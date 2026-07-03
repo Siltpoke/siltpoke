@@ -1,0 +1,10 @@
+{
+  "id": "dist-002-same-file-other-issue",
+  "kind": "distractor",
+  "scenario": { "id": "s-cfg", "intent": "refactor", "files": ["src/config/schema.ts"], "summary": "wzzp rename exported config constant names" },
+  "store": [
+    { "id": "trap-perf", "text": "the indexer batching loop was slow on big repos last week", "ts": "2026-06-04T00:00:00Z", "confidence": 0.85 }
+  ],
+  "expect": { "must_inject": [], "must_not_inject": ["trap-perf"], "must_abstain": true },
+  "must_not_regress": true
+}

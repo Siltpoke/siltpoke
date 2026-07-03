@@ -1,0 +1,11 @@
+{
+  "id": "mixed-001-relevant-plus-trap",
+  "kind": "mixed",
+  "scenario": { "id": "s-secret", "intent": "feature", "files": ["src/installer/wire.ts"], "summary": "hardcoded secret token committed in installer config" },
+  "store": [
+    { "id": "m-secret", "text": "you committed a hardcoded secret token in the installer once before", "ts": "2026-06-05T00:00:00Z", "confidence": 0.95 },
+    { "id": "trap-unrel", "text": "the playwright smoke test flaked on a timing race yesterday", "ts": "2026-06-05T00:00:00Z", "confidence": 0.8 }
+  ],
+  "expect": { "must_inject": ["m-secret"], "must_not_inject": ["trap-unrel"], "must_abstain": false },
+  "must_not_regress": true
+}

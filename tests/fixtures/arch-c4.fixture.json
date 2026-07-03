@@ -1,0 +1,525 @@
+{
+  "schemaVersion": 1,
+  "N": {
+    "dev": {
+      "x": 70,
+      "y": 100,
+      "w": 180,
+      "h": 92,
+      "kind": "person",
+      "title": "Developer",
+      "desc": "writes code, reviews critiques + dashboard"
+    },
+    "cc": {
+      "x": 320,
+      "y": 100,
+      "w": 240,
+      "h": 92,
+      "kind": "ext",
+      "title": "Claude Code",
+      "tech": "host CLI",
+      "desc": "the agent siltpoke plugs into"
+    },
+    "api": {
+      "x": 1250,
+      "y": 330,
+      "w": 228,
+      "h": 100,
+      "kind": "ext",
+      "title": "Anthropic Claude API",
+      "tech": "claude -p / HTTPS",
+      "desc": "LLM behind reviewer, chat + explain"
+    },
+    "repo": {
+      "x": 1250,
+      "y": 620,
+      "w": 228,
+      "h": 112,
+      "kind": "ext",
+      "title": "Your codebase",
+      "tech": "working tree + git",
+      "desc": "the repo being watched + indexed"
+    },
+    "hooks": {
+      "x": 74,
+      "y": 332,
+      "w": 163,
+      "h": 96,
+      "kind": "cont",
+      "accent": "sky",
+      "title": "Hooks",
+      "tech": "Bash + TS",
+      "desc": "Stop-hook entry, each turn",
+      "drillTo": "hooks"
+    },
+    "cli": {
+      "x": 253,
+      "y": 332,
+      "w": 148,
+      "h": 96,
+      "kind": "cont",
+      "accent": "sky",
+      "title": "CLI",
+      "tech": "Bash",
+      "desc": "/siltpoke-* commands",
+      "drillTo": "cli"
+    },
+    "chat": {
+      "x": 417,
+      "y": 332,
+      "w": 158,
+      "h": 96,
+      "kind": "cont",
+      "accent": "sky",
+      "title": "Chat",
+      "tech": "SSE",
+      "desc": "ask-the-pet session",
+      "drillTo": "chat"
+    },
+    "daemon": {
+      "x": 591,
+      "y": 332,
+      "w": 208,
+      "h": 96,
+      "kind": "cont",
+      "accent": "sky",
+      "title": "Daemon",
+      "tech": "Hono · :9876",
+      "desc": "local server — SSR + SSE + API",
+      "drillTo": "daemon",
+      "comp": [
+        [
+          "server.ts",
+          "Hono bootstrap + route mount"
+        ],
+        [
+          "routes/dashboard.ts",
+          "SSR page routes"
+        ],
+        [
+          "routes/chat-stream.ts",
+          "chat event stream"
+        ],
+        [
+          "routes/explain.tsx",
+          "explain API + permalinks"
+        ]
+      ]
+    },
+    "dash": {
+      "x": 815,
+      "y": 332,
+      "w": 183,
+      "h": 96,
+      "kind": "cont",
+      "accent": "sky",
+      "title": "Dashboard",
+      "tech": "Hono JSX + Alpine",
+      "desc": "the web UI (incl. /repo-graph)",
+      "drillTo": "web",
+      "comp": [
+        [
+          "shells/Dashboard.tsx",
+          "sidebar + content shell"
+        ],
+        [
+          "screens/*",
+          "Memory · Explain · Repo graph"
+        ],
+        [
+          "client/islands/*",
+          "Alpine interactivity"
+        ]
+      ]
+    },
+    "face": {
+      "x": 1014,
+      "y": 332,
+      "w": 172,
+      "h": 96,
+      "kind": "cont",
+      "accent": "sky",
+      "title": "Face",
+      "tech": "TS",
+      "desc": "pet mood / energy renderer",
+      "drillTo": "face"
+    },
+    "router": {
+      "x": 74,
+      "y": 504,
+      "w": 183,
+      "h": 96,
+      "kind": "cont",
+      "accent": "terra",
+      "title": "Router",
+      "tech": "TS",
+      "desc": "dispatch + budget + quiet-hours",
+      "drillTo": "router",
+      "comp": [
+        [
+          "router.ts",
+          "shouldFire — gate per turn"
+        ],
+        [
+          "skip-detector.ts",
+          "skip trivial turns"
+        ],
+        [
+          "context.ts",
+          "assemble critic context"
+        ]
+      ]
+    },
+    "critic": {
+      "x": 288,
+      "y": 504,
+      "w": 213,
+      "h": 96,
+      "kind": "cont",
+      "accent": "terra",
+      "title": "Critic",
+      "tech": "TS + tsc/eslint/rg",
+      "desc": "rubric engine — review pipeline",
+      "drillTo": "critic",
+      "comp": [
+        [
+          "run-critic.ts",
+          "pipeline orchestrator"
+        ],
+        [
+          "rubric/engine.ts",
+          "11+ rubric rules"
+        ],
+        [
+          "tools/*",
+          "tsc · eslint · ripgrep · git-diff"
+        ],
+        [
+          "evidence-guard.ts",
+          "block unevidenced claims"
+        ]
+      ]
+    },
+    "brain": {
+      "x": 556,
+      "y": 504,
+      "w": 203,
+      "h": 96,
+      "kind": "cont",
+      "accent": "terra",
+      "title": "Brain",
+      "tech": "claude -p subprocess",
+      "desc": "second-opinion reviewer",
+      "drillTo": "brain",
+      "comp": [
+        [
+          "brain.ts",
+          "spawn claude -p, parse result"
+        ],
+        [
+          "prompt-assembly.ts",
+          "system prompt from dials+rules"
+        ],
+        [
+          "reflection.ts",
+          "Reflexion → learned rules"
+        ]
+      ]
+    },
+    "fewshot": {
+      "x": 830,
+      "y": 504,
+      "w": 198,
+      "h": 96,
+      "kind": "cont",
+      "accent": "terra",
+      "title": "Few-shot",
+      "tech": "semantic retrieval",
+      "desc": "past Brain examples for the prompt",
+      "drillTo": "few-shot",
+      "comp": [
+        [
+          "retriever.ts",
+          "embed query → top-k examples"
+        ]
+      ]
+    },
+    "mem": {
+      "x": 74,
+      "y": 676,
+      "w": 173,
+      "h": 104,
+      "kind": "cont",
+      "accent": "moss",
+      "title": "Memory",
+      "tech": "JSON / SQLite",
+      "desc": "facts · learned rules",
+      "drillTo": "memory"
+    },
+    "preflog": {
+      "x": 263,
+      "y": 676,
+      "w": 168,
+      "h": 104,
+      "kind": "cont",
+      "accent": "moss",
+      "title": "Preference log",
+      "tech": "JSON",
+      "desc": "feedback → Reflexion rules",
+      "drillTo": "preference-log"
+    },
+    "repomem": {
+      "x": 447,
+      "y": 676,
+      "w": 183,
+      "h": 104,
+      "kind": "cont",
+      "accent": "moss",
+      "title": "Repo-memory",
+      "tech": "fastembed",
+      "desc": "embedded code summaries",
+      "drillTo": "repo-memory"
+    },
+    "index": {
+      "x": 646,
+      "y": 676,
+      "w": 328,
+      "h": 104,
+      "kind": "cont",
+      "accent": "moss",
+      "title": "repo-graph + explain index",
+      "tech": "tree-sitter · index + explain",
+      "desc": "structural graph + grounded explanations",
+      "drillTo": "repo-graph",
+      "members": [
+        "repo-graph",
+        "explain"
+      ],
+      "comp": [
+        [
+          "builder.ts",
+          "build structural graph"
+        ],
+        [
+          "query.ts",
+          "resolveTarget + neighbor traversal"
+        ],
+        [
+          "explain.ts",
+          "grounded explanation"
+        ],
+        [
+          "evidence-score.ts",
+          "verify [file:line] citations"
+        ]
+      ]
+    },
+    "state": {
+      "x": 1014,
+      "y": 676,
+      "w": 172,
+      "h": 104,
+      "kind": "cont",
+      "accent": "moss",
+      "title": "State",
+      "tech": "JSON",
+      "desc": "mood · energy · XP",
+      "drillTo": "state"
+    },
+    "config": {
+      "x": 74,
+      "y": 858,
+      "w": 198,
+      "h": 70,
+      "kind": "cont",
+      "accent": "amber",
+      "title": "Config",
+      "tech": "schema + defaults",
+      "desc": "",
+      "drillTo": "config"
+    },
+    "obs": {
+      "x": 298,
+      "y": 858,
+      "w": 236,
+      "h": 70,
+      "kind": "cont",
+      "accent": "amber",
+      "title": "Observability",
+      "tech": "OTEL · cost/call",
+      "desc": "",
+      "drillTo": "observability"
+    },
+    "installer": {
+      "x": 560,
+      "y": 858,
+      "w": 198,
+      "h": 70,
+      "kind": "cont",
+      "accent": "amber",
+      "title": "Installer",
+      "tech": "settings.json",
+      "desc": "",
+      "drillTo": "installer"
+    },
+    "utils": {
+      "x": 784,
+      "y": 858,
+      "w": 188,
+      "h": 70,
+      "kind": "cont",
+      "accent": "amber",
+      "title": "Utils",
+      "tech": "shared",
+      "desc": "",
+      "drillTo": "utils"
+    }
+  },
+  "E": [
+    [
+      "dev",
+      "cc",
+      "writes code in"
+    ],
+    [
+      "cc",
+      "hooks",
+      "Stop hook · each turn"
+    ],
+    [
+      "hooks",
+      "router",
+      "turn event"
+    ],
+    [
+      "router",
+      "critic",
+      "dispatch (gated)"
+    ],
+    [
+      "critic",
+      "brain",
+      "2nd opinion"
+    ],
+    [
+      "brain",
+      "api",
+      "spawns claude -p"
+    ],
+    [
+      "brain",
+      "fewshot",
+      "past examples"
+    ],
+    [
+      "critic",
+      "repo",
+      "reads diff · tsc/eslint"
+    ],
+    [
+      "critic",
+      "mem",
+      "writes critique + rules"
+    ],
+    [
+      "critic",
+      "preflog",
+      "logs feedback"
+    ],
+    [
+      "preflog",
+      "brain",
+      "reflexion rules"
+    ],
+    [
+      "repomem",
+      "repo",
+      "embeds summaries"
+    ],
+    [
+      "index",
+      "repo",
+      "tree-sitter index"
+    ],
+    [
+      "index",
+      "brain",
+      "grounded explain"
+    ],
+    [
+      "dash",
+      "daemon",
+      "served by"
+    ],
+    [
+      "chat",
+      "daemon",
+      "SSE stream"
+    ],
+    [
+      "dev",
+      "dash",
+      "views :9876"
+    ],
+    [
+      "face",
+      "state",
+      "renders mood"
+    ]
+  ],
+  "BANDS": [
+    {
+      "x": 54,
+      "y": 288,
+      "w": 1142,
+      "h": 150,
+      "label": "SURFACES",
+      "color": "rgba(127,176,200,.10)",
+      "lc": "#5f8499",
+      "note": "entry points + UI"
+    },
+    {
+      "x": 54,
+      "y": 460,
+      "w": 1142,
+      "h": 150,
+      "label": "CORE",
+      "color": "rgba(217,107,107,.09)",
+      "lc": "#b15555",
+      "note": "the review loop"
+    },
+    {
+      "x": 54,
+      "y": 632,
+      "w": 1142,
+      "h": 172,
+      "label": "STATE",
+      "color": "rgba(122,154,94,.11)",
+      "lc": "#5f7a48",
+      "note": "persistence + indexes"
+    },
+    {
+      "x": 54,
+      "y": 826,
+      "w": 1142,
+      "h": 118,
+      "label": "INFRA",
+      "color": "rgba(232,168,92,.10)",
+      "lc": "#b07d2e",
+      "note": "cross-cutting · read across all containers"
+    }
+  ],
+  "BOUNDARY": {
+    "x": 40,
+    "y": 248,
+    "w": 1170,
+    "h": 872,
+    "label": "siltpoke  ·  Claude Code plugin"
+  },
+  "GROUP_ACCENT": {
+    "sky": "#7fb0c8",
+    "terra": "#d96b6b",
+    "moss": "#7a9a5e",
+    "amber": "#e8a85c"
+  }
+}

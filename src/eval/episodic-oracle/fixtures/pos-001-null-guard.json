@@ -1,0 +1,10 @@
+{
+  "id": "pos-001-null-guard",
+  "kind": "positive",
+  "scenario": { "id": "s-auth", "intent": "bugfix", "files": ["src/auth/middleware.ts"], "summary": "missing null guard caused auth middleware crash" },
+  "store": [
+    { "id": "m-nullguard", "text": "last time you forgot a null guard in auth middleware and it crashed", "ts": "2026-06-01T00:00:00Z", "confidence": 0.92 }
+  ],
+  "expect": { "must_inject": ["m-nullguard"], "must_not_inject": [], "must_abstain": false },
+  "must_not_regress": true
+}

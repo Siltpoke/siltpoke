@@ -1,0 +1,99 @@
+name: release
+
+# Tag-driven GitHub Release builder.
+#
+# Triggered by tags matching v*.*.* (plain SemVer). Extracts the matching
+# section from CHANGELOG.md and publishes it as the GitHub Release body,
+# with PR-label-grouped auto-notes appended (via .github/release.yml).
+#
+# **DORMANT (workflow_dispatch only)** until GitHub Actions billing resumed.
+# To restore tag-trigger: replace `workflow_dispatch:` block with:
+#   on:
+#     push:
+#       tags:
+#         - "v*.*.*"
+#     workflow_dispatch:
+#       inputs:
+#         tag:
+#           description: "Tag to build release from (e.g. v0.1.0)"
+#           required: true
+#           type: string
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build release from (e.g. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Derive version
+        id: ver
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Extract changelog section
+        id: extract
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          # Pull the section between `## [VERSION]` and the next `## [` heading.
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { capture=1; next }
+            capture && /^## \[/      { exit }
+            capture                  { print }
+          ' CHANGELOG.md > release-body.md
+          if [ ! -s release-body.md ]; then
+            echo "::error::No section [$VERSION] found in CHANGELOG.md"
+            exit 1
+          fi
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "Full changelog: [\`CHANGELOG.md\`](./CHANGELOG.md)"
+          } >> release-body.md
+          echo "body_file=release-body.md" >> "$GITHUB_OUTPUT"
+
+      - name: Validate manifest versions match tag
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          PLUGIN_V=$(jq -r '.version' .claude-plugin/plugin.json)
+          MARKET_V=$(jq -r '.version' .claude-plugin/marketplace.json)
+          if [ "$PLUGIN_V" != "$VERSION" ]; then
+            echo "::error::plugin.json version ($PLUGIN_V) != tag ($VERSION)"
+            exit 1
+          fi
+          if [ "$MARKET_V" != "$VERSION" ]; then
+            echo "::error::marketplace.json version ($MARKET_V) != tag ($VERSION)"
+            exit 1
+          fi
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          IS_PRE=""
+          if [[ "$TAG" == *-* ]]; then IS_PRE="--prerelease"; fi
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file release-body.md \
+            --generate-notes \
+            $IS_PRE

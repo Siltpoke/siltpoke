@@ -1,0 +1,2050 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Siltpoke · Mochi</title>
+  <style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Quicksand:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Sans+JP:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap');
+
+  :root {
+    --shell-pink: #ffc0d8;
+    --shell-pink-dk: #f48fb1;
+    --shell-shadow: #c46a91;
+    --shell-glow: rgba(255, 192, 216, 0.45);
+    --lcd-bg: #d4e5b8;
+    --lcd-bg-dk: #a3c084;
+    --lcd-edge: #6b8c4f;
+    --lcd-ink: #1f3010;
+    --lcd-ink-soft: #4a5d36;
+    --pixel-font: 'Press Start 2P', monospace;
+    --display-font: 'Quicksand', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --bg: #fff7fb;
+    --bg-2: #ffffff;
+    --bg-3: #fef0f6;
+    --ink: #2c1f33;
+    --ink-soft: #7a6a82;
+    --accent: #ff6fa8;
+    --accent-2: #b45cff;
+    --accent-soft: #ffe2ed;
+    --border: #fce0eb;
+    --good: #1cae5e;
+    --warn: #e3811d;
+    --bad: #ed4862;
+    --panel-shadow: 0 1px 0 rgba(255,255,255,0.9) inset, 0 6px 18px rgba(255,111,168,0.08), 0 2px 4px rgba(180,92,255,0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1320;
+      --bg-2: #261b2e;
+      --bg-3: #2e2238;
+      --ink: #f7e8f0;
+      --ink-soft: #b09cb8;
+      --shell-pink: #e07ba8;
+      --shell-pink-dk: #b85587;
+      --shell-shadow: #6b2c50;
+      --shell-glow: rgba(224, 123, 168, 0.3);
+      --accent-soft: #3a2236;
+      --border: #3e2538;
+      --panel-shadow: 0 1px 0 rgba(255,255,255,0.04) inset, 0 6px 18px rgba(0,0,0,0.4);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--display-font);
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 1.55;
+    background:
+      radial-gradient(ellipse at top left, rgba(255,111,168,0.08), transparent 50%),
+      radial-gradient(ellipse at bottom right, rgba(180,92,255,0.06), transparent 50%),
+      var(--bg);
+    color: var(--ink);
+    padding: 2.5rem 1.5rem 4rem;
+    min-height: 100vh;
+  }
+  .wrap {
+    max-width: 1240px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: minmax(300px, 380px) 1fr;
+    gap: 2rem;
+    align-items: start;
+  }
+  @media (max-width: 960px) {
+    .wrap { grid-template-columns: 1fr; }
+    .left-col { position: static !important; max-width: 380px; margin: 0 auto; width: 100%; }
+    .shell { position: static !important; }
+  }
+  .left-col {
+    position: sticky;
+    top: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+  .mode-strip { display: flex; justify-content: center; }
+  .mode-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    border: 1px solid var(--border);
+    background: var(--bg-2);
+    color: var(--ink);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+    cursor: help;
+  }
+  .mode-badge::before {
+    content: "●";
+    color: var(--ink-soft);
+    font-size: 10px;
+  }
+  .mode-badge.mode-project::before { color: var(--good); }
+  .mode-badge.mode-global::before { color: var(--accent); }
+
+  /* --- shell (tamagotchi body) ----------------------------------------- */
+  .shell {
+    filter: drop-shadow(0 20px 30px var(--shell-glow));
+  }
+  .shell-loop {
+    width: 36px;
+    height: 22px;
+    margin: 0 auto -10px;
+    border: 6px solid var(--shell-pink-dk);
+    border-bottom: 0;
+    border-radius: 18px 18px 0 0;
+    box-shadow: inset -1px 1px 0 rgba(255,255,255,0.35);
+    position: relative;
+    z-index: 0;
+  }
+  .shell-body {
+    background:
+      radial-gradient(ellipse at 30% 18%, rgba(255,255,255,0.55), transparent 50%),
+      linear-gradient(180deg, var(--shell-pink) 0%, var(--shell-pink-dk) 100%);
+    border-radius: 44px;
+    padding: 2rem 1.5rem 2rem;
+    box-shadow:
+      0 14px 0 var(--shell-shadow),
+      inset 0 3px 0 rgba(255,255,255,0.55),
+      inset 0 -8px 0 rgba(0,0,0,0.12),
+      inset 6px 0 14px rgba(255,255,255,0.18),
+      inset -6px 0 14px rgba(0,0,0,0.08);
+    position: relative;
+    overflow: hidden;
+  }
+  .shell-body::after {
+    content: "";
+    position: absolute;
+    top: 14%;
+    left: 18%;
+    width: 22%;
+    height: 14%;
+    background: radial-gradient(ellipse, rgba(255,255,255,0.55) 0%, transparent 70%);
+    border-radius: 50%;
+    pointer-events: none;
+  }
+  .shell-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding: 0 0.5rem;
+    position: relative;
+    z-index: 1;
+  }
+  .shell-dots { display: flex; gap: 6px; }
+  .shell-dots span {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: rgba(0,0,0,0.22);
+    box-shadow: inset 1px 1px 1px rgba(255,255,255,0.4);
+  }
+  .shell-brand {
+    font-family: var(--pixel-font);
+    font-size: 7px;
+    color: rgba(255,255,255,0.7);
+    letter-spacing: 0.18em;
+    text-shadow: 1px 1px 0 rgba(0,0,0,0.15);
+  }
+
+  /* --- LCD screen ------------------------------------------------------- */
+  .lcd-frame {
+    padding: 6px;
+    border-radius: 22px;
+    background: linear-gradient(180deg, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.1) 100%);
+    box-shadow:
+      inset 0 2px 4px rgba(0,0,0,0.3),
+      0 2px 0 rgba(255,255,255,0.4);
+  }
+  .lcd {
+    background: linear-gradient(180deg, var(--lcd-bg) 0%, var(--lcd-bg-dk) 100%);
+    border-radius: 16px;
+    padding: 1.5rem 1.1rem 1.1rem;
+    position: relative;
+    overflow: hidden;
+    box-shadow:
+      inset 0 0 0 2px var(--lcd-edge),
+      inset 0 6px 14px rgba(0,0,0,0.18);
+    color: var(--lcd-ink);
+  }
+  .scanlines {
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 2px,
+      rgba(0,0,0,0.05) 2px,
+      rgba(0,0,0,0.05) 3px
+    );
+    pointer-events: none;
+    border-radius: inherit;
+  }
+  @keyframes pet-idle {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
+  }
+  @keyframes pet-blink {
+    0%, 92%, 100% { opacity: 1; }
+    94%, 96% { opacity: 0.15; }
+  }
+  .pet-portrait {
+    font-family: var(--pixel-font);
+    font-size: 20px;
+    line-height: 1.5;
+    white-space: pre;
+    text-align: center;
+    margin: 0.25rem 0 1rem;
+    color: var(--lcd-ink);
+    text-shadow: 1px 1px 0 var(--lcd-edge);
+    letter-spacing: 0.04em;
+    animation: pet-idle 3.6s ease-in-out infinite, pet-blink 5.2s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pet-portrait { animation: none; }
+  }
+  .pet-name {
+    text-align: center;
+    margin-bottom: 0.25rem;
+    color: var(--lcd-ink);
+    font-weight: 700;
+    font-size: 17px;
+    letter-spacing: 0.01em;
+  }
+  .pet-mood {
+    text-align: center;
+    font-size: 24px;
+    margin-bottom: 0.5rem;
+    color: var(--lcd-ink);
+    letter-spacing: 0.02em;
+  }
+  .bubble {
+    background: rgba(255,255,255,0.45);
+    border: 1px solid rgba(255,255,255,0.6);
+    border-radius: 14px;
+    padding: 0.75rem 1rem;
+    margin: 0.75rem -0.25rem 1rem;
+    font-size: 13.5px;
+    line-height: 1.5;
+    text-align: center;
+    color: var(--lcd-ink);
+    font-weight: 500;
+    min-height: 3.2em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: inset 0 1px 2px rgba(255,255,255,0.7), 0 1px 2px rgba(0,0,0,0.05);
+  }
+  .bubble-quote {
+    color: var(--lcd-ink-soft);
+    font-family: var(--pixel-font);
+    font-size: 14px;
+    margin: 0 0.2rem;
+  }
+  .meters { display: flex; flex-direction: column; gap: 0.55rem; margin: 1rem 0 0.75rem; }
+  .meter-row {
+    display: grid;
+    grid-template-columns: 56px 1fr 88px;
+    gap: 0.6rem;
+    align-items: center;
+  }
+  .meter-label {
+    font-family: var(--pixel-font);
+    font-size: 8px;
+    color: var(--lcd-ink-soft);
+    letter-spacing: 0.05em;
+  }
+  .meter {
+    height: 12px;
+    background: rgba(0,0,0,0.18);
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.25);
+  }
+  .fill {
+    height: 100%;
+    background: linear-gradient(180deg, var(--lcd-ink-soft) 0%, var(--lcd-ink) 100%);
+    border-radius: 6px;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.2) inset;
+    transition: width 0.6s ease;
+  }
+  .meter-val {
+    font-family: var(--pixel-font);
+    font-size: 9px;
+    text-align: right;
+    color: var(--lcd-ink);
+    letter-spacing: 0.02em;
+  }
+  .titles {
+    text-align: center;
+    font-family: var(--pixel-font);
+    font-size: 7px;
+    color: var(--lcd-ink-soft);
+    margin-top: 0.75rem;
+    letter-spacing: 0.08em;
+    line-height: 1.6;
+  }
+  .shell-buttons {
+    display: flex;
+    justify-content: space-around;
+    margin-top: 1.5rem;
+    padding: 0 0.5rem;
+    position: relative;
+    z-index: 1;
+  }
+  .btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 0;
+    padding: 0;
+    background:
+      radial-gradient(circle at 35% 30%, rgba(255,255,255,0.55), transparent 55%),
+      linear-gradient(180deg, var(--shell-pink) 0%, var(--shell-pink-dk) 100%);
+    box-shadow:
+      0 4px 0 var(--shell-shadow),
+      inset 0 1px 0 rgba(255,255,255,0.5),
+      inset 0 -2px 0 rgba(0,0,0,0.15);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.08s ease, box-shadow 0.08s ease;
+    font: inherit;
+    color: inherit;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn:active, .btn.pressed {
+    transform: translateY(3px);
+    box-shadow:
+      0 1px 0 var(--shell-shadow),
+      inset 0 1px 0 rgba(255,255,255,0.5),
+      inset 0 -2px 0 rgba(0,0,0,0.15);
+  }
+  .btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
+
+  /* button-triggered effects on the LCD */
+  @keyframes pet-wiggle {
+    0%, 100% { transform: translate(0,0) rotate(0); }
+    20% { transform: translate(-2px, -2px) rotate(-2deg); }
+    40% { transform: translate(2px, -1px) rotate(2deg); }
+    60% { transform: translate(-1px, 1px) rotate(-1deg); }
+    80% { transform: translate(2px, 0) rotate(1deg); }
+  }
+  .pet-portrait.wiggle {
+    animation:
+      pet-wiggle 0.55s ease-in-out 1,
+      pet-idle 3.6s ease-in-out infinite 0.55s,
+      pet-blink 5.2s ease-in-out infinite;
+  }
+  .heart-burst {
+    position: absolute;
+    pointer-events: none;
+    inset: 0;
+    overflow: visible;
+  }
+  .heart-burst span {
+    position: absolute;
+    bottom: 30%;
+    left: 50%;
+    font-size: 24px;
+    color: var(--accent);
+    opacity: 0;
+    animation: heart-rise 1.4s ease-out forwards;
+    text-shadow: 0 2px 8px rgba(255,111,168,0.5);
+  }
+  @keyframes heart-rise {
+    0% { transform: translate(-50%, 0) scale(0.5); opacity: 0; }
+    20% { opacity: 1; }
+    100% { transform: translate(calc(-50% + var(--dx, 0px)), -120px) scale(1.1); opacity: 0; }
+  }
+  .bubble.flash {
+    animation: bubble-flash 0.35s ease-out;
+  }
+  @keyframes bubble-flash {
+    0% { background: rgba(255,255,255,0.45); }
+    50% { background: rgba(255,255,255,0.85); }
+    100% { background: rgba(255,255,255,0.45); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pet-portrait.wiggle, .heart-burst span, .bubble.flash { animation: none; }
+  }
+  .btn-glyph {
+    font-family: var(--pixel-font);
+    font-size: 9px;
+    color: rgba(255,255,255,0.85);
+    text-shadow: 1px 1px 0 rgba(0,0,0,0.18);
+  }
+
+  /* --- tabs ------------------------------------------------------------ */
+  .tab-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 6px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--panel-shadow);
+    position: sticky;
+    top: 1.5rem;
+    z-index: 10;
+    backdrop-filter: saturate(160%) blur(10px);
+  }
+  .tab-btn {
+    flex: 1 1 auto;
+    min-width: 90px;
+    padding: 0.65rem 0.9rem;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--ink-soft);
+    font: inherit;
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    letter-spacing: 0.02em;
+  }
+  .tab-btn:hover { background: var(--bg-3); color: var(--ink); }
+  .tab-btn[aria-selected="true"] {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: white;
+    box-shadow: 0 2px 8px rgba(255,111,168,0.35);
+  }
+  .tab-btn[aria-selected="true"] .pill {
+    background: rgba(255,255,255,0.3);
+    color: white;
+    box-shadow: none;
+  }
+  .tab-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .tab-content {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+  .tab-content[hidden] { display: none; }
+
+  /* --- panels (right column, all collapsible) -------------------------- */
+  .panels { display: flex; flex-direction: column; gap: 1.25rem; }
+  details.panel {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 0;
+    box-shadow: var(--panel-shadow);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    overflow: hidden;
+  }
+  details.panel:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.9) inset, 0 10px 28px rgba(255,111,168,0.12), 0 4px 10px rgba(180,92,255,0.08);
+  }
+  details.panel > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 1.25rem 1.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    user-select: none;
+  }
+  details.panel > summary::-webkit-details-marker { display: none; }
+  details.panel > summary::after {
+    content: "›";
+    margin-left: auto;
+    font-size: 22px;
+    line-height: 0.7;
+    color: var(--accent);
+    transition: transform 0.2s ease;
+    font-weight: 700;
+  }
+  details.panel[open] > summary::after { transform: rotate(90deg); }
+  details.panel > summary h2 {
+    font-family: var(--display-font);
+    font-size: 13px;
+    font-weight: 700;
+    margin: 0;
+    color: var(--accent);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  details.panel > summary h2::before {
+    content: "";
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    box-shadow: 0 0 8px var(--accent-soft);
+  }
+  details.panel > .panel-body {
+    padding: 0 1.75rem 1.5rem;
+  }
+  details.panel > .panel-body > :first-child { margin-top: 0; }
+  .panel p { margin: 0.25rem 0; }
+  .muted { color: var(--ink-soft); }
+  .small { font-size: 0.85em; }
+
+  /* key-value list (used by genesis + progression detail) */
+  .kv-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+  }
+  .kv-row {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 0.75rem;
+    padding: 0.4rem 0;
+    border-bottom: 1px dashed var(--border);
+    font-size: 14px;
+  }
+  .kv-row:last-child { border-bottom: 0; }
+  .kv-k {
+    color: var(--ink-soft);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .kv-v { color: var(--ink); }
+  blockquote.genesis-soul {
+    margin: 0.5rem 0;
+    padding: 0.85rem 1.2rem;
+    background: linear-gradient(135deg, var(--accent-soft), var(--bg-3));
+    border-left: 3px solid var(--accent);
+    border-radius: 0 10px 10px 0;
+    color: var(--ink);
+    font-style: italic;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  pre {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.85rem 1rem;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.55;
+    margin: 0.5rem 0;
+  }
+  pre code {
+    border: 0;
+    background: transparent;
+    padding: 0;
+    font-size: inherit;
+  }
+
+  /* stats grid */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 0.75rem;
+  }
+  .stat {
+    padding: 0.85rem 1rem;
+    background:
+      linear-gradient(180deg, var(--bg-3) 0%, var(--bg-2) 100%);
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 1px 2px rgba(0,0,0,0.03);
+    transition: transform 0.15s ease;
+  }
+  .stat:hover { transform: translateY(-1px); }
+  .stat-v {
+    font-family: var(--display-font);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--ink);
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+  }
+  .stat-k {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    margin-top: 0.4rem;
+    letter-spacing: 0.02em;
+  }
+
+  /* chart */
+  .chart {
+    display: flex;
+    align-items: end;
+    gap: 10px;
+    height: 180px;
+    padding: 0.5rem 0 0;
+  }
+  .bar {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: end;
+    gap: 6px;
+    height: 100%;
+  }
+  .bar-fill {
+    width: 100%;
+    background: linear-gradient(180deg, var(--accent) 0%, var(--accent-2) 100%);
+    border-radius: 6px 6px 2px 2px;
+    min-height: 6px;
+    box-shadow: 0 2px 4px rgba(255,111,168,0.25);
+    transition: height 0.5s ease;
+  }
+  .bar-count {
+    font-family: var(--display-font);
+    font-weight: 700;
+    font-size: 13px;
+    text-align: center;
+    color: var(--ink);
+  }
+  .bar-label {
+    font-size: 11px;
+    text-align: center;
+    color: var(--ink-soft);
+    font-weight: 500;
+  }
+
+  /* tables */
+  table { width: 100%; border-collapse: collapse; }
+  th, td {
+    text-align: left;
+    padding: 0.65rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    font-size: 14px;
+  }
+  th {
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+    border-bottom: 2px solid var(--accent-soft);
+  }
+  tr:last-child td { border-bottom: 0; }
+  table.dense td, table.dense th { padding: 0.45rem 0.6rem; }
+  table.dense td { font-size: 13.5px; }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.85em;
+    padding: 0.1em 0.4em;
+    background: var(--bg-3);
+    border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+
+  /* severities */
+  .sev-high { color: var(--bad); font-weight: 700; }
+  .sev-medium { color: var(--warn); font-weight: 600; }
+  .sev-low { color: var(--accent-2); }
+  .sev-info { color: var(--ink-soft); }
+
+  .verdict-forwarded { color: var(--good); font-weight: 700; }
+  .verdict-dismissed { color: var(--bad); font-weight: 600; }
+  .verdict-acked { color: var(--ink-soft); }
+  tr.skipped td { color: var(--ink-soft); font-style: italic; }
+
+  /* config panel under shell */
+  .cfg-panel { font-size: 13.5px; }
+  .cfg-panel > .panel-body { padding-top: 0.25rem; }
+  .cfg-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin: 0.75rem 0;
+  }
+  .cfg-row {
+    display: grid;
+    grid-template-columns: 72px 1fr 40px;
+    gap: 0.6rem;
+    align-items: center;
+  }
+  .cfg-row .cfg-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-soft);
+    font-weight: 600;
+  }
+  .cfg-row input[type="text"],
+  .cfg-row select {
+    grid-column: 2 / span 2;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--ink);
+    font: inherit;
+    font-size: 13px;
+  }
+  .cfg-row input[type="text"]:focus,
+  .cfg-row select:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .cfg-dial input[type="range"] {
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+    height: 18px;
+    margin: 0;
+  }
+  .cfg-dial input[type="range"]::-webkit-slider-runnable-track {
+    height: 6px;
+    background: var(--accent-soft);
+    border-radius: 3px;
+  }
+  .cfg-dial input[type="range"]::-moz-range-track {
+    height: 6px;
+    background: var(--accent-soft);
+    border-radius: 3px;
+  }
+  .cfg-dial input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: linear-gradient(180deg, var(--accent), var(--accent-2));
+    margin-top: -5px;
+    box-shadow: 0 1px 3px rgba(255,111,168,0.4);
+    cursor: pointer;
+  }
+  .cfg-dial input[type="range"]::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: linear-gradient(180deg, var(--accent), var(--accent-2));
+    border: 0;
+    box-shadow: 0 1px 3px rgba(255,111,168,0.4);
+    cursor: pointer;
+  }
+  .cfg-val {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    text-align: right;
+    color: var(--ink);
+    font-size: 13px;
+  }
+  .cfg-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 0.25rem 0;
+  }
+  .cfg-diff {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    background: var(--bg-3);
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+  }
+  .cfg-diff.has-changes {
+    border-style: solid;
+    border-color: var(--accent);
+    background: linear-gradient(135deg, var(--accent-soft), var(--bg-3));
+  }
+  .cfg-diff-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .cfg-diff-json {
+    margin: 0.5rem 0 0;
+    font-size: 11px;
+    line-height: 1.5;
+    max-height: 200px;
+    overflow: auto;
+  }
+  .cfg-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .cfg-apply, .cfg-reset {
+    padding: 0.4rem 0.8rem;
+    border: 0;
+    border-radius: 8px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 0.08s ease;
+  }
+  .cfg-apply {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: white;
+    box-shadow: 0 1px 3px rgba(255,111,168,0.4);
+  }
+  .cfg-apply:hover { transform: translateY(-1px); }
+  .cfg-apply:active { transform: translateY(1px); }
+  .cfg-apply:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .cfg-reset {
+    background: transparent;
+    color: var(--ink-soft);
+    border: 1px solid var(--border);
+  }
+  .cfg-reset:hover { background: var(--bg-2); }
+  .cfg-toast {
+    color: var(--good);
+    font-weight: 700;
+    font-size: 12px;
+  }
+
+  /* floating action toast — feed/play/tease feedback */
+  .xp-toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 12px 22px;
+    border-radius: 999px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    font-weight: 700;
+    font-size: 14px;
+    z-index: 999;
+    animation: toast-pop 0.25s ease-out;
+  }
+  .xp-toast.good { color: var(--good); border-color: var(--good); }
+  .xp-toast.warn { color: var(--warn); border-color: var(--warn); }
+  .xp-toast.info { color: var(--ink-soft); }
+  @keyframes toast-pop {
+    0% { transform: translate(-50%, 20px); opacity: 0; }
+    100% { transform: translate(-50%, 0); opacity: 1; }
+  }
+
+  /* joined token columns inside recent calls */
+  .token-joined th:nth-child(5),
+  .token-joined th:nth-child(6),
+  .token-joined th:nth-child(7) { white-space: nowrap; }
+  .tok-cell {
+    font-variant-numeric: tabular-nums;
+    font-size: 12.5px;
+    white-space: nowrap;
+  }
+  .tok-in { color: var(--accent-2); font-weight: 600; }
+  .tok-out { color: var(--accent); font-weight: 600; }
+  .tok-cache { color: var(--ink-soft); }
+  .cost-cell {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  /* inboxes / docs */
+  details.inbox, details.doc {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 0.75rem 1rem;
+    margin: 0.75rem 0;
+    background:
+      linear-gradient(180deg, var(--bg-3) 0%, var(--bg-2) 100%);
+    transition: border-color 0.15s ease;
+  }
+  details.inbox:hover, details.doc:hover { border-color: var(--accent-soft); }
+  details.inbox[open], details.doc[open] { border-color: var(--accent-soft); }
+  details summary {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--ink);
+    padding: 0.25rem 0;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::before {
+    content: "›";
+    font-size: 22px;
+    line-height: 0.8;
+    color: var(--accent);
+    transition: transform 0.2s ease;
+    font-weight: 700;
+  }
+  details[open] summary::before { transform: rotate(90deg); }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    padding: 2px 8px;
+    background: linear-gradient(180deg, var(--accent), var(--accent-2));
+    color: white;
+    border-radius: 12px;
+    font-weight: 700;
+    font-size: 11px;
+    box-shadow: 0 1px 4px rgba(255,111,168,0.4);
+  }
+  .inbox-path { margin-left: auto; }
+  .inbox-name { font-weight: 700; font-size: 15px; color: var(--ink); }
+  .doc-title { font-weight: 700; font-size: 14px; }
+
+  /* rendered markdown body inside docs */
+  .md {
+    font-family: var(--display-font);
+    font-size: 15px;
+    line-height: 1.6;
+    padding: 0.75rem 0.25rem 0.25rem;
+    color: var(--ink);
+  }
+  .md h1, .md h2, .md h3, .md h4 {
+    font-family: var(--display-font);
+    font-weight: 700;
+    line-height: 1.3;
+    color: var(--ink);
+    margin: 1.25rem 0 0.5rem;
+  }
+  .md h1 { font-size: 22px; }
+  .md h2 { font-size: 18px; color: var(--accent); }
+  .md h3 { font-size: 15px; }
+  .md h4 { font-size: 13px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.06em; }
+  .md p { margin: 0.5rem 0; }
+  .md code { font-size: 0.88em; }
+  .md pre {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.85rem 1rem;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .md pre code { border: 0; background: transparent; padding: 0; }
+  .md blockquote {
+    border-left: 3px solid var(--accent);
+    margin: 0.75rem 0;
+    padding: 0.5rem 1rem;
+    background: var(--accent-soft);
+    border-radius: 0 8px 8px 0;
+    color: var(--ink);
+    font-style: italic;
+  }
+  .md table { font-size: 13.5px; margin: 0.5rem 0; }
+  .md table th, .md table td { padding: 0.5rem 0.7rem; }
+  .md ul, .md ol { margin: 0.4rem 0 0.6rem 1.5rem; padding: 0; }
+  .md li { margin: 0.2rem 0; }
+  .md a { color: var(--accent); text-decoration: none; border-bottom: 1px dashed var(--accent-soft); }
+  .md a:hover { border-bottom-style: solid; }
+  .md hr { border: 0; border-top: 1px dashed var(--border); margin: 1.5rem 0; }
+  .md strong { color: var(--ink); font-weight: 700; }
+  .md em { color: var(--ink-soft); }
+
+  /* footer */
+  footer {
+    text-align: center;
+    margin: 3rem auto 0;
+    max-width: 1240px;
+    padding-top: 1.5rem;
+    border-top: 1px dashed var(--border);
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="left-col">
+      
+<aside class="shell">
+  <div class="shell-loop"></div>
+  <div class="shell-body">
+    <div class="shell-top">
+      <div class="shell-dots"><span></span><span></span><span></span></div>
+      <div class="shell-brand">SILTPOKE · L 1</div>
+    </div>
+    <div class="lcd-frame">
+      <div class="lcd">
+        <div class="scanlines"></div>
+        <div class="heart-burst" id="heart-burst" aria-hidden="true"></div>
+        <div class="pet-portrait" id="pet-portrait" aria-hidden="true"> .---. 
+ (o.o) 
+ (___) </div>
+        <div class="pet-name">Mochi<span class="muted"> · slime</span></div>
+        <div class="pet-mood">( ´ ▽ ` )</div>
+        <div class="bubble" id="bubble"><span class="muted" id="bubble-text">quiet</span></div>
+        <div class="meters">
+          <div class="meter-row">
+            <span class="meter-label">XP</span>
+            <div class="meter"><div class="fill" style="width:0%"></div></div>
+            <span class="meter-val">0/100</span>
+          </div>
+          <div class="meter-row">
+            <span class="meter-label">CALLS</span>
+            <div class="meter"><div class="fill" style="width:0%"></div></div>
+            <span class="meter-val">0</span>
+          </div>
+          <div class="meter-row">
+            <span class="meter-label">SPEND</span>
+            <div class="meter"><div class="fill" style="width:0%"></div></div>
+            <span class="meter-val">$0.0000</span>
+          </div>
+        </div>
+        <div class="titles">Hatchling</div>
+      </div>
+    </div>
+    <div class="shell-buttons">
+      <button class="btn" data-action="feed" type="button" aria-label="feed"><span class="btn-glyph">A</span></button>
+      <button class="btn" data-action="play" type="button" aria-label="play"><span class="btn-glyph">B</span></button>
+      <button class="btn" data-action="tease" type="button" aria-label="tease"><span class="btn-glyph">C</span></button>
+    </div>
+  </div>
+</aside>
+      <div class="mode-strip"><span class="mode-badge mode-global" title="global view — cd into a project and run `bun run report` for its scoped report">GLOBAL</span></div>
+      
+<details class="panel cfg-panel" open>
+  <summary><h2>CONFIG</h2></summary>
+  <div class="panel-body">
+  <p class="muted small">edit and click apply — saved to ~/.siltpoke/config.json instantly. restart Claude Code to take effect</p>
+  <div class="cfg-grid">
+    <div class="cfg-row">
+      <label for="cfg-name" class="cfg-label">name</label>
+      <input id="cfg-name" type="text" value="Mochi" data-config-key="name" data-config-type="string" />
+    </div>
+    <div class="cfg-row">
+      <label for="cfg-species" class="cfg-label">species</label>
+      <select id="cfg-species" data-config-key="species" data-config-type="string"><option value="slime" selected>slime</option><option value="cat">cat</option><option value="owl">owl</option><option value="robot">robot</option><option value="bunny">bunny</option></select>
+    </div>
+    <div class="cfg-row">
+      <label for="cfg-language" class="cfg-label">language</label>
+      <select id="cfg-language" data-config-key="language" data-config-type="string"><option value="en" selected>English</option><option value="zh-CN">中文 (简体)</option><option value="zh-TW">中文 (繁體)</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="es">Español</option><option value="fr">Français</option><option value="de">Deutsch</option></select>
+    </div>
+    <div class="cfg-row">
+      <label for="cfg-trigger" class="cfg-label">trigger mode</label>
+      <select id="cfg-trigger" data-config-key="triggerMode" data-config-type="string"><option value="always">always</option><option value="gates" selected>gates</option><option value="on_demand">on_demand</option><option value="hybrid">hybrid</option></select>
+    </div>
+    <div class="cfg-divider"></div>
+    
+      <div class="cfg-row cfg-dial">
+        <label for="cfg-snark" class="cfg-label">snark</label>
+        <input id="cfg-snark" type="range" min="0" max="10" step="1" value="5" data-config-key="snark" data-config-type="number" />
+        <span class="cfg-val" data-config-display="snark">5</span>
+      </div>
+      <div class="cfg-row cfg-dial">
+        <label for="cfg-patience" class="cfg-label">patience</label>
+        <input id="cfg-patience" type="range" min="0" max="10" step="1" value="5" data-config-key="patience" data-config-type="number" />
+        <span class="cfg-val" data-config-display="patience">5</span>
+      </div>
+      <div class="cfg-row cfg-dial">
+        <label for="cfg-rigor" class="cfg-label">rigor</label>
+        <input id="cfg-rigor" type="range" min="0" max="10" step="1" value="5" data-config-key="rigor" data-config-type="number" />
+        <span class="cfg-val" data-config-display="rigor">5</span>
+      </div>
+      <div class="cfg-row cfg-dial">
+        <label for="cfg-chattiness" class="cfg-label">chattiness</label>
+        <input id="cfg-chattiness" type="range" min="0" max="10" step="1" value="5" data-config-key="chattiness" data-config-type="number" />
+        <span class="cfg-val" data-config-display="chattiness">5</span>
+      </div>
+      <div class="cfg-row cfg-dial">
+        <label for="cfg-curiosity" class="cfg-label">curiosity</label>
+        <input id="cfg-curiosity" type="range" min="0" max="10" step="1" value="5" data-config-key="curiosity" data-config-type="number" />
+        <span class="cfg-val" data-config-display="curiosity">5</span>
+      </div>
+  </div>
+  <div class="cfg-diff" id="cfg-diff">
+    <div class="cfg-diff-header">
+      <span id="cfg-diff-label" class="muted small">no changes</span>
+      <div class="cfg-actions">
+        <button type="button" class="cfg-reset" id="cfg-reset">reset</button>
+        <button type="button" class="cfg-apply" id="cfg-apply">apply</button>
+      </div>
+    </div>
+    <span id="cfg-toast" class="cfg-toast" hidden>copied!</span>
+  </div></div>
+</details>
+    </div>
+    <main class="panels">
+      
+  <nav class="tab-nav" role="tablist">
+    <button class="tab-btn" data-tab="overview" role="tab" aria-selected="true">Overview</button>
+    <button class="tab-btn" data-tab="tasks" role="tab" aria-selected="false">Tasks </button>
+    <button class="tab-btn" data-tab="growth" role="tab" aria-selected="false">Growth</button>
+    <button class="tab-btn" data-tab="diagnostics" role="tab" aria-selected="false">Diagnostics</button>
+    <button class="tab-btn" data-tab="reference" role="tab" aria-selected="false">Reference</button>
+  </nav>
+      <section class="tab-content" data-tab="overview">
+<details class="panel" open>
+  <summary><h2>TODAY</h2></summary>
+  <div class="panel-body">
+  <div class="stat-grid">
+    <div class="stat"><div class="stat-v">0</div><div class="stat-k">brain calls</div></div>
+    <div class="stat"><div class="stat-v">0</div><div class="stat-k">reflections</div></div>
+    <div class="stat"><div class="stat-v">$0.0000</div><div class="stat-k">spent</div></div>
+    <div class="stat"><div class="stat-v">0%</div><div class="stat-k">budget</div></div>
+    <div class="stat"><div class="stat-v">gates</div><div class="stat-k">mode</div></div>
+    <div class="stat"><div class="stat-v">off</div><div class="stat-k">quiet hours</div></div>
+  </div></div>
+</details>
+<details class="panel" open>
+  <summary><h2>LAST 7 DAYS</h2></summary>
+  <div class="panel-body"><p class="muted">no calls in the last 7 days</p></div>
+</details>
+<details class="panel" open>
+  <summary><h2>PROJECTS</h2></summary>
+  <div class="panel-body"><p class="muted">no per-project activity yet</p></div>
+</details></section>
+      <section class="tab-content" data-tab="tasks" hidden>
+<details class="panel" open>
+  <summary><h2>PENDING CRITIQUES</h2></summary>
+  <div class="panel-body"><p class="muted">inbox clean — no pending critiques across any project ✨</p></div>
+</details>
+<details class="panel">
+  <summary><h2>RECENT CALLS</h2></summary>
+  <div class="panel-body"><p class="muted">no calls logged yet</p></div>
+</details>
+<details class="panel">
+  <summary><h2>RECENT VERDICTS</h2></summary>
+  <div class="panel-body"><p class="muted">no forward/dismiss/ack verdicts yet — pull a critique with /siltpoke-forward &lt;id&gt;</p></div>
+</details></section>
+      <section class="tab-content" data-tab="growth" hidden>
+<details class="panel" open>
+  <summary><h2>PERSONALITY GENESIS</h2></summary>
+  <div class="panel-body">
+  <div class="kv-list">
+    <div class="kv-row"><span class="kv-k">how it was generated</span><span class="kv-v">manual — you set the dials yourself</span></div>
+    
+    
+  </div>
+  
+  <p class="muted small" style="margin-top:0.75rem">no genesis recorded — your dials were set manually so there's no Brain-written rationale to show</p></div>
+</details>
+<details class="panel">
+  <summary><h2>PROGRESSION</h2></summary>
+  <div class="panel-body">
+  <div class="kv-list">
+    <div class="kv-row"><span class="kv-k">current XP</span><span class="kv-v"><strong>0</strong> / 100 (L 1)</span></div>
+    <div class="kv-row"><span class="kv-k">titles unlocked</span><span class="kv-v">—</span></div>
+    <div class="kv-row"><span class="kv-k">unlocked poses</span><span class="kv-v">—</span></div>
+    <div class="kv-row"><span class="kv-k">pets today</span><span class="kv-v">0 / 3</span></div>
+  </div>
+  </div>
+</details>
+<details class="panel">
+  <summary><h2>PROJECT DETAIL</h2></summary>
+  <div class="panel-body"><p class="muted">no per-project siltpoke directories found</p></div>
+</details></section>
+      <section class="tab-content" data-tab="diagnostics" hidden>
+<details class="panel">
+  <summary><h2>ERROR LOG</h2></summary>
+  <div class="panel-body"><p class="muted">no wrapper errors logged ✨</p></div>
+</details></section>
+      <section class="tab-content" data-tab="reference" hidden>
+<details class="panel">
+  <summary><h2>REFERENCE</h2></summary>
+  <div class="panel-body"><p class="muted small">click a title to expand the rendered markdown</p>
+<details class="doc">
+  <summary><span class="doc-title">Manual</span><span class="muted small">the usage manual — commands, config, troubleshooting</span></summary>
+  <article class="md"><h1>Siltpoke — User Manual</h1>
+<blockquote>
+<p>Daily-use reference. For setup, see <a href="../README.md"><code>README.md</code></a>. This file
+is mirrored by the <code>/siltpoke-help</code> slash command — keep them in sync.</p>
+</blockquote>
+<hr>
+<h2>What Siltpoke does</h2>
+<p>A separate <code>claude -p</code> subprocess reads over Claude&#39;s shoulder after
+every turn, finds bugs Claude missed, and writes a critique to disk.
+<strong>Critiques never auto-inject into your chat</strong> — you pull them in
+explicitly when you want them.</p>
+<hr>
+<h2>Daily loop (the 3 commands you&#39;ll actually use)</h2>
+<pre><code>/siltpoke-inbox            List pending critiques (read-only)
+/siltpoke-forward &lt;id&gt;     Pull a specific critique into the chat (+20 XP if fresh)
+/siltpoke-dismiss &lt;id&gt; &lt;reason&gt;   Reject + Siltpoke learns from why it was wrong
+</code></pre>
+<p>That&#39;s the whole loop:</p>
+<ol>
+<li>Claude finishes a turn → Siltpoke runs in background → critique lands in inbox.</li>
+<li>You run <code>/siltpoke-inbox</code> whenever you want.</li>
+<li>For each pending critique:<ul>
+<li><strong>Useful</strong> → <code>/siltpoke-forward &lt;id&gt;</code> (default — XP awarded)</li>
+<li><strong>Wrong</strong> → <code>/siltpoke-dismiss &lt;id&gt; &lt;reason&gt;</code> (triggers Reflexion → writes a learned rule → Siltpoke won&#39;t make the same wrong call again)</li>
+<li><strong>Neutral / already-seen</strong> → <code>/siltpoke-ack &lt;id&gt;</code> (no XP, no learning)</li>
+</ul>
+</li>
+</ol>
+<hr>
+<h2>Full slash-command reference</h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/siltpoke</code></td>
+<td>State card — name, level, XP, mood, today&#39;s spend</td>
+</tr>
+<tr>
+<td><code>/siltpoke-inbox</code></td>
+<td>List pending critiques (read-only)</td>
+</tr>
+<tr>
+<td><code>/siltpoke-last</code></td>
+<td>Surface the most recent critique into chat</td>
+</tr>
+<tr>
+<td><code>/siltpoke-forward &lt;id&gt;</code></td>
+<td>Pull a specific critique (+20 XP if fresh)</td>
+</tr>
+<tr>
+<td><code>/siltpoke-forward-all</code></td>
+<td>Dump every pending critique at once</td>
+</tr>
+<tr>
+<td><code>/siltpoke-ack &lt;id&gt;</code></td>
+<td>Mark acknowledged — neutral, no XP, no learning</td>
+</tr>
+<tr>
+<td><code>/siltpoke-dismiss &lt;id&gt; &lt;reason&gt;</code></td>
+<td>Reject + trigger Reflexion to learn</td>
+</tr>
+<tr>
+<td><code>/siltpoke-wake</code></td>
+<td>One-shot bypass of budget + quiet-hours gates</td>
+</tr>
+<tr>
+<td><code>/siltpoke-review</code></td>
+<td>Alias for <code>/siltpoke-wake</code> (&quot;review my work now&quot;)</td>
+</tr>
+<tr>
+<td><code>/siltpoke-stats</code></td>
+<td>Today&#39;s token spend + budget stage + trigger mode</td>
+</tr>
+<tr>
+<td><code>/siltpoke-pet</code></td>
+<td>+5 XP (capped at 3 pets/day = 15 XP/day)</td>
+</tr>
+<tr>
+<td><code>/siltpoke-help</code></td>
+<td>This manual</td>
+</tr>
+</tbody></table>
+<h3>Dashboard report (browser)</h3>
+<pre><code class="language-bash">bun run report          # writes ~/.siltpoke/report.html
+open ~/.siltpoke/report.html  # macOS — opens in your default browser
+</code></pre>
+<p>Self-contained static HTML — no server, no JS framework. Refresh by
+re-running the command. Sections: pet header, today&#39;s metrics, 7-day
+bar chart, per-project table, pending-critique inbox grouped by
+project, last 30 brain calls, recent verdicts.</p>
+<hr>
+<h2>Trigger modes</h2>
+<p>Controls <em>when</em> Siltpoke actually runs Brain:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>always</code></td>
+<td>Every supported event (most expensive)</td>
+</tr>
+<tr>
+<td><code>gates</code> (default)</td>
+<td>Only on configured <code>gateEvents</code> (default: <code>Stop</code> + <code>PreCompact</code>)</td>
+</tr>
+<tr>
+<td><code>on_demand</code></td>
+<td>Never, unless <code>/siltpoke-wake</code> was just used</td>
+</tr>
+<tr>
+<td><code>hybrid</code></td>
+<td><code>gates</code> + <code>/siltpoke-wake</code> always bypasses</td>
+</tr>
+</tbody></table>
+<p>Change in <code>~/.siltpoke/config.json</code>:</p>
+<pre><code class="language-json">{
+  &quot;triggerMode&quot;: &quot;on_demand&quot;
+}
+</code></pre>
+<hr>
+<h2>Cost control</h2>
+<p>Default <code>~$0.04–$0.10/day</code> thanks to prompt caching (~70k tokens cached,
+calls 2+ cost ~$0.001).</p>
+<pre><code class="language-json">{
+  &quot;triggerMode&quot;: &quot;on_demand&quot;,
+  &quot;budget&quot;: { &quot;dailyTokenLimit&quot;: 100000 },
+  &quot;quietHours&quot;: { &quot;start&quot;: &quot;23:00&quot;, &quot;end&quot;: &quot;08:00&quot; }
+}
+</code></pre>
+<ul>
+<li><strong>Budget hard-stop</strong> → pet flips to <code>sleeping_broke</code>, Brain skipped until midnight reset</li>
+<li><strong>Quiet hours</strong> → Brain muted overnight</li>
+<li><strong><code>dailyTokenLimit: 0</code></strong> → disables the budget gate entirely</li>
+<li><strong>Skip-on-no-change</strong> → sha256 over <code>(session+cwd+changed_files+user_msg)</code>; identical context never re-runs Brain</li>
+</ul>
+<hr>
+<h2>Pet / progression system</h2>
+<p>XP sources:</p>
+<ul>
+<li><code>/siltpoke-forward &lt;id&gt;</code> on a fresh critique → <strong>+20 XP</strong></li>
+<li><code>/siltpoke-pet</code> → <strong>+5 XP</strong> (max 3 pets/day)</li>
+<li>Brain&#39;s own <code>xp_earned_events</code> for sustained engagement</li>
+</ul>
+<p><code>xp_to_next_level = 100 × level</code>. Unlocks:</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Unlock</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>L2</td>
+<td>Pose <code>peek</code> + title <code>Watcher</code></td>
+</tr>
+<tr>
+<td>L3</td>
+<td>Pose <code>blink</code></td>
+</tr>
+<tr>
+<td>L5</td>
+<td>Title <code>Apprentice</code></td>
+</tr>
+<tr>
+<td>L10</td>
+<td>Title <code>Sentinel</code></td>
+</tr>
+</tbody></table>
+<p>XP never decreases. Wrong critiques are handled via dismiss/Reflexion,
+not by punishing the pet.</p>
+<p>The statusline shows <code>L{level} {xp}/{xp_to_next_level}</code> under the
+pet&#39;s name so you can track progress at a glance. Hidden in
+<code>minimalMode</code> since that mode drops the face entirely.</p>
+<hr>
+<h2>Personality</h2>
+<p>Each Siltpoke has 5 dials (0–10):</p>
+<pre><code class="language-json">{
+  &quot;snark&quot;: 7,         // 0 = sweet, 10 = savage
+  &quot;patience&quot;: 4,      // 0 = trigger-happy, 10 = saintly
+  &quot;rigor&quot;: 6,         // 0 = vibes-based, 10 = methodical / cites file:line
+  &quot;chattiness&quot;: 5,    // 0 = terse, 10 = verbose bubbles
+  &quot;curiosity&quot;: 8      // 0 = by-the-book, 10 = suggests alternatives
+}
+</code></pre>
+<p>Re-roll without reinstalling:</p>
+<pre><code class="language-bash">bun run edit-personality
+</code></pre>
+<p>Loads current values as defaults — Enter to keep, type new value to
+change, or pick a different generation method (<code>quiz</code> / <code>random</code> /
+<code>memory</code>).</p>
+<hr>
+<h2>Match modes</h2>
+<p>Controls whether the pet mirrors or fills in your traits:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>mirror</code> (default)</td>
+<td>Pet mirrors user. Snarky user → snarky pet.</td>
+</tr>
+<tr>
+<td><code>complement</code></td>
+<td>Pet inverts user. Lazy user → rigorous pet.</td>
+</tr>
+<tr>
+<td><code>hybrid</code></td>
+<td>Vibe dials mirror (relatable), task dials complement (fills gaps).</td>
+</tr>
+</tbody></table>
+<p>Set during quiz, or change manually in <code>config.json</code> (advanced).</p>
+<hr>
+<h2>Output language</h2>
+<pre><code class="language-json">{
+  &quot;language&quot;: &quot;zh-CN&quot;
+}
+</code></pre>
+<p>Supported: <code>en</code>, <code>zh-CN</code>, <code>zh-TW</code>, <code>ja</code>, <code>ko</code>, <code>es</code>, <code>fr</code>, <code>de</code>, plus
+anything <code>claude -p</code> can reply in. The bubble + critique are written
+in this language; only code identifiers, file paths, and schema enum
+tokens stay English.</p>
+<p>If you see English leaking into the bubble for non-English settings,
+verify your <code>language</code> field is set and restart Claude Code.</p>
+<hr>
+<h2>Files Siltpoke owns</h2>
+<p>Critiques and learned-rule memory are <strong>per-project</strong> — Siltpoke
+shouldn&#39;t carry critique context from one codebase into another.
+Pet progression, budget, and debugging logs stay global.</p>
+<pre><code>~/.siltpoke/                  # global (one pet, one budget)
+  config.json                 # personality + budget + trigger
+  inner.txt                   # your original statusline command
+  progression.json            # XP, level, unlocks
+  state.json                  # latest Brain output (fallback when no project)
+  usage-events.jsonl          # spend log
+  brain-calls.jsonl           # every Brain call (debugging)
+  feedback-archive.jsonl      # permanent dismiss/forward archive across projects
+
+{project}/.siltpoke/          # per-project (one folder per repo)
+  state.json                  # this project&#39;s latest Brain output
+  recent_feedback.jsonl       # tier 2: per-project FIFO of last 20 verdicts
+  memory.json                 # tier 1: learned rules scoped to this project
+  critiques/
+    latest.md
+    history.jsonl
+    archive/YYYY-MM-DD/*
+</code></pre>
+<p><code>/siltpoke-inbox</code>, <code>/siltpoke-forward &lt;id&gt;</code>, <code>/siltpoke-ack &lt;id&gt;</code>, and
+<code>/siltpoke-dismiss &lt;id&gt; &lt;reason&gt;</code> all read from the current
+project&#39;s <code>.siltpoke/</code> — IDs are local to the project you&#39;re in.</p>
+<hr>
+<h2>Memory system (3-tier prompt)</h2>
+<p>Brain sees a 3-block system prompt in cache-friendly order:</p>
+<ol>
+<li><strong>Personality</strong> — stable, cached</li>
+<li><strong>Tier 1 long-term memory</strong> — <code>~/.siltpoke/memory.json</code>, learned rules across all your projects</li>
+<li><strong>Tier 2 recent feedback</strong> — <code>{cwd}/.siltpoke/recent_feedback.jsonl</code>, per-project FIFO of last 20 verdicts</li>
+</ol>
+<p><code>/siltpoke-dismiss &lt;id&gt; &lt;reason&gt;</code> fires a Reflexion subprocess →
+extracts the lesson → appends a <code>learned_rule</code> to tier 1 → next call
+Siltpoke sees the rule → won&#39;t make the same wrong critique again.</p>
+<hr>
+<h2>Troubleshooting</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>No face in statusline</td>
+<td><code>cat ~/.claude/settings.json | jq .statusLine</code> → should point at Siltpoke wrapper. Then restart Claude Code.</td>
+</tr>
+<tr>
+<td>Brain never runs</td>
+<td><code>/siltpoke-stats</code> then <code>tail -f ~/.siltpoke/brain-calls.jsonl</code> — look for <code>skipped</code> reasons: <code>quiet_hours</code>, <code>budget_hard_stop</code>, <code>no_change</code>, <code>wrong_event_mode</code>, <code>on_demand_no_bypass</code>.</td>
+</tr>
+<tr>
+<td>Cache hits always zero</td>
+<td>Something&#39;s mutating the stable prompt prefix between calls. Check <code>memory.json</code> isn&#39;t getting rewritten mid-call.</td>
+</tr>
+<tr>
+<td>Bubble mixes English into non-English</td>
+<td>Pull latest — system prompt was tightened. If still happens, file an issue with the bubble text.</td>
+</tr>
+<tr>
+<td>Start over</td>
+<td><code>bun run uninstall -- --purge &amp;&amp; bun run setup</code></td>
+</tr>
+<tr>
+<td>Upgraded from a pre-per-project Siltpoke and inbox feels stale</td>
+<td>Run <code>bun run migrate-critiques</code> from the repo to split the old global history into per-project archives. Old <code>~/.siltpoke/critiques/</code> stays as backup.</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>Uninstall</h2>
+<pre><code class="language-bash">bun run uninstall              # restore settings.json from backup, keep ~/.siltpoke/ data
+bun run uninstall -- --purge   # restore + nuke ~/.siltpoke/ entirely
+</code></pre>
+<p>Installer is <strong>idempotent</strong>. Re-running <code>bun run setup</code> after a repo
+update will pick up new slash commands (symlinks auto-refresh) without
+re-asking your personality questions.</p>
+</article>
+</details>
+<details class="doc">
+  <summary><span class="doc-title">MBTI archetype mapping</span><span class="muted small">fun reference — maps each Siltpoke archetype to its MBTI cousin</span></summary>
+  <article class="md"><h1>Siltpoke Archetype ↔ MBTI Mapping</h1>
+<p><strong>Date:</strong> 2026-05-14
+<strong>Purpose:</strong> Map each of Siltpoke&#39;s 16 base archetypes (or 48 with the
+curiosity prefix) to its closest MBTI personality type. <strong>Not a 1:1
+academic mapping</strong> — Siltpoke uses 5 Big-Five-aligned dials while MBTI
+uses 4 binary axes derived loosely from Jungian functions. Treat this
+as a fun reference, not a serious typing system.</p>
+<hr>
+<h2>How the mapping works</h2>
+<p>Siltpoke dials (Big Five) vs MBTI axes (Jung-derived):</p>
+<table>
+<thead>
+<tr>
+<th>Siltpoke dial</th>
+<th>High =</th>
+<th>MBTI mapping</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>snark</code></td>
+<td>savage / blunt</td>
+<td>T-leaning (Thinking)</td>
+</tr>
+<tr>
+<td><code>patience</code></td>
+<td>chill / saintly</td>
+<td>F + low-N (Feeling, stable)</td>
+</tr>
+<tr>
+<td><code>rigor</code></td>
+<td>methodical</td>
+<td>J-leaning (Judging)</td>
+</tr>
+<tr>
+<td><code>chattiness</code></td>
+<td>verbose / outgoing</td>
+<td>E-leaning (Extraversion)</td>
+</tr>
+<tr>
+<td><code>curiosity</code></td>
+<td>exploratory</td>
+<td>N-leaning (iNtuition) — used as prefix only</td>
+</tr>
+</tbody></table>
+<p>Logic: <code>snark</code> ≈ Thinking-vs-Feeling, <code>patience</code> modulates Feeling
+warmth, <code>rigor</code> ≈ J vs P, <code>chattiness</code> ≈ E vs I, <code>curiosity</code> ≈ N vs S.</p>
+<p>So each archetype has a closest-fit MBTI type, with the curiosity
+prefix shifting the S↔N axis.</p>
+<hr>
+<h2>The 16 base archetypes</h2>
+<p>Each row: <code>snark</code>, <code>patience</code>, <code>rigor</code>, <code>chattiness</code> (high <code>+</code> / low <code>-</code>)
+→ archetype name → MBTI nearest + flavor.</p>
+<table>
+<thead>
+<tr>
+<th align="center">Snark</th>
+<th align="center">Patience</th>
+<th align="center">Rigor</th>
+<th align="center">Chatty</th>
+<th>Archetype</th>
+<th>MBTI (nearest)</th>
+<th>Vibe</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="center">+</td>
+<td align="center">−</td>
+<td align="center">+</td>
+<td align="center">−</td>
+<td><strong>The Hawk</strong></td>
+<td><strong>ISTJ</strong> (&quot;The Logistician&quot;)</td>
+<td>Sharp-eyed, low-tolerance, surgical. Hunts in silence.</td>
+</tr>
+<tr>
+<td align="center">+</td>
+<td align="center">−</td>
+<td align="center">+</td>
+<td align="center">+</td>
+<td><strong>The Drill Sergeant</strong></td>
+<td><strong>ESTJ</strong> (&quot;The Executive&quot;)</td>
+<td>Yells out every typo. Cares deeply, expresses it via volume.</td>
+</tr>
+<tr>
+<td align="center">+</td>
+<td align="center">+</td>
+<td align="center">+</td>
+<td align="center">−</td>
+<td><strong>The Sly Fox</strong></td>
+<td><strong>INTJ</strong> (&quot;The Architect&quot;)</td>
+<td>Sees everything, says little, lands devastating one-liners.</td>
+</tr>
+<tr>
+<td align="center">+</td>
+<td align="center">+</td>
+<td align="center">+</td>
+<td align="center">+</td>
+<td><strong>The Wry Coach</strong></td>
+<td><strong>ENTJ</strong> (&quot;The Commander&quot;)</td>
+<td>Snarky mentor energy. Will roast you AND teach you.</td>
+</tr>
+<tr>
+<td align="center">+</td>
+<td align="center">−</td>
+<td align="center">−</td>
+<td align="center">−</td>
+<td><strong>The Snapper</strong></td>
+<td><strong>ISTP</strong> (&quot;The Virtuoso&quot;)</td>
+<td>Quick, sharp comments. No follow-up. Walks away.</td>
+</tr>
+<tr>
+<td align="center">+</td>
+<td align="center">−</td>
+<td align="center">−</td>
+<td align="center">+</td>
+<td><strong>The Rant</strong></td>
+<td><strong>ESTP</strong> (&quot;The Entrepreneur&quot;)</td>
+<td>Long impassioned tirades, low evidence, high energy.</td>
+</tr>
+<tr>
+<td align="center">+</td>
+<td align="center">+</td>
+<td align="center">−</td>
+<td align="center">−</td>
+<td><strong>The Tease</strong></td>
+<td><strong>INTP</strong> (&quot;The Logician&quot;)</td>
+<td>Playful jabs. Doesn&#39;t actually want you to feel bad.</td>
+</tr>
+<tr>
+<td align="center">+</td>
+<td align="center">+</td>
+<td align="center">−</td>
+<td align="center">+</td>
+<td><strong>The Roaster</strong></td>
+<td><strong>ENTP</strong> (&quot;The Debater&quot;)</td>
+<td>Sharp tongue, big heart, loves the audience.</td>
+</tr>
+<tr>
+<td align="center">−</td>
+<td align="center">−</td>
+<td align="center">+</td>
+<td align="center">−</td>
+<td><strong>The Perfectionist</strong></td>
+<td><strong>ISFJ</strong> (&quot;The Defender&quot;)</td>
+<td>Anxiously careful. Doesn&#39;t yell, just worries visibly.</td>
+</tr>
+<tr>
+<td align="center">−</td>
+<td align="center">−</td>
+<td align="center">+</td>
+<td align="center">+</td>
+<td><strong>The Anxious Officer</strong></td>
+<td><strong>ESFJ</strong> (&quot;The Consul&quot;)</td>
+<td>Frets out loud about every detail. Means well.</td>
+</tr>
+<tr>
+<td align="center">−</td>
+<td align="center">+</td>
+<td align="center">+</td>
+<td align="center">−</td>
+<td><strong>The Patient Sage</strong></td>
+<td><strong>INFJ</strong> (&quot;The Advocate&quot;)</td>
+<td>Quiet, methodical, kind. Cites evidence with gentle voice.</td>
+</tr>
+<tr>
+<td align="center">−</td>
+<td align="center">+</td>
+<td align="center">+</td>
+<td align="center">+</td>
+<td><strong>The Saint</strong></td>
+<td><strong>ENFJ</strong> (&quot;The Protagonist&quot;)</td>
+<td>Patient, careful, warm, vocal cheerleader. Pure good.</td>
+</tr>
+<tr>
+<td align="center">−</td>
+<td align="center">−</td>
+<td align="center">−</td>
+<td align="center">−</td>
+<td><strong>The Worrier</strong></td>
+<td><strong>ISFP</strong> (&quot;The Adventurer&quot;)</td>
+<td>Quietly anxious. Vibes-based. Doesn&#39;t share much.</td>
+</tr>
+<tr>
+<td align="center">−</td>
+<td align="center">−</td>
+<td align="center">−</td>
+<td align="center">+</td>
+<td><strong>The Frantic</strong></td>
+<td><strong>ESFP</strong> (&quot;The Entertainer&quot;)</td>
+<td>Anxious + chatty. Pure vibes, all volume. Loveable mess.</td>
+</tr>
+<tr>
+<td align="center">−</td>
+<td align="center">+</td>
+<td align="center">−</td>
+<td align="center">−</td>
+<td><strong>The Zen Monk</strong></td>
+<td><strong>INFP</strong> (&quot;The Mediator&quot;)</td>
+<td>Lets everything slide. Vibes only. Dreamy detachment.</td>
+</tr>
+<tr>
+<td align="center">−</td>
+<td align="center">+</td>
+<td align="center">−</td>
+<td align="center">+</td>
+<td><strong>The Cheerleader</strong></td>
+<td><strong>ENFP</strong> (&quot;The Campaigner&quot;)</td>
+<td>Sunshine. Patient, chatty, no rigor. Hypes you up.</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>Curiosity prefix flips the S/N axis</h2>
+<p>Curiosity adds a flavor prefix:</p>
+<ul>
+<li><strong>High curiosity</strong> (<code>curiosity ≥ 7</code>) → &quot;Curious ___&quot; → shifts MBTI toward <strong>N (iNtuition)</strong> — exploratory, suggests alternatives.</li>
+<li><strong>Low curiosity</strong> (<code>curiosity ≤ 3</code>) → &quot;Steady ___&quot; → shifts MBTI toward <strong>S (Sensing)</strong> — concrete, by-the-book.</li>
+<li><strong>Mid curiosity</strong> (<code>4-6</code>) → no prefix → neutral.</li>
+</ul>
+<p>Example: <strong>The Hawk</strong> is closest to ISTJ. With <code>curiosity = 9</code> it
+becomes <strong>Curious Hawk</strong> — closer to INTJ. With <code>curiosity = 1</code> it
+becomes <strong>Steady Hawk</strong> — pure ISTJ.</p>
+<p>That&#39;s how 16 base × 3 curiosity flavors = 48 distinct labels with a
+loose MBTI shape underneath.</p>
+<hr>
+<h2>Important caveats</h2>
+<ul>
+<li><strong>This is for fun.</strong> MBTI itself is widely contested in psychology
+(Big Five has stronger empirical support). The mapping above
+squishes 5 continuous dials into 4 binary axes — information is lost.</li>
+<li><strong>One archetype ≠ one MBTI.</strong> A Hawk could feel ISTJ to one person
+and INTJ to another depending on dial precision. Treat the mapping
+as &quot;vibes adjacent&quot; not &quot;scientifically equivalent&quot;.</li>
+<li><strong>Curiosity prefix is the cleanest mapping</strong> — it&#39;s a direct S/N
+flip in MBTI&#39;s vocabulary.</li>
+</ul>
+<hr>
+<h2>Why we don&#39;t use MBTI directly</h2>
+<p>The original quiz design considered MBTI directly as the framework.
+Decision was against because:</p>
+<ol>
+<li>MBTI binary forced-choice needs ~20 items per axis for stable
+signal. In a 5-question budget, binary throws away half the
+resolution.</li>
+<li>Big Five Likert gives a continuous 0-10 dial natively (sum 1-5
+responses → normalize).</li>
+<li>Big Five has empirical support in academic psychology; MBTI does
+not (per the Big Five wiki, MBTI test-retest reliability is poor,
+~50% of people get a different type on re-test).</li>
+</ol>
+<p>We use MBTI here only as a recognizable shorthand for users who know
+their type. The actual scoring is Big-Five-aligned.</p>
+<p>See <a href="./2026-05-14-personality-test-design.md"><code>2026-05-14-personality-test-design.md</code></a>
+for the full framework comparison + scoring math.</p>
+<hr>
+<h2>Sources for the MBTI types</h2>
+<ul>
+<li><a href="https://www.16personalities.com/personality-types">16Personalities — type descriptions</a></li>
+<li><a href="https://www.themyersbriggs.com/en-US/Products-and-Services/Myers-Briggs">MBTI Foundation — official type table</a></li>
+</ul>
+<p>The &quot;function/title&quot; labels (Logistician, Defender, etc.) come from
+16Personalities, which is the most widely-recognized consumer source.</p>
+</article>
+</details></div>
+</details></section>
+    </main>
+  </div>
+  <footer class="muted small">generated 2026-05-14T12:00:00.000Z · re-run <code>bun run report</code> to refresh</footer>
+  <div id="xp-toast" class="xp-toast" hidden></div>
+  <script>
+    (function () {
+      const bubbleText = document.getElementById("bubble-text");
+      const bubble = document.getElementById("bubble");
+      const portrait = document.getElementById("pet-portrait");
+      const heartBurst = document.getElementById("heart-burst");
+      const species = "slime";
+
+      // Per-species action emoji. Stays in the JS bundle so we don't have
+      // to round-trip to the server for "what does feeding a slime look
+      // like".
+      const FEED_EMOJI = {"slime":"🍩","cat":"🐟","owl":"🐭","robot":"🔋","bunny":"🥕"};
+      const PLAY_EMOJI = {"slime":"🎈","cat":"🧶","owl":"🎵","robot":"⚙️","bunny":"🥎"};
+      const TEASE_EMOJI = "💢";
+
+      // mood overlay shown next to the pet portrait during the action
+      const MOOD_EMOJI = { feed: "😋", play: "✨", tease: "😠" };
+
+      // Big-face kaomoji swap. The ASCII portrait IS the pet — the small
+      // mood emoji below it isn't enough. Each species gets its own
+      // 3-line face per action so eating/playing/teased actually reads
+      // on the screen the user is looking at.
+      const ACTION_FACES = {"cat":{"feed":" /\\_/\\ \n(=^.^=)\n c♥♥♥o","play":" /\\_/\\ \n(=ↀωↀ=)\n c--o-o","tease":" /\\_/\\ \n(=\u003e﹏\u003c=)\n  ψ ψ "},"slime":{"feed":" .---. \n (^ω^) \n (___) ","play":" .---. \n (\u003ew\u003c) \n (^v^) ","tease":" .---. \n (\u003e口\u003c)\n (___) "},"owl":{"feed":" ,-,-, \n (˘ᴗ˘) \n ===== ","play":" ,-,-, \n (◉‿◉) \n ===== ","tease":" ,-,-, \n (•̀д•́)\n ===== "},"robot":{"feed":" [---] \n |^v^| \n [___] ","play":" [---] \n |◉◡◉| \n [___] ","tease":" [---] \n |✗_✗| \n [___] "},"bunny":{"feed":" (\\_/) \n (^ω^) \n (=v=) ","play":" (\\_/) \n (\u003ev\u003c) \n (=v=) ","tease":" (\\_/) \n (\u003e_\u003c) \n (=v=) "}};
+
+      let serveMode = false;
+      // Probe the local server. If it's there we wire mutating actions to
+      // the API; otherwise we still play animations (visual-only).
+      fetch("/api/ping", { cache: "no-store" })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) { if (data && data.ok) serveMode = true; })
+        .catch(function () { /* static snapshot, no server */ });
+
+      function showToast(msg, kind) {
+        const t = document.getElementById("xp-toast");
+        if (!t) return;
+        t.textContent = msg;
+        t.className = "xp-toast " + (kind || "");
+        t.hidden = false;
+        setTimeout(function () { t.hidden = true; }, 2400);
+      }
+
+      function spawnOverlayEmoji(emoji, count) {
+        if (!heartBurst) return;
+        for (let i = 0; i < count; i++) {
+          const h = document.createElement("span");
+          h.textContent = emoji;
+          const dx = Math.round((Math.random() - 0.5) * 80);
+          h.style.setProperty("--dx", dx + "px");
+          h.style.animationDelay = (i * 0.08) + "s";
+          heartBurst.appendChild(h);
+          setTimeout(function () { h.remove(); }, 1600);
+        }
+      }
+
+      function wigglePortrait() {
+        if (!portrait) return;
+        portrait.classList.remove("wiggle");
+        void portrait.offsetWidth;
+        portrait.classList.add("wiggle");
+      }
+
+      function updateMeters(level, xp, xpToNext) {
+        const xpRow = document.querySelector(".meter-row");
+        if (!xpRow) return;
+        const fill = xpRow.querySelector(".fill");
+        const val = xpRow.querySelector(".meter-val");
+        if (fill) fill.style.width = Math.min(100, Math.round((xp / Math.max(1, xpToNext)) * 100)) + "%";
+        if (val) val.textContent = xp + "/" + xpToNext;
+        const brand = document.querySelector(".shell-brand");
+        if (brand) brand.textContent = brand.textContent.replace(/[0-9]+$/, level);
+      }
+
+      function actionVisual(action) {
+        if (action === "feed") spawnOverlayEmoji(FEED_EMOJI[species] || "🍪", 4);
+        else if (action === "play") spawnOverlayEmoji(PLAY_EMOJI[species] || "🎲", 4);
+        else if (action === "tease") spawnOverlayEmoji(TEASE_EMOJI, 3);
+        wigglePortrait();
+        // Swap the big ASCII face to its action variant, then restore.
+        // The small mood emoji below is a secondary cue; the face is the
+        // pet, so it has to actually react.
+        const faces = ACTION_FACES[species];
+        if (portrait && faces && faces[action]) {
+          const prevFace = portrait.textContent;
+          portrait.textContent = faces[action];
+          setTimeout(function () { portrait.textContent = prevFace; }, 2000);
+        }
+        // Mood emoji secondary cue.
+        const moodEl = document.querySelector(".pet-mood");
+        if (moodEl) {
+          const prev = moodEl.textContent;
+          moodEl.textContent = MOOD_EMOJI[action] || prev;
+          setTimeout(function () { moodEl.textContent = prev; }, 2000);
+        }
+      }
+
+      async function doAction(action) {
+        actionVisual(action);
+        if (!serveMode) {
+          showToast("offline preview — run `bun run report --serve` for real XP", "info");
+          return;
+        }
+        try {
+          const r = await fetch("/api/action", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ action: action }),
+          });
+          const data = await r.json();
+          if (data.ok) {
+            if (data.capped) {
+              showToast("daily cap reached for " + action, "warn");
+            } else if (data.awarded > 0) {
+              const grumpyNote = data.grumpy ? " (grumpy — XP reduced)" : "";
+              showToast("+" + data.awarded + " XP" + grumpyNote, "good");
+            } else if (action === "tease") {
+              const left = 3 - data.tease_count;
+              if (data.grumpy) {
+                showToast("pet is grumpy now — XP from next action will drop to 1", "warn");
+              } else if (left > 0) {
+                showToast("teased (" + left + " more before grumpy)", "info");
+              }
+            }
+            if (typeof data.level === "number") updateMeters(data.level, data.xp, data.xp_to_next_level);
+          } else if (data.error) {
+            showToast(data.error, "warn");
+          }
+        } catch (err) {
+          showToast("network error — server gone?", "warn");
+        }
+      }
+
+      document.querySelectorAll(".btn[data-action]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          const action = btn.getAttribute("data-action");
+          if (action === "feed" || action === "play" || action === "tease") {
+            doAction(action);
+          }
+        });
+      });
+
+      // ----- tabs -----
+      const TAB_STORAGE_KEY = "siltpoke.report.tab";
+      function activateTab(name) {
+        document.querySelectorAll(".tab-btn").forEach(function (btn) {
+          btn.setAttribute(
+            "aria-selected",
+            btn.getAttribute("data-tab") === name ? "true" : "false",
+          );
+        });
+        document.querySelectorAll(".tab-content").forEach(function (el) {
+          el.hidden = el.getAttribute("data-tab") !== name;
+        });
+        try { localStorage.setItem(TAB_STORAGE_KEY, name); } catch (e) {}
+      }
+      document.querySelectorAll(".tab-btn").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          const t = btn.getAttribute("data-tab");
+          if (t) activateTab(t);
+        });
+      });
+      try {
+        const saved = localStorage.getItem(TAB_STORAGE_KEY);
+        if (saved && document.querySelector('.tab-btn[data-tab="' + saved + '"]')) {
+          activateTab(saved);
+        }
+      } catch (e) {}
+
+      // ----- config panel -----
+      const initialConfig = {"name":"Mochi","species":"slime","snark":5,"patience":5,"rigor":5,"chattiness":5,"curiosity":5,"language":"en"};
+      const cfgDiffEl = document.getElementById("cfg-diff");
+      const cfgDiffLabel = document.getElementById("cfg-diff-label");
+      const cfgToast = document.getElementById("cfg-toast");
+      const cfgApplyBtn = document.getElementById("cfg-apply");
+      const cfgResetBtn = document.getElementById("cfg-reset");
+
+      const labels = {
+        no_changes: "no changes",
+        pending: "unsaved changes",
+        copied: "copied!",
+      };
+
+      function readForm() {
+        const out = {};
+        document.querySelectorAll("[data-config-key]").forEach(function (el) {
+          const key = el.getAttribute("data-config-key");
+          const type = el.getAttribute("data-config-type");
+          let v = el.value;
+          if (type === "number") v = Number(v);
+          out[key] = v;
+        });
+        return out;
+      }
+
+      function computeDiff() {
+        const form = readForm();
+        const diff = {};
+        Object.keys(form).forEach(function (k) {
+          if (form[k] !== initialConfig[k]) diff[k] = form[k];
+        });
+        return diff;
+      }
+
+      function refreshDiff() {
+        const diff = computeDiff();
+        const keys = Object.keys(diff);
+        if (keys.length === 0) {
+          cfgDiffEl.classList.remove("has-changes");
+          cfgDiffLabel.textContent = labels.no_changes;
+          if (cfgApplyBtn) cfgApplyBtn.disabled = true;
+        } else {
+          cfgDiffEl.classList.add("has-changes");
+          cfgDiffLabel.textContent = labels.pending + " (" + keys.length + ")";
+          if (cfgApplyBtn) cfgApplyBtn.disabled = false;
+        }
+      }
+
+      document.querySelectorAll("[data-config-key]").forEach(function (el) {
+        el.addEventListener("input", function () {
+          const display = document.querySelector(
+            "[data-config-display=\"" + el.getAttribute("data-config-key") + "\"]"
+          );
+          if (display) display.textContent = el.value;
+          refreshDiff();
+        });
+      });
+
+      if (cfgResetBtn) {
+        cfgResetBtn.addEventListener("click", function () {
+          document.querySelectorAll("[data-config-key]").forEach(function (el) {
+            const key = el.getAttribute("data-config-key");
+            const original = initialConfig[key];
+            if (original === undefined || original === null) {
+              el.value = el.tagName === "SELECT" ? el.options[0].value : "";
+            } else {
+              el.value = original;
+            }
+            const display = document.querySelector(
+              "[data-config-display=\"" + key + "\"]"
+            );
+            if (display) display.textContent = el.value;
+          });
+          refreshDiff();
+        });
+      }
+
+      if (cfgApplyBtn) {
+        cfgApplyBtn.addEventListener("click", async function () {
+          const diff = computeDiff();
+          if (Object.keys(diff).length === 0) return;
+          try {
+            const r = await fetch("/api/config", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(diff),
+            });
+            const data = await r.json();
+            if (data.ok && data.config) {
+              Object.keys(data.config).forEach(function (k) {
+                initialConfig[k] = data.config[k];
+              });
+              cfgToast.hidden = false;
+              cfgToast.textContent = labels.copied;
+              setTimeout(function () { cfgToast.hidden = true; }, 1800);
+              showToast("config saved — restart Claude Code to apply", "good");
+              refreshDiff();
+            } else {
+              showToast(data.error || "config save failed", "warn");
+            }
+          } catch (err) {
+            showToast("network error — server gone?", "warn");
+          }
+        });
+      }
+
+      refreshDiff();
+    })();
+  </script>
+</body>
+</html>

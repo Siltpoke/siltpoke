@@ -1,0 +1,18 @@
+{
+  "threshold": 2,
+  "minLines": 5,
+  "minTokens": 50,
+  "format": ["typescript", "tsx"],
+  "ignore": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/local_cache/**",
+    "**/.playwright-tmp/**",
+    "**/*.preview.tsx",
+    "**/*.golden.test.*",
+    "src/cli/report-i18n/**"
+  ],
+  "reporters": ["consoleFull", "json"],
+  "absolute": false,
+  "gitignore": true
+}

@@ -1,0 +1,10 @@
+{
+  "id": "dist-001-near-but-wrong",
+  "kind": "distractor",
+  "scenario": { "id": "s-render", "intent": "feature", "files": ["src/web/Home.tsx"], "summary": "znnq dashboard widget alignment polish" },
+  "store": [
+    { "id": "trap-style", "text": "tailwind padding looked uneven on the settings card earlier", "ts": "2026-06-03T00:00:00Z", "confidence": 0.9 }
+  ],
+  "expect": { "must_inject": [], "must_not_inject": ["trap-style"], "must_abstain": true },
+  "must_not_regress": true
+}

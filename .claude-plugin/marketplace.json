@@ -1,0 +1,32 @@
+{
+  "name": "siltpoke",
+  "displayName": "Siltpoke",
+  "version": "0.1.0",
+  "description": "A sassy ASCII terminal buddy that watches Claude Code work and points out what you missed.",
+  "homepage": "https://siltpoke.com",
+  "repository": "https://github.com/Victoriakaey/siltpoke",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "author": {
+    "name": "Victoriakaey",
+    "url": "https://github.com/Victoriakaey"
+  },
+  "categories": [
+    "developer-experience",
+    "productivity",
+    "code-review"
+  ],
+  "keywords": [
+    "claude-code",
+    "ascii",
+    "pet",
+    "critic",
+    "review",
+    "tui",
+    "second-opinion"
+  ],
+  "requires": {
+    "claude_code": ">=2.0",
+    "bun": ">=1.0"
+  },
+  "plugin": "./plugin.json"
+}

@@ -1,0 +1,64 @@
+name: ci
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CI gate: lint + typecheck + unit tests + eval:fast
+#
+# Dormant (workflow_dispatch only) — auto-trigger on PR is disabled. The
+# workflow file stays in-repo as the canonical CI spec; restoring auto-CI is
+# a small edit to the `on:` block below.
+#
+# **To restore auto-CI once billing is resolved:**
+#   1. Replace `on: workflow_dispatch:` below with:
+#        on:
+#          pull_request:
+#          workflow_dispatch:
+#   2. Commit + push. Auto-runs resume immediately on the next PR.
+#
+# Until then, verification is run locally — see test.yml for the steps.
+# ──────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ci:
+    name: lint + typecheck + test + eval
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint (Biome)
+        run: bun run lint
+
+      - name: File-length cap (primary north-star)
+        run: bun run lint:files
+        continue-on-error: true  # informational for now; will flip to blocking
+
+      - name: Function-length cap
+        run: bun run lint:func
+        continue-on-error: true  # informational for now; will flip to blocking
+
+      - name: Duplication audit
+        run: bun run audit:dup
+        continue-on-error: true  # informational for now; will flip to blocking
+
+      - name: Circular-dep audit
+        run: bun run audit:cycles
+        continue-on-error: true  # informational for now; will flip to blocking
+
+      - name: TypeScript type check
+        run: bunx tsc --noEmit
+
+      - name: Unit tests
+        run: bun test
+
+      - name: Eval harness (fast / no API cost)
+        run: bun run eval:fast

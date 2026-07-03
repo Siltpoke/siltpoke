@@ -1,0 +1,6 @@
+# Present but DELIBERATELY UNREAD by the resolver — the Python source root is
+# discovered structurally (src/mypkg/__init__.py chain), proving we do not depend
+# on packaging-marker parsing.
+[project]
+name = "demo"
+version = "0.0.0"

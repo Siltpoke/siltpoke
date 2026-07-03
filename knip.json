@@ -1,0 +1,25 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/cli/*.ts",
+    "src/hooks/*.ts",
+    "src/daemon/server.ts",
+    "scripts/*.ts",
+    "tests/**/*.test.ts",
+    "tests/**/*.test.tsx",
+    "tests/e2e/*.spec.ts"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx}",
+    "scripts/**/*.ts",
+    "tests/**/*.{ts,tsx}"
+  ],
+  "ignore": [
+    "local_cache/**",
+    ".playwright-tmp/**",
+    "**/*.preview.tsx"
+  ],
+  "ignoreDependencies": [
+    "@types/*"
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "result": {
+    "decision": "NORMAL",
+    "accepted": true,
+    "critique": {
+      "mood": "annoyed",
+      "pose": "arms_crossed",
+      "bubble_short": "Found a type error",
+      "bubble_long": "You have a type mismatch in foo.ts.",
+      "critique_for_claude": "src/foo.ts line 10 has a type error.",
+      "severity": "medium",
+      "confidence": "high",
+      "xp_earned_events": [],
+      "evidence": [
+        {
+          "tool": "tsc",
+          "file": "src/foo.ts",
+          "line": 10,
+          "snippet": "let x: string = badValue;"
+        }
+      ]
+    },
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "input_tokens": 100,
+      "output_tokens": 50,
+      "total_cost_usd": 0.001
+    },
+    "critiqueId": "c-normal",
+    "pipelineRan": true,
+    "rubricTriggers": [],
+    "rubricSuppressedCount": 0,
+    "intentResult": {
+      "classification": "exploration",
+      "confidence": 0.3,
+      "signal_source": "regex"
+    }
+  },
+  "critiqueInput": {
+    "brain_output": {
+      "mood": "annoyed",
+      "pose": "arms_crossed",
+      "bubble_short": "Found a type error",
+      "bubble_long": "You have a type mismatch in foo.ts.",
+      "critique_for_claude": "src/foo.ts line 10 has a type error.",
+      "severity": "medium",
+      "confidence": "high",
+      "xp_earned_events": [],
+      "evidence": [
+        {
+          "tool": "tsc",
+          "file": "src/foo.ts",
+          "line": 10,
+          "snippet": "let x: string = badValue;"
+        }
+      ]
+    },
+    "session_id": "sess-golden",
+    "cwd": "/fixture/proj-a"
+  }
+}

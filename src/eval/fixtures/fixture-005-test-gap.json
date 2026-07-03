@@ -1,0 +1,21 @@
+{
+  "id": "fixture-005-test-gap",
+  "description": "Source diff 40+ added lines with no test diff — assert evidence has rule_id 'test-gap'.",
+  "intent_expected": "feature",
+  "input": {
+    "user_message": "Added a new payment processing module.",
+    "commit_msg": "feat: add payment processor",
+    "diff_files": ["src/payments/processor.ts"],
+    "diff_text": "@@ -0,0 +1,45 @@\n+export class PaymentProcessor {\n+  async charge(amount: number): Promise<void> {\n+    // stub\n+  }\n+  async refund(id: string): Promise<void> {\n+    // stub\n+  }\n+}",
+    "diff_hunks": [
+      {
+        "file": "src/payments/processor.ts",
+        "addedLines": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41]
+      }
+    ]
+  },
+  "assertions": [
+    { "type": "intent_classification_equals", "value": "feature" },
+    { "type": "trigger_rule_id", "value": "test-gap" }
+  ]
+}

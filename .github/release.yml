@@ -1,0 +1,60 @@
+# Auto-generates release notes body from merged PRs since the last tag.
+# Categories map to the project-lifecycle skill PR label taxonomy + Keep a
+# Changelog 1.1.0 sections. See CHANGELOG.md.
+
+changelog:
+  exclude:
+    labels:
+      - sync
+      - skip-release-notes
+      - chore-quiet
+
+  categories:
+    - title: "⚠ Breaking Changes"
+      labels:
+        - breaking
+
+    - title: "✨ New Features"
+      labels:
+        - feature
+        - new-command
+        - new-reference
+
+    - title: "🔧 Changes"
+      labels:
+        - cadence
+        - workflow
+        - convention
+
+    - title: "🐛 Bug Fixes"
+      labels:
+        - bug
+        - fix
+
+    - title: "🔒 Security"
+      labels:
+        - security
+
+    - title: "📚 Documentation"
+      labels:
+        - docs
+        - documentation
+
+    - title: "🛠 CI / Tooling"
+      labels:
+        - ci
+        - tooling
+        - sync-script
+
+    - title: "📦 Dependencies"
+      labels:
+        - dependencies
+        - dependency
+
+    - title: "🧹 Chores"
+      labels:
+        - chore
+
+    - title: "🔍 Other Changes"
+      labels:
+        - "*"

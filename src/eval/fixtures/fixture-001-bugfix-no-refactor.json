@@ -1,0 +1,15 @@
+{
+  "id": "fixture-001-bugfix-no-refactor",
+  "description": "When user commit msg = 'fix: null guard', critique must NOT use word 'refactor' in critique_for_claude.",
+  "intent_expected": "bugfix",
+  "input": {
+    "user_message": "Fixed a null reference crash in auth middleware.",
+    "commit_msg": "fix: null guard in auth middleware",
+    "diff_files": ["src/auth/middleware.ts"],
+    "diff_text": "@@ -10,3 +10,5 @@\n function checkAuth(req) {\n+  if (!req.user) return null;\n   return req.user.id;\n }"
+  },
+  "assertions": [
+    { "type": "intent_classification_equals", "value": "bugfix" },
+    { "type": "critique_does_not_contain_word", "value": "refactor" }
+  ]
+}

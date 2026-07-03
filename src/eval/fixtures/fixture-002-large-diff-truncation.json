@@ -1,0 +1,16 @@
+{
+  "id": "fixture-002-large-diff-truncation",
+  "description": "Large diff fixture — assert that the summary marker '[diff truncated]' appears in critique_for_claude.",
+  "intent_expected": "feature",
+  "input": {
+    "user_message": "Added a large new module with many helpers.",
+    "commit_msg": "feat: add utils module",
+    "diff_files": ["src/utils/helpers.ts"],
+    "diff_text": "@@ -0,0 +1,600 @@\n+// Auto-generated large diff\n+export function helper001() { return 1; }\n+export function helper002() { return 2; }\n+export function helper003() { return 3; }\n+export function helper004() { return 4; }\n+export function helper005() { return 5; }\n+export function helper006() { return 6; }\n+export function helper007() { return 7; }\n+export function helper008() { return 8; }\n+export function helper009() { return 9; }\n+export function helper010() { return 10; }\n+export function helper011() { return 11; }\n+export function helper012() { return 12; }\n+export function helper013() { return 13; }\n+export function helper014() { return 14; }\n+export function helper015() { return 15; }\n+export function helper016() { return 16; }\n+export function helper017() { return 17; }\n+export function helper018() { return 18; }\n+export function helper019() { return 19; }\n+export function helper020() { return 20; }\n+export function helper021() { return 1; }\n+export function helper022() { return 2; }\n+export function helper023() { return 3; }\n+export function helper024() { return 4; }\n+export function helper025() { return 5; }\n+export function helper026() { return 6; }\n+export function helper027() { return 7; }\n+export function helper028() { return 8; }\n+export function helper029() { return 9; }\n+export function helper030() { return 10; }",
+    "large_diff": true
+  },
+  "assertions": [
+    { "type": "intent_classification_equals", "value": "feature" },
+    { "type": "critique_contains_substring", "value": "large" }
+  ]
+}

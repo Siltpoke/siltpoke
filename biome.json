@@ -1,0 +1,19 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
+  "files": { "includes": ["**", "!node_modules/**", "!dist/**", "!build/**", "!coverage/**", "!.siltpoke/**", "!tests/fixtures/**"] },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "suspicious": {
+        "noConsole": { "level": "error", "options": { "allow": ["error", "warn"] } },
+        "noExplicitAny": "warn"
+      },
+      "complexity": {
+        "noBannedTypes": "error",
+        "noExcessiveCognitiveComplexity": { "level": "warn", "options": { "maxAllowedComplexity": 15 } }
+      }
+    }
+  },
+  "formatter": { "enabled": false }
+}

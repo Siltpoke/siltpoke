@@ -1,0 +1,10 @@
+{
+  "id": "pos-002-async-await",
+  "kind": "positive",
+  "scenario": { "id": "s-async", "intent": "bugfix", "files": ["src/daemon/server.ts"], "summary": "forgot await on async database promise" },
+  "store": [
+    { "id": "m-await", "text": "you keep forgetting await on async promise calls in the daemon", "ts": "2026-06-02T00:00:00Z", "confidence": 0.88 }
+  ],
+  "expect": { "must_inject": ["m-await"], "must_not_inject": [], "must_abstain": false },
+  "must_not_regress": true
+}

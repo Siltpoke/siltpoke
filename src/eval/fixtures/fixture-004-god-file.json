@@ -1,0 +1,17 @@
+{
+  "id": "fixture-004-god-file",
+  "description": "A 1000-line file was changed — assert evidence has rule_id 'god-file'.",
+  "intent_expected": "feature",
+  "input": {
+    "user_message": "Refactored the main controller to add new endpoints.",
+    "commit_msg": "feat: extend main controller",
+    "diff_files": ["src/controllers/main.ts"],
+    "diff_text": "@@ -1,3 +1,5 @@\n+// Added endpoints\n+export function newEndpoint() { return null; }",
+    "file_line_counts": {
+      "src/controllers/main.ts": 1000
+    }
+  },
+  "assertions": [
+    { "type": "trigger_rule_id", "value": "god-file" }
+  ]
+}

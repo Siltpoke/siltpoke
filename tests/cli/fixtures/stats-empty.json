@@ -1,0 +1,19 @@
+{
+  "day": "2026-05-14",
+  "used_pct": 0,
+  "remaining_tokens": 500000,
+  "total_input_tokens": 0,
+  "total_output_tokens": 0,
+  "total_cache_tokens": 0,
+  "total_cost_usd": 0,
+  "brain_calls": 0,
+  "reflections": 0,
+  "trigger_mode": "gates",
+  "quiet_active": false,
+  "budget_stage": "ok",
+  "daily_token_limit": 500000,
+  "pending_facts": 0,
+  "chat_sessions_total": 0,
+  "chat_messages_total": 0,
+  "chat_last_activity": null
+}

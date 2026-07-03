@@ -1,0 +1,15 @@
+{
+  "result": {
+    "decision": "HARD_SUPPRESS",
+    "reason": "no tools produced usable output — abstaining",
+    "pipelineRan": true,
+    "rubricTriggers": [],
+    "rubricSuppressedCount": 0,
+    "intentResult": {
+      "classification": "exploration",
+      "confidence": 0.3,
+      "signal_source": "regex"
+    }
+  },
+  "critiqueInput": null
+}

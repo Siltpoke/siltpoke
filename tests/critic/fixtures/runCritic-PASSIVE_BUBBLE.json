@@ -1,0 +1,63 @@
+{
+  "result": {
+    "decision": "PASSIVE_BUBBLE",
+    "critique": {
+      "mood": "happy",
+      "pose": "base",
+      "bubble_short": "Clean refactor",
+      "bubble_long": "You have a type mismatch in foo.ts.",
+      "critique_for_claude": "",
+      "severity": "medium",
+      "confidence": "high",
+      "xp_earned_events": [],
+      "evidence": []
+    },
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "input_tokens": 100,
+      "output_tokens": 50,
+      "total_cost_usd": 0.001
+    },
+    "critiqueId": "c-passive",
+    "diffSummary": {
+      "intent": "1 file changed · +0 −0 (heuristic summary — Haiku unavailable)",
+      "key_changes": [
+        "src/foo.ts · +0 −0"
+      ],
+      "risks": [],
+      "file_count": 1,
+      "files_with_purpose": [
+        {
+          "path": "src/foo.ts",
+          "purpose": "+0 −0"
+        }
+      ],
+      "source": "heuristic"
+    },
+    "summaryError": "runDiffSummary returned null",
+    "pipelineRan": true,
+    "rubricTriggers": [],
+    "rubricSuppressedCount": 0,
+    "intentResult": {
+      "classification": "exploration",
+      "confidence": 0.3,
+      "signal_source": "regex"
+    }
+  },
+  "critiqueInput": {
+    "brain_output": {
+      "mood": "happy",
+      "pose": "base",
+      "bubble_short": "Clean refactor",
+      "bubble_long": "You have a type mismatch in foo.ts.",
+      "critique_for_claude": "",
+      "severity": "medium",
+      "confidence": "high",
+      "xp_earned_events": [],
+      "evidence": []
+    },
+    "session_id": "sess-golden",
+    "cwd": "/fixture/proj-a"
+  }
+}
