@@ -107,9 +107,15 @@ bun run uninstall -- --purge   # restore + nuke ~/.siltpoke/
 
 ## License
 
-Free for **non-commercial use** under the
-[PolyForm Noncommercial License 1.0.0](./LICENSE).
-Commercial use requires a separate license — contact
-**jd.victoria.work@gmail.com**.
+Siltpoke is **source-available** under the
+[PolyForm Perimeter License 1.0.1](./LICENSE).
+
+You're free to use, modify, and share it for **any purpose** — including inside a
+for-profit company's own work — **except** building or offering a product that
+competes with Siltpoke. That includes repackaging or reselling it, bundling it
+into a paid product, or offering a hosted / SaaS version of it.
+
+Want to bundle, resell, or host Siltpoke commercially? That needs a separate
+commercial license — reach out at **jd.victoria.work@gmail.com**.
 
 Copyright (c) 2026 Jiaqi Duan. All rights reserved.

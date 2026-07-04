@@ -6,9 +6,22 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-03
+
+### Changed
+
+- **License: relicensed from PolyForm Noncommercial 1.0.0 to PolyForm Perimeter
+  1.0.1.** Siltpoke is now usable for any purpose — including inside a for-profit
+  company's own work — except building or offering a product that competes with
+  it (repackaging, reselling, or hosting a SaaS version). Commercial
+  bundling/reselling/hosting still requires a separate license.
+
 ### Added
 
 - Initial public release: ambient critic (Stop-hook second opinion on every
   Claude Code turn), persistent memory (facts, episodes, conversational
   capture), statusline pet face, and the dashboard (state card, timeline,
   memory book, chat, repo graph).
+
+[Unreleased]: https://github.com/Victoriakaey/siltpoke/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Victoriakaey/siltpoke/releases/tag/v0.1.0

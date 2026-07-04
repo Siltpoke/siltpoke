@@ -1,16 +1,16 @@
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * Dashboard routes — formerly `src/cli/serve.ts`, now mounted into siltpoked.
+ * Dashboard API routes — the pet-action + config endpoints backing Home
+ * (`src/web/routes/home.tsx` owns "/"). The legacy tamagotchi report page
+ * (formerly GET /dashboard) and its HTML cache are retired.
  *
- *   GET  /            → rendered dashboard HTML (cached until invalidated)
  *   GET  /index.html  → redirect to /
  *   GET  /api/ping    → { ok, mode, pid }
  *   POST /api/action  → record a feed/play/pet/tease, write progression
  *                       Accept: text/html → renders Hero fragment + HX-Trigger
  *                       Accept: application/json (default) → JSON shape (regression-pin)
  *   POST /api/config  → sanitize + merge a config patch, persist to disk
- *   POST /api/refresh → bust the cached HTML
  *
  * Mount AFTER /hooks/stop and /api/version so the daemon's own routes
  * don't get shadowed.
@@ -27,7 +27,6 @@ import {
   type PetAction,
 } from "../../state/progression";
 import { maybeWriteSnapshot } from "../../state/vitalsWriter";
-import { buildReport } from "../../cli/report";
 import {
   toPetProps,
   deriveMood,
@@ -109,31 +108,6 @@ export function mountDashboardRoutes(
   app: Hono,
   deps: DashboardRouteDeps,
 ): void {
-  let cachedHtml: string | null = null;
-  const invalidate = (): void => {
-    cachedHtml = null;
-  };
-
-  // Moved from "/" to "/dashboard" so Home (src/web/screens/Home.tsx)
-  // can claim "/". Legacy CLI siltpoke-report consumers (bun run dashboard / siltpoke report)
-  // must use the new path. /index.html still redirects to / (Home) for canonical entry.
-  app.get("/dashboard", async () => {
-    if (!cachedHtml) {
-      const result = await buildReport({
-        homeBase: deps.homeBase,
-        projectCwd: deps.projectCwd,
-        serveMode: true,
-      });
-      cachedHtml = await readFile(result.outPath, "utf8");
-    }
-    return new Response(cachedHtml, {
-      headers: {
-        "content-type": "text/html; charset=utf-8",
-        "cache-control": "no-store",
-      },
-    });
-  });
-
   app.get("/index.html", (c) => c.redirect("/"));
 
   app.get("/api/ping", (c) =>
@@ -179,7 +153,6 @@ export function mountDashboardRoutes(
     await maybeWriteSnapshot(prog, now, deps.homeBase);
     const result = recordAction(prog, todayKey(), action as PetAction);
     await writeProgression(deps.homeBase, result.next);
-    invalidate();
 
     // Content-negotiation:
     //   HX-Request: true   → HTMX click — return Hero fragment + OOB stats panel
@@ -274,12 +247,6 @@ export function mountDashboardRoutes(
     const current = await loadConfig(deps.homeBase);
     const merged = { ...current, ...clean };
     await saveConfig(deps.homeBase, merged);
-    invalidate();
     return c.json({ ok: true, config: merged });
-  });
-
-  app.post("/api/refresh", (c) => {
-    invalidate();
-    return c.json({ ok: true });
   });
 }

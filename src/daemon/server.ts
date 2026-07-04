@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 import { Hono } from "hono";
 import { mkdirSync, existsSync, unlinkSync, readFileSync } from "node:fs";
@@ -208,11 +208,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   // backfill error must never block daemon start).
   await ensureFactKinds(homeBase).catch(() => {});
 
-  // Home screen registers GET / BEFORE dashboard routes so
-  // Home (`src/web/screens/Home.tsx`) wins over the legacy tamagotchi
-  // mockup served from `src/daemon/routes/dashboard.ts:103`. Dashboard's API
-  // endpoints (/api/ping, /api/action, /api/config, /api/refresh) still register
-  // below (Hono ignores duplicate-path handlers via first-match-wins on GET /).
+  // Home (`src/web/routes/home.tsx`) owns GET /. The dashboard mount below
+  // only registers the pet-action + config API (/api/ping, /api/action,
+  // /api/config); its legacy GET /dashboard report page is retired.
   mountHomeRoutes(app, { homeBase });
 
   mountDashboardRoutes(app, {
