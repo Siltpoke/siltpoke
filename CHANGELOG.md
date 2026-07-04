@@ -6,6 +6,8 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-03
+
 ### Changed
 
 - **License: relicensed from PolyForm Noncommercial 1.0.0 to PolyForm Perimeter
@@ -20,3 +22,6 @@ versioning: [SemVer](https://semver.org/).
   Claude Code turn), persistent memory (facts, episodes, conversational
   capture), statusline pet face, and the dashboard (state card, timeline,
   memory book, chat, repo graph).
+
+[Unreleased]: https://github.com/Victoriakaey/siltpoke/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Victoriakaey/siltpoke/releases/tag/v0.1.0
