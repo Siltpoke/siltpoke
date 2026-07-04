@@ -6,6 +6,14 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **License: relicensed from PolyForm Noncommercial 1.0.0 to PolyForm Perimeter
+  1.0.1.** Siltpoke is now usable for any purpose — including inside a for-profit
+  company's own work — except building or offering a product that competes with
+  it (repackaging, reselling, or hosting a SaaS version). Commercial
+  bundling/reselling/hosting still requires a separate license.
+
 ### Added
 
 - Initial public release: ambient critic (Stop-hook second opinion on every
