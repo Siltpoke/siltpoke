@@ -338,9 +338,10 @@ if (import.meta.main) {
   }
 
   await ensureDaemonUp();
-  // Fx-05: legacy "/" now serves Wave 1 Home; dashboard is at "/dashboard"
-  const url = "http://127.0.0.1:9876/dashboard";
-  process.stdout.write(`Siltpoke dashboard: ${url}\n`);
+  // "/" serves Wave 1 Home — the only surface now. The legacy tamagotchi
+  // report (formerly "/dashboard") is retired.
+  const url = "http://127.0.0.1:9876/";
+  process.stdout.write(`Siltpoke: ${url}\n`);
   if (!noOpen) {
     const cmd =
       process.platform === "darwin"

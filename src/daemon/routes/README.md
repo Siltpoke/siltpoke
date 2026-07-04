@@ -16,10 +16,9 @@ A route belongs in `daemon/routes/` when **any** of the following hold:
    shared loader logic. Examples:
    - `critique.tsx` — `GET /api/critiques/:id` (JSON) + `GET /critique/:id`
      (HTML permalink). Both need `secret` access + share the critique loader.
-4. **Legacy / migration routes** kept here for historical reasons even if
-   they emit HTML. Example: `dashboard.ts:118` `/dashboard` (legacy
-   tamagotchi mockup, superseded by `web/routes/home.tsx` Home screen but
-   still served as a fallback).
+4. **HTMX fragment endpoints** that emit partial HTML for a client-side
+   swap rather than a full page. Example: `dashboard.ts` `POST /api/action`
+   returns a Hero fragment + OOB stats panel for HTMX to swap into Home.
 
 ## What does NOT belong here
 
