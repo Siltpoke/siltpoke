@@ -30,7 +30,7 @@ import { fmtCost, fmtTokens, rowTokens, turnKey } from "./format";
 export const AGENT_REPLY_LABEL = "agent reply (opening · first ¶, ≤1200 chars)";
 
 export const TABS = [
-  { id: "critic", label: "Critic" },
+  { id: "critic", label: "Code Review" },
   { id: "diff", label: "Diff" },
   { id: "trace", label: "Trace" },
   { id: "feedback", label: "Feedback" },
@@ -198,7 +198,7 @@ function CriticTab({ c, preferenceStats }: {
   return (
     <div x-show={'tab === "critic"'} style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       {c.critique_for_claude && (
-        <Section title="critique · for claude">
+        <Section title="review · for claude">
           <div
             style={{
               fontFamily: tokens.font.body,
@@ -277,7 +277,7 @@ export function EmptyDetail({ hasRows }: { hasRows: boolean }) {
       }}
     >
       {hasRows
-        ? "no fired turn in this window — skipped turns carry no critique record to inspect. Flip the status filter to “fired” or “all” to find one."
+        ? "no fired turn in this window — skipped turns carry no review record to inspect. Flip the status filter to “fired” or “all” to find one."
         : "nothing here yet — no brain-call entries match the active filter."}
     </div>
   );

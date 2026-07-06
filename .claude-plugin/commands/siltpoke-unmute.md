@@ -1,5 +1,5 @@
 ---
-description: Clear the Siltpoke mute marker so the critic fires again.
+description: Clear the Siltpoke mute marker so Code Review fires again.
 ---
 
 The user wants to end an active mute (or just confirm Siltpoke isn't
@@ -16,7 +16,7 @@ The CLI deletes `~/.siltpoke/mute.json` (the mute marker that
 Siltpoke is a no-op (exit 0, output says "wasn't muted").
 
 Tell the user verbatim from the CLI output:
-- "Siltpoke unmuted. Critic will fire again on next Stop hook." — file
+- "Siltpoke unmuted. Code Review will fire again on next Stop hook." — file
   was removed.
 - "Siltpoke wasn't muted. No change." — no file to remove.
 

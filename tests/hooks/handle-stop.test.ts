@@ -527,7 +527,7 @@ describe("handleStopHook — consolidate integration", () => {
     );
 
     expect(consolidateCalled).toBe(true);
-    // memory-capture-repair: handleStopHook must pass projectBase = repo-local
+    // TODO: harden memory capture — handleStopHook must pass projectBase = repo-local
     // .siltpoke so consolidate reads project-local critiques (not stale global).
     expect(seenProjectBase).toBe(join(projectCwd, ".siltpoke"));
     expect(existsSync(join(projectCwd, ".siltpoke", "state.json"))).toBe(true);

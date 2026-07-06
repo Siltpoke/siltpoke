@@ -52,7 +52,7 @@ export function RowActions({ call }: { call: CriticCall }) {
       <button
         type="button"
         class={`critic-row-action critic-row-action-${action}`}
-        title={isActive ? `click to undo ${action}` : `mark this critique as ${action}`}
+        title={isActive ? `click to undo ${action}` : `mark this review as ${action}`}
         x-on:click={handler(effective, visibleLabel)}
         style={{
           fontFamily: tokens.font.mono,
@@ -88,7 +88,7 @@ export function RowActions({ call }: { call: CriticCall }) {
           lineHeight: 1.4,
         }}
       >
-        ack = seen · dismiss = bad critique · click again to undo
+        ack = seen · dismiss = bad review · click again to undo
       </span>
     </div>
   );

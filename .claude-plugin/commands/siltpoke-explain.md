@@ -1,10 +1,10 @@
 ---
-description: Explain a file / function / symbol using siltpoke's repo-graph + Brain.
+description: Explain a file / function / symbol using siltpoke's code-map + Brain.
 argument-hint: <target> [--depth 1|2] [--force] [--json]
 ---
 
 The user wants siltpoke to explain a specific symbol or file in plain
-English, grounded in the structural repo-graph built by
+English, grounded in the structural code-map built by
 `/siltpoke-index`. The explain layer runs Brain (`claude -p`) on top of the
 A's deterministic graph.
 

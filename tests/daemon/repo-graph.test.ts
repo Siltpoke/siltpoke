@@ -274,7 +274,7 @@ describe("architecture-view generate", () => {
     await pollTerminal();
     // lifecycle done (Brain ran + billed) but the rejected output was NOT cached
     expect(taskRecord().status).toBe("done");
-    expect(taskRecord().costUsd).toBe(0.4); // billed-but-rejected still records (会花钱就记)
+    expect(taskRecord().costUsd).toBe(0.4); // billed-but-rejected still records (log anything that costs money)
     expect(archModelCached()).toBe(false);
   });
 

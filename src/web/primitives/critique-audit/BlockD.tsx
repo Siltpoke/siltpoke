@@ -44,7 +44,7 @@ function SignalSourcesRow({ sources }: { sources: readonly string[] }) {
           letterSpacing: "0.06em",
         }}
       >
-        signal sources fired this critique
+        signal sources fired this review
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
         {sources.map((s, i) => (
@@ -120,7 +120,7 @@ function PreferenceHistoryPanel({
               </div>
             ) : (
               <div style={{ color: tokens.color.ink3 }}>
-                this critique: no signals yet — use ack / dismiss / feedback box below
+                this review: no signals yet — use ack / dismiss / feedback box below
               </div>
             )}
           </>
@@ -162,7 +162,7 @@ function RepoMemoryConventionsPanel({ v2 }: { v2: V2SidecarData }) {
       >
         {fired
           ? "repo-memory rule fired — see Block C for trigger detail"
-          : "no repo-memory signals fired this critique"}
+          : "no repo-memory signals fired this review"}
       </div>
     </div>
   );
@@ -227,7 +227,7 @@ function FewShotPanel({ critiqueId }: { critiqueId: string }) {
         <span x-show="loading" style={{ color: tokens.color.ink3 }}>loading…</span>
         <span x-show="err" x-text="'load failed: ' + err" style={{ color: tokens.color.terra }} />
         <span x-show="loaded && examples.length === 0" style={{ color: tokens.color.ink3 }}>
-          no similar past critiques (sim ≥ 0.3)
+          no similar past reviews (sim ≥ 0.3)
         </span>
         <template x-for="(ex, idx) in examples" x-bind:key="idx">
           <div

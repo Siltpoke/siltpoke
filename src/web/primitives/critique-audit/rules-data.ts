@@ -173,14 +173,14 @@ export const SPAN_KIND_EXPLAIN: Record<string, { what: string; why: string }> = 
   },
   chain: {
     what: "Orchestration — the parent span that contains other spans for one turn.",
-    why: "Gives you the wall-clock cost of the whole critique pipeline end-to-end.",
+    why: "Gives you the wall-clock cost of the whole review pipeline end-to-end.",
   },
   parser: {
-    what: "Parsing Brain's JSON response into a typed Critique object.",
+    what: "Parsing Brain's JSON response into a typed Review object.",
     why: "When Brain returns malformed JSON this span goes red — quick way to spot output-format regressions.",
   },
   persist: {
-    what: "Writing the final critique + v2 sidecar + brain-calls log to disk.",
-    why: "If persistence fails, the critique disappears even though Brain ran. Surface failures here.",
+    what: "Writing the final review + v2 sidecar + brain-calls log to disk.",
+    why: "If persistence fails, the review disappears even though Brain ran. Surface failures here.",
   },
 };

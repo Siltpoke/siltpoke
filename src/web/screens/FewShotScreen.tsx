@@ -66,7 +66,7 @@ export function FewShotScreen({
             Anti-Example Index
           </h1>
           <div style={{ fontFamily: tokens.font.body, fontSize: 13, color: tokens.color.ink3 }}>
-            Dismissed critiques indexed for few-shot retrieval
+            Dismissed reviews indexed for few-shot retrieval
           </div>
         </div>
 
@@ -156,7 +156,7 @@ export function FewShotScreen({
               type="text"
               name="q"
               defaultValue={query ?? ""}
-              placeholder="describe a type of critique..."
+              placeholder="describe a type of review..."
               style={{
                 flex: 1,
                 padding: "6px 10px",

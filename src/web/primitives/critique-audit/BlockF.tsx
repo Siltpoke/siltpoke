@@ -81,7 +81,7 @@ export function BlockF({ v2, c }: BlockFProps) {
           }}
         >
           <span>summary {Math.round(timing.summary_ms / 100) / 10}s</span>
-          <span>critic {Math.round(timing.critic_ms / 100) / 10}s</span>
+          <span>review {Math.round(timing.critic_ms / 100) / 10}s</span>
           <span>total {Math.round(timing.wall_ms / 100) / 10}s</span>
         </div>
       )}

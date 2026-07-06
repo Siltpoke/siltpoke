@@ -375,7 +375,7 @@ function _Legend() {
         <div style={{ fontFamily: tokens.font.mono, fontSize: 10, color: tokens.color.ink3, textTransform: "uppercase", letterSpacing: "0.08em" }}>
           speech kind · /critic row dot
         </div>
-        {row(tokens.color.moss, "comment", "Narrative chit-chat. severity=info, no actionable critique. Most fires land here by design.")}
+        {row(tokens.color.moss, "comment", "Narrative chit-chat. severity=info, no actionable review. Most fires land here by design.")}
         {row(tokens.color.amber, "warning", "Real concern. severity=low or medium, OR has critique_for_claude text.")}
         {row(tokens.color.terra, "critical", "Must-fix. severity=high. Rare — Brain only escalates with file:line evidence.")}
         <div style={{ fontFamily: tokens.font.mono, fontSize: 10, color: tokens.color.ink3, textTransform: "uppercase", letterSpacing: "0.08em", marginTop: 4 }}>

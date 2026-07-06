@@ -39,7 +39,7 @@ export function CritiquePermalink({ critique, spans, traceIds }: CritiquePermali
               marginBottom: 4,
             }}
           >
-            CRITIQUE · audit trail
+            REVIEW · audit trail
           </span>
           <h1
             style={{

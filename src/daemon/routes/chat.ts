@@ -104,7 +104,7 @@ export interface ChatRouteDeps {
     pageDeps: { homeBase: string; readMemory?: (homeBase: string) => Promise<CoreMemory | null> },
   ) => Promise<PageContext | null>;
   /**
-   * Memory campaign (real-time chat capture) — persist a fact when the user
+   * memory work (real-time chat capture) — persist a fact when the user
    * tells the pet "记住 X" in chat. Mirrors the optional `readMemory` signature
    * (same store the facts route writes to). Absent → capture disabled: no fact
    * is written AND the capture-honesty framing is NOT injected (back-compat —
@@ -112,7 +112,7 @@ export interface ChatRouteDeps {
    */
   writeMemory?: (homeBase: string, memory: CoreMemory) => Promise<void>;
   /**
-   * Conversational auto-capture (Memory campaign) — distill durable user-facts
+   * Conversational auto-capture (memory work) — distill durable user-facts
    * from a plain chat message (no explicit "记住" marker) via one ledgered Haiku
    * call. Injected so route tests stub it deterministically without spawning the
    * `claude` CLI; production defaults to the real `extractDurableFacts`. Only
@@ -600,7 +600,7 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     await appendMessage(deps.homeBase, sessionId, userMessage);
     insertMessage(deps.index, userMessage);
 
-    // ── Real-time chat capture (Memory campaign) ─────────────────────────────
+    // ── Real-time chat capture (memory work) ─────────────────────────────
     //
     // Capture (explicit "记住 X" OR a conversational fact statement) is detected +
     // persisted in runChatCapture BEFORE composing the system prompt, so this very
@@ -678,7 +678,7 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     // replies reflect what it knows about the user (language / explanation level /
     // personal warmth).
     //
-    // Store resolution (DELIBERATE): user-facts are about the USER (中文 / Daniel / pink), not a
+    // Store resolution (DELIBERATE): user-facts are about the USER (concise answers / Alex / teal), not a
     // project, so we read the SAME store the /memory page shows — deps.readMemory →
     // resolveProjectRoot(daemon cwd). The daemon runs from the user's project, so
     // cwd is the right store. We deliberately do NOT key off an anchor's proj_hash:

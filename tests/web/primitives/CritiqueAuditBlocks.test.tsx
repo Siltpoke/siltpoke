@@ -188,7 +188,7 @@ describe("BlockC", () => {
     const html = String(<BlockC v2={legacyV2} />);
     const naCount = (html.match(/rubric-row--na/g) ?? []).length;
     expect(naCount).toBeGreaterThan(0);
-    expect(html).toContain("rubric not run (legacy critique)");
+    expect(html).toContain("rubric not run (legacy review)");
   });
 
   test("renders pass (✓) for all rules when pipeline ran clean (schemaVersion=2, 0 triggers)", () => {
@@ -336,7 +336,7 @@ describe("BlockE", () => {
     const callNoReasoning = { ...BASE_CALL, reasoning: null, critique_for_claude: null };
     const html = String(<BlockE v2={null} c={callNoReasoning} />);
     expect(html).toContain("no reasoning");
-    expect(html).toContain("no actionable critique");
+    expect(html).toContain("no actionable review");
   });
 });
 
@@ -371,7 +371,7 @@ describe("BlockF", () => {
   test("renders timing breakdown", () => {
     const html = String(<BlockF v2={BASE_V2} c={BASE_CALL} />);
     expect(html).toContain("summary");
-    expect(html).toContain("critic");
+    expect(html).toContain("review");
     expect(html).toContain("total");
   });
 

@@ -31,10 +31,9 @@ tests/e2e/screenshots/
 # fastembed ONNX model cache (downloaded at runtime, ~100MB binaries)
 local_cache/
 
-# Test-evidence artifact written by the test-evidence make target.
-# mtime-based freshness check; never hand-written; runner emits on every gate cycle.
+# Local test-run marker (generated, not hand-written).
 .claude/.last-test-run
-# 2026-06-25 — agent worktrees are ephemeral Claude Code scratch dirs; never track them
+# Ephemeral local scratch dirs.
 .claude/worktrees/
 
 # Machine-local eval data — encodes machine-local absolute paths

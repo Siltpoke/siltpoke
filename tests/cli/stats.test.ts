@@ -155,7 +155,7 @@ test("formatCriticTelemetrySection: output includes 'Critic' header", async () =
   const r = await runStats({ homeBase });
   expect(r.criticCounters).toBeDefined();
   const section = formatCriticTelemetrySection(r.criticCounters);
-  expect(section).toContain("=== Critic ===");
+  expect(section).toContain("=== Code Review ===");
   expect(section).toContain("total runs today: 1");
   expect(section).toContain("tsc");
 });

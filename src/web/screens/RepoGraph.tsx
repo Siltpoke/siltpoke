@@ -721,7 +721,7 @@ export function RepoGraph(props: RepoGraphScreenProps) {
       <div class="rg-host" x-data="repoGraph" data-initial={initialPayload} data-secret={secret ?? ""}>
         {/* Page head — repo picker label is baked server-side (dropdown wired by the island). */}
         <div class="pagehead">
-          <h1>Repo graph</h1>
+          <h1>Code map</h1>
           <div class="repo-pick-wrap">
             <button class="repo-pick" id="rg-repo-pick" type="button" aria-label="Switch repository">
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">

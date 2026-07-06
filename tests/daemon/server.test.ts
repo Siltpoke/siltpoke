@@ -72,7 +72,7 @@ describe("daemon lifecycle", () => {
     const r = await fetch(`http://127.0.0.1:${handle.server.port}/api/version`);
     expect(r.ok).toBe(true);
     const j = (await r.json()) as { ok: boolean; daemonVersion?: string; protocol?: number; pid?: number; mode?: string };
-    expect(j.daemonVersion).toBe("0.1.0");
+    expect(j.daemonVersion).toBe("0.1.1");
     expect(j.protocol).toBe(1);
   });
 

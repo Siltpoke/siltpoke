@@ -3,7 +3,7 @@
  * full `claude -p` pass: they return `{taskId}` immediately (HTTP 202) and run
  * the LLM pass as a floating background promise. The run survives client
  * disconnect (the old disconnect-auto-cancel listener is REMOVED — now
- * backstopped by the wall-clock 守卫 + reconnect). A paid op still records
+ * backstopped by the wall-clock guard + reconnect). A paid op still records
  * (finish + cost ledger + model cache) AFTER the request ended → never invisible.
  */
 import { afterEach, describe, expect, test } from "bun:test";
@@ -166,12 +166,12 @@ describe("detached: returns {taskId} promptly, records after the request ends", 
     expect(tasks[0]!.costUsd ?? null).toBeNull();
   });
 
-  test("the timeout 守卫 still bounds a detached run (flip did not bypass it)", async () => {
+  test("the timeout guard still bounds a detached run (flip did not bypass it)", async () => {
     const prev = process.env.SILTPOKE_ARCH_TIMEOUT_MS;
     process.env.SILTPOKE_ARCH_TIMEOUT_MS = "30";
     try {
       const home = seedHome();
-      // hangs forever unless aborted → only the wall-clock 守卫 can end it
+      // hangs forever unless aborted → only the wall-clock guard can end it
       const app = mount(home, ({ signal }) => new Promise((_res, rej) => { signal?.addEventListener("abort", () => rej(new Error("aborted"))); }));
       const res = await generate(app, { repo: HASH });
       expect(res.status).toBe(202);

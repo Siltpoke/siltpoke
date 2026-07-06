@@ -95,7 +95,7 @@ export function CritiqueInbox(props: CritiqueInboxProps) {
             fontWeight: 500,
           }}
         >
-          CRITIQUE INBOX
+          REVIEW INBOX
         </span>
         <span
           class="critique-inbox__pending"
@@ -129,7 +129,7 @@ export function CritiqueInbox(props: CritiqueInboxProps) {
             padding: "8px 0",
           }}
         >
-          no critiques yet
+          no reviews yet
         </div>
       ) : (
         <div

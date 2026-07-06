@@ -121,7 +121,7 @@ export function BlockA({ v2, c, agentReplyLabel = "agent reply (verbatim)" }: Bl
         {v2.user_raw_query ? (
           <MonoBlock>{v2.user_raw_query}</MonoBlock>
         ) : (
-          <PlaceholderNote text="not captured — older critique" />
+          <PlaceholderNote text="not captured — older review" />
         )}
       </div>
 

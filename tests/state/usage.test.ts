@@ -184,8 +184,8 @@ test("loadDailyRollup: malformed lines are silently skipped", async () => {
 test("loadDailyRollup: sums cost for arch_generate + explain kinds", async () => {
   // Long-task runs append usage-events with new kind values. Their cost
   // must roll into the daily total exactly like the critic's `main` kind —
-  // otherwise a paid generate/explain stays invisible to `rtk gain` (the
-  // honest-metrics命门: a paid op siltpoke MUST record).
+  // otherwise a paid generate/explain stays invisible to external token accounting (the
+  // honest-metrics linchpin: a paid op siltpoke MUST record).
   const today = new Date();
   const iso = today.toISOString();
   await appendUsageEvent(tmp, event({ ts: iso, kind: "arch_generate", total_cost_usd: 0.4 }));

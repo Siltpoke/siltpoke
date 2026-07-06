@@ -44,8 +44,8 @@ describe("ensureFactKinds", () => {
     await writeMemory(home, {
       ...emptyMemory(),
       facts: [
-        fact({ id: "zh", text: "the user prefers responses in Chinese", kind: null }),
-        fact({ id: "dan", text: "User's boyfriend is Daniel", kind: null }),
+        fact({ id: "zh", text: "the user prefers concise answers", kind: null }),
+        fact({ id: "dan", text: "User's partner is Alex", kind: null }),
       ],
     });
     const wrote = await ensureFactKinds(home);
@@ -58,7 +58,7 @@ describe("ensureFactKinds", () => {
   it("is idempotent — a fully-tagged store is left untouched (returns false)", async () => {
     await writeMemory(home, {
       ...emptyMemory(),
-      facts: [fact({ id: "zh", text: "prefers Chinese", kind: "style" })],
+      facts: [fact({ id: "zh", text: "prefers concise answers", kind: "style" })],
     });
     expect(await ensureFactKinds(home)).toBe(false);
     expect(await ensureFactKinds(home)).toBe(false);

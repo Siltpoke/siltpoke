@@ -195,7 +195,7 @@ export function TraceTab({ c }: { c: CriticCall }) {
     </div>
   ) : (
     <div style={noteStyle} data-trace-note="no-critique-id">
-      no trace join possible — this turn pre-dates per-row critique ids, so its spans (if any)
+      no trace join possible — this turn pre-dates per-row review ids, so its spans (if any)
       cannot be linked.
     </div>
   );

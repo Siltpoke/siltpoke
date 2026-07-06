@@ -11,8 +11,8 @@ describe("detectRememberIntent", () => {
       ["记住 我用 pnpm 不用 npm", "我用 pnpm 不用 npm"],
       ["记一下 周五要发版", "周五要发版"],
       ["记下 测试覆盖率要 80%", "测试覆盖率要 80%"],
-      ["帮我记 喜欢粉色", "喜欢粉色"],
-      ["别忘了 男朋友叫 Daniel", "男朋友叫 Daniel"],
+      ["帮我记 喜欢青色", "喜欢青色"],
+      ["别忘了 伴侣叫 Alex", "伴侣叫 Alex"],
       ["remember I use pnpm", "I use pnpm"],
       ["note that the daemon runs on 9876", "the daemon runs on 9876"],
     ];
@@ -118,7 +118,7 @@ describe("looksLikeFactStatement", () => {
       ["我不喜欢", "我不喜欢用 npm"],
       ["我是", "我是后端工程师"],
       ["我叫", "我叫 Alice"],
-      ["我的", "我的男朋友叫 Daniel"],
+      ["我的", "我的伴侣叫 Alex"],
       ["我在用", "我在用 pnpm"],
       ["我用", "我用 bun 跑测试"],
       ["我不用", "我不用 yarn"],
@@ -127,7 +127,7 @@ describe("looksLikeFactStatement", () => {
       ["我会", "我会一点 Rust"],
       ["我习惯", "我习惯早上写代码"],
       ["我通常", "我通常用深色主题"],
-      ["记得我", "记得我喜欢粉色"],
+      ["记得我", "记得我喜欢青色"],
     ];
     for (const [marker, msg] of zh) {
       expect([marker, looksLikeFactStatement(msg)]).toEqual([marker, true]);
@@ -138,18 +138,18 @@ describe("looksLikeFactStatement", () => {
   test("P2 每个英文 marker → true (大小写不敏感)", () => {
     const en: Array<[string, string]> = [
       ["I like", "I like cream sponge cake"],
-      ["I love", "I love cats"],
+      ["I love", "I love dogs"],
       ["I hate", "I hate writing docs"],
       ["I prefer", "I prefer dark mode"],
       ["I'm", "I'm a backend engineer"],
       ["I am", "I am based in Shanghai"],
-      ["my", "my boyfriend is named Daniel"],
+      ["my", "my partner is named Alex"],
       ["I use", "I use pnpm not npm"],
       ["I don't use", "I don't use yarn"],
       ["I work on", "I work on a pet project"],
       ["I live", "I live in Shanghai"],
       ["I usually", "I usually code in the morning"],
-      ["remember I", "remember I like pink"],
+      ["remember I", "remember I like teal"],
     ];
     for (const [marker, msg] of en) {
       expect([marker, looksLikeFactStatement(msg)]).toEqual([marker, true]);
@@ -255,7 +255,7 @@ describe("looksLikeFactStatement", () => {
   // recall/challenge, not a statement; commands/code/too-short stay rejected.
   test("C3 修正 marker 不覆盖现有 reject", () => {
     expect(looksLikeFactStatement("不对吗？")).toBe(false); // question particle
-    expect(looksLikeFactStatement("actually, do you like cats?")).toBe(false);
+    expect(looksLikeFactStatement("actually, do you like dogs?")).toBe(false);
     expect(looksLikeFactStatement("/help 不对")).toBe(false); // command
     expect(looksLikeFactStatement("```\n不对 x = 1\n```")).toBe(false); // code
     expect(looksLikeFactStatement("不对")).toBe(false); // too short (<4)

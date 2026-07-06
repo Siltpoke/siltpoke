@@ -8,8 +8,8 @@
 ## What Siltpoke does
 
 A separate `claude -p` subprocess reads over Claude's shoulder after
-every turn, finds bugs Claude missed, and writes a critique to disk.
-**Critiques never auto-inject into your chat** — you pull them in
+every turn, finds bugs Claude missed, and writes a review to disk.
+**Reviews never auto-inject into your chat** — you pull them in
 explicitly when you want them.
 
 ---
@@ -17,16 +17,16 @@ explicitly when you want them.
 ## Daily loop (the 3 commands you'll actually use)
 
 ```
-/siltpoke-inbox            List pending critiques (read-only)
-/siltpoke-forward <id>     Pull a specific critique into the chat (+20 XP if fresh)
+/siltpoke-inbox            List pending reviews (read-only)
+/siltpoke-forward <id>     Pull a specific review into the chat (+10 XP if fresh)
 /siltpoke-dismiss <id> <reason>   Reject + Siltpoke learns from why it was wrong
 ```
 
 That's the whole loop:
 
-1. Claude finishes a turn → Siltpoke runs in background → critique lands in inbox.
+1. Claude finishes a turn → Siltpoke runs in background → review lands in inbox.
 2. You run `/siltpoke-inbox` whenever you want.
-3. For each pending critique:
+3. For each pending review:
    - **Useful** → `/siltpoke-forward <id>` (default — XP awarded)
    - **Wrong** → `/siltpoke-dismiss <id> <reason>` (triggers Reflexion → writes a learned rule → Siltpoke won't make the same wrong call again)
    - **Neutral / already-seen** → `/siltpoke-ack <id>` (no XP, no learning)
@@ -38,29 +38,31 @@ That's the whole loop:
 | Command | What it does |
 |---|---|
 | `/siltpoke` | State card — name, level, XP, mood, today's spend |
-| `/siltpoke-inbox` | List pending critiques (read-only) |
-| `/siltpoke-last` | Surface the most recent critique into chat |
-| `/siltpoke-forward <id>` | Pull a specific critique (+20 XP if fresh) |
-| `/siltpoke-forward-all` | Dump every pending critique at once |
+| `/siltpoke-inbox` | List pending reviews (read-only) |
+| `/siltpoke-last` | Surface the most recent review into chat |
+| `/siltpoke-forward <id>` | Pull a specific review (+10 XP if fresh) |
+| `/siltpoke-forward-all` | Dump every pending review at once |
 | `/siltpoke-ack <id>` | Mark acknowledged — neutral, no XP, no learning |
 | `/siltpoke-dismiss <id> <reason>` | Reject + trigger Reflexion to learn |
 | `/siltpoke-wake` | One-shot bypass of budget + quiet-hours gates |
 | `/siltpoke-review` | Alias for `/siltpoke-wake` ("review my work now") |
 | `/siltpoke-stats` | Today's token spend + budget stage + trigger mode |
-| `/siltpoke-pet` | +5 XP (capped at 3 pets/day = 15 XP/day) |
+| `/siltpoke-pet` | +5 XP (shared 100 action-XP/day cap) |
 | `/siltpoke-help` | This manual |
 
-### Dashboard report (browser)
+### Dashboard (browser)
 
 ```bash
-bun run report          # writes ~/.siltpoke/report.html
-open ~/.siltpoke/report.html  # macOS — opens in your default browser
+bun run report          # ensures the daemon is up, opens http://127.0.0.1:9876/
 ```
 
-Self-contained static HTML — no server, no JS framework. Refresh by
-re-running the command. Sections: pet header, today's metrics, 7-day
-bar chart, per-project table, pending-critique inbox grouped by
-project, last 30 brain calls, recent verdicts.
+The dashboard is served live by the daemon (`siltpoked`), not written to a
+static file. `bun run report` lazy-spawns the daemon if it isn't already
+running, then opens `http://127.0.0.1:9876/` in your default browser; pass
+`--no-open` to skip launching the browser. Refresh by reloading the page.
+Sections: pet header, today's metrics, 7-day bar chart, per-project table,
+pending-review inbox grouped by project, last 30 brain calls, recent
+verdicts.
 
 ---
 
@@ -109,11 +111,12 @@ calls 2+ cost ~$0.001).
 
 XP sources:
 
-- `/siltpoke-forward <id>` on a fresh critique → **+20 XP**
-- `/siltpoke-pet` → **+5 XP** (max 3 pets/day)
+- `/siltpoke-forward <id>` on a fresh review → **+10 XP**
+- `/siltpoke-pet` → **+5 XP** (shared 100 action-XP/day cap with dashboard actions)
 - Brain's own `xp_earned_events` for sustained engagement
 
-`xp_to_next_level = 100 × level`. Unlocks:
+`xp_to_next_level` scales in bands: `100 × level` (L1–5), `250 × level`
+(L6–10), `500 × level` (L11–20), `1000 × level` (L21+). Unlocks:
 
 | Level | Unlock |
 |---|---|
@@ -122,7 +125,7 @@ XP sources:
 | L5 | Title `Apprentice` |
 | L10 | Title `Sentinel` |
 
-XP never decreases. Wrong critiques are handled via dismiss/Reflexion,
+XP never decreases. Wrong reviews are handled via dismiss/Reflexion,
 not by punishing the pet.
 
 The statusline shows `L{level} {xp}/{xp_to_next_level}` under the
@@ -180,7 +183,7 @@ Set during quiz, or change manually in `config.json` (advanced).
 ```
 
 Supported: `en`, `zh-CN`, `zh-TW`, `ja`, `ko`, `es`, `fr`, `de`, plus
-anything `claude -p` can reply in. The bubble + critique are written
+anything `claude -p` can reply in. The bubble + review are written
 in this language; only code identifiers, file paths, and schema enum
 tokens stay English.
 
@@ -191,8 +194,8 @@ verify your `language` field is set and restart Claude Code.
 
 ## Files Siltpoke owns
 
-Critiques and learned-rule memory are **per-project** — Siltpoke
-shouldn't carry critique context from one codebase into another.
+Reviews and learned-rule memory are **per-project** — Siltpoke
+shouldn't carry review context from one codebase into another.
 Pet progression, budget, and debugging logs stay global.
 
 ```
@@ -231,7 +234,7 @@ Brain sees a 3-block system prompt in cache-friendly order:
 
 `/siltpoke-dismiss <id> <reason>` fires a Reflexion subprocess →
 extracts the lesson → appends a `learned_rule` to tier 1 → next call
-Siltpoke sees the rule → won't make the same wrong critique again.
+Siltpoke sees the rule → won't make the same wrong review again.
 
 ---
 

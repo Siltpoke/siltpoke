@@ -25,8 +25,8 @@ export interface LayoutProps {
    * Each is rendered as <script defer src={url}> in <head>, placed ahead of
    * /static/index.js so the chunk registers its Alpine.data() factory before
    * Alpine.start() walks the DOM. Use this for routes that ship a route-only
-   * island (e.g. Memory adds 'kanban'). Replaces the earlier lazy `import()`
-   * approach which raced Alpine.start().
+   * island chunk. Replaces the earlier lazy `import()` approach which raced
+   * Alpine.start().
    */
   preloadIslands?: readonly string[];
 }
@@ -150,10 +150,10 @@ export function Layout(props: PropsWithChildren<LayoutProps>) {
         ></script>
         {/* Preload island chunks as type=module so ESM `export { ... }`
             syntax parses (classic defer would silently
-            reject and skip evaluation → registerKanban never runs). Module
-            scripts have implicit defer + interleave with classic defer
-            scripts in document order, so kanban still registers BEFORE
-            index.js calls Alpine.start(). */}
+            reject and skip evaluation → the island's registration never
+            runs). Module scripts have implicit defer + interleave with
+            classic defer scripts in document order, so a preloaded island
+            still registers BEFORE index.js calls Alpine.start(). */}
         {preloads.map((url) => (
           <script type="module" src={url}></script>
         ))}

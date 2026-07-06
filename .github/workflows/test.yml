@@ -4,7 +4,7 @@ name: test
 # Dormant (workflow_dispatch only). The workflow stays in-repo as the
 # canonical CI spec; auto-trigger on push / PR is disabled.
 #
-# **To restore auto-CI once billing is resolved:**
+# **To restore auto-CI:**
 #   1. Edit the `on:` block below — replace `workflow_dispatch` with:
 #        on:
 #          push:

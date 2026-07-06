@@ -180,12 +180,12 @@ export async function runUndismiss(opts: UndismissOptions): Promise<UndismissRes
 
 export function formatUndismissHuman(result: UndismissResult): string {
   if (result.status_set === "not_found") {
-    return `siltpoke-undismiss: critique ${result.critique_id} not found.\n`;
+    return `siltpoke-undismiss: review ${result.critique_id} not found.\n`;
   }
   if (result.status_set === "wasnt_dismissed") {
-    return `Critique ${result.critique_id} wasn't dismissed (status: ${result.was_status}). No change.\n`;
+    return `Review ${result.critique_id} wasn't dismissed (status: ${result.was_status}). No change.\n`;
   }
-  const head = `Critique ${result.critique_id} restored. Status: dismissed → pending.`;
+  const head = `Review ${result.critique_id} restored. Status: dismissed → pending.`;
   if (result.rule_id === null) {
     return `${head}\nNo learned rule was created by this dismissal (low reflection confidence). Nothing else to undo.\n`;
   }

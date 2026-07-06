@@ -123,13 +123,13 @@ describe("buildMemoryLog", () => {
   it("maps fact.entities onto event.entities (null for untagged facts and non-fact events)", () => {
     const log = buildMemoryLog({
       facts: [
-        baseFact({ id: "tagged", entities: [{ name: "Daniel" }] }),
+        baseFact({ id: "tagged", entities: [{ name: "Alex" }] }),
         baseFact({ id: "untagged" }),
       ],
       critiques: [{ id: "ep1", ts: "2026-06-11T00:00:00.000Z", body: "real critique" }],
       learnedRules: [],
     });
-    expect(log.find((e) => e.id === "tagged")?.entities).toEqual([{ name: "Daniel" }]);
+    expect(log.find((e) => e.id === "tagged")?.entities).toEqual([{ name: "Alex" }]);
     expect(log.find((e) => e.id === "untagged")?.entities).toBeNull();
     // Non-fact (episodic/procedural) events don't carry entities at all —
     // mirrors the existing `kind` field convention (undefined, not null).

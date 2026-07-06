@@ -39,7 +39,7 @@ const stories: PreviewStory[] = [
     render: () => (
       <EmptyPlaceholder
         headline="no conversations yet"
-        sub="siltpoke speaks via critiques + statusline. talk back when ready."
+        sub="siltpoke speaks via reviews + statusline. talk back when ready."
         action={
           <code
             style={{
@@ -64,7 +64,7 @@ const stories: PreviewStory[] = [
       <EmptyPlaceholder
         art={<Creature species="otter" mood="neutral" stage="juvenile" cell={4} />}
         headline="i don't know you yet"
-        sub="chat a bit + dismiss a few critiques and siltpoke will start writing facts."
+        sub="chat a bit + dismiss a few reviews and siltpoke will start writing facts."
       />
     ),
   },

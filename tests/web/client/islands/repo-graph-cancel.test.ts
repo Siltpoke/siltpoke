@@ -169,7 +169,7 @@ describe("running state slot-swap: button enabled + Cancel label", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 1a-bis. "cancelling…" interim label persists (tick guard — reviewer Finding 3)
+// 1a-bis. "cancelling…" interim label persists (tick guard)
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("cancelling… interim label is NOT overwritten by tick while pending", () => {

@@ -116,7 +116,7 @@ describe("arch-context budget — no single-block exemption (the invariant)", ()
   });
 
   it("truncation + mass-drop combined still holds the invariant (capNote reserved)", () => {
-    // Reviewer-M scenario: a huge first subdir (truncated) PLUS many remaining
+    // Scenario: a huge first subdir (truncated) PLUS many remaining
     // subdirs (all dropped) — the long capNote listing every dropped path must
     // not push the final bundle back over budget.
     const nodes: SiltpokeGraphNode[] = [];

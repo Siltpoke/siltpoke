@@ -319,7 +319,7 @@ export function TraceListPanel({
             <thead>
               <tr>
                 <th style={headerStyle}>When</th>
-                <th style={headerStyle}>Critique</th>
+                <th style={headerStyle}>Review</th>
                 <th style={headerStyle}>Root</th>
                 <th style={headerStyle}>Status</th>
                 <th style={{ ...headerStyle, textAlign: "left" }}>Models</th>

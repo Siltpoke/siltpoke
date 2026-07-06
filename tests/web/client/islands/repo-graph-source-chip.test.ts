@@ -4,7 +4,7 @@
  * FLIP the rendered view (+ write the URL); the old code has no segment so the
  * flip never happens and the checkpoint fails.
  *
- * Session semantics (user-pinned): in-place switch after a completed generate
+ * Session semantics (a standing rule): in-place switch after a completed generate
  * stays; a BARE-url reload returns to the authored default (authored-from-props
  * gate); switching back to Authored CLEARS the ?arch-source= param (bare-URL
  * semantics restored) rather than writing =authored.

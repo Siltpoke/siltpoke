@@ -47,7 +47,7 @@ export function RepoMemoryScreen({ index }: RepoMemoryScreenProps) {
             Repo Memory
           </h1>
           <div style={{ fontFamily: tokens.font.body, fontSize: 13, color: tokens.color.ink3 }}>
-            Indexed conventions + file summaries for critic context
+            Indexed conventions + file summaries for review context
           </div>
         </div>
 

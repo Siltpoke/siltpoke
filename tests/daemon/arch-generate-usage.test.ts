@@ -1,9 +1,9 @@
 /**
  * A completed generate appends its cost to usage-events.jsonl (kind
- * "arch_generate"), so a paid run is visible to cost views (`rtk gain`). Honest
+ * "arch_generate"), so a paid run is visible to cost views. Honest
  * boundary pinned here: a CACHE hit spent $0 this invocation → it records NO
  * new usage-event (recording a cache read as fresh spend = a fabricated number,
- * the honest-metrics命门). A killed run is covered by arch-generate-cancel
+ * the honest-metrics linchpin). A killed run is covered by arch-generate-cancel
  * (costUsd null, no event).
  */
 import { afterEach, describe, expect, test } from "bun:test";
@@ -163,7 +163,7 @@ describe("generate handler — cost → usage-events (detached)", () => {
     expect(events[0].input_tokens).toBe(80);
     // Registry: the run's lifecycle completed (subprocess ran + was billed) →
     // `done`; result-quality (malformed) is separate from lifecycle status. The
-    // record carries the REAL cost, not null (the A-decision: 会花钱就记).
+    // record carries the REAL cost, not null (the decision: log anything that costs money).
     const tasks = JSON.parse(readFileSync(join(home, "tasks.json"), "utf8"));
     expect(tasks[0].status).toBe("done");
     expect(tasks[0].costUsd).toBeCloseTo(0.1, 5);
@@ -171,7 +171,7 @@ describe("generate handler — cost → usage-events (detached)", () => {
 });
 
 // A run that REACHED the paid subprocess and exited non-zero must still hit
-// the ledger (two real ~$2.5 burns went unledgered). Real usage recovered
+// the ledger (unmetered generate calls previously went unledgered). Real usage recovered
 // from the stdout tail when parseable (`basis: "tail_parsed"`), else the
 // pre-flight estimate (`basis: "estimated"`). pre_check_failed spends
 // nothing and stays unledgered (untouched).

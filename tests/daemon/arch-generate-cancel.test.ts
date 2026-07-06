@@ -1,5 +1,5 @@
 /**
- * Generate handler 止血 wiring: register (visible) + one-at-a-time lock
+ * Generate handler stopgap wiring: register (visible) + one-at-a-time lock
  * (409) + POST /arch/cancel → the registry records `cancelled` and the awaiting
  * generate returns 408. The subprocess truly dying is the registry's real-pid
  * test; here we prove the HANDLER drives that path correctly.
@@ -47,7 +47,7 @@ function mount(home: string) {
   return app;
 }
 
-describe("generate handler — 止血 wiring", () => {
+describe("generate handler — stopgap wiring", () => {
   test("register writes a running task the moment generate starts (visible)", async () => {
     const { home } = seedHome();
     const app = mount(home);

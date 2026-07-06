@@ -1,17 +1,22 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * `bun run report` — render a static HTML dashboard at ~/.siltpoke/report.html.
+ * Dashboard renderer + `bun run report` entrypoint.
+ *
+ * `renderReport()` stitches together state Siltpoke already keeps on disk into
+ * a single self-contained HTML document (no network, no JS framework in the
+ * output) and writes it to `~/.siltpoke/report.html` (or `{cwd}/.siltpoke/
+ * report.html` in project scope). The daemon uses this renderer to produce
+ * the page it serves.
+ *
+ * The `bun run report` CLI entrypoint (see `import.meta.main` below) does NOT
+ * write that file — it ensures the daemon is up and opens the live dashboard
+ * at http://127.0.0.1:9876/ in the browser.
  *
  * Aesthetic is Tamagotchi-style: a thick rounded LCD "shell" wraps the pet
  * portrait + stats. Everything else (per-project tables, brain-call log,
  * recent verdicts, embedded docs) lives in a second column on wide screens
  * and stacks below on mobile.
- *
- * Stitches together state Siltpoke already keeps on disk (no network, no
- * server, no JS framework in the output). Re-runs on demand; the output is
- * a single self-contained file the user can open in any browser. Closing
- * it has zero side effects.
  */
 import { readFile } from "node:fs/promises";
 import { writeFile, mkdir } from "node:fs/promises";

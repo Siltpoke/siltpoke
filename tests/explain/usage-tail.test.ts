@@ -76,7 +76,7 @@ test("test_tail_parse_last_occurrence_wins", () => {
 
 // ── review BF3(b) — cross-object pairing guard ───────────────────────────────
 
-test("test_BF3_cross_object_cost_is_NOT_paired_with_trailing_tokens (reviewer probe)", () => {
+test("test_BF3_cross_object_cost_is_NOT_paired_with_trailing_tokens", () => {
   // The last cost lives in an EARLIER object (closed by `}` before `,{`); the
   // token fields live in the trailing object. Pairing them would attach a
   // per-turn $0.001 to the result event's 150000 tokens — a fabricated pair.

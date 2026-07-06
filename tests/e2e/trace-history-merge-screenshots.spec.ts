@@ -55,7 +55,7 @@ function visiblePane(page: import("@playwright/test").Page) {
 test("tl-01 — timeline list + filters + contextual summary", async ({ page }) => {
   // With an ACTIVE search filter (?q=) so the shot demonstrates the filter +
   // contextual-summary story — and is visually distinct from tl-02's default
-  // view (PR stand-in review: 01 and 02 were pixel-identical, weak evidence).
+  // view (the two screenshots were pixel-identical, weak evidence).
   await page.goto("/timeline?q=E2E-TL");
   // Rail rows really rendered (fixture turns match the q filter).
   await expect(

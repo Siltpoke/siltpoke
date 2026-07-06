@@ -60,7 +60,7 @@ const stories: PreviewStory[] = [
           sub="max spend per calendar day"
           value="$5.00"
         />
-        <SettingsRow label="Model" sub="used for critique generation" value="sonnet-4.6" />
+        <SettingsRow label="Model" sub="used for review generation" value="sonnet-4.6" />
       </div>
     ),
   },

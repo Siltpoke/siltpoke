@@ -1,5 +1,5 @@
 ---
-description: Silence Siltpoke for a duration. Mute beats wake — critic never fires while active.
+description: Silence Siltpoke for a duration. Mute beats wake — Code Review never fires while active.
 ---
 
 The user wants Siltpoke quiet for pair-programming, a demo, or a focus
@@ -23,7 +23,7 @@ pass anything, ask them — empty arg exits 1 with a usage message.)
 The CLI writes `~/.siltpoke/mute.json` with the expiry timestamp. The
 Stop-hook router checks this file BEFORE any other gate (including
 `/siltpoke-wake` bypass) — mute beats wake. While mute is active,
-critic does not fire.
+Code Review does not fire.
 
 Tell the user verbatim from the CLI output (it includes the wall-clock
 expiry time). Then mention:

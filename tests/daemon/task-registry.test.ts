@@ -84,7 +84,7 @@ describe("TaskRegistry — lock + two-phase", () => {
   });
 });
 
-describe("TaskRegistry — cancel aborts + escalates to SIGKILL (止血)", () => {
+describe("TaskRegistry — cancel aborts + escalates to SIGKILL (stopgap)", () => {
   test("cancel calls controller.abort() (→ Bun.spawn SIGTERM)", () => {
     const r = new TaskRegistry(home(), { idGen: seqIds });
     const lh = liveHandle(fakeProc(222, {}));
@@ -122,7 +122,7 @@ describe("TaskRegistry — cancel aborts + escalates to SIGKILL (止血)", () =>
   });
 });
 
-describe("TaskRegistry — real pid liveness (the honest 止血 oracle)", () => {
+describe("TaskRegistry — real pid liveness (the honest stopgap oracle)", () => {
   test("SIGTERM path: controller.abort() kills a signal-wired subprocess (kill(pid,0)→ESRCH)", async () => {
     const r = new TaskRegistry(home(), { idGen: seqIds, killEscalationMs: 9999 });
     // wire the subprocess to the SAME controller the registry aborts — this is

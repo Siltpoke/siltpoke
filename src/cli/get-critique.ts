@@ -14,12 +14,12 @@ export async function getCritique(
 ): Promise<string> {
   const path = await findCritiqueByIdOrLatest(opts.basePath, opts.idOrLatest);
   if (!path) {
-    return `# Siltpoke: critique '${opts.idOrLatest}' not found.\n`;
+    return `# Siltpoke: review '${opts.idOrLatest}' not found.\n`;
   }
   try {
     return await readFile(path, "utf8");
   } catch (err) {
-    return `# Siltpoke: failed to read critique at ${path}: ${err}\n`;
+    return `# Siltpoke: failed to read review at ${path}: ${err}\n`;
   }
 }
 

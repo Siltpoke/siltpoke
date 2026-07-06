@@ -90,28 +90,28 @@ describe("chat fact-injection", () => {
   test("active facts land in the system prompt as a <user_context> block", async () => {
     const a = app(async () =>
       memWith([
-        fact({ id: "zh", text: "the user prefers responses in Chinese (中文)" }),
-        fact({ id: "dan", text: "User's boyfriend is Daniel" }),
+        fact({ id: "zh", text: "the user prefers concise answers" }),
+        fact({ id: "dan", text: "User's partner is Alex" }),
       ]),
     );
     const res = await post(a, { message: "hi" });
     await drain(res);
     expect(captured).toHaveLength(1);
     expect(captured[0].systemPrompt).toContain("<user_context>");
-    expect(captured[0].systemPrompt).toContain("the user prefers responses in Chinese (中文)");
-    expect(captured[0].systemPrompt).toContain("User's boyfriend is Daniel");
+    expect(captured[0].systemPrompt).toContain("the user prefers concise answers");
+    expect(captured[0].systemPrompt).toContain("User's partner is Alex");
   });
 
   test("retired facts do NOT leak; active null-stream facts DO inject", async () => {
     const a = app(async () =>
       memWith([
         fact({ id: "en", text: "User prefers responses in English", status: "retired" }),
-        fact({ id: "zh", text: "the user prefers responses in Chinese", status: "active", learned_from: null }),
+        fact({ id: "zh", text: "the user prefers concise answers", status: "active", learned_from: null }),
       ]),
     );
     const res = await post(a, { message: "hi" });
     await drain(res);
-    expect(captured[0].systemPrompt).toContain("the user prefers responses in Chinese");
+    expect(captured[0].systemPrompt).toContain("the user prefers concise answers");
     expect(captured[0].systemPrompt).not.toContain("English");
   });
 
@@ -143,13 +143,13 @@ describe("chat fact-injection", () => {
       streamFactory: fakeStream,
       readMemory: async (hb: string) => {
         seen.push(hb);
-        return memWith([fact({ text: "User prefers the color pink" })]);
+        return memWith([fact({ text: "User prefers the color teal" })]);
       },
     });
     const res = await post(a, { message: "hi" });
     await drain(res);
     expect(seen).toEqual([home]);
-    expect(captured[0].systemPrompt).toContain("User prefers the color pink");
+    expect(captured[0].systemPrompt).toContain("User prefers the color teal");
   });
 
   test("back-compat — no readMemory dep → no facts, route still streams", async () => {

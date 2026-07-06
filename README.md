@@ -22,18 +22,18 @@ wholly yours. On the token budget you already have.
  > _ <
  Mochi
  Apprentice
-L7 820/1500
+L7 820/1750
 ```
 
 Not five tools — **one nervous system**, four organs keyed to a single
 project:
 
-- **Critic.** A *separate* `claude -p` subprocess (your existing Claude
+- **Code Review.** A *separate* `claude -p` subprocess (your existing Claude
   Code login — no extra LLM bill) reviews each turn with its own prompt
   and personality, catching what the writing-side Claude missed. Every
-  claim cites file:line evidence. Critiques land on disk — you forward,
+  claim cites file:line evidence. Reviews land on disk — you forward,
   dismiss (it learns), or ignore. Pull, never push.
-- **Repo-graph.** A structural map of your codebase it can reason over —
+- **Code-map.** A structural map of your codebase it can reason over —
   ask it to explain a file or symbol, grounded in the real call graph.
 - **Memory.** Bugs fingerprinted across sessions; facts you tell it
   remembered across projects. Data stays on your disk — no siltpoke
@@ -80,19 +80,19 @@ claude plugin install project-lifecycle@project-life-cycle
 The whole loop is 3 commands:
 
 ```
-/siltpoke-inbox                   List pending critiques
+/siltpoke-inbox                   List pending reviews
 /siltpoke-forward <id>            Pull one into the chat (+10 XP if fresh)
 /siltpoke-dismiss <id> <reason>   Reject — Siltpoke learns why it was wrong
 ```
 
-The dashboard has the rest — state card, critic inbox, chat, memory,
-timeline, repo-graph:
+The dashboard has the rest — state card, code review inbox, chat, memory,
+timeline, code-map:
 
 ```
 /siltpoke-report                  Open dashboard → http://127.0.0.1:9876
 ```
 
-Chat (`/siltpoke-chat`), memory (`/siltpoke-remember`), repo-graph
+Chat (`/siltpoke-chat`), memory (`/siltpoke-remember`), code-map
 (`/siltpoke-index` → `/siltpoke-graph` → `/siltpoke-explain`), config,
 and the full 35-command reference:
 **[docs § Slash commands](https://siltpoke.com/docs.html#slash-commands)**

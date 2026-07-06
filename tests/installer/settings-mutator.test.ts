@@ -55,7 +55,7 @@ test("registerStopHook preserves existing PreToolUse hook", () => {
       PreToolUse: [
         {
           matcher: "Bash",
-          hooks: [{ type: "command", command: "rtk hook claude" }],
+          hooks: [{ type: "command", command: "my-tool hook" }],
         },
       ],
     },

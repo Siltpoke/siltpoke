@@ -18,7 +18,7 @@ import { mountMemoryLogRoute } from "./routes/memory-log";
 import { readMemory, writeMemory } from "../memory/memory";
 import { extractDurableFacts } from "../memory/extract-facts";
 import { ensureFactKinds } from "../memory/ensure-fact-kinds";
-import { mountStaticRoutes } from "../web/routes/static";
+import { mountStaticRoutes, ensureClientBundle } from "../web/routes/static";
 import { mountPreviewRoutes, loadDefaultRegistry } from "../web/routes/preview";
 import { mountHomeRoutes } from "../web/routes/home";
 import { mountMemoryRoutes } from "../web/routes/memory";
@@ -165,7 +165,7 @@ export async function evictPriorPortHolder(opts: {
 
 export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   const lock = acquireLock(opts.lockPath, {
-    version: "0.1.0",
+    version: "0.1.1",
     heartbeatMs: 30_000,
   });
 
@@ -291,7 +291,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     // Recall: inject active user-facts into the chat system prompt
     // (same store the /memory page reads).
     readMemory,
-    // Memory campaign — real-time chat capture: persist "记住 X" facts told to
+    // memory work — real-time chat capture: persist "记住 X" facts told to
     // the pet in chat to the same store the facts route writes to.
     writeMemory,
     // Conversational auto-capture — distill durable user-facts from plain chat
@@ -377,6 +377,12 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   mountRepoGraphWebRoutes(app, { cwd: process.cwd(), secret: opts.secret });
 
   // Web sub-app: static assets + dev preview (env-gated).
+  // Build the client island bundle if it's missing (gitignored artifact — a
+  // fresh clone/install ships without it, which would leave the dashboard
+  // rendered-but-dead). Skip for ephemeral test daemons (port 0). Fails open.
+  if (opts.port !== 0) {
+    await ensureClientBundle();
+  }
   mountStaticRoutes(app);
   const previewEnabled = process.env.SILTPOKE_ENV !== "production";
   const previewRegistry = previewEnabled
@@ -391,7 +397,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     // subprocess synchronously: the lazy Haiku narrative ~30-60s and the internal
     // POST /trace/purpose grounding call. (arch/generate + /explain are now
     // DETACHED — they return {taskId} in ms and run in a background promise, so
-    // this timeout no longer bounds them; the wall-clock 守卫 does.) 240s
+    // this timeout no longer bounds them; the wall-clock guard does.) 240s
     // (Bun's hard max is 255s) keeps the remaining synchronous LLM handlers alive.
     idleTimeout: 240,
     fetch: app.fetch,

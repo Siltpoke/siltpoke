@@ -5,7 +5,7 @@
  * subdirs are dropped whole, so the LLM never sees them and 19/20 containers
  * end up member-less (root of the A-line's honest "no file evidence" reads).
  *
- * THE NO-REGRESS SOUL (user-pinned): a repo whose full context FITS the budget
+ * THE NO-REGRESS SOUL (a standing rule): a repo whose full context FITS the budget
  * produces a BYTE-IDENTICAL bundle — sharding must never touch the generate
  * behavior of already-healthy repos. Pinned by a sha256 snapshot taken on
  * pre-sharding code.

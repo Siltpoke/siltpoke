@@ -33,13 +33,13 @@ export type { TraceFragmentSpan, TraceFragmentTrace } from "./span-timeline";
  */
 export const TRACE_NOTE_COPY = {
   "no-index":
-    "no trace index — the sqlite span index (~/.siltpoke/traces/index.sqlite) does not exist yet. Spans are recorded when the critic runs with tracing enabled.",
+    "no trace index — the sqlite span index (~/.siltpoke/traces/index.sqlite) does not exist yet. Spans are recorded when the review runs with tracing enabled.",
   "index-error":
-    "trace index unreadable — the sqlite span index exists but could not be queried. The critique itself is unaffected; see the Critic tab.",
+    "trace index unreadable — the sqlite span index exists but could not be queried. The review itself is unaffected; see the Code Review tab.",
   "no-trace":
     "no trace recorded for this turn — the trace index has no spans linked to this critique_id.",
   "no-critique-id":
-    "no trace join possible — this turn pre-dates per-row critique ids, so its spans (if any) cannot be linked.",
+    "no trace join possible — this turn pre-dates per-row review ids, so its spans (if any) cannot be linked.",
 } as const;
 
 export type TraceNoteKind = keyof typeof TRACE_NOTE_COPY;

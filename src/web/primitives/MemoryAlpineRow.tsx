@@ -316,7 +316,7 @@ export function MemoryAlpineRow() {
             x-text="event.kindBadge"
             x-bind:style="{ color: event.kindBadgeColor, borderColor: event.kindBadgeColor }"
             x-on:click="cycleFactKind(event)"
-            x-bind:title="event.kind === 'style' ? 'style — shapes your code critiques. Click → profile' : event.kind === 'profile' ? 'profile — chat-only, kept out of code reviews. Click → style' : 'untagged. Click → style'"
+            x-bind:title="event.kind === 'style' ? 'style — shapes your code reviews. Click → profile' : event.kind === 'profile' ? 'profile — chat-only, kept out of code reviews. Click → style' : 'untagged. Click → style'"
             style={{
               fontFamily: tokens.font.mono,
               fontSize: 9.5,

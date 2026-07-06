@@ -54,7 +54,7 @@ if (import.meta.main) {
 
   const { proj_hash } = resolveRepoGraphLocation(process.cwd());
   const url = `http://127.0.0.1:9876/repo-graph?repo=${encodeURIComponent(proj_hash)}`;
-  process.stdout.write(`Siltpoke repo-graph: ${url}\n`);
+  process.stdout.write(`Siltpoke code map: ${url}\n`);
   if (!noOpen) {
     const cmd =
       process.platform === "darwin"

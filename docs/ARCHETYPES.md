@@ -102,9 +102,6 @@ Decision was against because:
 We use MBTI here only as a recognizable shorthand for users who know
 their type. The actual scoring is Big-Five-aligned.
 
-See [`2026-05-14-personality-test-design.md`](./2026-05-14-personality-test-design.md)
-for the full framework comparison + scoring math.
-
 ---
 
 ## Sources for the MBTI types

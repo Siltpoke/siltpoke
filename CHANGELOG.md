@@ -6,6 +6,22 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-06
+
+### Changed
+
+- **Renamed two features for clarity: "Critic" → "Code Review" and "Repo Graph"
+  → "Code Map".** Display-only — same behavior, same commands.
+
+### Fixed
+
+- **The dashboard now works on a fresh install.** Opening it right after
+  installing used to show the page but leave every button unresponsive (the
+  browser bundle wasn't built yet); the daemon now builds it automatically on
+  first launch.
+- Documentation fixes: corrected the `bun run report` description, some
+  XP/level numbers, and removed a dead UI leftover.
+
 ## [0.1.0] - 2026-07-03
 
 ### Changed
@@ -23,5 +39,6 @@ versioning: [SemVer](https://semver.org/).
   capture), statusline pet face, and the dashboard (state card, timeline,
   memory book, chat, repo graph).
 
-[Unreleased]: https://github.com/Victoriakaey/siltpoke/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Victoriakaey/siltpoke/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Victoriakaey/siltpoke/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Victoriakaey/siltpoke/releases/tag/v0.1.0

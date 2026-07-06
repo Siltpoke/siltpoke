@@ -794,7 +794,7 @@ export function makeMemoryBookData(): MemoryBookData {
         this.memories = this.memories.map((m) => (m.id === id ? { ...m, kind } : m));
         this.flashToast(
           kind === "style"
-            ? "Re-tagged 🎯 style · shapes your critiques"
+            ? "Re-tagged 🎯 style · shapes your reviews"
             : "Re-tagged 🪪 profile · chat-only",
         );
       } catch (err) {

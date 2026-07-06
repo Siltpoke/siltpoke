@@ -21,23 +21,23 @@ the config schema.
 ## What Siltpoke does
 
 A separate `claude -p` subprocess reads over Claude's shoulder after
-every turn, finds bugs Claude missed, and writes a critique to disk.
-**Critiques never auto-inject into your chat** — you pull them in
+every turn, finds bugs Claude missed, and writes a review to disk.
+**Reviews never auto-inject into your chat** — you pull them in
 explicitly when you want them.
 
 ## Daily loop (the 3 commands you'll actually use)
 
 ```
-/siltpoke-inbox            List pending critiques (read-only)
-/siltpoke-forward <id>     Pull a specific critique into the chat (+20 XP if fresh)
+/siltpoke-inbox            List pending reviews (read-only)
+/siltpoke-forward <id>     Pull a specific review into the chat (+10 XP if fresh)
 /siltpoke-dismiss <id> <reason>   Reject + Siltpoke learns from why it was wrong
 ```
 
 That's the whole loop:
 
-1. Claude finishes a turn → Siltpoke runs in background → critique lands in inbox.
+1. Claude finishes a turn → Siltpoke runs in background → review lands in inbox.
 2. You run `/siltpoke-inbox` whenever you want.
-3. For each pending critique:
+3. For each pending review:
    - **Useful** → `/siltpoke-forward <id>` (default — XP awarded)
    - **Wrong** → `/siltpoke-dismiss <id> <reason>` (triggers Reflexion → writes a learned rule → Siltpoke won't make the same wrong call again)
    - **Neutral / already-seen** → `/siltpoke-ack <id>` (no XP, no learning)
@@ -46,10 +46,10 @@ That's the whole loop:
 
 ```
 /siltpoke                  State card — name, level, XP, mood, today's spend
-/siltpoke-last             Surface the most recent critique
-/siltpoke-forward-all      Dump every pending critique at once
+/siltpoke-last             Surface the most recent review
+/siltpoke-forward-all      Dump every pending review at once
 /siltpoke-stats            Today's token spend + budget stage + trigger mode
-/siltpoke-pet              +5 XP (capped at 3 pets/day = 15 XP/day)
+/siltpoke-pet              +5 XP (shared 100 action-XP/day cap)
 /siltpoke-wake             One-shot bypass of budget + quiet-hours gates
 /siltpoke-review           Alias for /siltpoke-wake ("review my work now")
 /siltpoke-help             This manual
@@ -89,13 +89,14 @@ calls 2+ cost ~$0.001). Knobs:
 
 XP sources:
 
-- `/siltpoke-forward <id>` on a fresh critique → **+20 XP**
-- `/siltpoke-pet` → **+5 XP** (max 3/day)
+- `/siltpoke-forward <id>` on a fresh review → **+10 XP**
+- `/siltpoke-pet` → **+5 XP** (shared 100 action-XP/day cap)
 - Brain's own `xp_earned_events` for sustained engagement
 
-`xp_to_next_level = 100 × level`. Unlocks: pose `peek` (L2), title
+`xp_to_next_level` scales in bands: `100 × level` (L1–5), `250 × level`
+(L6–10), `500 × level` (L11–20), `1000 × level` (L21+). Unlocks: pose `peek` (L2), title
 `Watcher` (L2), pose `blink` (L3), title `Apprentice` (L5), title
-`Sentinel` (L10). XP never decreases — wrong critiques are handled via
+`Sentinel` (L10). XP never decreases — wrong reviews are handled via
 dismiss/Reflexion, not by punishment.
 
 ## Re-roll personality

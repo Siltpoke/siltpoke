@@ -155,7 +155,7 @@ describe("Dashboard", () => {
     // Canonical labels should appear (Chat removed — floating chat replaces it)
     expect(html).toContain("Home");
     expect(html).toContain("Memory");
-    expect(html).toContain("Repo Graph");
+    expect(html).toContain("Code Map");
   });
 
   test("caller-supplied navItems prop overrides CANONICAL_NAV", () => {
@@ -170,7 +170,7 @@ describe("Dashboard", () => {
     // Canonical-only labels must NOT appear when overriding (Memory + Repo Graph
     // are CANONICAL_NAV entries — load-bearing guards that override suppresses them)
     expect(html).not.toContain("Memory");
-    expect(html).not.toContain("Repo Graph");
+    expect(html).not.toContain("Code Map");
   });
 });
 
@@ -192,7 +192,7 @@ describe("Dashboard sectioned navSections render", () => {
         content
       </Dashboard>,
     );
-    const allLabels = ["Home", "Timeline", "Memory", "Repo Graph"];
+    const allLabels = ["Home", "Timeline", "Memory", "Code Map"];
     for (const label of allLabels) {
       expect(html).toContain(label);
     }
@@ -216,7 +216,7 @@ describe("Dashboard sectioned navSections render", () => {
         content
       </Dashboard>,
     );
-    const workLabels = ["Timeline", "Memory", "Repo Graph"];
+    const workLabels = ["Timeline", "Memory", "Code Map"];
     for (const label of workLabels) {
       expect(html).toContain(label);
     }
@@ -262,7 +262,7 @@ describe("Dashboard sectioned navSections render", () => {
     expect(html).toContain("WORK");
     // All entry labels present (/stats removed; chat removed — floating
     // chat replaces it; History+Traces merged into Timeline)
-    const allLabels = ["Home", "Timeline", "Memory", "Repo Graph"];
+    const allLabels = ["Home", "Timeline", "Memory", "Code Map"];
     for (const label of allLabels) {
       expect(html).toContain(label);
     }

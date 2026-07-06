@@ -370,39 +370,39 @@ test("a style fact alone fires <core_memory> + the style section (empty summary 
   const out = assembleSystemPrompt({
     personalitySystemPrompt: personality,
     memory: bareMem([
-      mkFact({ id: "zh", text: "The user prefers responses in Chinese", kind: "style" }),
+      mkFact({ id: "zh", text: "The user prefers concise answers", kind: "style" }),
     ]),
     recent: [],
   });
   expect(out).toContain("<core_memory>");
   expect(out).toContain("## User communication style");
-  expect(out).toContain("The user prefers responses in Chinese");
+  expect(out).toContain("The user prefers concise answers");
 });
 
 test("profile + untagged facts never reach the critic (no leak, no fire)", () => {
   const out = assembleSystemPrompt({
     personalitySystemPrompt: personality,
     memory: bareMem([
-      mkFact({ id: "dan", text: "User's boyfriend is Daniel", kind: "profile" }),
-      mkFact({ id: "u", text: "User likes cats", kind: null }),
+      mkFact({ id: "dan", text: "User's partner is Alex", kind: "profile" }),
+      mkFact({ id: "u", text: "User likes dogs", kind: null }),
     ]),
     recent: [],
   });
   // no style facts → block doesn't fire on profile/untagged at all
   expect(out).toBe(personality);
-  expect(out).not.toContain("Daniel");
-  expect(out).not.toContain("cats");
+  expect(out).not.toContain("Alex");
+  expect(out).not.toContain("dogs");
 });
 
 test("style injected, profile sibling in the same store stays out", () => {
   const out = assembleSystemPrompt({
     personalitySystemPrompt: personality,
     memory: bareMem([
-      mkFact({ id: "zh", text: "The user prefers responses in Chinese", kind: "style" }),
-      mkFact({ id: "dan", text: "User's boyfriend is Daniel", kind: "profile" }),
+      mkFact({ id: "zh", text: "The user prefers concise answers", kind: "style" }),
+      mkFact({ id: "dan", text: "User's partner is Alex", kind: "profile" }),
     ]),
     recent: [],
   });
-  expect(out).toContain("Chinese");
-  expect(out).not.toContain("Daniel");
+  expect(out).toContain("concise");
+  expect(out).not.toContain("Alex");
 });

@@ -466,7 +466,7 @@ export async function buildSummarizerContext(
 
   const [recentCritiques, recentDismissals, recentChat] = await Promise.all([
     critiquesLoader(critiquesBase, lastConsolidatedAt),
-    // TODO(memory-capture-repair): file mismatch — loadRecentDismissals reads
+    // TODO: harden memory capture — file mismatch — loadRecentDismissals reads
     // <homeBase>/feedback-archive.jsonl (absent in practice), but dismissals are
     // actually written to ~/.siltpoke/preference-log.jsonl. Separate path-repair
     // tracked for a follow-up; left reading homeBase for now (out of this fix's scope).

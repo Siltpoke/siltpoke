@@ -1715,7 +1715,7 @@ function bootRepoGraph(root: HTMLElement): void {
       c4Bounds = adapted.model.__bounds;
       archTiers = adapted.tiers;
       // Deliberately NO ?arch-source= write here: the in-place switch is session
-      // UX; a bare-URL reload returns to the authored DEFAULT (user-pinned).
+      // UX; a bare-URL reload returns to the authored DEFAULT (a standing rule).
       render(true); // seamless upgrade — re-draw the generated C4 in place
       return true;
     } catch {
@@ -4214,7 +4214,7 @@ function bootRepoGraph(root: HTMLElement): void {
     } else {
       repoEmpty.innerHTML =
         `<h3>${esc(r.name)} isn't indexed yet</h3>` +
-        `<p>Run the indexer to generate a repo graph for this project.</p>` +
+        `<p>Run the indexer to generate a code map for this project.</p>` +
         `<div class="re-cmd">/siltpoke-index ${esc(r.path)}</div>`;
     }
     repoEmpty.classList.add("show");
@@ -5184,7 +5184,7 @@ function bootRepoGraph(root: HTMLElement): void {
     // excludes the ~360px card and the spine centers in the gap between the
     // sidebar and the card (not the full stage). The auto-selected entry shows
     // ITS off-path cluster too (consistent with click-selecting any spine node)
-    // so the initial frame already matches the post-"fit" layout, not 偏左.
+    // so the initial frame already matches the post-"fit" layout, not offset left.
     const entryId = data?.spine[0];
     if (entryId) {
       S.selected = entryId;

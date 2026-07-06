@@ -554,7 +554,7 @@ describe("consolidate() — happy path", () => {
 });
 
 // ---------------------------------------------------------------------------
-// projectBase critique-path routing (memory-capture-repair)
+// projectBase critique-path routing (memory capture hardening)
 //
 // Regression guard: the critic writes critiques PROJECT-LOCAL
 // ({repo}/.siltpoke/critiques/archive) but consolidate was reading the GLOBAL

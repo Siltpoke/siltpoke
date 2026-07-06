@@ -79,7 +79,7 @@ export const CANONICAL_NAV: readonly NavSection[] = [
       // keeps Icon.tsx untouched).
       { id: "timeline", label: "Timeline", href: "/timeline", icon: "history" },
       { id: "memory", label: "Memory", href: "/memory", icon: "memory" },
-      { id: "repo-graph", label: "Repo Graph", href: "/repo-graph", icon: "repo-graph" },
+      { id: "repo-graph", label: "Code Map", href: "/repo-graph", icon: "repo-graph" },
     ],
   },
 ];

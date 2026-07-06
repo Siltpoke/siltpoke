@@ -1,17 +1,17 @@
 ---
-description: Dismiss a Siltpoke critique and let Siltpoke learn from why it was wrong
+description: Dismiss a Siltpoke review and let Siltpoke learn from why it was wrong
 argument-hint: <critique-id> [reason]
 ---
 
-You are dismissing a Siltpoke critique at the user's explicit request.
-Arguments are in `$ARGUMENTS`. The first token is the critique id
+You are dismissing a Siltpoke review at the user's explicit request.
+Arguments are in `$ARGUMENTS`. The first token is the review id
 (e.g. `c-a7b3` or `latest`); everything after it is the dismiss reason
-explaining why the critique was wrong.
+explaining why the review was wrong.
 
 If `$ARGUMENTS` is empty, tell the user the usage is
 `/siltpoke-dismiss <critique-id> "why it was wrong"` and stop. A reason
 is optional but strongly encouraged — without one, Siltpoke can flip
-the critique status but cannot learn anything from the dismissal.
+the review status but cannot learn anything from the dismissal.
 
 Run this bash command:
 
@@ -22,8 +22,8 @@ bun ${CLAUDE_PLUGIN_ROOT}/src/cli/dismiss.ts $ARGUMENTS
 The CLI prints a single JSON object describing what happened. Use it to
 tell the user:
 
-- If `status_set` is `"not_found"`: the critique id was wrong. Suggest
-  `/siltpoke-inbox` to list pending critiques.
+- If `status_set` is `"not_found"`: the review id was wrong. Suggest
+  `/siltpoke-inbox` to list pending reviews.
 - If `status_set` is `"dismissed"` or `"already_dismissed"`: confirm the
   status flip, then look at `reflection`:
   - `rule_appended: true` — congratulate the user. Siltpoke just learned

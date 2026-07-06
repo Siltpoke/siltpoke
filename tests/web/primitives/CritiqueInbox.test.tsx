@@ -7,7 +7,7 @@ import { MOCK_CRITIQUES } from "../../../src/web/_shared/mocks/critiques";
 describe("CritiqueInbox", () => {
   test("renders CRITIQUE INBOX header", () => {
     const html = String(<CritiqueInbox critiques={MOCK_CRITIQUES} pendingCount={7} />);
-    expect(html).toContain("CRITIQUE INBOX");
+    expect(html).toContain("REVIEW INBOX");
   });
 
   test("critique-inbox class on root element", () => {
@@ -73,7 +73,7 @@ describe("CritiqueInbox", () => {
 
   test("empty critiques renders 'no critiques' placeholder", () => {
     const html = String(<CritiqueInbox critiques={[]} pendingCount={0} />);
-    expect(html).toContain("no critiques");
+    expect(html).toContain("no reviews");
     expect((html.match(/class="critique-row"/g) ?? []).length).toBe(0);
   });
 

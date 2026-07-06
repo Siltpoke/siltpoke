@@ -51,7 +51,7 @@ describe("GET /repo-graph (SSR shell)", () => {
     expect(status).toBe(200);
     expect(html).toContain('x-data="repoGraph"');
     expect(html).toContain('data-initial=');
-    expect(html).toContain("Repo Graph");
+    expect(html).toContain("Code Map");
   });
 
   test("payload baked into data-initial JSON parses cleanly", async () => {

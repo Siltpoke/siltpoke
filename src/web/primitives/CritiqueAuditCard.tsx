@@ -272,7 +272,7 @@ export function CritiqueAuditCard({ critique, onFeedback }: CritiqueAuditCardPro
       {/* ── Critique for Claude ── */}
       {critique_for_claude ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <SectionHead label="Critique for Claude" />
+          <SectionHead label="Review for Claude" />
           <div
             style={{
               fontFamily: tokens.font.body,

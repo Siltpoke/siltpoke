@@ -35,7 +35,7 @@ export async function markForwarded(
     opts.homeBase ?? join(process.env.HOME ?? "", ".siltpoke");
   const path = await findCritiqueByIdOrLatest(opts.basePath, opts.idOrLatest);
   if (!path) {
-    return `# Siltpoke: critique '${opts.idOrLatest}' not found.\n`;
+    return `# Siltpoke: review '${opts.idOrLatest}' not found.\n`;
   }
   const before = await readStatus(path);
   const alreadyForwarded = before === "forwarded";
@@ -72,7 +72,7 @@ export async function markForwarded(
   });
 
   const xpNote = alreadyForwarded ? "" : ` (+${FORWARD_XP_REWARD} XP)`;
-  return `# Siltpoke: critique '${opts.idOrLatest}' marked forwarded${xpNote}.\n`;
+  return `# Siltpoke: review '${opts.idOrLatest}' marked forwarded${xpNote}.\n`;
 }
 
 if (import.meta.main) {

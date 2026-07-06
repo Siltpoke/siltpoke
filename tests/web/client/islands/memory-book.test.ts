@@ -866,7 +866,7 @@ describe("approveFact + rejectFact (pending-row actions)", () => {
     id: "f-pend",
     ts: "2026-06-25T10:00:00.000Z",
     type: "semantic",
-    text: "user might prefer pink",
+    text: "user might prefer teal",
     why: "mentioned once",
     status: "pending",
   };
@@ -1010,7 +1010,7 @@ describe("sendChat routing", () => {
       calledUrl = url;
       return new Response(
         JSON.stringify({
-          candidate: "User prefers pink",
+          candidate: "User prefers teal",
           classification: "add",
           confidence: 0.9,
           targetFactId: null,
@@ -1020,11 +1020,11 @@ describe("sendChat routing", () => {
       );
     }) as unknown as typeof fetch;
     const data = makeMemoryBookData();
-    data.chat = "记得我喜欢粉红色";
+    data.chat = "记得我喜欢青色";
     await data.sendChat();
     expect(calledUrl).toBe("/api/facts/parse");
     expect(data.proposal?.classification).toBe("add");
-    expect(data.proposal?.candidate).toBe("User prefers pink");
+    expect(data.proposal?.candidate).toBe("User prefers teal");
     expect(data.parsing).toBe(false);
   });
 
@@ -1032,7 +1032,7 @@ describe("sendChat routing", () => {
     globalThis.fetch = (async () =>
       new Response(
         JSON.stringify({
-          candidate: "User prefers pink",
+          candidate: "User prefers teal",
           classification: "contradict",
           confidence: 0.8,
           targetFactId: "f-blue",
@@ -1041,7 +1041,7 @@ describe("sendChat routing", () => {
         { status: 200 },
       )) as unknown as typeof fetch;
     const data = makeMemoryBookData();
-    data.chat = "其实我喜欢粉色";
+    data.chat = "其实我喜欢青色";
     await data.sendChat();
     expect(data.proposal?.classification).toBe("contradict");
     expect(data.proposal?.targetFactId).toBe("f-blue");
@@ -1091,7 +1091,7 @@ describe("sendChat routing", () => {
       duringFlight = data.parsing; // observed mid-await
       return new Response(
         JSON.stringify({
-          candidate: "User prefers pink",
+          candidate: "User prefers teal",
           classification: "add",
           confidence: 0.9,
           targetFactId: null,
@@ -1134,19 +1134,19 @@ describe("confirm methods (mocked fetch)", () => {
     globalThis.fetch = (async (url: string, init: RequestInit) => {
       calledUrl = url;
       body = init.body as string;
-      return newFactResponse("f-new", "User prefers pink");
+      return newFactResponse("f-new", "User prefers teal");
     }) as unknown as typeof fetch;
     const data = makeMemoryBookData();
     data.proposal = {
       actionable: true,
-      detail: "User prefers pink",
+      detail: "User prefers teal",
       classification: "add",
-      candidate: "User prefers pink",
+      candidate: "User prefers teal",
       confidence: 0.9,
     };
     await data.confirmAdd();
     expect(calledUrl).toBe("/api/facts");
-    expect(JSON.parse(body)).toEqual({ text: "User prefers pink", confidence: 0.9 });
+    expect(JSON.parse(body)).toEqual({ text: "User prefers teal", confidence: 0.9 });
     expect(data.memories).toHaveLength(1);
     expect(data.memories[0].id).toBe("f-new");
     expect(data.memories[0].status).toBe("pending");
@@ -1158,19 +1158,19 @@ describe("confirm methods (mocked fetch)", () => {
     let body = "";
     globalThis.fetch = (async (_url: string, init: RequestInit) => {
       body = init.body as string;
-      return newFactResponse("f-new", "User prefers pink");
+      return newFactResponse("f-new", "User prefers teal");
     }) as unknown as typeof fetch;
     const data = makeMemoryBookData();
     data.proposal = {
       actionable: true,
-      detail: "User prefers pink",
+      detail: "User prefers teal",
       classification: "add",
-      candidate: "User prefers pink",
+      candidate: "User prefers teal",
       confidence: 0.9,
-      sourceText: "记得我喜欢粉红色",
+      sourceText: "记得我喜欢青色",
     };
     await data.confirmAdd();
-    expect(JSON.parse(body).save_reason).toBe("You added manually: 记得我喜欢粉红色");
+    expect(JSON.parse(body).save_reason).toBe("You added manually: 记得我喜欢青色");
   });
 
   it("confirmAdd keeps proposal + honest toast on failure", async () => {
@@ -1197,7 +1197,7 @@ describe("confirm methods (mocked fetch)", () => {
       return new Response(
         JSON.stringify({
           fact: {
-            id: "f-pink",
+            id: "f-teal",
             recall_count: 2,
             last_confirmed_at: "2026-06-26T09:00:00.000Z",
           },
@@ -1208,10 +1208,10 @@ describe("confirm methods (mocked fetch)", () => {
     const data = makeMemoryBookData();
     data.memories = [
       {
-        id: "f-pink",
+        id: "f-teal",
         ts: "2026-06-25T10:00:00.000Z",
         type: "semantic",
-        text: "User prefers pink",
+        text: "User prefers teal",
         why: null,
         status: "pending",
       },
@@ -1220,11 +1220,11 @@ describe("confirm methods (mocked fetch)", () => {
       actionable: true,
       detail: "x",
       classification: "restate",
-      candidate: "User likes pink",
-      targetFactId: "f-pink",
+      candidate: "User likes teal",
+      targetFactId: "f-teal",
     };
-    await data.confirmRestate("f-pink");
-    expect(calledUrl).toBe("/api/facts/f-pink/restate");
+    await data.confirmRestate("f-teal");
+    expect(calledUrl).toBe("/api/facts/f-teal/restate");
     expect(data.memories[0].status).toBe("active");
     // live badge advances from the returned fact (no reload needed)
     expect(data.memories[0].recall_count).toBe(2);
@@ -1239,15 +1239,15 @@ describe("confirm methods (mocked fetch)", () => {
     const data = makeMemoryBookData();
     data.memories = [
       {
-        id: "f-pink",
+        id: "f-teal",
         ts: "2026-06-25T10:00:00.000Z",
         type: "semantic",
-        text: "User prefers pink",
+        text: "User prefers teal",
         why: null,
         status: "pending",
       },
     ];
-    await data.confirmRestate("f-pink");
+    await data.confirmRestate("f-teal");
     expect(data.memories[0].status).toBe("pending");
     expect(data.toast).toContain("Something went wrong");
   });
@@ -1256,7 +1256,7 @@ describe("confirm methods (mocked fetch)", () => {
     let body = "";
     globalThis.fetch = (async (_url: string, init: RequestInit) => {
       body = init.body as string;
-      return newFactResponse("f-new", "User prefers pink");
+      return newFactResponse("f-new", "User prefers teal");
     }) as unknown as typeof fetch;
     const data = makeMemoryBookData();
     data.memories = [
@@ -1273,14 +1273,14 @@ describe("confirm methods (mocked fetch)", () => {
       actionable: true,
       detail: "x",
       classification: "contradict",
-      candidate: "User prefers pink",
+      candidate: "User prefers teal",
       confidence: 0.85,
       targetFactId: "f-blue",
       contradictedText: "User prefers blue",
     };
     await data.confirmReplace("f-blue");
     expect(JSON.parse(body)).toEqual({
-      text: "User prefers pink",
+      text: "User prefers teal",
       confidence: 0.85,
       supersedes: "f-blue",
     });
@@ -1293,14 +1293,14 @@ describe("confirm methods (mocked fetch)", () => {
     let body = "";
     globalThis.fetch = (async (_url: string, init: RequestInit) => {
       body = init.body as string;
-      return newFactResponse("f-new", "User prefers pink");
+      return newFactResponse("f-new", "User prefers teal");
     }) as unknown as typeof fetch;
     const data = makeMemoryBookData();
     data.proposal = {
       actionable: true,
       detail: "x",
       classification: "contradict",
-      candidate: "User prefers pink",
+      candidate: "User prefers teal",
       confidence: 0.85,
       targetFactId: "f-blue",
       contradictedText: "User prefers blue",
@@ -1308,7 +1308,7 @@ describe("confirm methods (mocked fetch)", () => {
     await data.keepBoth();
     const parsed = JSON.parse(body) as Record<string, unknown>;
     expect(parsed.supersedes).toBeUndefined();
-    expect(parsed.text).toBe("User prefers pink");
+    expect(parsed.text).toBe("User prefers teal");
     expect(data.memories.some((m) => m.id === "f-new")).toBe(true);
     expect(data.proposal).toBeNull();
     expect(data.toast).toContain("Keeping both");
@@ -1322,7 +1322,7 @@ describe("confirm methods (mocked fetch)", () => {
       actionable: true,
       detail: "x",
       classification: "contradict",
-      candidate: "User prefers pink",
+      candidate: "User prefers teal",
       targetFactId: "f-blue",
     };
     await data.confirmReplace("f-blue");
@@ -1932,7 +1932,7 @@ describe("setFactKind / cycleFactKind (re-tag)", () => {
     id: "f-1",
     ts: "2026-06-25T10:00:00.000Z",
     type: "semantic",
-    text: "prefers Chinese",
+    text: "prefers concise answers",
     why: null,
     status: "active",
     kind: "style",
@@ -1977,23 +1977,23 @@ describe("setFactKind / cycleFactKind (re-tag)", () => {
 // ---------------------------------------------------------------------------
 
 describe("island reuses groupByEntity for the by-entity view", () => {
-  const daniel1: MemoryEventClient = {
+  const alex1: MemoryEventClient = {
     id: "f1",
     ts: "2026-06-01T10:00:00.000Z",
     type: "semantic",
-    text: "boyfriend Daniel",
+    text: "partner Alex",
     why: null,
     status: "active",
-    entities: [{ name: "Daniel" }],
+    entities: [{ name: "Alex" }],
   };
-  const daniel2: MemoryEventClient = {
+  const alex2: MemoryEventClient = {
     id: "f2",
     ts: "2026-06-02T10:00:00.000Z",
     type: "semantic",
-    text: "Daniel likes hiking",
+    text: "Alex likes hiking",
     why: null,
     status: "active",
-    entities: [{ name: "daniel" }],
+    entities: [{ name: "alex" }],
   };
   const untagged: MemoryEventClient = {
     id: "f3",
@@ -2005,33 +2005,33 @@ describe("island reuses groupByEntity for the by-entity view", () => {
   };
 
   it("groupMemoriesByEntity matches the keys/labels groupByEntity itself produces", () => {
-    const facts = [daniel1, daniel2, untagged];
+    const facts = [alex1, alex2, untagged];
     const raw = groupByEntity(facts);
     const decorated = groupMemoriesByEntity(facts);
     expect(decorated.map((g) => g.key)).toEqual(raw.map((g) => g.key));
     expect(decorated.map((g) => g.label)).toEqual(raw.map((g) => g.label));
-    expect(decorated[0]?.label).toBe("Daniel");
+    expect(decorated[0]?.label).toBe("Alex");
     expect(decorated[decorated.length - 1]?.label).toBe("未分类");
   });
 
   it("decorates each grouped fact for MemoryAlpineRow (carries event.id/time)", () => {
-    const groups = groupMemoriesByEntity([daniel1, daniel2]);
-    const danielGroup = groups.find((g) => g.key === "daniel");
-    expect(danielGroup?.items.map((i) => i.id)).toEqual(["f1", "f2"]);
-    expect(danielGroup?.items[0]?.time).toBeDefined();
+    const groups = groupMemoriesByEntity([alex1, alex2]);
+    const alexGroup = groups.find((g) => g.key === "alex");
+    expect(alexGroup?.items.map((i) => i.id)).toEqual(["f1", "f2"]);
+    expect(alexGroup?.items[0]?.time).toBeDefined();
   });
 
   it("makeMemoryBookData().byEntityGroups() delegates to the shared helper", () => {
     const data = makeMemoryBookData();
-    data.memories = [daniel1, daniel2, untagged];
+    data.memories = [alex1, alex2, untagged];
     const groups = data.byEntityGroups();
-    expect(groups.find((g) => g.key === "daniel")?.items).toHaveLength(2);
+    expect(groups.find((g) => g.key === "alex")?.items).toHaveLength(2);
     expect(groups[groups.length - 1]).toMatchObject({ key: "", label: "未分类" });
   });
 
   it("byEntityGroups respects the active filter set (filteredMemories), like groups()", () => {
     const data = makeMemoryBookData();
-    data.memories = [daniel1, daniel2, untagged];
+    data.memories = [alex1, alex2, untagged];
     data.filterStatus = "retired"; // none of the fixtures are retired
     expect(data.byEntityGroups()).toHaveLength(0);
   });

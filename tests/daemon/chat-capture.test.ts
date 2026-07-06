@@ -1,4 +1,4 @@
-// Memory campaign (real-time chat capture) — the chat route detects an explicit
+// memory work (real-time chat capture) — the chat route detects an explicit
 // "记住 X" remember-intent on the user turn, persists it via writeMemory (same
 // store the facts route writes to), and injects a [SAVED]/[ALREADY KNOWN]/
 // [CAPTURE INCOMPLETE] marker + an always-on capture-honesty framing into the
@@ -202,7 +202,7 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(home, { recursive: true, force: true }));
 
-describe("Memory campaign — real-time chat capture", () => {
+describe("memory work — real-time chat capture", () => {
   test("'记住 X' writes an active stream:chat fact + injects [SAVED:", async () => {
     const { app, writes } = mount(); // empty initial store
     const res = await post(app, { message: "记住 我用 pnpm 不用 npm" });
@@ -302,7 +302,7 @@ describe("Memory campaign — real-time chat capture", () => {
   });
 });
 
-describe("Memory campaign — conversational auto-capture", () => {
+describe("memory work — conversational auto-capture", () => {
   test("plain fact statement auto-extracts → active stream:chat fact + [SAVED:", async () => {
     const { app, writes, extractCalls } = mount({
       extractFacts: async () => [{ text: "喜欢奶油海绵蛋糕", entities: [] }],
@@ -478,15 +478,15 @@ describe("Memory campaign — conversational auto-capture", () => {
   // writeMemory round-trip, not just the in-memory core transition.
   test("auto-capture persists entities from extraction into writeMemory", async () => {
     const { app, writes, extractCalls } = mount({
-      extractFacts: async () => [{ text: "likes cats", entities: [{ name: "cats" }] }],
+      extractFacts: async () => [{ text: "likes dogs", entities: [{ name: "dogs" }] }],
     });
-    const res = await post(app, { message: "我喜欢猫" });
+    const res = await post(app, { message: "我喜欢狗" });
     await drain(res);
 
-    expect(extractCalls).toEqual(["我喜欢猫"]);
+    expect(extractCalls).toEqual(["我喜欢狗"]);
     expect(writes).toHaveLength(1);
-    const persisted = writes[0].facts.find((f) => f.text === "likes cats");
-    expect(persisted?.entities).toEqual([{ name: "cats" }]);
+    const persisted = writes[0].facts.find((f) => f.text === "likes dogs");
+    expect(persisted?.entities).toEqual([{ name: "dogs" }]);
   });
 });
 
@@ -672,7 +672,7 @@ describe("Chat-memory correction — runner wiring", () => {
     expect(sp).not.toContain("[PROPOSED-REPLACE:");
   });
 
-  test("numeric guard also covers RESTATE (stand-in review #2) — numeric-diff restate becomes a coexisting add, NOT a stale reaffirm + false [ALREADY KNOWN]", async () => {
+  test("numeric guard also covers RESTATE — numeric-diff restate becomes a coexisting add, NOT a stale reaffirm + false [ALREADY KNOWN]", async () => {
     // A numeric update mislabeled "restate" must not reaffirm the STALE number
     // in place — that acks [ALREADY KNOWN] while the old count stays active
     // (a false confirmation, worse than a visible drop).
@@ -905,7 +905,7 @@ describe("Page-context chat", () => {
     const { app } = mount({
       assemblePageContext: async () => ({
         pageLabel: "Memory Book",
-        contextBundle: "- likes cats",
+        contextBundle: "- likes dogs",
         systemPrompt: "PAGE-SYS",
       }),
     });
@@ -915,7 +915,7 @@ describe("Page-context chat", () => {
     expect(captured).toHaveLength(1);
     const sp = captured[0].systemPrompt ?? "";
     expect(sp).toContain("PAGE-SYS");
-    expect(sp).toContain("likes cats");
+    expect(sp).toContain("likes dogs");
   });
 
   test("node anchor wins over page (page ignored when a node resolved)", async () => {

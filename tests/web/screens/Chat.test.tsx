@@ -87,7 +87,7 @@ describe("Chat screen SSR", () => {
     const html = render();
     expect(html).toContain("Home");
     expect(html).toContain("Memory");
-    expect(html).toContain("Repo Graph");
+    expect(html).toContain("Code Map");
   });
 
   test("Chat nav entry is gone (no /chat tab link in sidebar)", () => {

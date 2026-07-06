@@ -179,7 +179,7 @@ function CritiqueForClaudeBlock({ text }: { text: string }) {
           letterSpacing: "0.06em",
         }}
       >
-        critique for claude (final ask)
+        review for claude (final ask)
       </span>
       <div
         style={{
@@ -223,7 +223,7 @@ export function BlockE({ v2, c }: BlockEProps) {
       {critiqueText && !autoPromoted ? (
         <CritiqueForClaudeBlock text={critiqueText} />
       ) : !critiqueText ? (
-        <PlaceholderNote text="no actionable critique — narrative comment only" />
+        <PlaceholderNote text="no actionable review — narrative comment only" />
       ) : null}
     </AuditSection>
   );

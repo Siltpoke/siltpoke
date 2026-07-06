@@ -1,9 +1,9 @@
 /**
- * Wall-clock timeout 守卫 (命门).
+ * Wall-clock timeout guard (linchpin).
  *
  * `claude -p` has NO spawn timeout; the cost hard-cap fires only AFTER it
  * returns → a hung subprocess never trips it. The old approach leaned on
- * disconnect-auto-cancel as the runaway兜底; that listener was removed, so
+ * disconnect-auto-cancel as the runaway fallback; that listener was removed, so
  * this wall-clock kill becomes the ONLY bound on an abandoned run. A timed-out
  * run is SIGKILL'd (real pid ESRCH) and recorded `crashed` / cost null —
  * machine-timeout ≠ user-cancel.
@@ -46,10 +46,10 @@ function isAliveReal(pid: number): boolean {
   }
 }
 
-describe("timeoutKill: SIGKILL + crashed + cost null (命门)", () => {
+describe("timeoutKill: SIGKILL + crashed + cost null (linchpin)", () => {
   test("a run outliving the ceiling is force-killed (real pid ESRCH) + recorded crashed/cost-null", async () => {
     const r = new TaskRegistry(home(), { idGen: seqIds, killEscalationMs: 50 });
-    // a SIGTERM-trapping child → forces the SIGKILL escalation, proving a真杀
+    // a SIGTERM-trapping child → forces the SIGKILL escalation, proving an actual kill
     // (not just controller.abort()). Same oracle as above (kill(pid,0) → ESRCH).
     const proc = Bun.spawn(["bash", "-c", "trap '' TERM; sleep 60"], {
       stdout: "ignore",
@@ -158,7 +158,7 @@ describe("SILTPOKE_ARCH_TIMEOUT_MS resolution (handler-layer config)", () => {
   });
 });
 
-// ── Handler wiring: the generate route arms the守卫 from the env ──────────────
+// ── Handler wiring: the generate route arms the guard from the env ──────────────
 const HASH = "deadbeef0c01";
 function seedHome(): string {
   const h = home();
@@ -188,7 +188,7 @@ const hangingProvider: BrainProvider = ({ signal }) =>
     signal?.addEventListener("abort", () => reject(new Error("aborted")));
   });
 
-describe("generate route arms the守卫 from SILTPOKE_ARCH_TIMEOUT_MS", () => {
+describe("generate route arms the guard from SILTPOKE_ARCH_TIMEOUT_MS", () => {
   test("a hung generate past the env ceiling is recorded crashed / cost-null (not done, not a fabricated cost)", async () => {
     const prev = process.env.SILTPOKE_ARCH_TIMEOUT_MS;
     process.env.SILTPOKE_ARCH_TIMEOUT_MS = "30"; // 30ms ceiling for a deterministic test
@@ -201,8 +201,8 @@ describe("generate route arms the守卫 from SILTPOKE_ARCH_TIMEOUT_MS", () => {
         headers: { "content-type": "application/json", "X-Siltpoke-Secret": "s" },
         body: JSON.stringify({ repo: HASH }),
       });
-      // Detached: returns {taskId} 202 promptly; the守卫 fires on the
-      // background run → the RECORD (tasks.json) is the命门, polled after.
+      // Detached: returns {taskId} 202 promptly; the guard fires on the
+      // background run → the RECORD (tasks.json) is the linchpin, polled after.
       expect(res.status).toBe(202);
       const readStatus = () => (JSON.parse(readFileSync(join(h, "tasks.json"), "utf8")) as Array<{ status: string }>)[0]?.status;
       const start = Date.now();

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * Real-time chat capture orchestration (Memory campaign).
+ * Real-time chat capture orchestration (memory work).
  *
  * Lifted out of `src/daemon/routes/chat.ts` so the route stays under the 800-LOC
  * cap and the explicit ("记住 X") + conversational (plain fact statement) capture

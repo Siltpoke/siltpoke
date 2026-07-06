@@ -4,6 +4,6 @@ import type { Hono } from "hono";
 
 export function mountVersionRoute(app: Hono): void {
   app.get("/api/version", (c) =>
-    c.json({ daemonVersion: "0.1.0", protocol: 1 }),
+    c.json({ daemonVersion: "0.1.1", protocol: 1 }),
   );
 }

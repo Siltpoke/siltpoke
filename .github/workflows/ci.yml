@@ -7,7 +7,7 @@ name: ci
 # workflow file stays in-repo as the canonical CI spec; restoring auto-CI is
 # a small edit to the `on:` block below.
 #
-# **To restore auto-CI once billing is resolved:**
+# **To restore auto-CI:**
 #   1. Replace `on: workflow_dispatch:` below with:
 #        on:
 #          pull_request:

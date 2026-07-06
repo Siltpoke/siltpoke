@@ -1,4 +1,4 @@
-/** siltpoke-generate no-name-matching guard (认名字病 discipline, same
+/** siltpoke-generate no-name-matching guard (name-matching pitfall discipline, same
  * family as the zero-framework-name bucketing guard).
  *
  * Authored detection must be "file present", never "repo named X". This guard

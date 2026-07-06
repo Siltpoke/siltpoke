@@ -27,7 +27,7 @@ export function runUnmute(opts: UnmuteOptions = {}): UnmuteResult {
 
 export function formatUnmuteHuman(result: UnmuteResult): string {
   if (result.was_muted) {
-    return "Siltpoke unmuted. Critic will fire again on next Stop hook.\n";
+    return "Siltpoke unmuted. Code Review will fire again on next Stop hook.\n";
   }
   return "Siltpoke wasn't muted. No change.\n";
 }

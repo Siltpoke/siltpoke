@@ -205,7 +205,7 @@ export function assembleArchContext(
   );
   const kept = new Set<string>();
   const blockByPath = new Map<string, string>();
-  // Standing reserve (reviewer-M): the shard capNote is a short fixed
+  // Standing reserve: the shard capNote is a short fixed
   // sentence (counts, no path list) — reserve its worst case up front so kept
   // content ≤ effectiveBudget ∧ capNote ≤ reserve ⇒ bundle ≤ budget.
   const worstCapNoteTokens = estTokensOf(

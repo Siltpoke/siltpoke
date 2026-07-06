@@ -178,7 +178,7 @@ describe("captureChatFactCore", () => {
 
   // Empty / whitespace-only text is a contract violation (caller guards this);
   // the core throws rather than persisting a zero-length fact.
-  test("空 payload → throw (调用方必须先守卫)", () => {
+  test("空 payload → throw (caller must guard first)", () => {
     const memory = makeMemory([]);
     expect(() => captureChatFactCore(memory, "", now)).toThrow(/empty text/);
     expect(() => captureChatFactCore(memory, "   ", now)).toThrow(/empty text/);
@@ -187,9 +187,9 @@ describe("captureChatFactCore", () => {
   // Entities (entity model) thread onto the new fact when given.
   test("captureChatFactCore stores entities on the new fact", () => {
     const memory = makeMemory([]);
-    const result = captureChatFactCore(memory, "likes cats", now, null, [{ name: "cats" }]);
+    const result = captureChatFactCore(memory, "likes dogs", now, null, [{ name: "dogs" }]);
     if (!result.ok) throw new Error("expected ok");
-    expect(result.fact.entities).toEqual([{ name: "cats" }]);
+    expect(result.fact.entities).toEqual([{ name: "dogs" }]);
   });
 
   // No entities arg (legacy callers) → field stays absent, not `[]`
@@ -270,13 +270,13 @@ describe("captureChatFactsCore (batch)", () => {
     const memory = makeMemory([existing]);
     const { memory: out, saved } = captureChatFactsCore(
       memory,
-      [{ text: "pnpm" }, { text: "我喜欢猫" }],
+      [{ text: "pnpm" }, { text: "我喜欢狗" }],
       now,
     );
 
     expect(saved).toHaveLength(2);
     expect(saved[0]!.deduped).toBe(true); // existing "pnpm" reaffirmed
-    expect(saved[1]!.deduped).toBe(false); // "我喜欢猫" is new
+    expect(saved[1]!.deduped).toBe(false); // "我喜欢狗" is new
     expect(out.facts).toHaveLength(2); // 1 existing + 1 new
   });
 
@@ -286,11 +286,11 @@ describe("captureChatFactsCore (batch)", () => {
     const memory = makeMemory([]);
     const { memory: out } = captureChatFactsCore(
       memory,
-      [{ text: "boyfriend Daniel", entities: [{ name: "Daniel" }] }, { text: "no ent" }],
+      [{ text: "partner Alex", entities: [{ name: "Alex" }] }, { text: "no ent" }],
       now,
     );
-    const daniel = out.facts.find((f) => f.text === "boyfriend Daniel");
-    expect(daniel?.entities).toEqual([{ name: "Daniel" }]);
+    const alex = out.facts.find((f) => f.text === "partner Alex");
+    expect(alex?.entities).toEqual([{ name: "Alex" }]);
     expect(out.facts.find((f) => f.text === "no ent")?.entities).toBeUndefined();
   });
 });

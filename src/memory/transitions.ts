@@ -518,7 +518,7 @@ export function setFactKindCore(
 }
 
 /**
- * Real-time chat capture (Memory campaign) — persist an explicit "记住 X" fact
+ * Real-time chat capture (memory work) — persist an explicit "记住 X" fact
  * told to the pet in chat. Mirrors the `/remember` active-trust path (pushFact)
  * but lands here in the pure core for consistency with the other transitions.
  *

@@ -121,14 +121,14 @@ describe("extractDurableFacts", () => {
 describe("extractDurableFacts entities", () => {
   test("returns facts with their entities from the Haiku JSON", async () => {
     const callBrainRaw = async () => ({
-      output: { facts: [{ text: "likes cats", entities: [{ name: "cats", type: "thing" }] }] },
+      output: { facts: [{ text: "likes dogs", entities: [{ name: "dogs", type: "thing" }] }] },
       usage: { ...USAGE },
     });
-    const out = await extractDurableFacts("I love my cats", DEPS, undefined, {
+    const out = await extractDurableFacts("I love my dogs", DEPS, undefined, {
       callBrainRaw: callBrainRaw as unknown as typeof import("../../src/brain/brain").callBrainRaw,
       ledger: (async () => {}) as typeof ledgerBrainCall,
     });
-    expect(out).toEqual([{ text: "likes cats", entities: [{ name: "cats", type: "thing" }] }]);
+    expect(out).toEqual([{ text: "likes dogs", entities: [{ name: "dogs", type: "thing" }] }]);
   });
 
   test("defaults missing entities to [] and drops blank text", async () => {

@@ -159,7 +159,7 @@ export function ModelsPanel({ modelsInfo }: ModelsPanelProps) {
       <ModelRow
         name={modelsInfo.primary.name}
         provider={modelsInfo.primary.provider}
-        statusLabel="primary critic"
+        statusLabel="primary reviewer"
         active={true}
       />
 

@@ -270,7 +270,7 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
   let activeIndexHash: string | null = null;
   let activeAbort: AbortController | null = null;
 
-  // Long-task registry (止血): generate runs a 1–60 min `claude -p`. Before,
+  // Long-task registry (stopgap): generate runs a 1–60 min `claude -p`. Before,
   // navigate-away orphaned the subprocess (invisible burn). Now each generate is
   // registered (visible in ~/.siltpoke/tasks.json) + cancellable; the request's
   // own disconnect signal cancels it (navigate away → SIGTERM the subprocess),
@@ -487,12 +487,12 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
     const active = await resolveActiveRepo(body.repo, deps);
     if (!active) return c.json({ success: false, error: "repo not indexed" }, 404);
 
-    // 止血: register the run (visible + lock + cancellable) BEFORE spawning.
+    // Stopgap: register the run (visible + lock + cancellable) BEFORE spawning.
     // One generate at a time per daemon (mirrors the /index lock); a 2nd → 409.
     const controller = new AbortController();
-    // Wall-clock 守卫: a run that outlives the ceiling is SIGKILL'd +
+    // Wall-clock guard: a run that outlives the ceiling is SIGKILL'd +
     // recorded crashed/cost-null. The disconnect-auto-cancel used to be today's
-    // runaway 兜底; now that it's gone, this becomes the only bound on an
+    // runaway fallback; now that it's gone, this becomes the only bound on an
     // abandoned run.
     const task = taskRegistry.register(
       "arch_generate",
@@ -515,7 +515,7 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
     }
     // Detached flip: NO `c.req.raw.signal` disconnect listener — navigate
     // away no longer cancels. The run survives client disconnect, backstopped by
-    // the wall-clock 守卫 (the sole runaway bound now) + reconnect; the
+    // the wall-clock guard (the sole runaway bound now) + reconnect; the
     // model lands in the result-cache (readArchModel) and the client fetches it
     // on reconnect. The LLM pass runs as a FLOATING promise with its OWN
     // try/catch — a rejection must never become an unhandledRejection that
@@ -618,7 +618,7 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
                 : undefined;
         taskRegistry.finish(task.id, { costUsd: finalCost, errorMsg: finishErrorMsg });
         // Record the run in the cost ledger so a paid generate is visible
-        // to `rtk gain`. Record on ANY outcome that spent money THIS run; EXCLUDE
+        // to external token accounting. Record on ANY outcome that spent money THIS run; EXCLUDE
         // a `generated` cache hit ($0 re-serve → recording it fabricates spend).
         const spentUsage =
           outcome.kind === "generated"
@@ -699,7 +699,7 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
     return c.json({ success: true, taskId: task.id, status: "running" }, 202);
   });
 
-  // ── POST /api/repo-graph/arch/cancel (止血) ──────────────────────────────
+  // ── POST /api/repo-graph/arch/cancel (stopgap) ──────────────────────────
   // Manually cancel the running generate → AbortController.abort() (SIGTERM the
   // `claude -p` subprocess), escalating to SIGKILL if still alive after 5s. The
   // registry records `cancelled`; the subprocess actually dying is the acceptance bar.
@@ -1200,7 +1200,7 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
     // /trace/purpose) is deliberately NOT registered — it's a fast grounding
     // call that must not be one-at-a-timed behind a long generate.
     const controller = new AbortController();
-    // Wall-clock 守卫 (same ceiling as generate; explain is Haiku/seconds so
+    // Wall-clock guard (same ceiling as generate; explain is Haiku/seconds so
     // never approaches it — it's a runaway safety net, not an SLA).
     const task = taskRegistry.register(
       "explain",
@@ -1233,7 +1233,7 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
         // Honest cost. `explained` (Brain ran) and `cost_cap_exceeded` both
         // spent → record the real number. The ledger event fires ONLY on a run
         // that spent money THIS call: a `result.fromCache` explained re-served a
-        // prior result for $0 (the命门 — never fabricate fresh spend).
+        // prior result for $0 (the linchpin — never fabricate fresh spend).
         const finalCost =
           outcome.kind === "explained"
             ? outcome.usage.total_cost_usd ?? null

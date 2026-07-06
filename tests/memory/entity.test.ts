@@ -15,31 +15,31 @@ function fact(id: string, text: string, entities?: { name: string; type?: null }
 
 describe("entityKey", () => {
   test("folds case and collapses whitespace", () => {
-    expect(entityKey("Daniel")).toBe("daniel");
-    expect(entityKey("  My   Cat ")).toBe("my cat");
+    expect(entityKey("Alex")).toBe("alex");
+    expect(entityKey("  My   Dog ")).toBe("my dog");
   });
 });
 
 describe("groupByEntity", () => {
   test("groups facts that share an entity key", () => {
     const facts = [
-      fact("f1", "boyfriend Daniel", [{ name: "Daniel" }]),
-      fact("f2", "Daniel likes hiking", [{ name: "daniel" }]),
+      fact("f1", "partner Alex", [{ name: "Alex" }]),
+      fact("f2", "Alex likes hiking", [{ name: "alex" }]),
     ];
     const groups = groupByEntity(facts);
-    const daniel = groups.find((g) => g.key === "daniel");
-    expect(daniel?.facts.map((f) => f.id)).toEqual(["f1", "f2"]);
+    const alex = groups.find((g) => g.key === "alex");
+    expect(alex?.facts.map((f) => f.id)).toEqual(["f1", "f2"]);
   });
 
   test("a multi-entity fact appears under each entity", () => {
-    const facts = [fact("f1", "Daniel likes cats", [{ name: "Daniel" }, { name: "cats" }])];
+    const facts = [fact("f1", "Alex likes dogs", [{ name: "Alex" }, { name: "dogs" }])];
     const groups = groupByEntity(facts);
-    expect(groups.find((g) => g.key === "daniel")?.facts).toHaveLength(1);
-    expect(groups.find((g) => g.key === "cats")?.facts).toHaveLength(1);
+    expect(groups.find((g) => g.key === "alex")?.facts).toHaveLength(1);
+    expect(groups.find((g) => g.key === "dogs")?.facts).toHaveLength(1);
   });
 
   test("untagged facts land in a trailing 未分类 group", () => {
-    const facts = [fact("f1", "likes pink", [{ name: "pink" }]), fact("f2", "no entity")];
+    const facts = [fact("f1", "likes teal", [{ name: "teal" }]), fact("f2", "no entity")];
     const groups = groupByEntity(facts);
     expect(groups[groups.length - 1]).toMatchObject({ key: "", label: "未分类" });
     expect(groups[groups.length - 1]!.facts.map((f) => f.id)).toEqual(["f2"]);

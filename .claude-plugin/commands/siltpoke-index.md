@@ -1,5 +1,5 @@
 ---
-description: Build / refresh siltpoke's structural repo-graph for this project (deterministic, no LLM).
+description: Build / refresh siltpoke's structural code-map for this project (deterministic, no LLM).
 argument-hint: [--force]
 ---
 

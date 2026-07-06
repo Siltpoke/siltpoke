@@ -239,7 +239,7 @@ describe("runChatCorrectionEval replay mode", () => {
     JSON.stringify({
       id,
       message,
-      candidates: [{ id: "f-01", text: "用户是狗派" }],
+      candidates: [{ id: "f-01", text: "用户是咸党" }],
       expected: { facts: [{ classification: "contradict", target_id: "f-01" }], should_write: "replace" },
       category: "correction-explicit",
       lang: "zh",
@@ -250,7 +250,7 @@ describe("runChatCorrectionEval replay mode", () => {
       output: {
         facts: [
           {
-            text: "用户是猫派",
+            text: "用户是甜党",
             entities: [],
             classification: "contradict",
             target_fact_id: "f-01",
@@ -265,7 +265,7 @@ describe("runChatCorrectionEval replay mode", () => {
     const dir = await mkdtemp(join(tmpdir(), "chat-corr-eval-"));
     const casesPath = join(dir, "cases.jsonl");
     const cachePath = join(dir, "responses.jsonl");
-    await writeFile(casesPath, `${caseLine("c1", "不对，我是猫派")}\n${caseLine("c2", "我现在是猫派了")}\n`);
+    await writeFile(casesPath, `${caseLine("c1", "不对，我是甜党")}\n${caseLine("c2", "我现在是甜党了")}\n`);
     await writeFile(cachePath, `${responseLine("c1")}\n${responseLine("c2")}\n`);
 
     const run = await runChatCorrectionEval({
@@ -293,7 +293,7 @@ describe("runChatCorrectionEval replay mode", () => {
     const dir = await mkdtemp(join(tmpdir(), "chat-corr-eval-"));
     const casesPath = join(dir, "cases.jsonl");
     const cachePath = join(dir, "responses.jsonl");
-    await writeFile(casesPath, `${caseLine("c1", "不对，我是猫派")}\n${caseLine("c2", "我现在是猫派了")}\n`);
+    await writeFile(casesPath, `${caseLine("c1", "不对，我是甜党")}\n${caseLine("c2", "我现在是甜党了")}\n`);
     await writeFile(cachePath, `${responseLine("c1")}\n`); // c2 missing
 
     await expect(

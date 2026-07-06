@@ -1194,20 +1194,20 @@ is mirrored by the <code>/siltpoke-help</code> slash command — keep them in sy
 <hr>
 <h2>What Siltpoke does</h2>
 <p>A separate <code>claude -p</code> subprocess reads over Claude&#39;s shoulder after
-every turn, finds bugs Claude missed, and writes a critique to disk.
-<strong>Critiques never auto-inject into your chat</strong> — you pull them in
+every turn, finds bugs Claude missed, and writes a review to disk.
+<strong>Reviews never auto-inject into your chat</strong> — you pull them in
 explicitly when you want them.</p>
 <hr>
 <h2>Daily loop (the 3 commands you&#39;ll actually use)</h2>
-<pre><code>/siltpoke-inbox            List pending critiques (read-only)
-/siltpoke-forward &lt;id&gt;     Pull a specific critique into the chat (+20 XP if fresh)
+<pre><code>/siltpoke-inbox            List pending reviews (read-only)
+/siltpoke-forward &lt;id&gt;     Pull a specific review into the chat (+10 XP if fresh)
 /siltpoke-dismiss &lt;id&gt; &lt;reason&gt;   Reject + Siltpoke learns from why it was wrong
 </code></pre>
 <p>That&#39;s the whole loop:</p>
 <ol>
-<li>Claude finishes a turn → Siltpoke runs in background → critique lands in inbox.</li>
+<li>Claude finishes a turn → Siltpoke runs in background → review lands in inbox.</li>
 <li>You run <code>/siltpoke-inbox</code> whenever you want.</li>
-<li>For each pending critique:<ul>
+<li>For each pending review:<ul>
 <li><strong>Useful</strong> → <code>/siltpoke-forward &lt;id&gt;</code> (default — XP awarded)</li>
 <li><strong>Wrong</strong> → <code>/siltpoke-dismiss &lt;id&gt; &lt;reason&gt;</code> (triggers Reflexion → writes a learned rule → Siltpoke won&#39;t make the same wrong call again)</li>
 <li><strong>Neutral / already-seen</strong> → <code>/siltpoke-ack &lt;id&gt;</code> (no XP, no learning)</li>
@@ -1229,19 +1229,19 @@ explicitly when you want them.</p>
 </tr>
 <tr>
 <td><code>/siltpoke-inbox</code></td>
-<td>List pending critiques (read-only)</td>
+<td>List pending reviews (read-only)</td>
 </tr>
 <tr>
 <td><code>/siltpoke-last</code></td>
-<td>Surface the most recent critique into chat</td>
+<td>Surface the most recent review into chat</td>
 </tr>
 <tr>
 <td><code>/siltpoke-forward &lt;id&gt;</code></td>
-<td>Pull a specific critique (+20 XP if fresh)</td>
+<td>Pull a specific review (+10 XP if fresh)</td>
 </tr>
 <tr>
 <td><code>/siltpoke-forward-all</code></td>
-<td>Dump every pending critique at once</td>
+<td>Dump every pending review at once</td>
 </tr>
 <tr>
 <td><code>/siltpoke-ack &lt;id&gt;</code></td>
@@ -1265,21 +1265,23 @@ explicitly when you want them.</p>
 </tr>
 <tr>
 <td><code>/siltpoke-pet</code></td>
-<td>+5 XP (capped at 3 pets/day = 15 XP/day)</td>
+<td>+5 XP (shared 100 action-XP/day cap)</td>
 </tr>
 <tr>
 <td><code>/siltpoke-help</code></td>
 <td>This manual</td>
 </tr>
 </tbody></table>
-<h3>Dashboard report (browser)</h3>
-<pre><code class="language-bash">bun run report          # writes ~/.siltpoke/report.html
-open ~/.siltpoke/report.html  # macOS — opens in your default browser
+<h3>Dashboard (browser)</h3>
+<pre><code class="language-bash">bun run report          # ensures the daemon is up, opens http://127.0.0.1:9876/
 </code></pre>
-<p>Self-contained static HTML — no server, no JS framework. Refresh by
-re-running the command. Sections: pet header, today&#39;s metrics, 7-day
-bar chart, per-project table, pending-critique inbox grouped by
-project, last 30 brain calls, recent verdicts.</p>
+<p>The dashboard is served live by the daemon (<code>siltpoked</code>), not written to a
+static file. <code>bun run report</code> lazy-spawns the daemon if it isn&#39;t already
+running, then opens <code>http://127.0.0.1:9876/</code> in your default browser; pass
+<code>--no-open</code> to skip launching the browser. Refresh by reloading the page.
+Sections: pet header, today&#39;s metrics, 7-day bar chart, per-project table,
+pending-review inbox grouped by project, last 30 brain calls, recent
+verdicts.</p>
 <hr>
 <h2>Trigger modes</h2>
 <p>Controls <em>when</em> Siltpoke actually runs Brain:</p>
@@ -1332,11 +1334,12 @@ calls 2+ cost ~$0.001).</p>
 <h2>Pet / progression system</h2>
 <p>XP sources:</p>
 <ul>
-<li><code>/siltpoke-forward &lt;id&gt;</code> on a fresh critique → <strong>+20 XP</strong></li>
-<li><code>/siltpoke-pet</code> → <strong>+5 XP</strong> (max 3 pets/day)</li>
+<li><code>/siltpoke-forward &lt;id&gt;</code> on a fresh review → <strong>+10 XP</strong></li>
+<li><code>/siltpoke-pet</code> → <strong>+5 XP</strong> (shared 100 action-XP/day cap with dashboard actions)</li>
 <li>Brain&#39;s own <code>xp_earned_events</code> for sustained engagement</li>
 </ul>
-<p><code>xp_to_next_level = 100 × level</code>. Unlocks:</p>
+<p><code>xp_to_next_level</code> scales in bands: <code>100 × level</code> (L1–5), <code>250 × level</code>
+(L6–10), <code>500 × level</code> (L11–20), <code>1000 × level</code> (L21+). Unlocks:</p>
 <table>
 <thead>
 <tr>
@@ -1361,7 +1364,7 @@ calls 2+ cost ~$0.001).</p>
 <td>Title <code>Sentinel</code></td>
 </tr>
 </tbody></table>
-<p>XP never decreases. Wrong critiques are handled via dismiss/Reflexion,
+<p>XP never decreases. Wrong reviews are handled via dismiss/Reflexion,
 not by punishing the pet.</p>
 <p>The statusline shows <code>L{level} {xp}/{xp_to_next_level}</code> under the
 pet&#39;s name so you can track progress at a glance. Hidden in
@@ -1414,15 +1417,15 @@ change, or pick a different generation method (<code>quiz</code> / <code>random<
 }
 </code></pre>
 <p>Supported: <code>en</code>, <code>zh-CN</code>, <code>zh-TW</code>, <code>ja</code>, <code>ko</code>, <code>es</code>, <code>fr</code>, <code>de</code>, plus
-anything <code>claude -p</code> can reply in. The bubble + critique are written
+anything <code>claude -p</code> can reply in. The bubble + review are written
 in this language; only code identifiers, file paths, and schema enum
 tokens stay English.</p>
 <p>If you see English leaking into the bubble for non-English settings,
 verify your <code>language</code> field is set and restart Claude Code.</p>
 <hr>
 <h2>Files Siltpoke owns</h2>
-<p>Critiques and learned-rule memory are <strong>per-project</strong> — Siltpoke
-shouldn&#39;t carry critique context from one codebase into another.
+<p>Reviews and learned-rule memory are <strong>per-project</strong> — Siltpoke
+shouldn&#39;t carry review context from one codebase into another.
 Pet progression, budget, and debugging logs stay global.</p>
 <pre><code>~/.siltpoke/                  # global (one pet, one budget)
   config.json                 # personality + budget + trigger
@@ -1455,7 +1458,7 @@ project&#39;s <code>.siltpoke/</code> — IDs are local to the project you&#39;r
 </ol>
 <p><code>/siltpoke-dismiss &lt;id&gt; &lt;reason&gt;</code> fires a Reflexion subprocess →
 extracts the lesson → appends a <code>learned_rule</code> to tier 1 → next call
-Siltpoke sees the rule → won&#39;t make the same wrong critique again.</p>
+Siltpoke sees the rule → won&#39;t make the same wrong review again.</p>
 <hr>
 <h2>Troubleshooting</h2>
 <table>
@@ -1752,8 +1755,6 @@ not (per the Big Five wiki, MBTI test-retest reliability is poor,
 </ol>
 <p>We use MBTI here only as a recognizable shorthand for users who know
 their type. The actual scoring is Big-Five-aligned.</p>
-<p>See <a href="./2026-05-14-personality-test-design.md"><code>2026-05-14-personality-test-design.md</code></a>
-for the full framework comparison + scoring math.</p>
 <hr>
 <h2>Sources for the MBTI types</h2>
 <ul>

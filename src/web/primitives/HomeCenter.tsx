@@ -5,8 +5,8 @@
  * Design D — HomeCenter primitive.
  *
  * Dotted-grid middle panel of the Home dashboard: status pills + creature
- * + greeting + chips. Toy view + ViewToggle dropped (TamagotchiToy still
- * exported separately for a future re-enable).
+ * + greeting + chips. Toy view is shelved: TamagotchiToy is still exported
+ * separately for a future re-enable, but its ViewToggle switcher was removed.
  *
  * Keeps <section id="hero"> for HTMX swap target back-compat.
  */
@@ -72,8 +72,8 @@ export function HomeCenter(props: HomeCenterProps) {
         minHeight: 480,
       }}
     >
-      {/* Top row — status pills only. Toy view + ViewToggle dropped (kept
-          the component for a future re-enable). */}
+      {/* Top row — status pills only. Toy view shelved (TamagotchiToy kept
+          for a future re-enable; its ViewToggle switcher was removed). */}
       <div
         class="home-center__top"
         style={{

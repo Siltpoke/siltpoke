@@ -254,7 +254,7 @@ export function BlockC({ v2, cwd }: BlockCProps) {
           ? `${v2.rubric_triggers.length} trigger${v2.rubric_triggers.length !== 1 ? "s" : ""}`
           : pipelineRan
             ? "all rules pass — 0 triggers"
-            : "rubric not run (legacy critique)"
+            : "rubric not run (legacy review)"
       }
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>

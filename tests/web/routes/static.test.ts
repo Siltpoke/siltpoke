@@ -1,6 +1,10 @@
 import { test, expect, describe } from "bun:test";
 import { Hono } from "hono";
-import { mountStaticRoutes } from "../../../src/web/routes/static";
+import { join } from "node:path";
+import {
+  mountStaticRoutes,
+  ensureClientBundle,
+} from "../../../src/web/routes/static";
 
 describe("static routes", () => {
   test("GET /static/tokens.css returns CSS with :root vars", async () => {
@@ -41,6 +45,45 @@ describe("static routes", () => {
       expect(body.length).toBeGreaterThan(0);
       expect(body).toContain("--color-cream");
     }
+  });
+
+  describe("ensureClientBundle (lazy build on daemon start)", () => {
+    test("builds the bundle when it is missing", async () => {
+      let buildCalls = 0;
+      const res = await ensureClientBundle({
+        bundlePath: join("/tmp", "no-such-siltpoke-bundle-xyz", "index.js"),
+        build: async () => {
+          buildCalls++;
+          return { success: true };
+        },
+      });
+      expect(buildCalls).toBe(1);
+      expect(res.built).toBe(true);
+    });
+
+    test("does NOT build when the bundle already exists", async () => {
+      let buildCalls = 0;
+      // This test file itself is a guaranteed-present path.
+      const res = await ensureClientBundle({
+        bundlePath: import.meta.path,
+        build: async () => {
+          buildCalls++;
+          return { success: true };
+        },
+      });
+      expect(buildCalls).toBe(0);
+      expect(res.built).toBe(false);
+    });
+
+    test("fails open: a build error does not throw (daemon must still start)", async () => {
+      const res = await ensureClientBundle({
+        bundlePath: join("/tmp", "no-such-siltpoke-bundle-xyz", "index.js"),
+        build: async () => {
+          throw new Error("build blew up");
+        },
+      });
+      expect(res.built).toBe(false);
+    });
   });
 
   test("GET /static/index.js returns 503 placeholder when bundle missing", async () => {

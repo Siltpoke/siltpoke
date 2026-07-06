@@ -150,7 +150,7 @@ export function formatCriticTelemetrySection(tel: CriticCounters | undefined): s
   if (tel === undefined || tel.totalCritiqueRuns === 0) return "";
 
   const lines: string[] = [];
-  lines.push("=== Critic ===");
+  lines.push("=== Code Review ===");
   lines.push(`total runs today: ${tel.totalCritiqueRuns}`);
 
   const abstentionRate =

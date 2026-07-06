@@ -63,7 +63,7 @@ describe("TraceListPanel", () => {
 
   test("renders critique column header", () => {
     const html = String(<TraceListPanel traces={[makeTrace()]} />);
-    expect(html).toContain("Critique");
+    expect(html).toContain("Review");
   });
 
   test("renders formatted token counts in combined Tokens column", () => {

@@ -172,7 +172,7 @@ async function writeTraceFor(critiqueId: string): Promise<void> {
   tracer.setKind(root, "chain");
   tracer.setAttribute(root, "siltpoke.demo", true);
   tracer.setInput(root, {
-    "[DEMO]": "This trace is synthetic data from `bun src/cli/demo-seed.ts` — not produced by a real critic fire. Inputs/outputs below illustrate the trace UI shape; they don't reflect actual scans of your repo.",
+    "[DEMO]": "This trace is synthetic data from `bun src/cli/demo-seed.ts` — not produced by a real code review fire. Inputs/outputs below illustrate the trace UI shape; they don't reflect actual scans of your repo.",
     source: "stop-hook",
     critique_id: critiqueId,
     changed_files: 5,

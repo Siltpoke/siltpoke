@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Jiaqi Duan
 /**
  * Long-task background registry — the substrate that stops invisible
- * subprocess burn (止血).
+ * subprocess burn (stopgap).
  *
  * generate/explain run a `claude -p` subprocess for 1–60 min. Before this, they
  * ran synchronously inside the HTTP handler → navigate away orphaned the
@@ -72,7 +72,7 @@ export interface KillableProc {
 interface LiveHandle {
   controller: AbortController;
   proc?: KillableProc;
-  /** Wall-clock 守卫: fires `timeoutKill` if the run outlives the ceiling.
+  /** Wall-clock guard: fires `timeoutKill` if the run outlives the ceiling.
    * Cleared by complete() on every terminal so a finished run never flips later. */
   timer?: ReturnType<typeof setTimeout>;
   /** This run's child was spawned DETACHED (it has a per-task result file).
@@ -94,7 +94,7 @@ export const ARCH_TIMEOUT_DEFAULT_MS = 900_000;
 /**
  * Resolve the wall-clock ceiling from `SILTPOKE_ARCH_TIMEOUT_MS` (one env covers
  * both arch_generate + explain — explain is Haiku/seconds, never approaches it).
- * Invalid / non-positive → the default (the守卫 is a runaway-killer, not a
+ * Invalid / non-positive → the default (the guard is a runaway-killer, not a
  * foot-gun; a bad env must not silently disable it). Giant-repo users raise it.
  */
 export function resolveArchTimeoutMs(env: Record<string, string | undefined> = process.env): number {
@@ -220,7 +220,7 @@ export class TaskRegistry {
     this.records.set(rec.id, rec);
     this.live.set(rec.id, live);
     this.activeId = rec.id;
-    // Wall-clock 守卫: with no timeoutMs the behavior is unchanged (CLI /
+    // Wall-clock guard: with no timeoutMs the behavior is unchanged (CLI /
     // no-ceiling callers). Cleared by complete() on every terminal.
     if (opts.timeoutMs !== undefined && opts.timeoutMs > 0) {
       const t = setTimeout(() => this.timeoutKill(rec.id), opts.timeoutMs);
@@ -237,7 +237,7 @@ export class TaskRegistry {
    * client disconnected during context assembly, before the Brain call), the
    * subprocess that just spawned would otherwise escape the SIGKILL escalation
    * (cancel() ran with no proc) — so kill it now. Closes the spawn-after-cancel
-   * 止血 hole.
+   * stopgap hole.
    */
   attachProc(id: string, proc: KillableProc): void {
     const lh = this.live.get(id);
@@ -395,7 +395,7 @@ export class TaskRegistry {
   }
 
   /**
-   * Wall-clock 守卫: a run that outlived the ceiling. Same abort+SIGKILL
+   * Wall-clock guard: a run that outlived the ceiling. Same abort+SIGKILL
    * escalation as cancel(), but the terminal is `crashed` — a machine-timeout is
    * NOT a user-cancel; two honest terminals (timeout-killed → crashed / cost
    * null, never a fabricated number). A no-op on an already-terminal id
@@ -548,7 +548,7 @@ export class TaskRegistry {
       }
     }
     if (patch.errorMsg !== undefined) rec.errorMsg = patch.errorMsg;
-    // Clear the wall-clock 守卫 so a finished/cancelled run can never fire
+    // Clear the wall-clock guard so a finished/cancelled run can never fire
     // a stale timeoutKill (which would be a no-op anyway, but don't leave it armed).
     const lh = this.live.get(id);
     if (lh?.timer) clearTimeout(lh.timer);

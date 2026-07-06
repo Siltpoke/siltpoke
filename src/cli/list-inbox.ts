@@ -88,14 +88,14 @@ export async function listInbox(opts: ListInboxOptions): Promise<string> {
 
   const historyPath = join(opts.basePath, "critiques", "history.jsonl");
   if (!existsSync(historyPath)) {
-    return "# Siltpoke inbox is empty — no pending critiques.\n";
+    return "# Siltpoke inbox is empty — no pending reviews.\n";
   }
 
   let raw: string;
   try {
     raw = await readFile(historyPath, "utf8");
   } catch {
-    return "# Siltpoke inbox is empty — no pending critiques.\n";
+    return "# Siltpoke inbox is empty — no pending reviews.\n";
   }
 
   const entries = raw
@@ -110,7 +110,7 @@ export async function listInbox(opts: ListInboxOptions): Promise<string> {
   }
 
   if (pending.length === 0) {
-    return "# Siltpoke inbox is empty — no pending critiques.\n";
+    return "# Siltpoke inbox is empty — no pending reviews.\n";
   }
 
   const rows = [

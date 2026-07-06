@@ -225,7 +225,7 @@ describe("confirmModal — focus behaviour", () => {
 
 describe("confirmModal — scroll-lock", () => {
   test("overflow hidden while open; exact pre-open value restored on close", async () => {
-    // Reviewer L2 fix: use a sentinel value so we prove the exact pre-open value
+    // Use a sentinel value so we prove the exact pre-open value
     // is restored, not just that it is no longer "hidden".
     const confirmModal = await importModal();
 
@@ -275,7 +275,7 @@ describe("confirmModal — content safety (XSS)", () => {
 
 describe("confirmModal — concurrent calls", () => {
   test("two simultaneous modals are independent: closing first leaves second alive", async () => {
-    // Reviewer L3: this primitive is declared the template for future modals;
+    // This primitive is declared the template for future modals;
     // concurrent-call semantics must be explicit. Each call is self-contained
     // (distinct overlay elements, distinct `resolved` closures, distinct
     // prevFocus/prevOverflow captures).

@@ -8,7 +8,7 @@
 import { tokens } from "../../tokens/tokens";
 
 export const V2_MISSING_NOTE =
-  "v2 audit data unavailable — this critique pre-dates pipeline wire OR ran on legacy path.";
+  "v2 audit data unavailable — this review pre-dates pipeline wire OR ran on legacy path.";
 
 export const TIER_LABEL: Record<number, string> = {
   1: "Tier 1 · deterministic",

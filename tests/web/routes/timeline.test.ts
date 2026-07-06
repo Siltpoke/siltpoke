@@ -60,7 +60,7 @@ describe("GET /timeline — shell", () => {
     expect(html).toContain(">Timeline</h1>");
     expect(html).toContain("siltpoke · observability");
     // Tab shell: all four tabs present, all live (no stubs left).
-    expect(html).toContain(">Critic</button>");
+    expect(html).toContain(">Code Review</button>");
     expect(html).toContain(">Diff</button>");
     expect(html).toContain(">Trace</button>");
     expect(html).toContain(">Feedback</button>");

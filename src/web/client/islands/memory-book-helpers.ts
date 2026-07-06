@@ -431,7 +431,7 @@ const STREAM_BADGE: Record<string, { label: string; color: string }> = {
   user:      { label: "✍️ you typed",     color: "#9d86c2" }, // violet
   commit:    { label: "🤖 from commits",  color: "#7a9a5e" }, // moss
   chat:      { label: "💬 from chat",     color: "#7fb0c8" }, // sky
-  critique:  { label: "🔍 from critique", color: "#e8a85c" }, // amber
+  critique:  { label: "🔍 from review", color: "#e8a85c" }, // amber
   dismissal: { label: "👋 dismissed",     color: "#d96b6b" }, // terra
   remember:  { label: "💾 remembered",    color: "#5a4f3f" }, // ink2
 };

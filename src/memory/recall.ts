@@ -52,13 +52,13 @@ export function buildUserContextBlock(facts: readonly Fact[]): string {
 //
 // The Brain/critic recall injects ONLY communication-style facts (how the user
 // wants to be talked to: language, explanation level, tone). Personal-profile
-// facts (boyfriend, favourite colour, pets) are noise for a code review and stay
+// facts (partner, favourite colour, pets) are noise for a code review and stay
 // chat-only. The `kind` field carries the split; `classifyFactKind` only SEEDS
 // it once (the injection path reads the persisted field, never the classifier).
 
 // Lowercase substrings that signal a communication-style fact. Chosen to hit the
 // real style facts ("prefers responses in Chinese", "prefers beginner-friendly
-// explanations") without matching profile facts (Daniel / pink / cats / creamer).
+// explanations") without matching profile facts (Alex / teal / dogs / oat milk).
 const STYLE_SIGNALS = [
   "chinese",
   "中文",

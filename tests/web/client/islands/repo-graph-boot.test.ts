@@ -152,7 +152,7 @@ describe("repo-graph island boot — Generate affordance vs reconnect", () => {
     );
   });
 
-  /** Re-check-half coverage (user-pinned: 别留裸). The fixed
+  /** Re-check-half coverage (a standing rule: don't leave it bare). The fixed
    * reconnectArchTask re-checks `!generating` AFTER its await (:1264) so a
    * user click during the fetch gap can't spawn a SECOND observer. Coverage
    * signal = /arch/task call count: click starts observer #1 (1 poll call);

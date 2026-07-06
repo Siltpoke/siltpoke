@@ -107,7 +107,7 @@ export function PreferenceLogScreen({ entries, counts }: PreferenceLogScreenProp
               borderRadius: tokens.radius.md,
             }}
           >
-            No preference signals yet — interact with critiques to build history.
+            No preference signals yet — interact with reviews to build history.
           </div>
         ) : (
           <div>
@@ -128,7 +128,7 @@ export function PreferenceLogScreen({ entries, counts }: PreferenceLogScreenProp
             >
               <span>Time</span>
               <span>Signal</span>
-              <span>Critique</span>
+              <span>Review</span>
               <span>Reason</span>
             </div>
             {entries.map((entry, i) => (

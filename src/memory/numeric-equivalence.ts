@@ -53,7 +53,7 @@
  * @example numericallyEquivalent("有 3 只猫", "用户养了 2 只猫")        // true
  * @example numericallyEquivalent("每周跑步 5 次", "用户每周跑步 3 次")   // true
  * @example numericallyEquivalent("我有 2 只猫", "用户养了 2 只猫")      // false (same numbers)
- * @example numericallyEquivalent("用户是猫派", "用户是狗派")            // false (no numbers)
+ * @example numericallyEquivalent("用户养狗", "用户养鱼")                // false (no numbers)
  * @example numericallyEquivalent("我有3只猫", "用户住在2楼")            // false (different topic)
  */
 

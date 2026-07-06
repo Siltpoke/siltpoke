@@ -103,7 +103,7 @@ const ZH_FACT_MARKERS: readonly string[] = [
 ];
 
 // Correction-shaped markers (zh) — a correction can carry the durable fact
-// WITHOUT any first-person marker ("不是狗派，是猫派"). These ONLY open the
+// WITHOUT any first-person marker ("不是猫派，是狗派"). These ONLY open the
 // gate (recall-oriented design); they never
 // classify — the extractor + the runner's layer-2 re-derivation decide what,
 // if anything, gets written. Over-admission (e.g. "不对，13×7=91") is
@@ -114,7 +114,7 @@ const ZH_CORRECTION_MARKERS: readonly string[] = [
   "其实",
   "搞错了",
   "记错了",
-  // Temporal-update phrasing ("我现在是猫派了") — a temporal adverb between 我
+  // Temporal-update phrasing ("我现在是狗派了") — a temporal adverb between 我
   // and the verb defeats the contiguous first-person markers ("我现在是" ∌
   // "我是"). "我现在" is the first-person-anchored form; the verb-anchored
   // form lives in ZH_TEMPORAL_UPDATE below. A BARE "现在" was rejected in
@@ -128,7 +128,7 @@ const ZH_CORRECTION_MARKERS: readonly string[] = [
 // 现在 followed within 2 chars by a durable-state verb. Same gate-only role.
 const ZH_TEMPORAL_UPDATE = /现在.{0,2}(是|用|做|养|住|喝|不)/;
 
-// "不是…是" negation-plus-restatement shape ("我不是狗派，是猫派").
+// "不是…是" negation-plus-restatement shape ("我不是猫派，是狗派").
 const ZH_NEGATE_RESTATE = /不是[\s\S]+是/;
 
 // Correction-shaped markers (en) — same gate-only role as the zh set.

@@ -221,7 +221,7 @@ async function renderRepoGraphPage(c: Context, deps: RepoGraphWebRouteDeps) {
   // The repoGraph island is plain vanilla (cytoscape dropped) and
   // ships in the main client bundle (index.ts) — no lazy chunk, no preload.
   return c.html(
-    <Layout title="repo graph · siltpoke">
+    <Layout title="code map · siltpoke">
       <RepoGraph
         projection={projection}
         repoEntries={repos}

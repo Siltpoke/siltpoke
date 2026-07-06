@@ -5,14 +5,18 @@
  *
  * tokens.css is regenerated lazily on the first request after a process
  * start if the on-disk file is stale relative to tokens.ts. The client
- * bundle lives at `public/static/index.js` after `bun build`; in dev we
- * fall back to a build-on-the-fly path if the file is missing.
+ * bundle lives at `public/static/index.js` after `bun build`. It is a
+ * gitignored build artifact, so a fresh clone/install ships without it;
+ * `ensureClientBundle()` (called at daemon start) builds it if missing so
+ * the dashboard is interactive on first `bun run report`. The 503 branch in
+ * the `/static/index.js` route is only a last-resort guard.
  */
 import type { Hono } from "hono";
 import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildTokensCss } from "../../../scripts/build-tokens";
+import { buildClient } from "../../../scripts/build-client";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
@@ -23,6 +27,35 @@ function tokensCssPath(): string {
 
 function clientBundlePath(): string {
   return join(repoRoot, "public", "static", "index.js");
+}
+
+/**
+ * Ensure the client island bundle exists, building it once if missing.
+ *
+ * `public/static/index.js` is a gitignored build artifact — a fresh clone or
+ * marketplace install has no bundle until it's built, and without it every
+ * Alpine/htmx island is dead (the page renders but nothing is clickable).
+ * The daemon calls this at startup so `bun run report` works on first run.
+ *
+ * Fails open: a build error is swallowed (the daemon must still start; the
+ * `/static/index.js` route then serves its 503 hint). Injectable
+ * `bundlePath`/`build` for tests.
+ */
+export async function ensureClientBundle(
+  opts: {
+    bundlePath?: string;
+    build?: () => Promise<{ success: boolean }>;
+  } = {},
+): Promise<{ built: boolean }> {
+  const path = opts.bundlePath ?? clientBundlePath();
+  if (existsSync(path)) return { built: false };
+  const build = opts.build ?? (() => buildClient({ minify: true }));
+  try {
+    const result = await build();
+    return { built: result.success };
+  } catch {
+    return { built: false };
+  }
 }
 
 function tailwindCssPath(): string {
@@ -73,7 +106,7 @@ export function mountStaticRoutes(app: Hono): void {
       );
     }
     // No-store on the bare index.js so the browser always picks up the
-    // latest bundle after a rebuild. Hashed island chunks (kanban-<hash>.js)
+    // latest bundle after a rebuild. Hashed island chunks (<name>-<hash>.js)
     // still cache aggressively below.
     return c.body(readFileSync(path, "utf8"), 200, {
       "Content-Type": "application/javascript; charset=utf-8",
@@ -82,11 +115,11 @@ export function mountStaticRoutes(app: Hono): void {
   });
 
   // Serve content-hashed island chunks.
-  // The kanban island ships as a separate chunk (loaded ahead of index.js
+  // A route-only island ships as a separate chunk (loaded ahead of index.js
   // via Layout.preloadIslands so it registers with globalThis.Alpine before
   // Alpine.start()). Restricted to a /static/<name>-<hash>.js pattern with
   // a strict regex so the route can't be coerced into reading arbitrary
-  // paths off disk (kanban → only hexish chars + dash, no slashes / dots).
+  // paths off disk (chunk names → only hexish chars + dash, no slashes / dots).
   app.get("/static/:filename{[a-z0-9-]+\\.js}", (c) => {
     const filename = c.req.param("filename");
     // Reject anything that doesn't look like a hashed-chunk emission.
