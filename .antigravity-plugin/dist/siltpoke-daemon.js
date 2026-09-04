@@ -50016,6 +50016,11 @@ function FloatingChat({ secret } = {}) {
                         }, undefined, false, undefined, this),
                         /* @__PURE__ */ jsxDEV("span", {
                           class: "w-[7px] h-[7px] rounded-full bg-ink2 animate-pulse [animation-delay:400ms]"
+                        }, undefined, false, undefined, this),
+                        /* @__PURE__ */ jsxDEV("span", {
+                          "x-show": "waitLabel()",
+                          "x-text": "waitLabel()",
+                          class: "text-[10px] text-ink3 font-mono ml-1 tabular-nums"
                         }, undefined, false, undefined, this)
                       ]
                     }, undefined, true, undefined, this),
@@ -67631,7 +67636,8 @@ async function generateValidatedVerbalization(input2) {
 }
 
 // src/daemon/routes/chat-stream.ts
-var DEFAULT_MODEL3 = "claude-sonnet-4-6";
+var DEFAULT_CHAT_MODEL = "claude-haiku-4-5-20251001";
+var DEFAULT_MODEL3 = DEFAULT_CHAT_MODEL;
 var DEFAULT_TIMEOUT_MS9 = 60000;
 var STDERR_CAP = 8 * 1024;
 function startClaudeSession(opts, model, timeoutMs) {
@@ -67752,13 +67758,34 @@ function classifyOutcome(o) {
   return { type: "message_stop", usage: o.usage, full_text: o.fullText };
 }
 function translateClaudeEvent(ev, state) {
+  const phases = [];
+  if (ev.type === "system") {
+    const sys = ev;
+    if (sys.subtype === "hook_started") {
+      phases.push({ type: "phase", phase: "waking", detail: sys.hook_name });
+    } else if (sys.subtype === "init") {
+      phases.push({ type: "phase", phase: "ready" });
+    } else if (sys.subtype === "thinking_tokens") {
+      const n = sys.estimated_tokens;
+      phases.push({
+        type: "phase",
+        phase: "thinking",
+        detail: typeof n === "number" ? String(n) : undefined
+      });
+    }
+  }
   if (!state.startedEmitted && (ev.type === "message_start" || ev.type === "system")) {
     const meta4 = ev;
     state.messageId = meta4.message?.id ?? state.messageId;
     state.messageModel = meta4.message?.model ?? state.messageModel;
     state.startedEmitted = true;
-    return [{ type: "message_start", message_id: state.messageId, model: state.messageModel }];
+    return [
+      ...phases,
+      { type: "message_start", message_id: state.messageId, model: state.messageModel }
+    ];
   }
+  if (phases.length > 0)
+    return phases;
   if (ev.type === "content_block_delta") {
     const payload = ev;
     const text2 = payload.delta?.text ?? "";
@@ -68313,7 +68340,7 @@ ${recall.matches.map((m) => `- ${m.summary}`).join(`
       turnAbort.abort();
     else
       reqSignal.addEventListener("abort", onReqAbort, { once: true });
-    const replyModel = body2.model ?? "claude-sonnet-4-6";
+    const replyModel = body2.model ?? DEFAULT_CHAT_MODEL;
     const sseStream = new ReadableStream({
       async start(controller) {
         const enc = new TextEncoder;
@@ -68360,7 +68387,7 @@ data: ${JSON.stringify(staleness)}
 
 `));
         }
-        const red = await reduceStreamEvents(stream, { assistantId: newId("m"), assistantModel: body2.model ?? "claude-sonnet-4-6" }, {
+        const red = await reduceStreamEvents(stream, { assistantId: newId("m"), assistantModel: body2.model ?? DEFAULT_CHAT_MODEL }, {
           emit,
           logStderr: (reason, tail) => {
             console.error(`[chat-stream] session=${sessionId} reason=${reason ?? "unclassified"} claude -p stderr (capped):

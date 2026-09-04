@@ -328,6 +328,17 @@ export function FloatingChat({ secret }: FloatingChatProps = {}) {
               <span class="w-[7px] h-[7px] rounded-full bg-ink2 animate-pulse"></span>
               <span class="w-[7px] h-[7px] rounded-full bg-ink2 animate-pulse [animation-delay:200ms]"></span>
               <span class="w-[7px] h-[7px] rounded-full bg-ink2 animate-pulse [animation-delay:400ms]"></span>
+              {/* What the wait is doing, beside the dots. The stage label shows
+                  as soon as the server reports one; the seconds are held back
+                  until 3s so a quick reply never flashes a counter. Both halves
+                  and their gating live in waitLabel() — see its comment for why
+                  they are gated separately. Dots alone cannot distinguish a slow
+                  reply from a hung one, and replies here run 7-26s. */}
+              <span
+                x-show="waitLabel()"
+                x-text="waitLabel()"
+                class="text-[10px] text-ink3 font-mono ml-1 tabular-nums"
+              ></span>
             </div>
             <div x-show="error" class="self-center text-xs text-bubbleTerminalRed opacity-[.85]" x-text="error"></div>
 

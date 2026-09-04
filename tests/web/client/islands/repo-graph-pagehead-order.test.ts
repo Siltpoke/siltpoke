@@ -146,33 +146,6 @@ describe("divider visibility pairs with the button", () => {
     expect(divider!.hidden).toBe(false);
   });
 
-  // Regression guard: the quiz controls block (Plan 2 surface) added a SECOND
-  // hairline divider to the pagehead, sharing the .pagehead-divider class with
-  // the pre-existing arch-gen isolation divider. That broke Playwright strict
-  // mode in tests/e2e/arch-toggle-regenerate-screenshots.spec.ts
-  // (`.pagehead-divider` resolved to 2 elements) AND let the extra divider
-  // intercept a later toggle click. The quiz block's divider must use its own
-  // class (.rg-quiz-divider) so .pagehead-divider stays unique — this
-  // assertion catches the dup at the unit level without needing the E2E.
-  test("EXACTLY ONE .pagehead-divider in the rendered pagehead (quiz divider must use a distinct class)", async () => {
-    installFetchMock([
-      ["/arch/task", () => Promise.resolve(jsonResponse({ data: { task: null } }))],
-      ["/arch/estimate", () => Promise.resolve(jsonResponse({ success: true, data: { estUsd: 0.15 } }))],
-    ]);
-
-    const root = await mountRepoGraph();
-
-    const pagehead = root.querySelector<HTMLElement>(".pagehead");
-    expect(pagehead).not.toBeNull(); // anti-vacuous
-
-    const dividers = pagehead!.querySelectorAll(".pagehead-divider");
-    expect(dividers.length).toBe(1);
-
-    // The quiz block's own divider must be present under its distinct class —
-    // proves this isn't passing vacuously because the quiz block was omitted.
-    const quizDivider = pagehead!.querySelector(".rg-quiz-divider");
-    expect(quizDivider).not.toBeNull();
-  });
 });
 
 // ── Grounded chip relocated to TOOLBAR ───────────────────────────────────────

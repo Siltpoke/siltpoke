@@ -501,6 +501,25 @@ export interface FloatingChatData {
    */
   streamingConvId: string | null;
   /**
+   * Seconds the in-flight reply has been running, ticking while `streaming`.
+   *
+   * The dots alone say "something is happening" but not "for how long", and a
+   * reply here takes 7-26s: roughly 6s of `claude -p` process startup that no
+   * model choice removes, plus the model's own time. Measured 2026-09-04.
+   * Without a number, a slow answer and a hung one look identical.
+   */
+  elapsedSec: number;
+  /** Last stage the server reported for the in-flight reply; null before any. */
+  phase: string | null;
+  /** That stage's real payload (hook name, running token estimate). */
+  phaseDetail: string | null;
+  /** Human label for `phase` — empty string when there is nothing truthful to say. */
+  phaseLabel(): string;
+  /** The rendered waiting line: stage label always, seconds only past 3s. "" = render nothing. */
+  waitLabel(): string;
+  /** Interval handle for `elapsedSec`; cleared wherever `streaming` goes false. */
+  _elapsedTimer: ReturnType<typeof setInterval> | null;
+  /**
    * Abort handle for the in-flight send()'s fetch. Non-null only
    * while a turn is streaming; stopStreaming() aborts it. The abort path
    * appends the quiet cancelled marker to the ORIGINATING conversation and
@@ -890,6 +909,10 @@ export function makeFloatingChatData(
     draft: "",
     streaming: false,
     streamingConvId: null,
+    elapsedSec: 0,
+    _elapsedTimer: null,
+    phase: null,
+    phaseDetail: null,
     abortController: null,
     error: null,
     desyncCta: null,
@@ -1661,6 +1684,19 @@ export function makeFloatingChatData(
       this.error = null;
       this.streaming = true;
       this.streamingConvId = convId;
+      // Restart rather than resume: a second question must not inherit the
+      // first one's clock.
+      if (this._elapsedTimer !== null) clearInterval(this._elapsedTimer);
+      this.elapsedSec = 0;
+      this.phase = null;
+      this.phaseDetail = null;
+      // Derived from a start timestamp, NOT counted one tick at a time. A
+      // background tab throttles intervals, so a counter that adds 1 per tick
+      // under-reports the wait exactly when the user comes back and reads it.
+      const startedAt = Date.now();
+      this._elapsedTimer = setInterval(() => {
+        this.elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+      }, 1000);
       this.abortController = new AbortController();
       // Auto-scroll: land the just-sent user message + the streaming indicator
       // at the bottom (deferred to after the DOM renders them). Only scrolls the
@@ -1715,6 +1751,10 @@ export function makeFloatingChatData(
             messages: (this.conversations.find((c) => c.id === convId)?.messages ?? []).slice(0, -1),
           });
           this.streaming = false;
+          if (this._elapsedTimer !== null) {
+            clearInterval(this._elapsedTimer);
+            this._elapsedTimer = null;
+          }
 
           const signal = (await res.json()) as {
             blocked?: string;
@@ -1859,6 +1899,19 @@ export function makeFloatingChatData(
               } catch {
                 /* partial JSON — not an error */
               }
+            } else if (ev.name === "phase") {
+              // Server-reported stage, each one carried by a real `claude -p`
+              // event (see chat-stream.ts's StreamEvent doc). Rendered as text
+              // beside the dots so a long wait says what it is waiting ON.
+              try {
+                const p = JSON.parse(ev.data) as { phase?: string; detail?: string };
+                if (p.phase) {
+                  this.phase = p.phase;
+                  this.phaseDetail = p.detail ?? null;
+                }
+              } catch {
+                /* partial JSON — leave the previous phase showing */
+              }
             } else if (ev.name === "error") {
               // The raw server error string is never rendered — only the
               // classified reason maps (via fixed copy) to what the user sees.
@@ -1922,6 +1975,10 @@ export function makeFloatingChatData(
         }
       } finally {
         this.streaming = false;
+        if (this._elapsedTimer !== null) {
+          clearInterval(this._elapsedTimer);
+          this._elapsedTimer = null;
+        }
         // Streaming-scope fix — clear the originating-conv marker (success OR
         // error) so the typing-dots gate (isActiveStreaming) goes false.
         this.streamingConvId = null;
@@ -2128,6 +2185,50 @@ export function makeFloatingChatData(
      * active conversation. The typing-dots indicator gates on this so switching
      * conversations mid-stream (or creating a new one) hides another conv's dots.
      */
+    /**
+     * Label for the stage the server last reported.
+     *
+     * One branch per real phase and nothing else — no timer-driven escalation
+     * through "thinking harder…" style copy, because there is no event behind
+     * that and a reassuring label nobody can contradict is worse than silence.
+     * An unknown phase returns "" and the row falls back to the bare seconds.
+     */
+    phaseLabel() {
+      switch (this.phase) {
+        case "waking":
+          return "waking up";
+        case "ready":
+          return "asking siltpoke";
+        case "thinking":
+          // The detail is the CLI's own running token estimate.
+          return this.phaseDetail ? `thinking · ${this.phaseDetail} tokens` : "thinking";
+        default:
+          return "";
+      }
+    },
+
+    /**
+     * The whole waiting line: the stage label, and the seconds only once the
+     * wait is worth counting.
+     *
+     * The two halves are gated SEPARATELY and that is the point. The stage
+     * label appears the moment the server reports one — it carries information
+     * either way. The number is held until 3s so a fast reply never flashes a
+     * counter. An earlier version gated them together as
+     * `elapsedSec >= 3 || phaseLabel()`, whose comment claimed the 3s hold
+     * while the code showed the counter from ~1s on every real turn, because
+     * `waking` lands almost immediately: the hold existed only for a stream
+     * that emitted no phases at all.
+     *
+     * Returns "" when there is nothing to say, which is also the row's x-show.
+     */
+    waitLabel() {
+      const label = this.phaseLabel();
+      const secs = this.elapsedSec >= 3 ? `${this.elapsedSec}s` : "";
+      if (label && secs) return `${label} · ${secs}`;
+      return label || secs;
+    },
+
     isActiveStreaming() {
       return this.streaming && this.streamingConvId !== null && this.streamingConvId === this.activeId;
     },

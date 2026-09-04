@@ -131,6 +131,40 @@ describe("chat-stream parser — claude -p stream-json (CLI 2.x)", () => {
     expect(stop).toMatchObject({ type: "message_stop", full_text: "fallback reply" });
   });
 
+  test("phase events ride ALONGSIDE message_start, never in place of it", async () => {
+    // Regression, and it happened: the first version of the phase channel
+    // returned early on `system` events, which is precisely the event the
+    // translator synthesises message_start from — the CLI emits none of its
+    // own. The reply silently never started. Asserting the phases exist is not
+    // enough; message_start has to still be there beside them.
+    const events = await collect([
+      JSON.stringify({
+        type: "system",
+        subtype: "hook_started",
+        hook_name: "SessionStart:startup",
+      }),
+      JSON.stringify({ type: "system", subtype: "init" }),
+      JSON.stringify({ type: "system", subtype: "thinking_tokens", estimated_tokens: 50 }),
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "hi" }] } }),
+      JSON.stringify({ type: "result", usage: { input_tokens: 1, output_tokens: 1 } }),
+    ]);
+
+    expect(events.find((e) => e.type === "message_start")).toBeDefined();
+
+    const phases = events.filter((e) => e.type === "phase");
+    expect(phases.map((p) => (p as { phase: string }).phase)).toEqual([
+      "waking",
+      "ready",
+      "thinking",
+    ]);
+    // Detail is the real payload, not a label we made up.
+    expect(phases[0]).toMatchObject({ detail: "SessionStart:startup" });
+    expect(phases[2]).toMatchObject({ detail: "50" });
+
+    // And the reply itself still lands.
+    expect(events.find((e) => e.type === "message_stop")).toMatchObject({ full_text: "hi" });
+  });
+
   test("still handles incremental content_block_delta events (Messages-API shape)", async () => {
     const events = await collect([
       JSON.stringify({ type: "message_start", message: { id: "m", model: "x" } }),

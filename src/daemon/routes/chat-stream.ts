@@ -13,6 +13,25 @@ export type StreamErrorReason = "timeout" | "spawn_failed" | "empty_exit";
 export type StreamEvent =
   | { type: "message_start"; message_id: string; model: string }
   | { type: "content_block_delta"; text: string }
+  /**
+   * What the reply is doing right now, for the waiting UI.
+   *
+   * Every value is carried by a real `claude -p` event — none is inferred from
+   * elapsed time. A phase label driven by a timer would be a progress bar that
+   * cannot be wrong because it never looks: exactly the shape this repo keeps
+   * finding. If the CLI stops emitting a stage, its label stops appearing.
+   *
+   *   waking   ← system/hook_started   (startup hooks; measured as the bulk of
+   *                                     the ~6s floor before the model is asked)
+   *   ready    ← system/init           (session up, tools resolved)
+   *   thinking ← system/thinking_tokens (carries a real running token estimate)
+   *
+   * A `writing` stage was drafted and then dropped: nothing on this path emits
+   * an event for it, and a phase nothing can produce is the same dead-guard
+   * shape the rest of this rule set exists to avoid. Add it back with its
+   * producer, not before.
+   */
+  | { type: "phase"; phase: "waking" | "ready" | "thinking"; detail?: string }
   | { type: "message_stop"; usage: StreamUsage; full_text: string }
   | {
       type: "error";
@@ -52,7 +71,34 @@ export interface StreamChatOptions {
   fakeEvents?: AsyncIterable<StreamEvent>;
 }
 
-const DEFAULT_MODEL = "claude-sonnet-4-6";
+/**
+ * Chat's reply model. Haiku, not Sonnet, and measured rather than assumed.
+ *
+ * The size of the win depends entirely on how long the answer is, so a single
+ * number would be a lie in one direction or the other. Measured 2026-09-04,
+ * three alternating runs per arm through this route's exact spawn shape
+ * (`claude -p --model M --output-format stream-json --no-session-persistence`),
+ * medians:
+ *
+ *   one-sentence answer   sonnet 6.6s · haiku 6.3s   (ranges overlap — no win)
+ *   ~300-word answer      sonnet 22.1s · haiku 14.7s (ranges disjoint — ~33%)
+ *
+ * Because ~6s of every reply is `claude -p` process startup — each message
+ * spawns a fresh CLI — the model choice buys only the generation time above
+ * that floor. On a short reply the floor is the whole cost and the two models
+ * are indistinguishable; the longer the reply, the more the choice matters.
+ * Do not quote one figure for this change: quote the dependency.
+ *
+ * Chat answers "what is this", "why did it say that" about the page in front
+ * of you; the critic already defaults to haiku for the harder job of reviewing
+ * a diff (src/brain/registry.ts). Sonnet here was the odd one out, not the
+ * considered choice.
+ *
+ * Exported because chat.ts had this same literal twice more, which is how three
+ * copies of a default drift apart.
+ */
+export const DEFAULT_CHAT_MODEL = "claude-haiku-4-5-20251001";
+const DEFAULT_MODEL = DEFAULT_CHAT_MODEL;
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 interface ClaudeStreamEvent {
@@ -295,13 +341,43 @@ interface ParseState {
  * events, accumulating reply text / usage / completion flags into `state`.
  */
 function translateClaudeEvent(ev: ClaudeStreamEvent, state: ParseState): StreamEvent[] {
+  // Phase signals are PREPENDED to whatever this event already produces, never
+  // returned in its place. The CLI emits no `message_start` of its own — the
+  // branch below synthesises one from the first `system` event — so returning
+  // early here would have cut the signal that starts the reply. (It did, for
+  // one revision of this function.)
+  const phases: StreamEvent[] = [];
+  if (ev.type === "system") {
+    const sys = ev as unknown as {
+      subtype?: string;
+      hook_name?: string;
+      estimated_tokens?: number;
+    };
+    if (sys.subtype === "hook_started") {
+      phases.push({ type: "phase", phase: "waking", detail: sys.hook_name });
+    } else if (sys.subtype === "init") {
+      phases.push({ type: "phase", phase: "ready" });
+    } else if (sys.subtype === "thinking_tokens") {
+      const n = sys.estimated_tokens;
+      phases.push({
+        type: "phase",
+        phase: "thinking",
+        detail: typeof n === "number" ? String(n) : undefined,
+      });
+    }
+  }
+
   if (!state.startedEmitted && (ev.type === "message_start" || ev.type === "system")) {
     const meta = ev as unknown as MessageMeta;
     state.messageId = meta.message?.id ?? state.messageId;
     state.messageModel = meta.message?.model ?? state.messageModel;
     state.startedEmitted = true;
-    return [{ type: "message_start", message_id: state.messageId, model: state.messageModel }];
+    return [
+      ...phases,
+      { type: "message_start", message_id: state.messageId, model: state.messageModel },
+    ];
   }
+  if (phases.length > 0) return phases;
 
   if (ev.type === "content_block_delta") {
     const payload = ev as unknown as DeltaPayload;

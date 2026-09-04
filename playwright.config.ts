@@ -34,7 +34,7 @@ export default defineConfig({
     // the time any spec's test.beforeAll or the declared globalSetup file
     // runs (both measured to run AFTER the daemon is already answering
     // requests — see that script's doc comment).
-    command: "bun tests/e2e/_setup/seed-progress-fixture.ts && bun run build:web && PORT=9877 SILTPOKE_ENV=test SILTPOKE_HOME=./.playwright-tmp/siltpoke SILTPOKE_TEST_MOCK_STREAM=1 SILTPOKE_TEST_KNOWLEDGE_DOCS_ROOT=./.playwright-tmp/knowledge-fixture bun src/cli/daemon.ts start",
+    command: "bun run build:web && PORT=9877 SILTPOKE_ENV=test SILTPOKE_HOME=./.playwright-tmp/siltpoke SILTPOKE_TEST_MOCK_STREAM=1 SILTPOKE_TEST_KNOWLEDGE_DOCS_ROOT=./.playwright-tmp/knowledge-fixture bun src/cli/daemon.ts start",
     port: 9877,
     timeout: 60_000,
     // FOOTGUN: `command` (which runs build:web → rebuilds public/static/index.js)

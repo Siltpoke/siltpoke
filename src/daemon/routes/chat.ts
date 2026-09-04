@@ -64,6 +64,7 @@ import {
   type StreamEvent,
   type StreamUsage,
   streamChat,
+  DEFAULT_CHAT_MODEL,
 } from "./chat-stream";
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
@@ -1231,7 +1232,7 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     const onReqAbort = () => turnAbort.abort();
     if (reqSignal.aborted) turnAbort.abort();
     else reqSignal.addEventListener("abort", onReqAbort, { once: true });
-    const replyModel = body.model ?? "claude-sonnet-4-6";
+    const replyModel = body.model ?? DEFAULT_CHAT_MODEL;
 
     const sseStream = new ReadableStream<Uint8Array>({
       async start(controller) {
@@ -1337,7 +1338,7 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
 
         const red = await reduceStreamEvents(
           stream,
-          { assistantId: newId("m"), assistantModel: body.model ?? "claude-sonnet-4-6" },
+          { assistantId: newId("m"), assistantModel: body.model ?? DEFAULT_CHAT_MODEL },
           {
             emit,
             // launchd redirects the daemon's stderr to
