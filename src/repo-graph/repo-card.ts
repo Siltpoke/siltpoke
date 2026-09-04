@@ -16,6 +16,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { computeProjHash } from "./proj-hash";
+import { resolveExternalScope, isOutOfScopeRegistryNode, hasOutOfScopeRegistryNodes } from "../explain/arch-reconcile";
 
 const REPO_MEMORY_DIR = "repo-memory";
 
@@ -89,11 +90,27 @@ export function loadRepoCard(home: string, projectRoot: string): RepoCard | null
 
   const arch = readJsonObject(join(dir, "arch-model.json"));
   const areas = claimTitles(arch?.bands, "label");
-  const component_titles = claimTitles(arch?.nodes, "title");
+  // Drop registry-declared reviewer externals this repo cannot evidence before
+  // counting or naming anything. This reads the raw JSON rather than going
+  // through readArchModel (which prunes on its own), so the rule has to be
+  // applied here too — otherwise the card lists "Codex CLI / Agy CLI / Qoder CLI
+  // / Codebuddy CLI" as components of a repo that has never called any of them.
+  const scope = resolveExternalScope(projectRoot);
+  const component_titles = claimTitles(
+    Array.isArray(arch?.nodes) ? arch.nodes.filter((n) => !isOutOfScopeRegistryNode(n, scope)) : arch?.nodes,
+    "title",
+  );
 
+  // The cached blurb was WRITTEN from this same model. If the model still
+  // carries out-of-scope reviewer externals, the prompt that produced the blurb
+  // listed them as components, so the sentence on disk describes a repo built
+  // partly out of code-review CLIs. Filtering the component list does not
+  // retroactively fix a paragraph — suppress it and let the next explicit
+  // generate write an honest one.
+  const archModelIsPolluted = hasOutOfScopeRegistryNodes(arch, scope);
   const summary = readJsonObject(join(dir, "repo-summary.json"));
   const summary_text =
-    summary && typeof summary.text === "string" && summary.text.trim().length > 0
+    !archModelIsPolluted && summary && typeof summary.text === "string" && summary.text.trim().length > 0
       ? summary.text
       : null;
 

@@ -27,10 +27,7 @@ import {
   type FeedbackArchiveEntry,
 } from "../memory/feedback-archive";
 import { removeLearnedRuleById } from "../memory/memory";
-
-function siltpokeHome(envHome: string | undefined): string {
-  return join(envHome ?? "", ".siltpoke");
-}
+import { siltpokeRoot } from "../installer/paths";
 
 function projectSiltpoke(cwd: string): string {
   return join(cwd, ".siltpoke");
@@ -101,7 +98,7 @@ async function decideRuleRemoval(
 }
 
 export async function runUndismiss(opts: UndismissOptions): Promise<UndismissResult> {
-  const homeBase = opts.homeBase ?? siltpokeHome(process.env.HOME);
+  const homeBase = opts.homeBase ?? siltpokeRoot();
   const projectBase = opts.projectBase ?? projectSiltpoke(opts.cwd);
   const now = opts.now ?? (() => new Date());
 

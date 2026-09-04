@@ -7,7 +7,75 @@
  * (`elink.strong` ⇔ w > 15), so they regress loudly if anyone re-tunes them.
  */
 import { test, expect, describe } from "bun:test";
-import { couplingTier, symTraceAffordance, decodeCanonicalNodeId } from "../../../src/web/client/islands/repo-graph";
+import {
+  couplingTier,
+  symTraceAffordance,
+  decodeCanonicalNodeId,
+  defaultEntryId,
+  entryCallLabel,
+  type Entrypoint,
+} from "../../../src/web/client/islands/repo-graph";
+
+/**
+ * defaultEntryId (client/server /trace no-`?entry` default parity).
+ *
+ * The server (daemon/routes/repo-graph.tsx) resolves an unqualified /trace
+ * as: the preset "cli" role when one was actually detected, else the first
+ * ranked detected entry ("cli" only as a last resort when nothing was
+ * detected at all — see `hasPresetCli`). This client-side helper is the
+ * single source of truth for the SAME rule, called from both phEnter's
+ * fallback AND phEnterDefault's toolbar-button candidate selection, so
+ * neither reachable client path can independently drift from the server.
+ *
+ * Fix-loop round 1 finding: phEnterDefault used to compute its own
+ * `entrypoints[0]?.id` (misnamed `firstPreset`) instead of calling this
+ * helper — the naive "just take index 0" rule only matched the server's
+ * cli-preferring rule by coincidence of siltpoke's own package.json having
+ * no bin/scripts/index.ts (so entrypoints only ever contains the 3 presets,
+ * in an order where "cli" happens to sort first). The first test below
+ * pins the case that naive rule gets wrong: `rankAndDedup` on the server
+ * sorts "certain" bin/script entries BEFORE "inferred" presets, so a repo
+ * with both a detected preset cli AND a certain bin entry would have
+ * entrypoints[0] be the bin entry, not "cli" — proving this is a real
+ * behavioral difference, not just a rename.
+ */
+function mkEntry(overrides: Partial<Entrypoint> & Pick<Entrypoint, "id" | "source" | "confidence">): Entrypoint {
+  return {
+    label: "",
+    fn: "fn",
+    module: "m",
+    file: "f.ts",
+    line: 1,
+    path: "src/f.ts",
+    nodeId: `function:src/f.ts:${overrides.id}`,
+    ...overrides,
+  };
+}
+
+describe("defaultEntryId (client/server /trace default parity)", () => {
+  test("preset cli present alongside a HIGHER-RANKED certain bin entry → still returns cli, not entrypoints[0]", () => {
+    // entrypoints[0] is deliberately the certain bin entry (as rankAndDedup
+    // would order it), so a naive "first ranked entry" rule would return the
+    // bin id here — this is exactly the divergence the fix closes.
+    const entrypoints: Entrypoint[] = [
+      mkEntry({ id: "ep:bin:acme", source: "bin", confidence: "certain" }),
+      mkEntry({ id: "cli", source: "preset", confidence: "inferred" }),
+    ];
+    expect(defaultEntryId(entrypoints)).toBe("cli");
+  });
+
+  test("no preset cli detected → first ranked entry", () => {
+    const entrypoints: Entrypoint[] = [
+      mkEntry({ id: "ep:bin:acme", source: "bin", confidence: "certain" }),
+      mkEntry({ id: "ep:script:dev", source: "script", confidence: "inferred" }),
+    ];
+    expect(defaultEntryId(entrypoints)).toBe("ep:bin:acme");
+  });
+
+  test("no entrypoints at all → \"cli\" last-resort fallback", () => {
+    expect(defaultEntryId([])).toBe("cli");
+  });
+});
 
 describe("couplingTier (edge-tooltip coupling wording, prototype thresholds)", () => {
   test("1–7 imports → light", () => {
@@ -120,5 +188,30 @@ describe("decodeCanonicalNodeId (canonical node_id → descriptor)", () => {
       path: "src/utils.ts",
       name: "helper",
     });
+  });
+});
+
+/**
+ * entryCallLabel — a file-root entry (Task 2's tier 2/3 generic detection can
+ * root a trace at a bare file node, no exported function to call) has no
+ * call signature, so it must render as its bare name, never `name()`.
+ * Function/class/symbol nodes (and legacy data with no `type` at all) keep
+ * today's `name()` rendering.
+ */
+describe("entryCallLabel (file-root vs function-root display)", () => {
+  test("type undefined (legacy / synthetic tail nodes) → name()", () => {
+    expect(entryCallLabel("helper")).toBe("helper()");
+  });
+
+  test("type 'function' → name()", () => {
+    expect(entryCallLabel("main", "function")).toBe("main()");
+  });
+
+  test("type 'class' → name()", () => {
+    expect(entryCallLabel("UserModel", "class")).toBe("UserModel()");
+  });
+
+  test("type 'file' → bare name, NO parens", () => {
+    expect(entryCallLabel("index.ts", "file")).toBe("index.ts");
   });
 });

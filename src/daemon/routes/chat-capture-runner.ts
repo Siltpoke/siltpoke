@@ -4,7 +4,7 @@
  * Real-time chat capture orchestration (memory work).
  *
  * Lifted out of `src/daemon/routes/chat.ts` so the route stays under the 800-LOC
- * cap and the explicit ("记住 X") + conversational (plain fact statement) capture
+ * cap and the explicit () + conversational (plain fact statement) capture
  * paths share ONE persistence structure (readMemory → captureChatFactsCore →
  * writeMemory → truthful signal). Sharing the batch core is also what fixes the
  * truthfulness bug where the auto path emitted [SAVED] for a pure dedupe — both
@@ -25,7 +25,7 @@ import {
   type ClassifiedClaim,
 } from "../../memory/chat-claim-apply";
 import type { CandidateFact, ExtractedFact } from "../../memory/extract-facts";
-import type { CoreMemory } from "../../memory/memory";
+import type { CoreMemory, ProjectScope } from "../../memory/memory";
 import { detectRememberIntent, looksLikeFactStatement } from "../../memory/chat-capture";
 import { numericallyEquivalent } from "../../memory/numeric-equivalence";
 import { captureChatFactsCore } from "../../memory/transitions";
@@ -66,7 +66,7 @@ export type CaptureSignal = "saved" | "already_known" | "incomplete" | "correcte
  * Provenance written onto a chat-captured fact's `save_reason` — surfaced as the
  * /memory "Why" line. Without it the row falls back to "no source recorded (early
  * memory)", which mislabels brand-new chat facts as legacy sourceless memories.
- * Explicit ("记住 X") vs conversational (auto-extract) get distinct wording.
+ * Explicit () vs conversational (auto-extract) get distinct wording.
  */
 export const SAVE_REASON_EXPLICIT = "you asked me to remember this in chat";
 export const SAVE_REASON_AUTO = "noticed while chatting";
@@ -79,8 +79,18 @@ export interface ChatCaptureResult {
 }
 
 export interface RunChatCaptureDeps {
-  readMemory: (homeBase: string) => Promise<CoreMemory | null>;
-  writeMemory: (homeBase: string, memory: CoreMemory) => Promise<void>;
+  readMemory: (homeBase: string, projectCwd?: ProjectScope) => Promise<CoreMemory | null>;
+  writeMemory: (homeBase: string, memory: CoreMemory, projectCwd?: ProjectScope) => Promise<void>;
+  /**
+   * Per-request memory scope (T3). The chat route resolves it ONCE per send and
+   * threads it here so recall + capture read/write the SAME store: an anchored
+   * send → the anchor repo's project cwd; an un-anchored send → `GLOBAL_ONLY`
+   * (the daemon has no project cwd under launchd). Captured facts are always
+   * style|profile (global-routed), so a `GLOBAL_ONLY` write persists them
+   * correctly regardless of the daemon's own cwd. Omitted → `process.cwd()`
+   * (pre-T3 behavior; the live chat route always threads a concrete scope).
+   */
+  projectCwd?: ProjectScope;
   /**
    * Ledgered Haiku extraction (or an injected stub in tests). `candidates` is
    * the provenance-fenced active-fact list the extractor may classify against
@@ -108,8 +118,8 @@ export interface RunChatCaptureDeps {
  * Decide + persist a chat capture for one user turn, returning the marker signal.
  *
  * Routing (deterministic, from code — security rule, never an LLM boolean):
- *   (a) explicit "记住" trigger-only (no payload) → incomplete (no write).
- *   (b) explicit "记住 X" with payload           → save X via the batch core.
+ *   (a) explicit  trigger-only (no payload) → incomplete (no write).
+ *   (b) explicit  with payload           → save X via the batch core.
  *   (c) no marker BUT looksLikeFactStatement     → ONE ledgered Haiku extraction,
  *       then save the returned claims via the batch core.
  *   else                                         → no capture.
@@ -124,15 +134,15 @@ export async function runChatCapture(
   const none: ChatCaptureResult = { signal: null, text: "" };
   const intent = detectRememberIntent(message);
 
-  // (a) trigger-only "记住" with no content — ask what to remember, write nothing.
+  // (a) trigger-only  with no content — ask what to remember, write nothing.
   if (intent.hit && intent.payload === "") {
     return { signal: "incomplete", text: "" };
   }
 
-  // (b) explicit "记住 X" — deterministic, no paid call.
+  // (b) explicit  — deterministic, no paid call.
   if (intent.hit && intent.payload) {
     try {
-      const mem = await deps.readMemory(deps.homeBase);
+      const mem = await deps.readMemory(deps.homeBase, deps.projectCwd);
       if (!mem) return none;
       const { memory, saved } = captureChatFactsCore(
         mem,
@@ -141,7 +151,7 @@ export async function runChatCapture(
         SAVE_REASON_EXPLICIT,
       );
       if (!saved.length) return none;
-      await deps.writeMemory(deps.homeBase, memory);
+      await deps.writeMemory(deps.homeBase, memory, deps.projectCwd);
       return {
         signal: saved[0]!.deduped ? "already_known" : "saved",
         text: saved[0]!.text,
@@ -178,7 +188,7 @@ async function runAutoCapture(
     // still exactly ONE read + ONE write per turn. Hoisting also means a
     // null store now skips the paid extraction entirely (strictly cheaper
     // than the old extract-then-read order).
-    const mem = await deps.readMemory(deps.homeBase);
+    const mem = await deps.readMemory(deps.homeBase, deps.projectCwd);
     if (!mem) return { signal: null, text: "" };
     const correctionEnabled = deps.correctionEnabled !== false;
     const candidates = correctionEnabled ? buildChatCandidates(mem) : undefined;
@@ -193,7 +203,7 @@ async function runAutoCapture(
     // Reference-equal memory = nothing changed (all claims dropped/blank) →
     // skip the write (a sub-floor contradict leaves the store untouched).
     // Atomicity: every non-dropped claim of the turn rides this ONE write.
-    if (memory !== mem) await deps.writeMemory(deps.homeBase, memory);
+    if (memory !== mem) await deps.writeMemory(deps.homeBase, memory, deps.projectCwd);
     return signalFromOutcomes(results);
   } catch {
     // Best-effort: extraction is never allowed to block or break the reply.
@@ -270,8 +280,8 @@ function deriveClassifiedClaims(
       return { text: f.text, entities: f.entities, classification: "add", targetId: null };
     }
     // Numeric-specifics guard, promoted from prompt to CODE: the eval
-    // calibration showed Haiku labels numeric-difference pairs ("我有 3 只猫" vs stored
-    // "用户养了 2 只猫") contradict at 0.95-1.0 despite the prompt guard, and
+    // calibration showed Haiku labels numeric-difference pairs ( vs stored
+    // ) contradict at 0.95-1.0 despite the prompt guard, and
     // its flat confidence curve means the ladder can't catch them. A numeric
     // difference is NOT a contradiction → downgrade to a coexisting add
     // (visible, no data loss — the conservative direction). The raw MESSAGE is

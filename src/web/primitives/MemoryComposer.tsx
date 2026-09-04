@@ -4,7 +4,7 @@
 import { tokens } from "../tokens/tokens";
 
 /**
- * NL "改记忆" composer — docked at the bottom of the by-type view.
+ * NL  composer — docked at the bottom of the by-type view.
  *
  * The matcher (island buildProposal) is deterministic (NO LLM): it can only
  * propose retiring an EXISTING semantic fact. ✓确认 on an actionable proposal
@@ -36,6 +36,55 @@ const cancelBtnStyle = {
   padding: "6px 14px",
   cursor: "pointer",
 };
+// Shared row styles for the proposal header (title + "awaiting" pill) — every
+// classification (deterministic retire / add / restate / contradict) renders
+// the same header shape, only the title text and pill text change.
+const proposalHeaderRowStyle = { display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" };
+const proposalTitleStyle = { fontSize: 12.5, fontWeight: 600, color: tokens.color.ink };
+const awaitingPillStyle = {
+  fontFamily: tokens.font.mono,
+  fontSize: 10,
+  fontWeight: 600,
+  color: tokens.color.memStatusPendingInk,
+  // 18% — consolidated with STATUS_META.pending.bg in memory-book-helpers.ts
+  // (this site was independently hand-tuned to 20%; same role, one %).
+  background: "color-mix(in srgb, var(--color-amber) 18%, transparent)",
+  borderRadius: tokens.radius.pill,
+  padding: "1px 8px",
+};
+// Shared style for the body/detail line under a proposal header.
+const detailTextStyle = { fontSize: 12.5, color: tokens.color.ink2, lineHeight: 1.5 };
+
+function ProposalHeader({
+  title,
+  pill,
+}: {
+  title: import("hono/jsx").Child;
+  pill: string;
+}) {
+  return (
+    <div style={proposalHeaderRowStyle}>
+      <span style={proposalTitleStyle}>{title}</span>
+      <span style={awaitingPillStyle}>{pill}</span>
+    </div>
+  );
+}
+
+// Confirm/Cancel action row shared by the deterministic-retire, add, and
+// restate classifications — only the confirm handler differs (cancel is
+// always cancelProposal()).
+function ConfirmCancelRow({ onConfirm }: { onConfirm: string }) {
+  return (
+    <div style={{ marginTop: "9px", display: "flex", gap: "8px" }}>
+      <button type="button" class="memory-proposal-confirm" x-on:click={onConfirm} style={confirmBtnStyle}>
+        ✓ Confirm
+      </button>
+      <button type="button" class="memory-proposal-cancel" x-on:click="cancelProposal()" style={cancelBtnStyle}>
+        ✕ Cancel
+      </button>
+    </div>
+  );
+}
 
 export function MemoryComposer() {
   return (
@@ -54,9 +103,9 @@ export function MemoryComposer() {
           class="memory-proposal bk-rise"
           style={{
             marginBottom: "10px",
-            background: "#fffaf0",
-            border: "1px solid #e8c98a",
-            borderLeft: "3px solid #e8a85c",
+            background: tokens.color.memProposalBg,
+            border: `1px solid ${tokens.color.memProposalBorder}`,
+            borderLeft: `3px solid ${tokens.color.amber}`,
             borderRadius: "10px",
             padding: "12px 14px",
             display: "flex",
@@ -86,75 +135,28 @@ export function MemoryComposer() {
             {/* deterministic retire proposal (no classification) */}
             <template x-if="proposal && !proposal.classification && proposal.actionable">
               <div>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
-                  <span style={{ fontSize: 12.5, fontWeight: 600, color: tokens.color.ink }}>
-                    siltpoke proposes to <span x-text="proposal.verb" /> a memory
-                  </span>
-                  <span
-                    style={{
-                      fontFamily: tokens.font.mono,
-                      fontSize: 10,
-                      fontWeight: 600,
-                      color: "#a06a1e",
-                      background: "rgba(232,168,92,.2)",
-                      borderRadius: tokens.radius.pill,
-                      padding: "1px 8px",
-                    }}
-                  >
-                    Awaiting your confirmation
-                  </span>
-                </div>
-                <div style={{ fontSize: 12.5, color: tokens.color.ink2, lineHeight: 1.5 }}>
+                <ProposalHeader
+                  title={
+                    <>
+                      siltpoke proposes to <span x-text="proposal.verb" /> a memory
+                    </>
+                  }
+                  pill="Awaiting your confirmation"
+                />
+                <div style={detailTextStyle}>
                   「<b style={{ color: tokens.color.ink }} x-text="proposal.target" />」——{" "}
                   <span x-text="proposal.detail" />
                 </div>
-                <div style={{ marginTop: "9px", display: "flex", gap: "8px" }}>
-                  <button
-                    type="button"
-                    class="memory-proposal-confirm"
-                    x-on:click="confirmProposal()"
-                    style={{
-                      fontFamily: tokens.font.body,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      color: tokens.color.cream,
-                      background: tokens.color.moss,
-                      border: "none",
-                      borderRadius: "7px",
-                      padding: "6px 14px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    ✓ Confirm
-                  </button>
-                  <button
-                    type="button"
-                    class="memory-proposal-cancel"
-                    x-on:click="cancelProposal()"
-                    style={{
-                      fontFamily: tokens.font.body,
-                      fontSize: 12,
-                      fontWeight: 500,
-                      color: tokens.color.ink2,
-                      background: "transparent",
-                      border: `1px solid ${tokens.color.edge}`,
-                      borderRadius: "7px",
-                      padding: "6px 14px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    ✕ Cancel
-                  </button>
-                </div>
+                <ConfirmCancelRow onConfirm="confirmProposal()" />
               </div>
             </template>
             {/* non-actionable proposal — honest, no mutate button */}
             <template x-if="proposal && !proposal.classification && !proposal.actionable">
               <div>
-                <div style={{ fontSize: 12.5, fontWeight: 600, color: tokens.color.ink, marginBottom: "4px" }}>
+                <div style={{ ...proposalTitleStyle, marginBottom: "4px" }}>
                   siltpoke isn't sure
                 </div>
-                <div style={{ fontSize: 12.5, color: tokens.color.ink2, lineHeight: 1.5 }}>
+                <div style={detailTextStyle}>
                   <span x-text="proposal.detail" />
                 </div>
                 <div style={{ marginTop: "9px" }}>
@@ -162,17 +164,7 @@ export function MemoryComposer() {
                     type="button"
                     class="memory-proposal-dismiss"
                     x-on:click="cancelProposal()"
-                    style={{
-                      fontFamily: tokens.font.body,
-                      fontSize: 12,
-                      fontWeight: 500,
-                      color: tokens.color.ink2,
-                      background: "transparent",
-                      border: `1px solid ${tokens.color.edge}`,
-                      borderRadius: "7px",
-                      padding: "6px 14px",
-                      cursor: "pointer",
-                    }}
+                    style={cancelBtnStyle}
                   >
                     Got it
                   </button>
@@ -182,116 +174,34 @@ export function MemoryComposer() {
             {/* NL add — single 确认 */}
             <template x-if="proposal && proposal.classification === 'add'">
               <div>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
-                  <span style={{ fontSize: 12.5, fontWeight: 600, color: tokens.color.ink }}>
-                    siltpoke wants to save a new memory
-                  </span>
-                  <span
-                    style={{
-                      fontFamily: tokens.font.mono,
-                      fontSize: 10,
-                      fontWeight: 600,
-                      color: "#a06a1e",
-                      background: "rgba(232,168,92,.2)",
-                      borderRadius: tokens.radius.pill,
-                      padding: "1px 8px",
-                    }}
-                  >
-                    Awaiting your confirmation
-                  </span>
-                </div>
-                <div style={{ fontSize: 12.5, color: tokens.color.ink2, lineHeight: 1.5 }}>
+                <ProposalHeader title="siltpoke wants to save a new memory" pill="Awaiting your confirmation" />
+                <div style={detailTextStyle}>
                   「<b style={{ color: tokens.color.ink }} x-text="proposal.candidate" />」
                 </div>
-                <div style={{ marginTop: "9px", display: "flex", gap: "8px" }}>
-                  <button
-                    type="button"
-                    class="memory-proposal-confirm"
-                    x-on:click="confirmAdd()"
-                    style={confirmBtnStyle}
-                  >
-                    ✓ Confirm
-                  </button>
-                  <button
-                    type="button"
-                    class="memory-proposal-cancel"
-                    x-on:click="cancelProposal()"
-                    style={cancelBtnStyle}
-                  >
-                    ✕ Cancel
-                  </button>
-                </div>
+                <ConfirmCancelRow onConfirm="confirmAdd()" />
               </div>
             </template>
             {/* NL restate — single 确认 (reconfirm existing) */}
             <template x-if="proposal && proposal.classification === 'restate'">
               <div>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
-                  <span style={{ fontSize: 12.5, fontWeight: 600, color: tokens.color.ink }}>
-                    siltpoke wants to reaffirm an existing memory
-                  </span>
-                  <span
-                    style={{
-                      fontFamily: tokens.font.mono,
-                      fontSize: 10,
-                      fontWeight: 600,
-                      color: "#a06a1e",
-                      background: "rgba(232,168,92,.2)",
-                      borderRadius: tokens.radius.pill,
-                      padding: "1px 8px",
-                    }}
-                  >
-                    Awaiting your confirmation
-                  </span>
-                </div>
-                <div style={{ fontSize: 12.5, color: tokens.color.ink2, lineHeight: 1.5 }}>
+                <ProposalHeader
+                  title="siltpoke wants to reaffirm an existing memory"
+                  pill="Awaiting your confirmation"
+                />
+                <div style={detailTextStyle}>
                   Existing 「<b style={{ color: tokens.color.ink }} x-text="proposal.contradictedText" />」—— confirm it still holds.
                 </div>
-                <div style={{ marginTop: "9px", display: "flex", gap: "8px" }}>
-                  <button
-                    type="button"
-                    class="memory-proposal-confirm"
-                    x-on:click="confirmRestate(proposal.targetFactId)"
-                    style={confirmBtnStyle}
-                  >
-                    ✓ Confirm
-                  </button>
-                  <button
-                    type="button"
-                    class="memory-proposal-cancel"
-                    x-on:click="cancelProposal()"
-                    style={cancelBtnStyle}
-                  >
-                    ✕ Cancel
-                  </button>
-                </div>
+                <ConfirmCancelRow onConfirm="confirmRestate(proposal.targetFactId)" />
               </div>
             </template>
             {/* NL contradict — 替换 / 两条都留 / 取消 */}
             <template x-if="proposal && proposal.classification === 'contradict'">
               <div>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
-                  <span style={{ fontSize: 12.5, fontWeight: 600, color: tokens.color.ink }}>
-                    This conflicts with an existing memory
-                  </span>
-                  <span
-                    style={{
-                      fontFamily: tokens.font.mono,
-                      fontSize: 10,
-                      fontWeight: 600,
-                      color: "#a06a1e",
-                      background: "rgba(232,168,92,.2)",
-                      borderRadius: tokens.radius.pill,
-                      padding: "1px 8px",
-                    }}
-                  >
-                    Awaiting your choice
-                  </span>
-                </div>
-                <div style={{ fontSize: 12.5, color: tokens.color.ink2, lineHeight: 1.5 }}>
+                <ProposalHeader title="This conflicts with an existing memory" pill="Awaiting your choice" />
+                <div style={detailTextStyle}>
                   New: 「<b style={{ color: tokens.color.ink }} x-text="proposal.candidate" />」
                 </div>
-                <div style={{ fontSize: 12.5, color: tokens.color.ink2, lineHeight: 1.5 }}>
+                <div style={detailTextStyle}>
                   Old: 「<b style={{ color: tokens.color.ink }} x-text="proposal.contradictedText" />」
                 </div>
                 <div style={{ marginTop: "9px", display: "flex", gap: "8px", flexWrap: "wrap" }}>

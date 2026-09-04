@@ -13,7 +13,7 @@ const stories: PreviewStory[] = [
   {
     name: "terra background",
     render: () => (
-      <Pill bg={tokens.color.terra} border={tokens.color.terra} color="#fff">
+      <Pill bg={tokens.color.terra} border={tokens.color.terra} color={tokens.color.onTerra}>
         terra
       </Pill>
     ),
@@ -21,7 +21,7 @@ const stories: PreviewStory[] = [
   {
     name: "moss background",
     render: () => (
-      <Pill bg={tokens.color.moss} border={tokens.color.moss} color="#fff">
+      <Pill bg={tokens.color.moss} border={tokens.color.moss} color={tokens.color.onMoss}>
         moss
       </Pill>
     ),
@@ -29,7 +29,7 @@ const stories: PreviewStory[] = [
   {
     name: "amber background",
     render: () => (
-      <Pill bg={tokens.color.amber} border={tokens.color.amber} color={tokens.color.ink}>
+      <Pill bg={tokens.color.amber} border={tokens.color.amber} color={tokens.color.onAmber}>
         amber
       </Pill>
     ),

@@ -8,38 +8,36 @@
  * a repo that already has a cached blurb returns it for $0 without spending.
  * Blocked by the same daily-budget + quiet-hours gate as chat sends.
  */
-import type { Hono } from "hono";
+
 import { join } from "node:path";
-import { isAuthorized } from "../auth";
+import type { Hono } from "hono";
+import type { BrainCallRawResult, BrainUsage, CallBrainOptions } from "../../brain/brain";
+import { loadBrainConfig } from "../../brain/brain-config";
+import { resolveRoleMeta } from "../../brain/registry";
+import { makeRoleRawBrain } from "../../brain/role-brain";
 import { computeProjHash } from "../../repo-graph/proj-hash";
 import { readJsonObject } from "../../repo-graph/repo-card";
+import { hasOutOfScopeRegistryNodes, resolveExternalScope } from "../../explain/arch-reconcile";
 import {
-  SUMMARY_SYSTEM_PROMPT,
   buildSummaryContext,
   parseSummaryOutput,
-  writeRepoSummary,
   repoSummaryPath,
+  SUMMARY_SYSTEM_PROMPT,
+  writeRepoSummary,
 } from "../../repo-graph/repo-summary-gen";
-import { callBrainRaw, type BrainUsage } from "../../brain/brain";
 import { loadBudgetConfig } from "../../state/budget-config";
 import { loadQuietHoursConfig } from "../../state/quiet-hours";
-import { loadDailyRollup } from "../../state/usage";
+import { appendUsageEvent, loadDailyRollup } from "../../state/usage";
+import { isAuthorized } from "../auth";
 import { evaluateChatSendGate } from "./chat-send-gate";
-import { appendUsageEvent } from "../../state/usage";
-
-const SUMMARY_MODEL = "claude-haiku-4-5";
 
 /** Injectable Brain call so the route can be tested without a real `claude -p`. */
-export type SummaryBrainCall = (opts: {
-  systemPrompt: string;
-  contextBundle: string;
-  model: string;
-}) => Promise<{ output: unknown; usage: BrainUsage }>;
+export type SummaryBrainCall = (opts: CallBrainOptions) => Promise<BrainCallRawResult>;
 
 export interface RepoSummaryRouteDeps {
   home: string;
   secret: string;
-  /** Defaults to the real `callBrainRaw`. */
+  /** Defaults to the config-selected `extract`-role provider (single-brain S2). */
   callBrain?: SummaryBrainCall;
   /** Injectable clock for the gate / timestamps. */
   now?: () => Date;
@@ -47,8 +45,7 @@ export interface RepoSummaryRouteDeps {
 
 export function mountRepoSummaryRoute(app: Hono, deps: RepoSummaryRouteDeps): void {
   const home = deps.home;
-  const callBrain: SummaryBrainCall =
-    deps.callBrain ?? ((opts) => callBrainRaw(opts));
+  const callBrain: SummaryBrainCall = deps.callBrain ?? makeRoleRawBrain(home, "extract");
   const nowFn = deps.now ?? (() => new Date());
 
   app.post("/api/repo-summary", async (c) => {
@@ -75,8 +72,15 @@ export function mountRepoSummaryRoute(app: Hono, deps: RepoSummaryRouteDeps): vo
       return c.json({ error: "repo has no architecture model — generate it first" }, 400);
     }
 
+    // A blurb generated from a polluted model is not reusable. `buildSummaryContext`
+    // now filters out-of-scope reviewer externals, but anything already on disk was
+    // written from a prompt that listed them as components — serving it would keep
+    // that sentence alive forever, since nothing else invalidates this file.
+    // Treated as a cache MISS so the normal budget-gated path regenerates it.
+    const stalePrompt = hasOutOfScopeRegistryNodes(archModel, resolveExternalScope(projectRoot));
+
     // Idempotent: return the cached blurb without spending if it already exists.
-    const cached = readJsonObject(repoSummaryPath(home, projectRoot));
+    const cached = stalePrompt ? null : readJsonObject(repoSummaryPath(home, projectRoot));
     if (cached && typeof cached.text === "string" && cached.text.trim().length > 0) {
       return c.json({ summary_text: cached.text, cost_usd: 0, cached: true });
     }
@@ -98,7 +102,9 @@ export function mountRepoSummaryRoute(app: Hono, deps: RepoSummaryRouteDeps): vo
     // Re-check the cache after the gate: a concurrent request (second tab,
     // reload-then-click) may have just generated it in the read-then-spend
     // window. Cheap insurance against a double Brain spend.
-    const fresh = readJsonObject(repoSummaryPath(home, projectRoot));
+    // Same staleness rule as the first read — a concurrent writer racing us is
+    // worth reusing, the pre-scope blurb on disk is not.
+    const fresh = stalePrompt ? null : readJsonObject(repoSummaryPath(home, projectRoot));
     if (fresh && typeof fresh.text === "string" && fresh.text.trim().length > 0) {
       return c.json({ summary_text: fresh.text, cost_usd: 0, cached: true });
     }
@@ -109,8 +115,7 @@ export function mountRepoSummaryRoute(app: Hono, deps: RepoSummaryRouteDeps): vo
     try {
       const result = await callBrain({
         systemPrompt: SUMMARY_SYSTEM_PROMPT,
-        contextBundle: buildSummaryContext(archModel),
-        model: SUMMARY_MODEL,
+        contextBundle: buildSummaryContext(archModel, projectRoot),
       });
       summaryText = parseSummaryOutput(result.output);
       usage = result.usage;
@@ -121,10 +126,17 @@ export function mountRepoSummaryRoute(app: Hono, deps: RepoSummaryRouteDeps): vo
       );
     }
 
+    // Record which model actually served this cache entry (display-only
+    // metadata, not sent back to the provider) — resolved from the same
+    // `extract`-role config `callBrain` just routed through, so a
+    // non-default-config install doesn't get a stale "claude-haiku" label.
+    const brainConfig = await loadBrainConfig(home);
+    const resolvedModel = resolveRoleMeta(brainConfig, "extract").model ?? "unknown";
+
     const costUsd = usage.total_cost_usd ?? 0;
     writeRepoSummary(home, projectRoot, {
       text: summaryText,
-      model: SUMMARY_MODEL,
+      model: resolvedModel,
       generated_ts: now.toISOString(),
       cost_usd: costUsd,
     });

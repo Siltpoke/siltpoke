@@ -29,24 +29,36 @@ export interface TraceWaterfallProps {
  * pastel for differentiating phases at a glance — these hexes push toward
  * fully-saturated primaries while staying within the warm/cool spread of
  * the rest of the page.
+ *
+ * Task 10b batch 2 — `tokens.kind.*` (see palette.ts's `kindPalette` for
+ * the full light+dark design, the 3:1-vs-`edge` contrast gate, and the
+ * distinctness fix for the two pairs that independently converged after
+ * being lifted for dark mode). `siltpoke.brain.verify` intentionally shares
+ * `tokens.kind.summarizerHaiku` with `siltpoke.summarizer.haiku` — a
+ * pre-existing one-literal-two-keys design in this record, kept as ONE
+ * token referenced twice rather than two tokens that happen to start equal.
  */
 const KIND_COLORS: Record<string, string> = {
-  "siltpoke.turn":              "#9c1c1c", // crimson
-  "siltpoke.summarizer.haiku":  "#2d6b22", // forest green
-  "siltpoke.rubric.tier1":      "#c45a08", // burnt orange
-  "siltpoke.rubric.tier2":      "#8a3f04", // dark rust
-  "siltpoke.intent.classify":   "#1e6a6a", // deep teal
-  "siltpoke.prompt.build":      "#3a2e22", // dark espresso
-  "siltpoke.brain.find":        "#1c5a8a", // deep blue
-  "siltpoke.brain.verify":      "#2d6b22", // forest green
-  "siltpoke.response.parse":    "#a8267a", // vivid magenta
-  "siltpoke.critique.persist":  "#1a1a14", // near-black
+  "siltpoke.turn":              tokens.kind.turn, // crimson
+  "siltpoke.summarizer.haiku":  tokens.kind.summarizerHaiku, // forest green
+  "siltpoke.rubric.tier1":      tokens.kind.rubricTier1, // burnt orange
+  "siltpoke.rubric.tier2":      tokens.kind.rubricTier2, // dark rust
+  "siltpoke.intent.classify":   tokens.kind.intentClassify, // deep teal
+  "siltpoke.prompt.build":      tokens.kind.promptBuild, // dark espresso
+  "siltpoke.brain.find":        tokens.kind.brainFind, // deep blue
+  "siltpoke.brain.verify":      tokens.kind.summarizerHaiku, // shares summarizer.haiku's token — see comment above
+  "siltpoke.response.parse":    tokens.kind.responseParse, // vivid magenta
+  "siltpoke.critique.persist":  tokens.kind.critiquePersist, // near-black (dark-mode hue-shifted, see palette.ts)
 };
 
-/** Fallback bar color — dark enough to read on any cream background. */
-const DEFAULT_BAR_COLOR = "#2a241c";
-/** Darker track background so bars pop visually. */
-const TRACK_BG = "#d8cbab";
+// Fallback bar color for an unmapped span name — folded into `tokens.color.ink`
+// (near-exact match to the original `#2a241c`) rather than kept as a 10th
+// competing hue in `kindPalette`: this is deliberately "not a recognized
+// kind," a neutral signal, not another identity color needing distinctness
+// from the other 9 (Task 10b batch 2).
+const DEFAULT_BAR_COLOR = tokens.color.ink;
+/** Darker track background so bars pop visually. Exact match to `tokens.color.edge`. */
+const TRACK_BG = tokens.color.edge;
 
 function depthOf(spanId: string, spans: WaterfallSpan[]): number {
   const span = spans.find(s => s.span_id === spanId);

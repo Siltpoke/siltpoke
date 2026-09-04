@@ -150,8 +150,10 @@ describe("GET /explain/result builds the cached explanation (reuses buildExplana
   test("after a detached explain completes, /explain/result serves the Explanation", async () => {
     const home = seedHome();
     const app = mount(home, { explain: explainOk });
+    // Secret-gated (daemon-hardening security audit, finding 3 — residual
+    // gap); mount() sets secret: "s".
     await app.request("/api/repo-graph/explain", {
-      method: "POST", headers: { "content-type": "application/json" },
+      method: "POST", headers: { "content-type": "application/json", "X-Siltpoke-Secret": "s" },
       body: JSON.stringify({ repo: HASH, target: "src/brain/brain.ts" }),
     });
     await pollTerminal(home);

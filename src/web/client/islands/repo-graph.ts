@@ -25,6 +25,7 @@ import type { C4Model, C4Node } from "./repo-graph-c4-model";
 // Pure keyspace fn (shared with the server — ONE-source discipline);
 // safe in the client bundle, no fs/server imports behind it.
 import { bucketIdOfPath } from "../../../repo-graph/project-architecture";
+import type { SiltpokeNodeType } from "../../../repo-graph/types";
 import {
   deriveC4FromProjection,
   type DerivableProjection,
@@ -45,6 +46,7 @@ import {
   groundedPopoverTitle,
   buildGroundedPopoverHtml,
 } from "./repo-graph-popovers";
+import { tokens } from "../../tokens/tokens";
 
 interface AlpineGlobal {
   data(name: string, factory: () => Record<string, unknown>): void;
@@ -166,8 +168,8 @@ interface Neighbor {
 // ─── Trace-level contract (from /api/repo-graph/{trace,entrypoints}) ─
 
 /** Detected trace root (GET /entrypoints). */
-interface Entrypoint {
-  id: string; // role id: "cli" | "daemon" | "dash"
+export interface Entrypoint {
+  id: string; // role id: preset "cli" | "daemon" | "dash", or a generic-detected id
   label: string;
   fn: string;
   module: string;
@@ -175,6 +177,92 @@ interface Entrypoint {
   line: number;
   path: string;
   nodeId: string;
+  source: "bin" | "script" | "framework" | "preset";
+  confidence: "certain" | "inferred";
+}
+
+/**
+ * The single source of truth for "which entry does an unqualified trace root
+ * at" — the client-side twin of the server's /trace no-`?entry` default
+ * (repo-graph.tsx `hasPresetCli` logic): prefer the preset "cli" role when one
+ * was actually detected, else the first ranked entry, else "cli" as a
+ * last-resort fallback (only meaningful before /entrypoints has ever
+ * resolved). Pure + exported so both call sites (phEnter's fallback,
+ * phEnterDefault's candidate selection) AND a unit test can pin the exact
+ * same rule the server uses — they cannot independently drift out of parity.
+ */
+export function defaultEntryId(entrypoints: Entrypoint[]): string {
+  return entrypoints.find((e) => e.id === "cli")?.id ?? entrypoints[0]?.id ?? "cli";
+}
+
+/** Gap between reattach poll ticks, ms. */
+export const POLL_INTERVAL_MS = 3000;
+
+/**
+ * Fallback wall-clock budget when the daemon didn't tell us its own — matches
+ * `index-config.ts`'s `timeoutMs` default of 10 minutes. Guessing SHORTER than
+ * the daemon's cap is the failure mode that matters: it accuses a healthy long
+ * build of having died.
+ */
+export const DEFAULT_INDEX_TIMEOUT_MS = 600_000;
+
+/**
+ * Ticks to wait before giving up on a reattached index.
+ *
+ * Derived from the daemon's OWN `index.timeoutMs`, never from a constant picked
+ * independently: the daemon kills the indexer at `timeoutMs` and then deletes
+ * the repo, which the poll sees as `gone`. So any budget SHORTER than that cap
+ * fires `exhausted` on a build that is still perfectly healthy — the first cut
+ * of this used a flat 40 ticks (~2 min) against a 10-minute default, i.e. it
+ * would have told users the daemon had crashed roughly five times too early.
+ *
+ * The margin covers the interval's own granularity plus the daemon's post-kill
+ * cleanup, so a real timeout is reported as the failure it is (`gone`) rather
+ * than as this weaker "we stopped watching" verdict.
+ */
+export function pollTickBudget(indexTimeoutMs = DEFAULT_INDEX_TIMEOUT_MS): number {
+  const effective = indexTimeoutMs > 0 ? indexTimeoutMs : DEFAULT_INDEX_TIMEOUT_MS;
+  return Math.ceil(effective / POLL_INTERVAL_MS) + 10;
+}
+
+/** What one tick of the reattach poll concluded. */
+export type PollVerdict = "ready" | "gone" | "exhausted" | "wait";
+
+/**
+ * Decide what a reattach poll tick means. Pure, and exported, because the
+ * interesting cases are the ones that used to have no outcome at all.
+ *
+ * Reloading mid-index re-raises the "Indexing …" overlay and polls /repos. That
+ * poll only ever acted on `ready`, which leaves two ways to hang forever:
+ *
+ *   - **gone** — the build FAILED. The daemon calls `removeRepoIndex`, which
+ *     `rm -rf`s the repo's storage dir, and /repos is a listing of exactly
+ *     those dirs. So a failed repo does not turn "failed": it disappears.
+ *     `find(...)?.state === "ready"` was then false forever. Disappearance is
+ *     the failure signal, and it was simply never read — which is why this
+ *     needs no server-side change, contrary to how it first looked.
+ *   - **exhausted** — the repo is still "indexing" after the budget. A daemon
+ *     restart mid-build leaves `meta.building` true with no process behind it,
+ *     so this state is permanent. The poll used to just stop, silently.
+ *
+ * Order matters: `ready` wins over the clock (a slow success is still a
+ * success), and `gone` wins over `exhausted` (name the actual failure rather
+ * than blaming the timer).
+ *
+ * Absence cannot be confused with a user forgetting the repo: renderRepoMenu
+ * disables every forget button while any index is running.
+ */
+export function pollVerdict(
+  repos: ReadonlyArray<{ id: string; state: string }>,
+  id: string,
+  tries: number,
+  budget: number = pollTickBudget(),
+): PollVerdict {
+  const entry = repos.find((r) => r.id === id);
+  if (entry?.state === "ready") return "ready";
+  if (!entry) return "gone";
+  if (tries > budget) return "exhausted";
+  return "wait";
 }
 
 /** One node on a traced call path (mirrors trace-path.ts TraceNode). */
@@ -188,6 +276,11 @@ interface TraceNodeData {
   signature: string;
   io: { input: string; output: string };
   purpose: { src: string; text?: string };
+  /**
+   * Graph node type ("file" | "function" | "class" | "module" | "symbol").
+   * Absent on the synthetic unresolved-tail node — keeps today's rendering.
+   */
+  type?: SiltpokeNodeType;
   role?: "entry";
   shared?: boolean;
   warn?: boolean;
@@ -302,6 +395,16 @@ function esc(s: unknown): string {
   );
 }
 
+/**
+ * A function/class/symbol entry reads as `name()`; a file-root entry (a
+ * generic entrypoint rooted at a module, not a function) has no call
+ * signature to append — just its bare name. Absent `type` (e.g. legacy data)
+ * keeps today's `name()` rendering.
+ */
+export function entryCallLabel(name: string, type?: SiltpokeNodeType): string {
+  return type === "file" ? name : `${name}()`;
+}
+
 /** Test/spec file? Used to sort sources ahead of tests in the Files list. */
 function isTestFile(name: string): boolean {
   return /\.(test|spec)\.[cm]?[jt]sx?$/.test(name);
@@ -317,10 +420,26 @@ function gridCols(n: number): number {
   return Math.max(2, Math.ceil(Math.sqrt(n)));
 }
 
-// rgba() from a #hex (port of app.js hexA).
-function hexA(hex: string, a: number): string {
-  const n = parseInt(hex.slice(1), 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+/**
+ * A CSS color at N% opacity, as a CSS value — replaces the old hexA(), which
+ * parsed a hex literal (parseInt + bit-shifts) and therefore froze at
+ * whatever theme was compiled in. `color` is any valid CSS <color> the
+ * caller already has in hand — a `var(--x)` reference (whether a hand-typed
+ * string, `tokens.color.*`/`tokens.graph.*`, or one of RepoGraph's own
+ * local `.rg-host`-scoped custom properties) or a literal hex — so this
+ * takes a color VALUE rather than a `ColorToken` name. Update (Important 4,
+ * final dark-mode branch review): the server's GROUP_ACCENTS is now MOSTLY
+ * `tokens.color.*` (4 of 6 — see project-architecture.ts), with 2 genuine
+ * hex-literal "overflow" accents remaining; this function's signature
+ * doesn't change either way, since it never inspects the string, only
+ * interpolates it.
+ *
+ * THE RESULT IS A CSS VALUE ONLY. Never feed it to JS string parsing — that
+ * is exactly what hexA's caller did, and why the color could not follow a
+ * theme.
+ */
+export function cssAlpha(color: string, percent: number): string {
+  return `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 }
 
 function center(r: Rect): { x: number; y: number } {
@@ -716,7 +835,17 @@ function bootRepoGraph(root: HTMLElement): void {
 
   const groupById = new Map(GROUPS.map((g) => [g.id, g]));
   const subById = new Map(SUBDIRS.map((s) => [s.id, s]));
-  const FALLBACK_GROUP: ProjectionGroup = { id: "other", title: "Other", short: "Other", accent: "#8a7c64" };
+  // `tokens.color.ink3` (final dark-mode branch review, Important 4) — was
+  // the hand-written string `"var(--ink3)"`, RepoGraph's own local
+  // `.rg-host`-scoped alias FOR `--color-ink3` (RepoGraph.tsx's alias
+  // block). `tokens.color.ink3` resolves to that same global custom
+  // property directly, so the render is identical either way, but a
+  // typo'd `tokens.color.foo` is a compile error where a typo'd string is a
+  // silent no-op that resolves to nothing outside `.rg-host` — this repo's
+  // dominant defect shape (see staleness-badge.ts's docstring on the same
+  // rule). Also no longer depends on `.rg-host`'s alias block existing/being
+  // in scope for this fallback to render correctly.
+  const FALLBACK_GROUP: ProjectionGroup = { id: "other", title: "Other", short: "Other", accent: tokens.color.ink3 };
   const groupOf = (subId: string): ProjectionGroup => groupById.get(subById.get(subId)?.group ?? "") ?? FALLBACK_GROUP;
   const subdirsInGroup = (gid: string): Subdir[] => SUBDIRS.filter((s) => s.group === gid);
   // B-fix 2026-06-10: display route for a bucket = its REAL projection path.
@@ -829,7 +958,11 @@ function bootRepoGraph(root: HTMLElement): void {
     memberBuckets: null,
     memberTitle: null,
     view: { scale: 1, tx: 0, ty: 0 },
-    trace: { ep: "cli", depth: 6, data: null, entrypoints: [], expanded: new Set(), offFor: null, gen: {}, coverage: null, treeSubs: new Set(), treeFiles: new Set() },
+    // ep starts unset ("") — "cli" is a preset among several possible detected
+    // entries, not a safe assumption before /entrypoints has loaded. phEnter's
+    // defaultEntryId() resolves the real default once entrypoints arrive, so
+    // server and client can't diverge on a repo without a preset cli.
+    trace: { ep: "", depth: 6, data: null, entrypoints: [], expanded: new Set(), offFor: null, gen: {}, coverage: null, treeSubs: new Set(), treeFiles: new Set() },
   };
 
   // ── Trace-level data adapter (entrypoints + per-entry trace, cached) ────
@@ -847,7 +980,7 @@ function bootRepoGraph(root: HTMLElement): void {
         entrypointsLoaded = true;
       }
     } catch {
-      /* leave empty; toolbar still offers the default cli trace */
+      /* leave empty; defaultEntryId()'s "cli" last resort still offers a trace */
     }
   }
 
@@ -1110,8 +1243,10 @@ function bootRepoGraph(root: HTMLElement): void {
     const ep = S.trace.entrypoints.find((e) => e.id === S.trace.ep);
     // For user-chosen roots (no matching preset), derive a human label from
     // the entry node's parsed fn name rather than showing the raw node id.
-    const sceneEntryFn = data?.nodes.find((n) => n.id === data?.spine[0])?.fn;
-    const epLabel = ep?.label ?? (sceneEntryFn ? `${sceneEntryFn}()` : S.trace.ep);
+    const sceneEntryNode = data?.nodes.find((n) => n.id === data?.spine[0]);
+    const sceneEntryFn = sceneEntryNode?.fn;
+    const epLabel =
+      ep?.label ?? (sceneEntryFn ? entryCallLabel(sceneEntryFn, sceneEntryNode?.type) : S.trace.ep);
     if (!data || data.spine.length === 0) {
       // No root chosen (search-fallback entry) reads differently than a
       // chosen root that genuinely resolves to no path.
@@ -1187,7 +1322,13 @@ function bootRepoGraph(root: HTMLElement): void {
         id: "c:trace",
         gid: "core",
         title: "call path · " + epLabel,
-        accent: "#c9871f",
+        // `tokens.graph.resolved` (final dark-mode branch review, Important
+        // 4) — was the hand-written string "var(--resolved)", RepoGraph's
+        // own local alias FOR `--graph-resolved` (RepoGraph.tsx's alias
+        // block; the ochre "resolved call" accent, matches the legend
+        // below — not a brand token, hence `tokens.graph.*`, not
+        // `tokens.color.*`). Same resolved value, now compile-checked.
+        accent: tokens.graph.resolved,
         count: route.length,
         rect: { x: bx, y: by, w: bw, h: bh },
         isTrace: true,
@@ -1568,17 +1709,22 @@ function bootRepoGraph(root: HTMLElement): void {
       const body = (await res.json()) as { success: boolean; data?: { estUsd: number; mayTruncate?: boolean } };
       if (body.success && body.data) {
         archEstUsd = body.data.estUsd;
-        // Re-evaluate the current affordance state at resolve time (archSource /
-        // generatedPayload may have changed if the island transitioned during fetch).
-        const currentDec = archSource === "codemap"
-          ? null
-          : archAffordanceState(archSource, generatedPayload !== null, generatedStale);
-        // Only write ≈$ to the button when hint is null (no-cache or stale tier;
-        // the currentDec===null arm is the codemap defensive branch — unreachable
-        // in practice, codemap never shows the button) — on the no-cache path this
-        // IS the only pre-burn cost signal on the button. On the fresh-cache path
-        // (hint non-null) suppress: cost lives in the modal body.
-        if (currentDec === null || currentDec.hint === null) {
+        // Write ≈$ to the button ONLY on the no-cache path — the first Generate,
+        // which fires directly with no confirm modal in front of it, so the button
+        // is genuinely the last surface before the spend.
+        //
+        // Every cached path (stale OR fresh) goes through the confirm modal, which
+        // shows the cost in its body; writing it here too made the button read
+        // "↻ Re-generate — code changed ≈$1.54 · uses Claude · large repo — generate
+        // may hit the output cap and truncate", which overflowed its row and got
+        // clipped. Worse, it was inconsistent: this write lands asynchronously
+        // AFTER updateArchAffordance has cleared the span, so a fresh page load
+        // showed the long label while any later interaction re-cleared it and left
+        // the short one — the same button reading two different ways depending on
+        // how you arrived. The condition used to be `hint === null`, which is true
+        // for the stale tier as well, contradicting the comment right above it.
+        const noCache = generatedPayload === null;
+        if (noCache) {
           // Advisory truncation heads-up, appended to the pre-burn cost
           // line. Advisory only — the button still fires (never blocks).
           const warn = body.data.mayTruncate ? ` · ${ARCH_TRUNCATION_WARNING}` : "";
@@ -2056,7 +2202,7 @@ function bootRepoGraph(root: HTMLElement): void {
       const loc = t.path ? `${t.path}${t.line ? ":" + t.line : ""}` : "static analysis can't link this call";
       if (t.branchOf) {
         d.innerHTML =
-          `<div class="ntop"><span class="nname">${esc(t.fn)}()</span><span class="ph-brtag">${esc(t.branch ?? "")}</span></div>` +
+          `<div class="ntop"><span class="nname">${esc(entryCallLabel(t.fn, t.type))}</span><span class="ph-brtag">${esc(t.branch ?? "")}</span></div>` +
           `<div class="nsig" title="${esc(loc)}">${esc(loc)}</div>`;
       } else {
         // Badges: only the EXCEPTIONAL ⚠ (the one node with a drawn
@@ -2069,7 +2215,7 @@ function bootRepoGraph(root: HTMLElement): void {
           badges += `<span class="ph-bdg warn" title="Path may continue — an unresolved next step the static pass couldn't link">⚠</span>`;
         }
         d.innerHTML =
-          `<div class="ntop"><span class="nname">${esc(t.fn)}()</span>${badges}</div>` +
+          `<div class="ntop"><span class="nname">${esc(entryCallLabel(t.fn, t.type))}</span>${badges}</div>` +
           `<div class="nsig" title="${esc(loc)}">${esc(loc)}</div>`;
       }
     }
@@ -2642,7 +2788,7 @@ function bootRepoGraph(root: HTMLElement): void {
     try {
       const res = await fetch("/api/repo-graph/explain", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "X-Siltpoke-Secret": indexSecret },
         body: JSON.stringify({ target: scope.target, repo: repoHash, force: scope.state === "stale" }),
       });
       if (res.status === 409) return note("Another task is running — try again in a moment.");
@@ -2847,8 +2993,12 @@ function bootRepoGraph(root: HTMLElement): void {
     return { klass: "resolved", label: "resolved call" };
   }
 
-  function offParentFn(parentId: string | undefined): string {
-    return S.trace.data?.nodes.find((n) => n.id === parentId)?.fn ?? parentId ?? "";
+  /** Off-path context note reads "near <code>fn()</code>" — but a file-root
+   * parent has no call signature, so it reads "near <code>entry.ts</code>". */
+  function offParentLabel(parentId: string | undefined): string {
+    const parent = S.trace.data?.nodes.find((n) => n.id === parentId);
+    const fn = parent?.fn ?? parentId ?? "";
+    return entryCallLabel(fn, parent?.type);
   }
 
   // Stepper: the walkable hops = spine + the unresolvable tail(s).
@@ -2920,9 +3070,10 @@ function bootRepoGraph(root: HTMLElement): void {
       closePanel();
       return;
     }
-    if (t.path) publishViewed({ name: t.fn, path: t.path, node_type: "function" }, t.fn);
+    if (t.path) publishViewed({ name: t.fn, path: t.path, node_type: t.type ?? "function" }, t.fn);
     const g = groupOf(t.module);
     const isOff = !!t.off;
+    const isFileRoot = t.type === "file";
     const { klass, label } = traceClass(t);
     const loc = t.path
       ? `${esc(subdirRoute(t.module))}${esc(t.file)}${t.line ? ":" + t.line : ""}`
@@ -2930,15 +3081,18 @@ function bootRepoGraph(root: HTMLElement): void {
     pHead.innerHTML =
       `<div class="p-eyebrow"><span class="gd" style="background:${g.accent}"></span>trace · ${isOff ? "off-path node" : "node card"}` +
       `<span class="p-eyebrow-r">${phStepBtns(t.id)}<button class="p-close" id="rg-pclose">×</button></span></div>` +
-      `<div class="p-title">${esc(t.fn)}()</div>` +
+      `<div class="p-title">${esc(entryCallLabel(t.fn, t.type))}</div>` +
       `<div class="p-purpose" style="font-family:var(--mono);font-size:11px">${loc}</div>` +
       `<div class="ph-class ${klass}">${esc(label)}</div>`;
     pBody.innerHTML =
       (isOff
-        ? `<div class="ph-offnote">↪ <b>Off-path node</b> — reachable near <code>${esc(offParentFn(t.off))}()</code>, but this trace's main path <b>doesn't take it</b>. Context only — not a step on the path.</div>`
+        ? `<div class="ph-offnote">↪ <b>Off-path node</b> — reachable near <code>${esc(offParentLabel(t.off))}</code>, but this trace's main path <b>doesn't take it</b>. Context only — not a step on the path.</div>`
         : "") +
-      `<div class="ph-f"><div class="ph-lbl">Input · takes</div><div class="ph-val mono">${esc(t.io.input || "—")}</div></div>` +
-      `<div class="ph-f"><div class="ph-lbl">Output · returns</div><div class="ph-val mono">${esc(t.io.output || "—")}</div></div>` +
+      // A file-root has no call signature — no Input/Output to show, just Purpose.
+      (isFileRoot
+        ? ""
+        : `<div class="ph-f"><div class="ph-lbl">Input · takes</div><div class="ph-val mono">${esc(t.io.input || "—")}</div></div>` +
+          `<div class="ph-f"><div class="ph-lbl">Output · returns</div><div class="ph-val mono">${esc(t.io.output || "—")}</div></div>`) +
       `<div class="ph-f"><div class="ph-lbl">Purpose · what it does</div>${phPurpose(t)}</div>` +
       // 🔗 shared dropped as a per-node chip (it was true for every node on a
       // shared-infra path → decoration); stated once on the container header.
@@ -2986,7 +3140,7 @@ function bootRepoGraph(root: HTMLElement): void {
     try {
       const res = await fetch("/api/repo-graph/trace/purpose", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "X-Siltpoke-Secret": indexSecret },
         body: JSON.stringify({ node: nodeId, repo: repoHash }),
       });
       if (res.ok) {
@@ -3068,8 +3222,8 @@ function bootRepoGraph(root: HTMLElement): void {
       // calm marker is faded to match the rest line (0.32) — SVG markers don't
       // inherit stroke-opacity, so without this the head reads ~3x darker than
       // its faint line and floats near the external boxes. Focus uses c4-arrT (solid).
-      '<marker id="c4-arr" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 1 L9 5 L0 9" fill="none" stroke="#8a7c64" stroke-opacity="0.32" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>' +
-      '<marker id="c4-arrT" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 1 L9 5 L0 9" fill="none" stroke="#d96b6b" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker>';
+      '<marker id="c4-arr" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 1 L9 5 L0 9" fill="none" style="stroke:var(--ink3)" stroke-opacity="0.32" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>' +
+      '<marker id="c4-arrT" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 1 L9 5 L0 9" fill="none" style="stroke:var(--terra)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker>';
     svg.appendChild(defs);
 
     // system boundary (externals sit outside it).
@@ -3171,7 +3325,7 @@ function bootRepoGraph(root: HTMLElement): void {
       const path = document.createElementNS(SVGNS, "path");
       path.setAttribute("d", `M${p1.x} ${p1.y} Q${cx} ${cy} ${p2.x} ${p2.y}`);
       path.setAttribute("fill", "none");
-      path.setAttribute("stroke", "#8a7c64");
+      path.style.stroke = tokens.color.ink3; // was hand-written "var(--ink3)" — Important 4
       path.setAttribute("stroke-width", "1.4");
       path.setAttribute("stroke-opacity", "0.32");
       path.setAttribute("marker-end", "url(#c4-arr)");
@@ -3246,19 +3400,19 @@ function bootRepoGraph(root: HTMLElement): void {
     for (const e of c4EdgeEls) {
       const on = !!focusId && (e.s === focusId || e.t === focusId);
       if (!focusId) {
-        e.path.setAttribute("stroke", "#8a7c64");
+        e.path.style.stroke = tokens.color.ink3; // was hand-written "var(--ink3)" — Important 4
         e.path.setAttribute("stroke-opacity", "0.32");
         e.path.setAttribute("stroke-width", "1.4");
         e.path.setAttribute("marker-end", "url(#c4-arr)");
         e.lab.classList.remove("show");
       } else if (on) {
-        e.path.setAttribute("stroke", "#d96b6b");
+        e.path.style.stroke = tokens.color.terra; // was hand-written "var(--terra)" — Important 4
         e.path.setAttribute("stroke-opacity", "1");
         e.path.setAttribute("stroke-width", "2.2");
         e.path.setAttribute("marker-end", "url(#c4-arrT)");
         e.lab.classList.add("show");
       } else {
-        e.path.setAttribute("stroke", "#8a7c64");
+        e.path.style.stroke = tokens.color.ink3; // was hand-written "var(--ink3)" — Important 4
         e.path.setAttribute("stroke-opacity", "0.08");
         e.path.setAttribute("stroke-width", "1.4");
         // SVG markers don't inherit stroke-opacity — a 0.08 line keeps a solid
@@ -3324,10 +3478,19 @@ function bootRepoGraph(root: HTMLElement): void {
       void drillToFile(n.drillTo);
       return;
     }
+    const wasOpen = panelEl?.classList.contains("open") ?? false;
     c4Sel = id;
     for (const k in c4NodeEls) c4NodeEls[k].classList.toggle("sel", k === id);
     c4Focus(id);
     openSubdirPanelC4(id);
+    // The detail panel is a left overlay (#rg-panel, 320px, z-30). When it JUST
+    // opened, re-fit so the graph reframes clear of it (fit()'s tx left-aligns the
+    // world just past the panel when panelW > 0) — otherwise the just-selected
+    // container sits under the panel and the SECOND click that drills into it
+    // (c4Select same-id → drillToFile) lands on the panel instead of the node.
+    // Only on closed→open (not when reselecting while already open) so the graph
+    // doesn't jump on every click.
+    if (!wasOpen) fit();
   }
   function c4Deselect(): void {
     c4Sel = null;
@@ -3344,7 +3507,7 @@ function bootRepoGraph(root: HTMLElement): void {
     if (!panelEl || !pHead || !pBody || !pFoot) return;
     const n = C4.N[id];
     if (!n) return;
-    const acc = n.accent ? C4.GROUP_ACCENT[n.accent] : "var(--ink3)";
+    const acc = n.accent ? C4.GROUP_ACCENT[n.accent] : tokens.color.ink3; // was hand-written "var(--ink3)" — Important 4
     const out = C4.E.filter((e) => e[0] === id).map((e) => ({ other: e[1], vb: e[2] }));
     const inb = C4.E.filter((e) => e[1] === id).map((e) => ({ other: e[0], vb: e[2] }));
     pHead.innerHTML =
@@ -3389,7 +3552,11 @@ function bootRepoGraph(root: HTMLElement): void {
       n.kind === "cont"
         ? `<div class="p-note">${canDrillNode(n) ? `<span class="p-drill">Click the box again to open its files ›</span><br>` : ""}${archSource === "generated" && !n.memberFiles?.length ? `<span class="p-drill">no file evidence — not drillable</span><br>` : ""}<span class="muted">runtime container · all labels human-authored</span></div>`
         : n.kind === "ext"
-          ? `<div class="p-note"><span class="muted">external system — outside the siltpoke boundary</span></div>`
+          ? `<div class="p-note"><span class="muted">external system — outside the siltpoke boundary</span>` +
+            (n.provenance === "registry-declared"
+              ? `<br><span class="muted">declared in provider registry · reachability unverified</span>`
+              : "") +
+            `</div>`
           : `<div class="p-note"><span class="muted">actor</span></div>`;
     panelEl.classList.add("open");
     publishViewed(null, ""); // a container/actor is not an anchorable node
@@ -3449,7 +3616,7 @@ function bootRepoGraph(root: HTMLElement): void {
         width: c.rect.w + "px",
         height: c.rect.h + "px",
       });
-      box.style.borderColor = hexA(c.accent, c.isTrace ? 0.6 : 0.5);
+      box.style.borderColor = cssAlpha(c.accent, c.isTrace ? 60 : 50);
       const dotColor = c.accent;
       const unit =
         S.level === "arch" ? "modules" : S.level === "file" ? "files" : S.level === "trace" ? "steps" : "symbols";
@@ -3663,7 +3830,7 @@ function bootRepoGraph(root: HTMLElement): void {
       const entryNode = S.trace.data?.nodes.find((n) => n.id === S.trace.data?.spine[0]);
       const fn = ep?.fn ?? entryNode?.fn ?? S.trace.ep;
       // No root chosen yet (search-fallback entry) → just "⟜ Trace", no "· ()".
-      const cur = fn ? `⟜ Trace · ${esc(fn)}()` : "⟜ Trace";
+      const cur = fn ? `⟜ Trace · ${esc(entryCallLabel(fn, entryNode?.type))}` : "⟜ Trace";
       crumbsEl.innerHTML =
         `<span class="c" data-i="0">Architecture</span><span class="sep">›</span>` +
         `<span class="c cur">${cur}</span>`;
@@ -3926,7 +4093,11 @@ function bootRepoGraph(root: HTMLElement): void {
   function hlMatch(name: string, q: string): string {
     const i = name.toLowerCase().indexOf(q.toLowerCase());
     if (i < 0) return esc(name);
-    return esc(name.slice(0, i)) + "<mark style='background:#f3e0a8;color:inherit'>" + esc(name.slice(i, i + q.length)) + "</mark>" + esc(name.slice(i + q.length));
+    // The mark's own text is `color:inherit` — whatever ink is already
+    // rendering (`.rg-host .res .nm{color:var(--ink)}`) — so `searchHighlight`
+    // is the only piece that needs a dark counterpart, chosen so `ink` stays
+    // legible on it in BOTH themes (Task 10b batch 2; see palette.ts).
+    return esc(name.slice(0, i)) + `<mark style='background:${tokens.color.searchHighlight};color:inherit'>` + esc(name.slice(i, i + q.length)) + "</mark>" + esc(name.slice(i + q.length));
   }
   function pathLabel(h: SearchHit): string {
     if (h.kind === "subdir") return "";
@@ -4057,13 +4228,22 @@ function bootRepoGraph(root: HTMLElement): void {
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   // Which repo's forget × is "armed" (showing the inline confirm row).
   let forgetArmed: string | null = null;
+  // The daemon's own wall-clock cap on an indexer subprocess, as reported by
+  // /repos. The reattach poll sizes its give-up budget from this rather than
+  // from a constant — see pollTickBudget.
+  let indexTimeoutMs = DEFAULT_INDEX_TIMEOUT_MS;
 
   async function loadRepos(): Promise<void> {
     try {
       const res = await fetch("/api/repo-graph/repos");
       if (!res.ok) return;
-      const body = (await res.json()) as { data: { repos: RepoSummary[] } };
+      const body = (await res.json()) as {
+        data: { repos: RepoSummary[]; indexTimeoutMs?: number };
+      };
       repoList = body.data.repos ?? [];
+      if (typeof body.data.indexTimeoutMs === "number" && body.data.indexTimeoutMs > 0) {
+        indexTimeoutMs = body.data.indexTimeoutMs;
+      }
     } catch {
       /* keep prior list */
     }
@@ -4194,7 +4374,7 @@ function bootRepoGraph(root: HTMLElement): void {
     }
     if (r.state === "indexing") {
       showRepoEmpty(r);
-      startPolling(r.id);
+      startPolling(r.id, r.name);
     } else {
       showRepoEmpty(r);
     }
@@ -4220,29 +4400,69 @@ function bootRepoGraph(root: HTMLElement): void {
     repoEmpty.classList.add("show");
   }
 
-  // Poll /repos while a selected repo indexes; reload when the structural indexer finishes.
-  function startPolling(id: string): void {
+  // Poll /repos while a selected repo indexes; reload when the structural
+  // indexer finishes — and, because a reattach has no SSE stream to carry a
+  // verdict, land a dismissible terminal on the two ways it can end badly
+  // instead of stopping without a word. See pollVerdict for what those are.
+  function startPolling(id: string, name = "this repo"): void {
     if (pollTimer) clearInterval(pollTimer);
     let tries = 0;
+    const stop = (): void => {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = null;
+    };
     pollTimer = setInterval(async () => {
       tries += 1;
-      if (tries > 40) {
-        if (pollTimer) clearInterval(pollTimer);
-        pollTimer = null;
+      await loadRepos();
+      // Budget read AFTER loadRepos so it reflects the daemon's live config.
+      const verdict = pollVerdict(repoList, id, tries, pollTickBudget(indexTimeoutMs));
+      if (verdict === "wait") return;
+      stop();
+      if (verdict === "ready") {
+        window.location.href = `/repo-graph?repo=${encodeURIComponent(id)}`;
         return;
       }
-      await loadRepos();
-      if (repoList.find((x) => x.id === id)?.state === "ready") {
-        if (pollTimer) clearInterval(pollTimer);
-        pollTimer = null;
-        window.location.href = `/repo-graph?repo=${encodeURIComponent(id)}`;
-      }
+      currentIndexHash = null;
+      showIndexError(name, verdict === "gone" ? "index_failed" : "reattach_timeout");
     }, 3000);
   }
 
   // ── In-dashboard "Index a repo" trigger + live SSE progress ──────
   let indexingActive = false;
   let currentIndexHash: string | null = null;
+  // What the centre of the canvas looked like BEFORE an index took it over.
+  // showIndexProgress hides #rg-world to make room for the centre state; the
+  // terminal states need this to put the view back. Without it a single failed
+  // index left whatever graph was on screen hidden behind a permanent overlay
+  // with no way out but a page reload — indexing an unrelated repo from the
+  // Code Map broke the Code Map.
+  let preIndexCenter: { world: string; hint: string; emptyHtml: string; emptyShown: boolean } | null = null;
+
+  /** Snapshot the centre before the first takeover of an index run. Later calls
+   * within the same run are no-ops — progress ticks must not overwrite the
+   * pre-index view with the progress view. */
+  function captureCenterState(): void {
+    if (preIndexCenter || !repoEmpty) return;
+    preIndexCenter = {
+      world: world.style.display,
+      hint: hintEl?.style.display ?? "",
+      emptyHtml: repoEmpty.innerHTML,
+      emptyShown: repoEmpty.classList.contains("show"),
+    };
+  }
+
+  /** Put back exactly what the snapshot held — which may itself be an empty
+   * state (indexing started from an unindexed repo). Restoring the world
+   * unconditionally would show a blank canvas for a repo that has no graph. */
+  function restoreCenterState(): void {
+    const snap = preIndexCenter;
+    preIndexCenter = null;
+    if (!snap || !repoEmpty) return;
+    world.style.display = snap.world;
+    if (hintEl) hintEl.style.display = snap.hint;
+    repoEmpty.innerHTML = snap.emptyHtml;
+    repoEmpty.classList.toggle("show", snap.emptyShown);
+  }
 
   function reasonText(reason: string): string {
     switch (reason) {
@@ -4270,6 +4490,7 @@ function bootRepoGraph(root: HTMLElement): void {
   // "Indexing <name>…" center state — "scanning…" until the first progress tick.
   function showIndexProgress(name: string, done: number | null, total: number | null): void {
     if (!repoEmpty) return;
+    captureCenterState();
     closeRepoMenu();
     closePanel();
     if (hintEl) hintEl.style.display = "none";
@@ -4284,12 +4505,53 @@ function bootRepoGraph(root: HTMLElement): void {
     if (cancel) cancel.onclick = () => void cancelIndex();
   }
 
-  function showIndexError(name: string, message: string): void {
+  /** The server's terminals are distinguishable (routes/repo-graph.tsx) — say
+   * which one happened instead of collapsing all three into "Indexing failed.",
+   * which left no clue whether the indexer had died, timed out, or crashed. */
+  function terminalText(message: string): string {
+    switch (message) {
+      case "cancelled":
+        return "Indexing cancelled.";
+      case "timeout":
+        return "Indexing timed out — raise index.timeoutMs, or index a smaller subtree.";
+      // These two used to point at "the daemon log", which was WRONG advice:
+      // the daemon spawned the child with `stderr: "ignore"`, so no log line
+      // ever existed to go and read. The child's own last line now rides along
+      // as `detail` and is shown beneath this text instead.
+      case "index_failed":
+        return "The indexer exited with an error. Nothing was saved.";
+      case "index_error":
+        return "The indexer crashed before it finished. Nothing was saved.";
+      // Reattach outlasted the daemon's OWN indexer timeout with the repo still
+      // marked "indexing". Names no cause on purpose: a stuck `meta.building`
+      // from a daemon restarted mid-build is the likeliest, but the client
+      // cannot tell that apart from other stalls, and an earlier draft of this
+      // string asserted the restart outright — which would have been a flat
+      // falsehood on any build still running under a raised index.timeoutMs.
+      case "reattach_timeout":
+        return "Stopped watching — this has been marked in-progress for longer than the indexer is allowed to run, and nothing is reporting on it. Re-open the repo picker to see where it stands.";
+      // Deliberately does NOT claim nothing was saved: the stream died, so the
+      // build's own outcome is unknown to us — it may well have finished.
+      case "disconnected":
+        return "Lost the indexer's progress stream before it reported a result — the daemon may have restarted. Re-open the repo picker to see whether the index finished.";
+      default:
+        return "Indexing failed.";
+    }
+  }
+
+  function showIndexError(name: string, message: string, detail?: string): void {
     if (!repoEmpty) return;
-    const human =
-      message === "cancelled" ? "Indexing cancelled." : message === "timeout" ? "Indexing timed out." : "Indexing failed.";
-    repoEmpty.innerHTML = `<h3>${esc(name)}</h3><p>${esc(human)}</p>`;
+    // `detail` is the indexer's own stderr line, escaped like any other
+    // untrusted string — it originates in a child process, not in our code.
+    repoEmpty.innerHTML =
+      `<h3>${esc(name)}</h3><p>${esc(terminalText(message))}</p>` +
+      (detail ? `<p class="rg-idx-detail">${esc(detail)}</p>` : "") +
+      `<button class="rg-idx-cancel" id="rg-idx-dismiss">Back to the map</button>`;
     repoEmpty.classList.add("show");
+    // The way out. Without it the overlay is terminal in the literal sense —
+    // it covers the canvas until the page is reloaded.
+    const dismiss = repoEmpty.querySelector<HTMLElement>("#rg-idx-dismiss");
+    if (dismiss) dismiss.onclick = () => restoreCenterState();
   }
 
   async function cancelIndex(): Promise<void> {
@@ -4353,6 +4615,11 @@ function bootRepoGraph(root: HTMLElement): void {
     const dec = new TextDecoder();
     let buf = "";
     let name = "repo";
+    // Did the server actually tell us how this ended? A stream that stops
+    // without a done/error frame — daemon restart, dropped connection,
+    // truncated proxy response — used to leave the progress overlay up for
+    // good, which is the same dead end the error terminal just stopped being.
+    let sawTerminal = false;
     try {
       for (;;) {
         const { value, done } = await reader.read();
@@ -4365,7 +4632,14 @@ function bootRepoGraph(root: HTMLElement): void {
           const ev = /event:\s*(.+)/.exec(block)?.[1]?.trim();
           const dataRaw = /data:\s*(.+)/.exec(block)?.[1];
           if (!ev || !dataRaw) continue;
-          let data: { name?: string; hash?: string; done?: number; total?: number; message?: string } = {};
+          let data: {
+            name?: string;
+            hash?: string;
+            done?: number;
+            total?: number;
+            message?: string;
+            detail?: string;
+          } = {};
           try {
             data = JSON.parse(dataRaw);
           } catch {
@@ -4378,19 +4652,28 @@ function bootRepoGraph(root: HTMLElement): void {
           } else if (ev === "progress") {
             showIndexProgress(name, data.done ?? 0, data.total ?? 0);
           } else if (ev === "done") {
+            sawTerminal = true;
             indexingActive = false;
             window.location.href = `/repo-graph?repo=${encodeURIComponent(data.hash ?? "")}`;
             return;
           } else if (ev === "error") {
+            sawTerminal = true;
             indexingActive = false;
             currentIndexHash = null;
-            showIndexError(name, data.message ?? "failed");
+            showIndexError(name, data.message ?? "failed", data.detail);
             return;
           }
         }
       }
     } finally {
       indexingActive = false;
+      // Covers both a clean end-of-stream with no terminal frame and a reader
+      // that threw. Only fires once the run had actually started — before
+      // "started" there is no overlay to be stuck behind.
+      if (!sawTerminal && preIndexCenter) {
+        currentIndexHash = null;
+        showIndexError(name, "disconnected");
+      }
     }
   }
 
@@ -4547,7 +4830,7 @@ function bootRepoGraph(root: HTMLElement): void {
     if (ix) {
       currentIndexHash = ix.id;
       showIndexProgress(ix.name, null, null);
-      startPolling(ix.id);
+      startPolling(ix.id, ix.name);
     }
   }
   void maybeReattachIndexing();
@@ -4567,9 +4850,11 @@ function bootRepoGraph(root: HTMLElement): void {
     const ep = S.trace.entrypoints.find((e) => e.id === S.trace.ep);
     // For user-chosen roots (no matching preset), derive a human label from
     // the entry node's parsed fn name rather than showing the raw node id.
-    const entryNodeFn = S.trace.data?.nodes.find((n) => n.id === S.trace.data?.spine[0])?.fn;
+    const entryNode = S.trace.data?.nodes.find((n) => n.id === S.trace.data?.spine[0]);
+    const entryNodeFn = entryNode?.fn;
     // No root yet (search-fallback entry) → prompt instead of an empty label.
-    const label = ep?.label ?? (entryNodeFn ? `${entryNodeFn}()` : S.trace.ep || "choose a function…");
+    const label =
+      ep?.label ?? (entryNodeFn ? entryCallLabel(entryNodeFn, entryNode?.type) : S.trace.ep || "choose a function…");
     const cov = S.trace.coverage;
     // The chip sits in the RIGHT cluster adjacent to the entry button.
     // ph-bar layout in trace mode: [.ph-spacer (flex:1)] [chip-wrap] [pick-wrap]
@@ -4646,9 +4931,9 @@ function bootRepoGraph(root: HTMLElement): void {
       `<button class="lg-btn" id="rg-ph-legbtn"><span>?</span> Legend · what these mean</button>` +
       `<div class="lg-pop" id="rg-ph-legpop">` +
       `<div class="lg-h">Edges</div>` +
-      `<div class="lg-row"><svg width="30" height="8"><line x1="0" y1="4" x2="30" y2="4" stroke="#c9871f" stroke-width="3"/></svg><span><b>Solid ochre</b> · a resolved (confirmed) call — the path follows it</span></div>` +
-      `<div class="lg-row"><svg width="30" height="8"><line x1="0" y1="4" x2="30" y2="4" stroke="#c0531a" stroke-width="2.5" stroke-dasharray="6 5"/></svg><span><b>Dashed</b> · an unresolved next step (named, but not indexed)</span></div>` +
-      `<div class="lg-row"><svg width="30" height="8"><line x1="0" y1="4" x2="30" y2="4" stroke="#9b2d1f" stroke-width="2.5" stroke-dasharray="1.5 5"/></svg><span><b>Red dotted</b> · there's a next step, but static analysis can't tell who</span></div>` +
+      `<div class="lg-row"><svg width="30" height="8"><line x1="0" y1="4" x2="30" y2="4" style="stroke:var(--resolved)" stroke-width="3"/></svg><span><b>Solid ochre</b> · a resolved (confirmed) call — the path follows it</span></div>` +
+      `<div class="lg-row"><svg width="30" height="8"><line x1="0" y1="4" x2="30" y2="4" style="stroke:var(--unresolved)" stroke-width="2.5" stroke-dasharray="6 5"/></svg><span><b>Dashed</b> · an unresolved next step (named, but not indexed)</span></div>` +
+      `<div class="lg-row"><svg width="30" height="8"><line x1="0" y1="4" x2="30" y2="4" style="stroke:var(--unresolvable)" stroke-width="2.5" stroke-dasharray="1.5 5"/></svg><span><b>Red dotted</b> · there's a next step, but static analysis can't tell who</span></div>` +
       `<div class="lg-h">Nodes</div>` +
       `<div class="lg-row"><span class="lg-sw white"></span><span><b>White</b> · a function on the path</span></div>` +
       `<div class="lg-row"><span class="lg-sw red"></span><span><b>Red dotted</b> · an unresolvable next step (static can't link it — no guessing)</span></div>` +
@@ -5048,9 +5333,14 @@ function bootRepoGraph(root: HTMLElement): void {
             const sel = e.id === S.trace.ep;
             const tc = traceCache.get(e.id);
             const steps = tc ? stepStr(tc.spine.length) : "…";
+            // Generic detection (Task 2) can root a preset at a file node (no
+            // function to call) — `decodeCanonicalNodeId` reads the node_type
+            // straight off the canonical id, no new Entrypoint field needed.
+            const epType = decodeCanonicalNodeId(e.nodeId)?.node_type;
+            const fnLabel = entryCallLabel(e.fn, epType === "file" ? "file" : undefined);
             return (
               `<button class="ph-ep${sel ? " sel" : ""}" data-ep="${esc(e.id)}"><span class="ep-dot"></span>` +
-              `<span class="ep-m"><b>${esc(e.label)}</b><span class="ep-meta">${esc(e.fn)}() · ${steps}</span></span>` +
+              `<span class="ep-m"><b>${esc(e.label)}</b><span class="ep-meta">${esc(fnLabel)} · ${steps}</span></span>` +
               `${sel ? '<span class="ep-on">active</span>' : ""}</button>`
             );
           })
@@ -5121,7 +5411,10 @@ function bootRepoGraph(root: HTMLElement): void {
   // — "cli" doesn't resolve, so the stage showed an empty
   // "no call path" trace. Pick a sensible default root instead. Priority:
   //   1. most-recent retained user trace (honor their last manual intent)
-  //   2. first detected preset entrypoint
+  //   2. defaultEntryId() — the SAME preset-cli-preferring rule the server's
+  //      /trace no-`?entry` default uses (repo-graph.tsx `hasPresetCli`), so
+  //      this reachable path can't diverge from the server on a repo with
+  //      both a preset cli AND a competing certain bin/script entry.
   //   3. neither resolves → open the picker focused on function-search, never a
   //      dead trace (there is always a way in).
   async function phEnterDefault(): Promise<void> {
@@ -5129,8 +5422,8 @@ function bootRepoGraph(root: HTMLElement): void {
     const candidates: string[] = [];
     const recentTraced = loadTraced()[0]?.nodeId;
     if (recentTraced) candidates.push(recentTraced);
-    const firstPreset = S.trace.entrypoints[0]?.id;
-    if (firstPreset && firstPreset !== recentTraced) candidates.push(firstPreset);
+    const preferredEntry = S.trace.entrypoints.length > 0 ? defaultEntryId(S.trace.entrypoints) : undefined;
+    if (preferredEntry && preferredEntry !== recentTraced) candidates.push(preferredEntry);
     for (const ep of candidates) {
       const data = await ensureTrace(ep);
       if (data && data.spine.length > 0) {
@@ -5169,7 +5462,7 @@ function bootRepoGraph(root: HTMLElement): void {
 
   async function phEnter(ep: string): Promise<void> {
     await ensureEntrypoints();
-    S.trace.ep = ep || S.trace.ep || "cli";
+    S.trace.ep = ep || S.trace.ep || defaultEntryId(S.trace.entrypoints);
     const data = await ensureTrace(S.trace.ep);
     S.trace.data = data;
     S.level = "trace";

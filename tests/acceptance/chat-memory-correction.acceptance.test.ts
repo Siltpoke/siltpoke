@@ -49,6 +49,16 @@ import {
 
 // ── Shared fixtures ─────────────────────────────────────────────────────────
 
+const TEST_SECRET = "test-secret";
+
+const ELIGIBLE_PROJECT = async () => ({
+  project_id: null,
+  proj_hash: null,
+  project_root: null,
+  display_name: null,
+  source: "explicit" as const,
+});
+
 let home: string;
 let capturedStreams: StreamChatOptions[];
 
@@ -155,8 +165,10 @@ function mount(
   const writes: CoreMemory[] = [];
   const extractorCalls: ExtractorCall[] = [];
   mountChatRoutes(app, {
+    resolveProject: ELIGIBLE_PROJECT,
     homeBase: home,
     index: openIndex(home),
+    secret: TEST_SECRET,
     streamFactory: fakeStream,
     readMemory: async (hb: string) => realReadMemory(hb),
     writeMemory: async (hb: string, memory: CoreMemory) => {
@@ -193,7 +205,7 @@ const contradictStub =
 async function post(a: Hono, message: string): Promise<Response> {
   return a.request("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
     body: JSON.stringify({ message }),
   });
 }

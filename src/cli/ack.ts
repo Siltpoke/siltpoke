@@ -47,7 +47,12 @@ export async function runAck(opts: AckOptions): Promise<AckResult> {
   } catch {
     // best-effort snapshot
   }
-  appendPreferenceEntry(
+  // Awaited on purpose. This used to be fire-and-forget, and this file is
+  // also a CLI entry whose process.exit(0) fired before the append reached
+  // disk — so an `ack` never landed in preference-log.jsonl at all. (Unlike
+  // dismiss, ack writes no feedback-archive entry, so nothing recorded it
+  // anywhere else either.) `.catch` keeps the write non-fatal.
+  await appendPreferenceEntry(
     {
       critique_id: opts.critiqueId,
       signal: "ack",

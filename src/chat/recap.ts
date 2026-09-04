@@ -17,10 +17,10 @@
  * fallback (e.g. the deterministic first-message placeholder).
  */
 
-import { callBrainText } from "../brain/brain";
+import type { callBrainText } from "../brain/brain";
+import { makeRoleTextBrain } from "../brain/role-brain";
 import { ledgerBrainCall } from "../state/usage";
 
-const RECAP_MODEL = "claude-haiku-4-5-20251001";
 const RECAP_TIMEOUT_MS = 60_000;
 const RECAP_SYSTEM_PROMPT =
   "You are given the TRANSCRIPT of a PAST chat between a user and their coding companion. " +
@@ -67,7 +67,7 @@ export async function recapSession(
   deps: RecapDeps,
 ): Promise<string> {
   if (messages.length === 0) return "";
-  const brain = deps.callBrainText ?? callBrainText;
+  const brain = deps.callBrainText ?? makeRoleTextBrain(deps.homeBase, "chat");
   const ledger = deps.ledger ?? ledgerBrainCall;
   // Bounded excerpt: first 2 + last 2 turns (no duplicates when ≤ 4 messages),
   // ≤400 chars — mirrors consolidate.ts's summarizer excerpt shape.
@@ -83,15 +83,14 @@ export async function recapSession(
     const raw = await brain({
       systemPrompt: RECAP_SYSTEM_PROMPT,
       contextBundle,
-      model: RECAP_MODEL,
       timeoutMs: RECAP_TIMEOUT_MS,
     });
     // Ledger the real spend the moment the call returns — BEFORE sanitize — so
-    // an unusable result still records the tokens it cost.
+    // an unusable result still records the tokens it cost. No static `model`
+    // anymore — see extract-facts.ts for the cost-honesty rationale.
     await ledger(deps.homeBase, {
       kind: "chat_capture",
       session_id: deps.sessionId,
-      model: RECAP_MODEL,
       usage: raw.usage,
     });
     // LLM output is untrusted — sanitize the raw text into a clean one-liner.

@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * memory-book — Alpine island for the /memory "记忆之书" screen.
+ * memory-book — Alpine island for the /memory  screen.
  *
  * Three views:
  *   - timeline (时间流): date-grouped stream of every durable memory, primary.
  *   - byType (按类型): 2×2 gradient cards → modal drill-down + NL composer.
  *   - entity (实体): groups via the shared groupByEntity (src/memory/entity.ts).
  *
- * The composer ("改记忆") has two paths. (1) Deterministic forget fast-path (NO
- * LLM): "忘掉 X" keyword-matches one existing semantic fact; ✓确认 performs the
+ * The composer () has two paths. (1) Deterministic forget fast-path (NO
+ * LLM):  keyword-matches one existing semantic fact; ✓确认 performs the
  * real POST /api/facts/:id/retire (soft delete). (2) NL path: any other text
  * → POST /api/facts/parse (one haiku call, budget/quiet-hours gated, NEVER
  * writes) → an add/restate/contradict proposal the user must confirm (confirmAdd
@@ -48,10 +48,28 @@ import {
   sortMemories,
   TYPE_META,
 } from "./memory-book-helpers";
+import { tokens } from "../../tokens/tokens";
 
 // Re-export the pure surface so existing imports (and unit tests) can keep
 // importing from "./memory-book".
 export * from "./memory-book-helpers";
+
+/**
+ * The page's resolved proj_hash as a `?repo=` query suffix, read from the
+ * `[data-proj-hash]` attribute Layout.tsx sets on the root `<html>` element
+ * (per-request project resolution — see src/daemon/project-context.ts). Every
+ * write fetch below appends this so the server-side write-guard resolves the
+ * SAME project the page did. "" when unresolved → no query param (the
+ * server falls back to its own sticky-pin resolution, same as any other
+ * omitted `?repo=`).
+ */
+function writeRepoQuery(): string {
+  const projHash =
+    (typeof document !== "undefined"
+      ? document.querySelector("[data-proj-hash]")?.getAttribute("data-proj-hash")
+      : null) ?? "";
+  return projHash ? `?repo=${projHash}` : "";
+}
 
 export interface MemoryBookData {
   memories: MemoryEventClient[];
@@ -126,6 +144,8 @@ export interface MemoryBookData {
   /** Re-tag — cycle a fact's kind (style↔profile, untagged→style). */
   cycleFactKind(event: { id: string; kind?: "style" | "profile" | null }): void;
   setFactKind(id: string, kind: "style" | "profile"): Promise<void>;
+  /** Pin/unpin a fact against decay (POST /api/facts/:id/pin). */
+  setPinned(id: string, pinned: boolean): Promise<void>;
   /**
    * Scroll the target card into view and briefly highlight it. Morph-safe —
    * only invoked via x-on:click in templates, never via addEventListener.
@@ -292,7 +312,7 @@ export function makeMemoryBookData(): MemoryBookData {
     },
     modalColor(): string {
       const m = MODAL_META[this.modalType as MemoryType | "working"];
-      return m ? m.color : "#8a7c64";
+      return m ? m.color : tokens.color.ink3;
     },
 
     modalEmptyMessage(): string {
@@ -357,7 +377,7 @@ export function makeMemoryBookData(): MemoryBookData {
         const ids = this.recentChats.map((c) => c.id);
         const res = await fetch("/api/chat/recap-recent", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", "X-Siltpoke-Secret": this.secret },
           body: JSON.stringify({ ids }),
         });
         if (!res.ok) return;
@@ -379,7 +399,7 @@ export function makeMemoryBookData(): MemoryBookData {
      * ($0, no LLM): a pure retire is matched synchronously by buildProposal.
      * Any OTHER text is sent to POST /api/facts/parse for an LLM-classified
      * proposal (add / restate / contradict). The parse call is gated — a
-     * budget/quiet-hours pause surfaces an honest "已暂停" toast, never a write.
+     * budget/quiet-hours pause surfaces an honest  toast, never a write.
      */
     async sendChat(): Promise<void> {
       // Guard against double-submit while a parse call is in flight (the Enter
@@ -465,7 +485,7 @@ export function makeMemoryBookData(): MemoryBookData {
       save_reason?: string;
     }): Promise<boolean> {
       try {
-        const res = await fetch("/api/facts", {
+        const res = await fetch(`/api/facts${writeRepoQuery()}`, {
           method: "POST",
           headers: {
             "X-Siltpoke-Secret": this.secret,
@@ -533,7 +553,7 @@ export function makeMemoryBookData(): MemoryBookData {
      */
     async confirmRestate(id: string): Promise<void> {
       try {
-        const res = await fetch(`/api/facts/${id}/restate`, {
+        const res = await fetch(`/api/facts/${id}/restate${writeRepoQuery()}`, {
           method: "POST",
           headers: { "X-Siltpoke-Secret": this.secret },
         });
@@ -631,7 +651,7 @@ export function makeMemoryBookData(): MemoryBookData {
      */
     async retireFact(id: string): Promise<boolean> {
       try {
-        const res = await fetch(`/api/facts/${id}/retire`, {
+        const res = await fetch(`/api/facts/${id}/retire${writeRepoQuery()}`, {
           method: "POST",
           headers: { "X-Siltpoke-Secret": this.secret },
         });
@@ -677,7 +697,7 @@ export function makeMemoryBookData(): MemoryBookData {
      */
     async reactivateFact(id: string): Promise<void> {
       try {
-        const res = await fetch(`/api/facts/${id}/reactivate`, {
+        const res = await fetch(`/api/facts/${id}/reactivate${writeRepoQuery()}`, {
           method: "POST",
           headers: { "X-Siltpoke-Secret": this.secret },
         });
@@ -724,7 +744,7 @@ export function makeMemoryBookData(): MemoryBookData {
      */
     async approveFact(id: string): Promise<void> {
       try {
-        const res = await fetch(`/api/facts/${id}/approve`, {
+        const res = await fetch(`/api/facts/${id}/approve${writeRepoQuery()}`, {
           method: "POST",
           headers: { "X-Siltpoke-Secret": this.secret },
         });
@@ -778,7 +798,7 @@ export function makeMemoryBookData(): MemoryBookData {
      */
     async setFactKind(id: string, kind: "style" | "profile"): Promise<void> {
       try {
-        const res = await fetch(`/api/facts/${id}/kind`, {
+        const res = await fetch(`/api/facts/${id}/kind${writeRepoQuery()}`, {
           method: "POST",
           headers: {
             "X-Siltpoke-Secret": this.secret,
@@ -800,6 +820,41 @@ export function makeMemoryBookData(): MemoryBookData {
       } catch (err) {
         console.error("[memoryBook] set-kind error:", err);
         this.flashToast("Something went wrong · couldn't re-tag this memory, try later");
+      }
+    },
+
+    /**
+     * Persist a fact's pinned flag (POST /api/facts/:id/pin) and flip the row
+     * on 200 only (mirror setFactKind: optimistic update gated on success,
+     * never before the server confirms — row stays unchanged on failure, the
+     * effective "rollback"). Idempotent on the server (unchanged pinned →
+     * no write). Wires the manual decay-protection affordance
+     * (setFactPinnedCore) onto the fact row.
+     */
+    async setPinned(id: string, pinned: boolean): Promise<void> {
+      try {
+        const res = await fetch(`/api/facts/${id}/pin${writeRepoQuery()}`, {
+          method: "POST",
+          headers: {
+            "X-Siltpoke-Secret": this.secret,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ pinned }),
+        });
+        if (!res.ok) {
+          console.error("[memoryBook] set-pinned failed:", res.status);
+          this.flashToast(
+            "Something went wrong · couldn't update pin status, try later",
+          );
+          return;
+        }
+        this.memories = this.memories.map((m) => (m.id === id ? { ...m, pinned } : m));
+        this.flashToast(
+          pinned ? "📌 Pinned · protected from decay" : "Unpinned · decay rules apply again",
+        );
+      } catch (err) {
+        console.error("[memoryBook] set-pinned error:", err);
+        this.flashToast("Something went wrong · couldn't update pin status, try later");
       }
     },
 

@@ -136,10 +136,13 @@ function makeRawDiff(file = "src/foo.ts"): string {
  * Make a runToolsFn stub that returns a NORMAL-path result:
  * tsc has a finding (REAL_SNIPPET in raw), git-diff has a hunk, others empty/ok.
  */
-function makeNormalToolsFn(changedFilesCapture?: { files: string[] }): RunCriticDeps["runToolsFn"] {
+function makeNormalToolsFn(
+  changedFilesCapture?: { files: string[]; revisionRange?: string | undefined },
+): RunCriticDeps["runToolsFn"] {
   return async (opts) => {
     if (changedFilesCapture) {
       changedFilesCapture.files = opts.changedFiles;
+      changedFilesCapture.revisionRange = opts.revisionRange;
     }
     return {
       tsc: {
@@ -502,8 +505,12 @@ describe("runReview — abstention (HARD_SUPPRESS)", () => {
 // 9. Guard reject — NORMAL not-accepted → exit 2
 // ---------------------------------------------------------------------------
 
-describe("runReview — guard reject", () => {
-  test("fabricated snippet → 'evidence guard rejected' + exit 2", async () => {
+describe("runReview — unverified evidence", () => {
+  // Was "guard reject → exit 2". The exit code is gone with the rejection: a
+  // fabricated citation costs the citation, not the review, so the run exits 0
+  // like any other review and says "unconfirmed" above the text. Asserting the
+  // old exit 2 would be asserting a code path that no longer exists.
+  test("fabricated snippet → 'unconfirmed' printed, review still shown, exit 0", async () => {
     await initGitRepo(cwd, true);
     const lines: string[] = [];
 
@@ -530,14 +537,64 @@ describe("runReview — guard reject", () => {
       },
     });
 
-    expect(result.exitCode).toBe(2);
+    expect(result.exitCode).toBe(0);
+    // The mark is present...
+    expect(lines.some((l) => l.includes("unconfirmed"))).toBe(true);
+    // ...and so is the review it is marking. Asserting only the mark would
+    // still pass on the old behavior of printing a reason INSTEAD of the
+    // review, which is the thing that changed.
+    expect(lines.some((l) => l.includes("You have a type error"))).toBe(true);
+    // The fabricated snippet itself must not be echoed as evidence.
     expect(
-      lines.some(
-        (l) =>
-          l.includes("evidence guard rejected") ||
-          l.includes("guard rejected"),
-      ),
-    ).toBe(true);
+      lines.some((l) => l.includes("this snippet was fabricated by the LLM hallucination!")),
+    ).toBe(false);
+  });
+
+  // 2026-09-01. `coerceBrainOutputShape` drops citations that fail their own
+  // shape, so an all-malformed list reaches this surface as `evidence: []` —
+  // the same state as a reviewer that pointed at nothing. Printing the old copy
+  // there blames the reviewer for a discard siltpoke performed.
+  test("every citation dropped → says the lines were unusable, not that none were given", async () => {
+    await initGitRepo(cwd, true);
+    const lines: string[] = [];
+
+    const dropped = makeBrainOutput({ evidence: [], truncated: { evidence_malformed: 2 } });
+
+    const result = await runReview({
+      cwd,
+      homeBase,
+      output: (msg) => lines.push(msg),
+      deps: {
+        runToolsFn: makeNormalToolsFn(),
+        callBrainFn: makeBrainFn(dropped),
+        writeCritiqueFn: async (bp, _i) => ({ id: "c-drop", path: bp }),
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(lines.some((l) => l.includes("pointed at 2 lines, none in a shape Siltpoke could use"))).toBe(true);
+    expect(lines.some((l) => l.includes("did not point at any specific line"))).toBe(false);
+    // The review itself still reaches the reader — that is the whole point.
+    expect(lines.some((l) => l.includes("You have a type error"))).toBe(true);
+  });
+
+  test("a genuinely uncited review still says so — the new copy did not replace the old one", async () => {
+    await initGitRepo(cwd, true);
+    const lines: string[] = [];
+
+    const result = await runReview({
+      cwd,
+      homeBase,
+      output: (msg) => lines.push(msg),
+      deps: {
+        runToolsFn: makeNormalToolsFn(),
+        callBrainFn: makeBrainFn(makeBrainOutput({ evidence: [] })),
+        writeCritiqueFn: async (bp, _i) => ({ id: "c-none", path: bp }),
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(lines.some((l) => l.includes("did not point at any specific line"))).toBe(true);
   });
 });
 
@@ -549,7 +606,7 @@ describe("runReview — --base flag", () => {
   test("--base main scopes diff; changedFiles derived from that diff", async () => {
     await initGitRepo(cwd, true);
 
-    const capturedFiles: { files: string[] } = { files: [] };
+    const capturedFiles: { files: string[]; revisionRange?: string | undefined } = { files: [] };
     const toolsFn = makeNormalToolsFn(capturedFiles);
 
     // We can't easily stub runGitDiff itself, so we verify the output message
@@ -570,6 +627,67 @@ describe("runReview — --base flag", () => {
 
     // The scope description should mention the base ref
     expect(lines.some((l) => l.includes("main...HEAD"))).toBe(true);
+  });
+
+  // The pre-flight `runGitDiff` at the top of runReview has always used the
+  // range; what the range never reached was `runCritic`. With it absent,
+  // `runToolsPhase` runs an unscoped `git diff HEAD` and — on a clean tree —
+  // falls back to `git log -3 -p`, so the CLI decides "there is something to
+  // review" from `base...HEAD` and then reviews three arbitrary commits.
+  // Asserting on the message text alone could not see that: the message is
+  // printed by review.ts from its own local, and stayed correct throughout.
+  test("--base reaches runTools as revisionRange, not only the pre-flight check", async () => {
+    // `main...HEAD` has to be NON-EMPTY or runReview bails at its empty-diff
+    // check and never reaches runCritic at all — which is exactly why the
+    // message-only test above passes on a fixture where HEAD *is* main.
+    await initGitRepo(cwd);
+    const { spawnSync } = await import("node:child_process");
+    spawnSync("git", ["checkout", "-b", "work"], { cwd, stdio: "pipe" });
+    writeFileSync(join(cwd, "README.md"), "hello\nfrom the branch\n");
+    spawnSync("git", ["add", "."], { cwd, stdio: "pipe" });
+    spawnSync("git", ["commit", "-m", "branch work"], { cwd, stdio: "pipe" });
+
+    const captured: { files: string[]; revisionRange?: string | undefined } = { files: [] };
+
+    await runReview({
+      cwd,
+      homeBase,
+      base: "main",
+      output: () => {},
+      deps: {
+        runToolsFn: makeNormalToolsFn(captured),
+        callBrainFn: makeBrainFn(makeBrainOutput()),
+        writeCritiqueFn: async (bp, _i) => ({ id: "c-base-range", path: bp }),
+      },
+    });
+
+    expect(captured.revisionRange).toBe("main...HEAD");
+  });
+
+  // The other half of the contract: no `--base` means no unit was named, and
+  // the range must stay absent so the working-tree path and its
+  // recent-commits fallback still work. A fix that hardcoded a range would
+  // pass the test above and break this one.
+  test("no --base leaves revisionRange absent, so the working-tree path is unchanged", async () => {
+    await initGitRepo(cwd, true);
+
+    const captured: { files: string[]; revisionRange?: string | undefined } = {
+      files: [],
+      revisionRange: "sentinel-never-overwritten",
+    };
+
+    await runReview({
+      cwd,
+      homeBase,
+      output: () => {},
+      deps: {
+        runToolsFn: makeNormalToolsFn(captured),
+        callBrainFn: makeBrainFn(makeBrainOutput()),
+        writeCritiqueFn: async (bp, _i) => ({ id: "c-no-base", path: bp }),
+      },
+    });
+
+    expect(captured.revisionRange).toBeUndefined();
   });
 });
 

@@ -26,7 +26,11 @@ import { join } from "node:path";
 import type { Hono } from "hono";
 import { readCriticTelemetry } from "../../state/api";
 import { Layout } from "../_shared/layout";
+import { loadReviewUnit } from "../../config/review-unit-config";
 import { TimelineScreen } from "../screens/TimelineScreen";
+import { DetailPane } from "../screens/timeline/detail-pane";
+import { turnKey } from "../screens/timeline/format";
+import { makeProjHashResolver } from "../screens/timeline/proj-hash";
 import {
   type TraceFragmentTrace,
   TraceTabFragment,
@@ -37,6 +41,13 @@ import { buildBrainCosts, buildTraceTotals, loadFullSpans, openIndexDb } from ".
 
 export interface TimelineRouteDeps {
   homeBase?: string;
+  /**
+   * Daemon secret — forwarded to `<Layout secret>` so the page's htmx
+   * `hx-headers` + FloatingChat's `data-secret` carry it. Powers the
+   * secret-gated `POST /api/critic/action` / `POST /api/critic/budget`
+   * inline fetches rendered on this page (row-helpers.tsx / panels.tsx).
+   */
+  secret?: string;
 }
 
 /** Row shape for the per-trace span query (needs `day` for JSONL lookup). */
@@ -103,6 +114,7 @@ export function mountTimelineRoutes(app: Hono, deps: TimelineRouteDeps = {}): vo
     const range = parseRange(c.req.query("range"));
     const sort = parseSort(c.req.query("sort"));
     const query = c.req.query("q") ?? null;
+    const family = c.req.query("family") ?? null; // builder-family filter (Brain select v2)
     // Pager cursors: `before` pages older, `after` pages newer (both
     // exclusive; `before` wins if both are set). An unparseable value is
     // treated as absent (first page) — the params only ever come from our
@@ -120,18 +132,95 @@ export function mountTimelineRoutes(app: Hono, deps: TimelineRouteDeps = {}): vo
       range,
       sort,
       query,
+      family,
       before,
       after,
       // Turn-counted windows: `limit` counts rows that RENDER under the
-      // active filters — gate-skip floods never consume page slots.
+      // active filters (incl. family) — gate-skip floods never consume slots.
       windowMode: "turns",
       limit: 20,
       homeDir: homedir(),
     });
+    // Verbatim forward of the active filter/pager params so each lazy
+    // dossier placeholder can re-request its DetailPane against the SAME
+    // window (the route parses this identically). Excludes `key` (added
+    // per-placeholder) and any unknown params.
+    const dossierQuery = (() => {
+      const p = new URLSearchParams();
+      for (const k of ["project", "status", "kind", "range", "sort", "q", "family", "before", "after"]) {
+        const v = c.req.query(k);
+        if (v) p.set(k, v);
+      }
+      return p.toString();
+    })();
+    // Read per-request, not at mount: the page's own review-unit island
+    // POSTs to /api/config, and that write must show on the next GET without
+    // a daemon restart.
+    const reviewUnit = await loadReviewUnit(homeBase);
     return c.html(
-      <Layout title="timeline · siltpoke">
-        <TimelineScreen telemetry={telemetry} />
+      <Layout title="timeline · siltpoke" secret={deps.secret}>
+        <TimelineScreen
+          telemetry={telemetry}
+          dossierQuery={dossierQuery}
+          reviewUnit={reviewUnit}
+          secret={deps.secret}
+        />
       </Layout>,
+    );
+  });
+
+  // On-demand dossier fragment — the lazy other half of the master/detail
+  // page. TimelineScreen server-renders ONLY the pre-selected dossier eager;
+  // every other rail row ships a placeholder that hx-gets its DetailPane here
+  // on first selection (then keeps it in the DOM → re-select is instant). The
+  // fragment carries interactive controls (dismiss/ack chips + tab loaders),
+  // so it is morphed in via `alpine-morph` — NOT x-html — so both htmx and
+  // Alpine re-process the swapped nodes. Same filters the page used are
+  // forwarded so the requested turn resolves in the same window; a generous
+  // limit (not the page's 20-turn cap) guarantees the row is reachable.
+  app.get("/api/timeline/dossier", async (c) => {
+    const key = c.req.query("key");
+    if (!key) return c.text("missing key", 400);
+    // Resolve the turn under the SAME filters + pager cursor the page used,
+    // but over a DELIBERATELY WIDER window than the page's 20-turn view.
+    // The page renders the newest 20 turns; without a `before`/`after` cursor
+    // that window is recomputed live per request, so a critique firing between
+    // page render and a later row-click could evict an already-rendered row
+    // from an equal-width window → a 404 on a row the user can plainly see.
+    // A 200-turn window is a superset of the visible page (and, under a pager
+    // cursor, of that page too), so the clicked row is virtually always still
+    // present; the client still degrades honestly if it truly isn't (below).
+    const parseCursor = (v: string | undefined): Date | null => {
+      const d = v ? new Date(v) : null;
+      return d !== null && !Number.isNaN(d.getTime()) ? d : null;
+    };
+    const telemetry = await readCriticTelemetry(homeBase, new Date(), {
+      project: c.req.query("project") ?? null,
+      status: parseStatus(c.req.query("status")),
+      kind: parseKind(c.req.query("kind")),
+      range: parseRange(c.req.query("range")),
+      sort: parseSort(c.req.query("sort")),
+      query: c.req.query("q") ?? null,
+      before: parseCursor(c.req.query("before")),
+      after: parseCursor(c.req.query("after")),
+      windowMode: "turns",
+      limit: 200,
+      homeDir: homedir(),
+    });
+    const row = telemetry.recent.find((r) => turnKey(r) === key);
+    if (!row) return c.text("no such turn in the active window", 404);
+    const resolveProjHash = makeProjHashResolver();
+    return c.html(
+      String(
+        <DetailPane
+          c={row}
+          now={new Date()}
+          homeBasename={telemetry.homeBasename}
+          preferenceStats={telemetry.preferenceStats}
+          initial={true}
+          projHash={resolveProjHash(row.cwd)}
+        />,
+      ),
     );
   });
 

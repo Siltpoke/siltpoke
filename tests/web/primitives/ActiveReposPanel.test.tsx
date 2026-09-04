@@ -13,6 +13,7 @@ function view(over: Partial<ActiveRepoView> & { project_id: string }): ActiveRep
     last_active_at: over.last_active_at ?? "2026-06-27T09:00:00Z",
     chat_count: over.chat_count ?? 0,
     latest_summary: over.latest_summary ?? "",
+    fact_count: over.fact_count ?? 0,
     repo: over.repo,
   };
 }

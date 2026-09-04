@@ -287,7 +287,7 @@ describe("runExplain — pre-check + resolve failures", () => {
     const outcome = await runExplain({ target: "runDoctor" }, makeCtx());
     expect(outcome.kind).toBe("pre_check_failed");
     if (outcome.kind !== "pre_check_failed") return;
-    expect(outcome.message).toMatch(/siltpoke-index/i);
+    expect(outcome.message).toMatch(/Code Map/i);
   });
 
   test("ambiguous bare symbol → ambiguous outcome with candidates", async () => {

@@ -24,17 +24,17 @@ interface CardCfg {
 const ICON: Record<string, Child> = {
   semantic: (
     <svg aria-hidden="true" width="17" height="17" viewBox="0 0 16 16" fill="none">
-      <circle cx="5" cy="5" r="2.2" stroke="#fff" stroke-width="1.3" />
-      <circle cx="11" cy="7" r="1.8" stroke="#fff" stroke-width="1.3" />
-      <circle cx="6.5" cy="11" r="1.8" stroke="#fff" stroke-width="1.3" />
-      <path d="M6.7 5.6 L9.4 6.6 M6.3 9.4 L9.8 8" stroke="#fff" stroke-width="1.2" />
+      <circle cx="5" cy="5" r="2.2" style={{ stroke: tokens.color.onAccent }} stroke-width="1.3" />
+      <circle cx="11" cy="7" r="1.8" style={{ stroke: tokens.color.onAccent }} stroke-width="1.3" />
+      <circle cx="6.5" cy="11" r="1.8" style={{ stroke: tokens.color.onAccent }} stroke-width="1.3" />
+      <path d="M6.7 5.6 L9.4 6.6 M6.3 9.4 L9.8 8" style={{ stroke: tokens.color.onAccent }} stroke-width="1.2" />
     </svg>
   ),
   episodic: (
     <svg aria-hidden="true" width="17" height="17" viewBox="0 0 16 16" fill="none">
       <path
         d="M4 3 V13 M4 4.5 H11 L9.4 6.2 L11 8 H4"
-        stroke="#fff"
+        style={{ stroke: tokens.color.onAccent }}
         stroke-width="1.3"
         stroke-linejoin="round"
         fill="none"
@@ -43,15 +43,15 @@ const ICON: Record<string, Child> = {
   ),
   procedural: (
     <svg aria-hidden="true" width="17" height="17" viewBox="0 0 16 16" fill="none">
-      <path d="M3 5 H9 M3 8 H13 M3 11 H7" stroke="#fff" stroke-width="1.4" stroke-linecap="round" />
-      <circle cx="11.5" cy="5" r="1.5" stroke="#fff" stroke-width="1.3" />
+      <path d="M3 5 H9 M3 8 H13 M3 11 H7" style={{ stroke: tokens.color.onAccent }} stroke-width="1.4" stroke-linecap="round" />
+      <circle cx="11.5" cy="5" r="1.5" style={{ stroke: tokens.color.onAccent }} stroke-width="1.3" />
     </svg>
   ),
   working: (
     <svg aria-hidden="true" width="17" height="17" viewBox="0 0 16 16" fill="none">
       <path
         d="M3 5 C3 4 4 3.5 5 3.5 H11 C12 3.5 13 4 13 5 V9 C13 10 12 10.5 11 10.5 H7 L4 13 V10.5 C3.4 10.4 3 9.8 3 9 Z"
-        stroke="#fff"
+        style={{ stroke: tokens.color.onAccent }}
         stroke-width="1.3"
         fill="none"
         stroke-linejoin="round"
@@ -60,16 +60,30 @@ const ICON: Record<string, Child> = {
   ),
 };
 
+// footerDivider: memory-book-helpers.ts's TYPE_META is silent on this role
+// (it's a MemoryByTypeCards-only concern), so unlike color/enColor there is
+// no separate "canonical file" to defer to here — all four cards now share
+// ONE derivation (color-mix of the card's own accent into `paper`, matching
+// the semantic card's pre-existing `tokens.color.paperD` treatment in
+// spirit). Before this change, semantic alone used the real `paperD` token
+// while episodic/procedural/working each carried a hand-picked near-white
+// literal (`#ece4ee`/`#e6ecdd`/`#efe0dc`) — a latent inconsistency the
+// classification flagged (3 of 4 types silently diverged from the one that
+// already used the token system).
 const CARDS: CardCfg[] = [
   {
     type: "semantic",
     title: "Semantic Memory",
     en: "SEMANTIC · facts & knowledge",
-    color: "#7fb0c8",
-    gradient: "linear-gradient(165deg,#fffdf8,#f5eee2)",
-    border: "#cdd9e0",
-    enColor: "#5a86a0",
-    footerDivider: tokens.color.paperD,
+    color: tokens.color.sky,
+    gradient: `linear-gradient(165deg,${tokens.color.memCardBg},${tokens.color.memTypeGradient2Semantic})`,
+    // A color-mix(sky, paper) derivation was tried first and rejected —
+    // even the best-fit weight visibly shifted the border's hue (review
+    // round 1, Important 6). `memTypeBorderSemantic` is the literal
+    // `#cdd9e0` already live today, given a dark counterpart instead.
+    border: tokens.color.memTypeBorderSemantic,
+    enColor: tokens.color.memTypeInkSemantic,
+    footerDivider: "color-mix(in srgb, var(--color-sky) 20%, var(--color-paper))",
     countExpr: "countActiveByType('semantic')",
     unit: "facts",
     footer: "Open this type →",
@@ -79,11 +93,18 @@ const CARDS: CardCfg[] = [
     type: "episodic",
     title: "Episodic Memory",
     en: "EPISODIC · things that happened",
-    color: "#9d86c2",
-    gradient: "linear-gradient(165deg,#fffdf9,#f4eef2)",
-    border: "#ddd0e2",
-    enColor: "#8a72a8",
-    footerDivider: "#ece4ee",
+    color: tokens.color.violet,
+    // 1st gradient stop was `#fffdf9` here — one hex unit off the other
+    // three cards' `#fffdf8` — a typo, not a design decision (classification
+    // finding). Folded into `memCardBg` like its siblings.
+    gradient: `linear-gradient(165deg,${tokens.color.memCardBg},${tokens.color.memTypeGradient2Episodic})`,
+    // Same rejection as the semantic card's border above — even the
+    // best-fit color-mix(violet, paper) weight lost the lavender cast for a
+    // grey one (`#ddd2d7` vs the real `#ddd0e2`). `memTypeBorderEpisodic` is
+    // the literal already live today.
+    border: tokens.color.memTypeBorderEpisodic,
+    enColor: tokens.color.memTypeInkEpisodic,
+    footerDivider: "color-mix(in srgb, var(--color-violet) 20%, var(--color-paper))",
     countExpr: "countActiveByType('episodic')",
     unit: "interactions",
     footer: "Open this type →",
@@ -93,11 +114,17 @@ const CARDS: CardCfg[] = [
     type: "procedural",
     title: "Procedural Memory",
     en: "PROCEDURAL · learned rules",
-    color: "#7a9a5e",
-    gradient: "linear-gradient(165deg,#fffdf8,#f1f3ea)",
-    border: "#d2dcc6",
-    enColor: "#6f8a54",
-    footerDivider: "#e6ecdd",
+    color: tokens.color.moss,
+    gradient: `linear-gradient(165deg,${tokens.color.memCardBg},${tokens.color.memTypeGradient2Procedural})`,
+    // Same rejection as its siblings above — `memTypeBorderProcedural` is
+    // the literal `#d2dcc6` already live today.
+    border: tokens.color.memTypeBorderProcedural,
+    // Consolidates a 3-way drift the classification found: this file had
+    // `#6f8a54`, MemoryFilterBar.tsx independently had the same `#6f8a54`,
+    // and memory-book-helpers.ts (TYPE_META's canonical source) had a THIRD
+    // value, `#5e7048`. All three now defer to the canonical file's value.
+    enColor: tokens.color.memTypeInkProcedural,
+    footerDivider: "color-mix(in srgb, var(--color-moss) 20%, var(--color-paper))",
     countExpr: "countActiveByType('procedural')",
     unit: "rules",
     footer: "Open this type →",
@@ -107,11 +134,11 @@ const CARDS: CardCfg[] = [
     type: "working",
     title: "Working Memory",
     en: "WORKING · short-term + recall",
-    color: "#d96b6b",
-    gradient: "linear-gradient(165deg,#fffdf8,#f6edea)",
-    border: "#e6cfc9",
-    enColor: "#c06a64",
-    footerDivider: "#efe0dc",
+    color: tokens.color.terra,
+    gradient: `linear-gradient(165deg,${tokens.color.memCardBg},${tokens.color.memWorkingGradient2})`,
+    border: tokens.color.memWorkingBorder,
+    enColor: tokens.color.memWorkingInk,
+    footerDivider: "color-mix(in srgb, var(--color-terra) 20%, var(--color-paper))",
     countExpr: "workingCount",
     unit: "cross-chat recalls",
     footer: "See current state →",
@@ -129,8 +156,8 @@ function SampleItems(cfg: CardCfg) {
           </div>
         </template>
         <template x-for="chat in recentChats.slice(0, 2)" x-bind:key="chat.started_at">
-          <div style={{ display: "flex", alignItems: "center", gap: "7px", fontSize: 12, color: "#3d3630" }}>
-            <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#9d86c2", flexShrink: 0 }} />
+          <div style={{ display: "flex", alignItems: "center", gap: "7px", fontSize: 12, color: tokens.color.memSampleInk }}>
+            <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: tokens.color.violet, flexShrink: 0 }} />
             <span
               x-text="chat.summary"
               style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
@@ -148,7 +175,7 @@ function SampleItems(cfg: CardCfg) {
         </div>
       </template>
       <template x-for={`event in samples('${cfg.type}')`} x-bind:key="event.id">
-        <div style={{ display: "flex", alignItems: "center", gap: "7px", fontSize: 12, color: "#3d3630" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "7px", fontSize: 12, color: tokens.color.memSampleInk }}>
           <span
             x-bind:style="{ background: event.typeColor }"
             style={{ width: "6px", height: "6px", borderRadius: "50%", flexShrink: 0 }}
@@ -244,7 +271,7 @@ export function MemoryByTypeCards() {
                     width: "8px",
                     height: "8px",
                     borderRadius: "50%",
-                    background: "#d96b6b",
+                    background: tokens.color.terra,
                     flexShrink: 0,
                   }}
                 />
@@ -254,7 +281,7 @@ export function MemoryByTypeCards() {
                     fontFamily: tokens.font.mono,
                     fontSize: 9,
                     fontWeight: 600,
-                    color: "#5a7a3e",
+                    color: tokens.color.memStatusActiveInk,
                     flexShrink: 0,
                   }}
                 >

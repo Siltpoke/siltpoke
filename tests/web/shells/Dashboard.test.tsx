@@ -22,7 +22,10 @@ describe("Dashboard", () => {
     expect(html).toContain(tokens.color.cream);
     // Wave 1.5b: AppChrome trademark "siltpoked" bar dropped — sidebar
     // footer now renders the daemon identity instead.
-    expect(html).toContain("daemon");
+    // Was `toContain("daemon")`, standing in for "the footer rendered".
+    // That line is gone (a hardcoded port beside an always-green dot),
+    // so anchor on the footer itself — the thing the test is about.
+    expect(html).toContain("sidebar-footer");
   });
 
   test("renders all nav item labels", () => {
@@ -220,7 +223,9 @@ describe("Dashboard sectioned navSections render", () => {
     for (const label of workLabels) {
       expect(html).toContain(label);
     }
-    for (const gone of ["Commands", "Settings", "Help"]) {
+    // "Quests" joins the removed set 2026-08-06 — the route is unmounted, so a nav link
+    // to it would be a 404 the user finds rather than a page.
+    for (const gone of ["Commands", "Help", "Quests", "Settings"]) {
       expect(html).not.toContain(gone);
     }
   });
@@ -266,6 +271,9 @@ describe("Dashboard sectioned navSections render", () => {
     for (const label of allLabels) {
       expect(html).toContain(label);
     }
+    // The default path must not resurrect an unmounted route either.
+    expect(html).not.toContain("Quests");
+    expect(html).not.toContain("Settings");
   });
 
   test("section labels carry x-show='!collapsed' for Alpine collapsed-sidebar hide", () => {
@@ -308,5 +316,48 @@ describe("Dashboard sectioned navSections render", () => {
     expect(html).toContain("MYPET");
     expect(html).toContain("HomeCustom");
     expect(html).not.toContain("WORK");
+  });
+});
+
+describe("Dashboard — build-stamp footer row", () => {
+  /**
+   * The island can only ever run if the shell actually emits its mount point,
+   * and the mount point only reaches the reader if it sits outside the
+   * two-column footer flex (a third child there displaces the theme toggle).
+   * Both are asserted structurally, because neither is visible to the island's
+   * own unit tests: those drive a hand-built `$el` and would pass against a
+   * shell that renders nothing at all.
+   */
+  function shellHtml(): string {
+    return String(
+      <Dashboard navItems={NAV_ITEMS} activeSection="home">
+        content
+      </Dashboard>,
+    );
+  }
+
+  test("mounts the buildStamp island with the endpoint it reads", () => {
+    const html = shellHtml();
+    expect(html).toContain('x-data="buildStamp"');
+    expect(html).toContain('data-build-url="/api/version"');
+  });
+
+  test("is its own row, not a third child of the two-column footer flex", () => {
+    const html = shellHtml();
+    const footer = html.indexOf('class="sidebar-footer"');
+    const themeToggle = html.indexOf("data-theme-toggle");
+    const buildRow = html.indexOf("data-build-stamp");
+    expect(footer).toBeGreaterThan(-1);
+    expect(themeToggle).toBeGreaterThan(-1);
+    // Ordering IS the check: the build row must come after the theme toggle,
+    // i.e. after the footer flex has closed, never between its two children.
+    expect(buildRow).toBeGreaterThan(themeToggle);
+  });
+
+  test("ships hidden — nothing is claimed until /api/version answers", () => {
+    const html = shellHtml();
+    const row = html.slice(html.indexOf("data-build-stamp"), html.indexOf("data-build-stamp") + 500);
+    expect(row).toContain("display:none");
+    expect(row).toContain("ready");
   });
 });

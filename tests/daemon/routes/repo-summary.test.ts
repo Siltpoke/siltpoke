@@ -1,8 +1,16 @@
-import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import { Hono } from "hono";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Hono } from "hono";
 import { mountRepoSummaryRoute, type SummaryBrainCall } from "../../../src/daemon/routes/repo-summary";
 import { computeProjHash } from "../../../src/repo-graph/proj-hash";
 import { repoSummaryPath } from "../../../src/repo-graph/repo-summary-gen";
@@ -80,10 +88,12 @@ describe("POST /api/repo-summary", () => {
     expect(body.summary_text).toBe("A demo app that does demo things.");
     expect(body.cached).toBe(false);
 
-    // cache written
+    // cache written — model is now the resolved extract-role model
+    // (single-brain S2: pinned snapshot, not the undated alias the old
+    // static SUMMARY_MODEL sent — same weights today, different string).
     const cache = JSON.parse(readFileSync(repoSummaryPath(home, ROOT), "utf8"));
     expect(cache.text).toBe("A demo app that does demo things.");
-    expect(cache.model).toBe("claude-haiku-4-5");
+    expect(cache.model).toBe("claude-haiku-4-5-20251001");
 
     // usage ledgered
     const events = readFileSync(join(home, "usage-events.jsonl"), "utf8").trim().split("\n");
@@ -145,5 +155,53 @@ describe("POST /api/repo-summary", () => {
     const res = await post(makeApp(throwingBrain), { project_root: ROOT });
     expect(res.status).toBe(502);
     expect(existsSync(repoSummaryPath(home, ROOT))).toBe(false);
+  });
+});
+
+describe("POST /api/repo-summary default seam (role-routed, single-brain S2)", () => {
+  test("no deps.callBrain + home config selecting qoder for extract → real qoder path is exercised", async () => {
+    writeArchModel();
+    const bin = mkdtempSync(join(tmpdir(), "repo-summary-role-bin-"));
+    const originalPath = process.env.PATH;
+    try {
+      writeFileSync(
+        join(home, "config.json"),
+        JSON.stringify({ brain: { roles: { extract: { provider: "qoder" } } } }),
+      );
+      const fakeBin = join(bin, "qodercli");
+      writeFileSync(
+        fakeBin,
+        [
+          "#!/usr/bin/env bun",
+          'const inner = JSON.stringify({ summary: "Routed through qoder." });',
+          'const envelope = { type: "result", subtype: "success", is_error: false, result: inner, total_cost_usd: 0, usage: { input_tokens: 5, output_tokens: 3 } };',
+          "process.stdout.write(JSON.stringify(envelope));",
+          "",
+        ].join("\n"),
+      );
+      chmodSync(fakeBin, 0o755);
+      process.env.PATH = `${bin}:${originalPath ?? ""}`;
+
+      // No `callBrain` override — exercises the real default seam.
+      const app = new Hono();
+      mountRepoSummaryRoute(app, { home, secret: SECRET });
+      const res = await app.request("/api/repo-summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": SECRET },
+        body: JSON.stringify({ project_root: ROOT }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.summary_text).toBe("Routed through qoder.");
+
+      // Cached record's model reflects the qoder-routed config (no
+      // per-family default model for qoder — CLI's own account default).
+      const cache = JSON.parse(readFileSync(repoSummaryPath(home, ROOT), "utf8"));
+      expect(cache.model).toBe("unknown");
+    } finally {
+      process.env.PATH = originalPath;
+      rmSync(bin, { recursive: true, force: true });
+    }
   });
 });

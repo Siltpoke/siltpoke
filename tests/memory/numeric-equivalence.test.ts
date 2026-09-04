@@ -13,7 +13,7 @@ import { numericallyEquivalent } from "../../src/memory/numeric-equivalence";
 
 describe("numericallyEquivalent", () => {
   test("zh numeric trap (eval nt-zh-01): 3 只猫 vs 2 只猫 → true", () => {
-    // Cached extractor claim "有 3 只猫" is subject-dropped; the containment
+    // Cached extractor claim  is subject-dropped; the containment
     // metric tolerates the fragment-vs-canonical asymmetry (score exactly 0.6).
     expect(numericallyEquivalent("有 3 只猫", "用户养了 2 只猫")).toBe(true);
   });
@@ -43,7 +43,7 @@ describe("numericallyEquivalent", () => {
   });
 
   test("shared zh numeral in ordinary words → false (eval ce-zh-06 regression fence)", () => {
-    // Both sides carry "一" (一家) — identical token sequences, so this TRUE
+    // Both sides carry  (一家) — identical token sequences, so this TRUE
     // contradiction is protected from the guard by the same-numbers early exit.
     expect(numericallyEquivalent("在一家AI创业公司做后端", "用户在一家银行工作")).toBe(false);
   });
@@ -61,7 +61,7 @@ describe("numericallyEquivalent", () => {
   });
 
   test("90后 vs 00后 → true via short-residue equality fallback", () => {
-    // Residues are both the single char "后" (< 2 chars → strict equality).
+    // Residues are both the single char  (< 2 chars → strict equality).
     // Note this downgrade is the SAFE direction even though 90后/00后 is
     // arguably a true contradiction: the new claim still lands as a visible
     // coexisting add — no retirement without high-precision evidence.

@@ -162,6 +162,32 @@ describe("tracePath — confidence + flags", () => {
     expect(t.nodes.find((n) => n.id === a)?.purpose).toEqual({ src: "none" });
   });
 
+  test("trace node carries the graph node type (file root renders as file)", () => {
+    const b = new GraphBuilder();
+    const fileId = "file:src/entry.ts:";
+    b.graph.nodes.push({
+      id: fileId,
+      type: "file",
+      name: "entry.ts",
+      path: "src/entry.ts",
+      lineRange: [1, 1],
+    });
+    b.queryIndex.path_to_node_ids["src/entry.ts"] ??= [];
+    b.queryIndex.path_to_node_ids["src/entry.ts"].push(fileId);
+    b.fn({ name: "helper", path: "src/entry.ts" });
+    b.graph.edges.push({
+      id: `${fileId}::calls::helper`,
+      source: fileId,
+      target: "helper",
+      type: "calls",
+      weight: 1,
+      call_kind: "static",
+    });
+    const t = tracePath(b.graph, b.queryIndex, fileId, { depth: 4, entrypointIds: [fileId] });
+    expect(t.nodes.find((n) => n.id === fileId)?.type).toBe("file");
+    expect(t.nodes.find((n) => n.fn === "helper")?.type).toBe("function");
+  });
+
   // Off-path siblings carry a fan-in `weight` (global resolved in-degree) so
   // the renderer can rank + cap the dimmed left column by how widely-called each
   // is — the most-called are the most relevant context to keep visible.

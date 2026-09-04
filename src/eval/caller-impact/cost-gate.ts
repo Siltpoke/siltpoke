@@ -99,3 +99,69 @@ export class SpendTracker {
     }
   }
 }
+
+/**
+ * Call-count analog of `CostCeilingExceeded` (track #7 T5, AC12) — quota-billed
+ * providers (codex) have no meaningful `--max-usd`; the hard ceiling is a call
+ * COUNT instead of a dollar amount. Kept as a DISTINCT class (not a `total_cost_usd`
+ * repurpose) so its message stays honest about the unit being counted.
+ */
+export class CallCeilingExceeded extends Error {
+  constructor(
+    public readonly callsMade: number,
+    public readonly ceilingCalls: number,
+  ) {
+    super(
+      `call ceiling exceeded: made ${callsMade} calls > ceiling ${ceilingCalls} — run aborted`,
+    );
+    this.name = "CallCeilingExceeded";
+  }
+}
+
+export interface CallGateDecision {
+  ok: boolean;
+  reason: string;
+}
+
+/**
+ * Pre-run gate for quota-billed (call-counted) providers — sibling of
+ * `checkGate`: refuse if no ceiling, ceiling <= 0, or the plan's estimated
+ * arm calls exceed it.
+ */
+export function checkCallGate(
+  estimatedArmCalls: number,
+  ceilingCalls: number | undefined,
+): CallGateDecision {
+  if (ceilingCalls === undefined || Number.isNaN(ceilingCalls)) {
+    return { ok: false, reason: "no call ceiling — quota-billed run requires --max-calls <n>" };
+  }
+  if (ceilingCalls <= 0) {
+    return { ok: false, reason: `call ceiling must be > 0 (got ${ceilingCalls})` };
+  }
+  if (estimatedArmCalls > ceilingCalls) {
+    return {
+      ok: false,
+      reason: `estimated ${estimatedArmCalls} arm calls exceeds ceiling ${ceilingCalls} — raise --max-calls or shrink the set/repeats`,
+    };
+  }
+  return { ok: true, reason: `estimated ${estimatedArmCalls} arm calls within ceiling ${ceilingCalls}` };
+}
+
+/**
+ * Running call-count tracker. `add()` once per call made; the instant the
+ * count crosses the ceiling it THROWS, aborting the in-flight run — same
+ * abort discipline as `SpendTracker`, one call unit instead of one dollar.
+ */
+export class CallCountTracker {
+  private count = 0;
+  constructor(private readonly ceilingCalls: number) {}
+  get callsMade(): number {
+    return this.count;
+  }
+  add(): void {
+    this.count += 1;
+    if (this.count > this.ceilingCalls) {
+      throw new CallCeilingExceeded(this.count, this.ceilingCalls);
+    }
+  }
+}

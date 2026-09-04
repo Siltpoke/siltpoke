@@ -18,6 +18,7 @@ import type {
   SiltpokeGraphNode,
 } from "../../src/repo-graph/types";
 import { emptyCounters, emptyGraph } from "../../src/repo-graph/types";
+import { tokens } from "../../src/web/tokens/tokens";
 
 function fileNode(path: string): SiltpokeGraphNode {
   return { id: `file:${path}:`, type: "file", name: path, path, lineRange: [1, 100] };
@@ -86,15 +87,20 @@ describe("projectArchitecture — groups", () => {
   const proj: ArchitectureProjection = projectArchitecture(graph, OVERLAY, makeMeta());
 
   test("derives group id + short from panel name first token", () => {
+    // Accent asserted against tokens.color.* rather than a hardcoded hex
+    // (final dark-mode branch review, Important 3): GROUP_ACCENTS' first 4
+    // entries are now `tokens.color.terra`/`moss`/`sky`/`amber`, so pinning
+    // a literal "#d96b6b" here would make this test the ONE place in the
+    // codebase still assuming the pre-migration light-only value.
     expect(proj.groups[0]).toEqual({
       id: "core",
       title: "Core LLM + orchestration",
       short: "Core",
-      accent: "#d96b6b",
+      accent: tokens.color.terra,
     });
     expect(proj.groups[1]!.id).toBe("state");
     expect(proj.groups[1]!.short).toBe("State");
-    expect(proj.groups[1]!.accent).toBe("#7a9a5e");
+    expect(proj.groups[1]!.accent).toBe(tokens.color.moss);
   });
 });
 

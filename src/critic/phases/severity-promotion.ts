@@ -58,7 +58,7 @@ export function autoPromoteSeverity(
   // Nudge mood from happy to concerned so the bubble doesn't mislead.
   if (critique.mood === "happy") critique.mood = "concerned";
 
-  // Override happy bubble text. Brain emitted "干净！" while rubric triggers
+  // Override happy bubble text. Brain emitted  while rubric triggers
   // existed → bubble misleads the eye. Replace with a neutral nudge so the
   // chip and the badge agree.
   const happyBubblePatterns = /干净|nice|clean|great|good|nothing to say|all good|all green|✓|👍|👌/i;

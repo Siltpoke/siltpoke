@@ -13,10 +13,14 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { mountDashboardRoutes } from "../../src/daemon/routes/dashboard";
 
+// POST /api/action is secret-gated (daemon-hardening security audit,
+// finding 2) — every request below now carries this header.
+const TEST_SECRET = "test-secret";
+
 function makeApp(): { app: Hono; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), "dashboard-test-"));
   const app = new Hono();
-  mountDashboardRoutes(app, { homeBase: dir });
+  mountDashboardRoutes(app, { homeBase: dir, secret: TEST_SECRET });
   return { app, dir };
 }
 
@@ -32,7 +36,7 @@ describe("POST /api/action — JSON response (regression pin)", () => {
   test("returns 200 JSON with ok:true for valid action (feed)", async () => {
     const res = await app.request("/api/action", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ action: "feed" }),
     });
     expect(res.status).toBe(200);
@@ -52,7 +56,7 @@ describe("POST /api/action — JSON response (regression pin)", () => {
   test("returns 200 JSON for play action", async () => {
     const res = await app.request("/api/action", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ action: "play" }),
     });
     expect(res.status).toBe(200);
@@ -64,7 +68,7 @@ describe("POST /api/action — JSON response (regression pin)", () => {
   test("returns 200 JSON for pet action", async () => {
     const res = await app.request("/api/action", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ action: "pet" }),
     });
     expect(res.status).toBe(200);
@@ -76,7 +80,7 @@ describe("POST /api/action — JSON response (regression pin)", () => {
   test("returns 200 JSON for tease action", async () => {
     const res = await app.request("/api/action", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ action: "tease" }),
     });
     expect(res.status).toBe(200);
@@ -88,7 +92,7 @@ describe("POST /api/action — JSON response (regression pin)", () => {
   test("returns 200 JSON for clean action (Wave 1.5b)", async () => {
     const res = await app.request("/api/action", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ action: "clean" }),
     });
     expect(res.status).toBe(200);
@@ -100,7 +104,7 @@ describe("POST /api/action — JSON response (regression pin)", () => {
   test("returns 200 JSON for sleep action (Wave 1.5b)", async () => {
     const res = await app.request("/api/action", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ action: "sleep" }),
     });
     expect(res.status).toBe(200);
@@ -112,7 +116,7 @@ describe("POST /api/action — JSON response (regression pin)", () => {
   test("returns 400 JSON for invalid action", async () => {
     const res = await app.request("/api/action", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ action: "explode" }),
     });
     expect(res.status).toBe(400);
@@ -123,7 +127,7 @@ describe("POST /api/action — JSON response (regression pin)", () => {
   test("returns 400 JSON for invalid JSON body", async () => {
     const res = await app.request("/api/action", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: "not json",
     });
     expect(res.status).toBe(400);
@@ -132,7 +136,7 @@ describe("POST /api/action — JSON response (regression pin)", () => {
   test("no Accept header uses JSON path (content-type is application/json)", async () => {
     const res = await app.request("/api/action", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ action: "feed" }),
     });
     const ct = res.headers.get("content-type") ?? "";
@@ -155,6 +159,7 @@ describe("POST /api/action — text/html Accept (Accept negotiation)", () => {
       headers: {
         "Content-Type": "application/json",
         Accept: "text/html",
+        "X-Siltpoke-Secret": TEST_SECRET,
       },
       body: JSON.stringify({ action: "feed" }),
     });
@@ -169,6 +174,7 @@ describe("POST /api/action — text/html Accept (Accept negotiation)", () => {
       headers: {
         "Content-Type": "application/json",
         Accept: "text/html",
+        "X-Siltpoke-Secret": TEST_SECRET,
       },
       body: JSON.stringify({ action: "feed" }),
     });
@@ -183,6 +189,7 @@ describe("POST /api/action — text/html Accept (Accept negotiation)", () => {
       headers: {
         "Content-Type": "application/json",
         Accept: "text/html",
+        "X-Siltpoke-Secret": TEST_SECRET,
       },
       body: JSON.stringify({ action: "feed" }),
     });
@@ -197,6 +204,7 @@ describe("POST /api/action — text/html Accept (Accept negotiation)", () => {
       headers: {
         "Content-Type": "application/json",
         Accept: "text/html",
+        "X-Siltpoke-Secret": TEST_SECRET,
       },
       body: JSON.stringify({ action: "feed" }),
     });
@@ -211,6 +219,7 @@ describe("POST /api/action — text/html Accept (Accept negotiation)", () => {
       headers: {
         "Content-Type": "application/json",
         Accept: "text/html",
+        "X-Siltpoke-Secret": TEST_SECRET,
       },
       body: JSON.stringify({ action: "pet" }),
     });
@@ -225,6 +234,7 @@ describe("POST /api/action — text/html Accept (Accept negotiation)", () => {
       headers: {
         "Content-Type": "application/json",
         Accept: "text/html",
+        "X-Siltpoke-Secret": TEST_SECRET,
       },
       body: JSON.stringify({ action: "play" }),
     });
@@ -239,6 +249,7 @@ describe("POST /api/action — text/html Accept (Accept negotiation)", () => {
       headers: {
         "Content-Type": "application/json",
         Accept: "text/html",
+        "X-Siltpoke-Secret": TEST_SECRET,
       },
       body: JSON.stringify({ action: "feed" }),
     });
@@ -252,6 +263,7 @@ describe("POST /api/action — text/html Accept (Accept negotiation)", () => {
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
+        "X-Siltpoke-Secret": TEST_SECRET,
       },
       body: JSON.stringify({ action: "feed" }),
     });
@@ -259,5 +271,29 @@ describe("POST /api/action — text/html Accept (Accept negotiation)", () => {
     expect(ct).toContain("application/json");
     const json = (await res.json()) as Record<string, unknown>;
     expect(json.ok).toBe(true);
+  });
+});
+
+// daemon-hardening security audit, finding 2 — an unauthenticated POST
+// (blind cross-origin CSRF) could otherwise farm XP for free.
+describe("POST /api/action — secret gate", () => {
+  test("without the secret → 401", async () => {
+    const { app } = makeApp();
+    const res = await app.request("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "feed" }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("with the correct secret → 200", async () => {
+    const { app } = makeApp();
+    const res = await app.request("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
+      body: JSON.stringify({ action: "feed" }),
+    });
+    expect(res.status).toBe(200);
   });
 });

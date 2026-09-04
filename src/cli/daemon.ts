@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
-import { startDaemon, } from "../daemon/server";
+import { startDaemon, DaemonAlreadyRunningError } from "../daemon/server";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { atomicWrite } from "../utils/atomic-write";
 import { generateSecret } from "../daemon/auth";
 import { runStopWithGuard } from "./daemon-stop-guard";
+import { installAutostartForPlatform } from "../installer/autostart";
+import { runRestart } from "./daemon-restart";
+import { siltpokeRoot } from "../installer/paths";
 
-const BASE = process.env.SILTPOKE_HOME ?? join(homedir(), ".siltpoke");
+const BASE = siltpokeRoot();
 
 function loadOrCreateSecret(): string {
   const path = join(BASE, "secret");
@@ -28,15 +30,29 @@ async function cmdStart(detach: boolean): Promise<void> {
     return;
   }
   const port = process.env.PORT ? Number(process.env.PORT) : 9876;
-  const handle = await startDaemon({
-    port,
-    hostname: "127.0.0.1",
-    lockPath: join(BASE, "siltpoked.lock"),
-    pidPath: join(BASE, "siltpoked.pid"),
-    markerDir: join(BASE, "markers"),
-    secret: loadOrCreateSecret(),
-    homeBase: BASE,
-  });
+  let handle: Awaited<ReturnType<typeof startDaemon>>;
+  try {
+    handle = await startDaemon({
+      port,
+      hostname: "127.0.0.1",
+      lockPath: join(BASE, "siltpoked.lock"),
+      pidPath: join(BASE, "siltpoked.pid"),
+      markerDir: join(BASE, "markers"),
+      secret: loadOrCreateSecret(),
+      homeBase: BASE,
+    });
+  } catch (err) {
+    // A healthy siltpoked already owns the port. Step down with success so
+    // launchd KeepAlive treats this as "already handled" and does NOT
+    // crash-flap the newcomer against the incumbent (the dashboard stays up).
+    if (err instanceof DaemonAlreadyRunningError) {
+      process.stdout.write(
+        `siltpoked already running on http://127.0.0.1:${err.port}\n`,
+      );
+      process.exit(0);
+    }
+    throw err;
+  }
   process.stdout.write(
     `siltpoked listening on http://127.0.0.1:${handle.server.port}\n`,
   );
@@ -84,36 +100,18 @@ function cmdStatus(): void {
   process.stdout.write(`siltpoked: ${alive ? "running" : "stale"} pid=${pid}\n`);
 }
 
-interface AutostartInstaller {
-  installAutostart(): Promise<void>;
-}
-
 async function cmdInstallAutostart(): Promise<void> {
-  const platform = process.platform;
-  if (platform === "darwin") {
-    const mod = (await import("../installer/launchd").catch(() => null)) as
-      | AutostartInstaller
-      | null;
-    if (!mod || typeof mod.installAutostart !== "function") {
-      process.stderr.write("installer/launchd.ts not available\n");
-      process.exit(2);
-    }
-    await mod.installAutostart();
-    return;
+  const result = await installAutostartForPlatform();
+  if (result.status === "unavailable") {
+    process.stderr.write(`installer/${result.module}.ts not available\n`);
+    process.exit(2);
   }
-  if (platform === "linux") {
-    const mod = (await import("../installer/systemd").catch(() => null)) as
-      | AutostartInstaller
-      | null;
-    if (!mod || typeof mod.installAutostart !== "function") {
-      process.stderr.write("installer/systemd.ts not available\n");
-      process.exit(2);
-    }
-    await mod.installAutostart();
-    return;
+  if (result.status === "skipped") {
+    process.stderr.write(
+      `install-autostart unsupported on platform=${result.platform}\n`,
+    );
+    process.exit(2);
   }
-  process.stderr.write(`install-autostart unsupported on platform=${platform}\n`);
-  process.exit(2);
 }
 
 const sub = process.argv[2] ?? "status";
@@ -130,10 +128,13 @@ switch (sub) {
   case "status":
     cmdStatus();
     break;
+  case "restart":
+    process.exit(await runRestart());
+    break;
   case "install-autostart":
     await cmdInstallAutostart();
     break;
   default:
-    process.stderr.write(`unknown subcommand: ${sub}\nusage: siltpoked [start|stop|status|install-autostart] [--detach] [--force]\n`);
+    process.stderr.write(`unknown subcommand: ${sub}\nusage: siltpoked [start|stop|status|restart|install-autostart] [--detach] [--force]\n`);
     process.exit(2);
 }

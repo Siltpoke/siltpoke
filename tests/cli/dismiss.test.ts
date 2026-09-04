@@ -13,6 +13,7 @@ import { runDismiss } from "../../src/cli/dismiss";
 import type { ReflectionCallResult } from "../../src/brain/reflection";
 import { readMemory } from "../../src/memory/memory";
 import { writeGlobal, emptyGlobal } from "../../src/memory/global";
+import { selectRelevantRules } from "../../src/brain/rule-selector";
 
 let tmpHome: string;
 let projectCwd: string;
@@ -151,22 +152,24 @@ test("happy path: status flips + recent + archive + rule appended", async () => 
   expect(log).toContain('"kind":"reflection"');
 });
 
-test("low_confidence: rule NOT appended, recent + archive still written", async () => {
-  seedCritique("c-low");
+test("medium confidence: rule IS appended (write gate removed), carries confidence", async () => {
+  seedCritique("c-med");
   const result = await runDismiss({
-    critiqueId: "c-low",
-    reason: "maybe wrong",
+    critiqueId: "c-med",
+    reason: "maybe wrong but worth remembering",
     cwd: projectCwd,
     homeBase,
     preferenceLogPath: prefLog,
     reflectionFn: fakeReflection({ confidence: "medium" }),
   });
   expect(result.reflection.ran).toBe(true);
-  expect(result.reflection.rule_appended).toBe(false);
-  expect(result.reflection.skip_reason).toBe("low_confidence");
+  expect(result.reflection.rule_appended).toBe(true);
   expect(result.recent_appended).toBe(true);
   expect(result.archive_appended).toBe(true);
-  expect(existsSync(join(projectCwd, ".siltpoke", "memory.json"))).toBe(false);
+
+  const mem = await readMemory(homeBase);
+  expect(mem?.learned_rules).toHaveLength(1);
+  expect(mem?.learned_rules[0]?.confidence).toBe("medium");
 });
 
 test("duplicate rule: second dismiss does not double-append", async () => {
@@ -287,4 +290,76 @@ test("already_dismissed critique still records recent + archive entries", async 
   expect(result.status_set).toBe("already_dismissed");
   expect(result.recent_appended).toBe(true);
   expect(result.archive_appended).toBe(true);
+});
+
+// ---------------------------------------------------------------------------
+// Prompt-injection hardening (Control 5 — dismiss.ts dropped
+// applies_to_file_types, so every dismiss-created rule silently became
+// universal-forever by construction; src/brain/rule-selector.ts:32-34
+// isUniversal() treats an absent field as universal). 2026-07-13.
+// ---------------------------------------------------------------------------
+
+test("[hardening] a dismiss-created rule carries applies_to_file_types when the reflection returns it", async () => {
+  seedCritique("c-scoped");
+  const result = await runDismiss({
+    critiqueId: "c-scoped",
+    reason: "py-specific false positive",
+    cwd: projectCwd,
+    homeBase,
+    preferenceLogPath: prefLog,
+    reflectionFn: fakeReflection({
+      confidence: "high",
+      applies_to_file_types: ["py"],
+    }),
+  });
+  expect(result.reflection.rule_appended).toBe(true);
+
+  const mem = await readMemory(homeBase);
+  const persisted = mem!.learned_rules.find(
+    (r) => r.id === result.reflection.rule_id,
+  )!;
+  // The bug (pre-fix): this field was silently dropped when dismiss.ts built
+  // the LearnedRule literal, even though the reflection schema returns it.
+  expect(persisted.applies_to_file_types).toEqual(["py"]);
+
+  // rule-selector then actually scopes it — a "ts" review does NOT pick up
+  // a rule scoped to "py" (pre-fix, an unscoped/universal rule would leak
+  // into every future review of every file type, forever).
+  const selectedForTs = selectRelevantRules(mem!.learned_rules, new Set(["ts"]));
+  expect(selectedForTs.map((r) => r.id)).not.toContain(persisted.id);
+
+  const selectedForPy = selectRelevantRules(mem!.learned_rules, new Set(["py"]));
+  expect(selectedForPy.map((r) => r.id)).toContain(persisted.id);
+});
+
+test("[moat-proof regression] an AUTO-written medium-confidence rule reaches the store and is selected for a matching review", async () => {
+  seedCritique("c-moat");
+  const result = await runDismiss({
+    critiqueId: "c-moat",
+    reason: "already null-checked upstream at line 30",
+    cwd: projectCwd,
+    homeBase,
+    preferenceLogPath: prefLog,
+    reflectionFn: fakeReflection({
+      confidence: "medium", // the OLD gate dropped this — the store-starver
+      learned_rule:
+        "Before flagging NULL handling, grep for existing null checks in the same file.",
+      rule_category: "null_check",
+      applies_to_file_types: ["py"],
+    }),
+  });
+  expect(result.reflection.rule_appended).toBe(true);
+
+  const ruleId = result.reflection.rule_id;
+  expect(ruleId).toBeDefined();
+
+  const mem = await readMemory(homeBase);
+  // The spike proved a hand-seeded rule fires; this proves an AUTO-written one
+  // reaches what the critic would receive for a .py review.
+  const selected = selectRelevantRules(mem!.learned_rules, new Set(["py"]));
+  expect(selected.map((r) => r.id)).toContain(ruleId!);
+
+  // ...and is correctly scoped: a .ts review does NOT pick it up.
+  const selectedTs = selectRelevantRules(mem!.learned_rules, new Set(["ts"]));
+  expect(selectedTs.map((r) => r.id)).not.toContain(ruleId!);
 });

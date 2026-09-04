@@ -1,6 +1,45 @@
 import { test, expect } from "bun:test";
-import { callReflection } from "../../src/brain/reflection";
+import {
+  callReflection,
+  reflectionSystemPrompt,
+  buildContextBundle,
+  REFLECTION_SYSTEM_PROMPT,
+} from "../../src/brain/reflection";
 import { BrainError } from "../../src/brain/brain";
+
+// --- mode-aware reflection (dismiss vs acted_on) ---
+
+test("reflectionSystemPrompt defaults to dismiss framing (unchanged)", () => {
+  expect(reflectionSystemPrompt()).toBe(REFLECTION_SYSTEM_PROMPT);
+  expect(reflectionSystemPrompt("dismiss")).toBe(REFLECTION_SYSTEM_PROMPT);
+});
+
+test("acted_on system prompt is reinforcement-framed, not dismiss/mistake-framed", () => {
+  const p = reflectionSystemPrompt("acted_on");
+  const lower = p.toLowerCase();
+  expect(p).not.toBe(REFLECTION_SYSTEM_PROMPT);
+  // must NOT carry the dismiss FRAMING that inverts acted-on rules — target the
+  // dismiss prompt's actual framing phrases, not a bare "dismissed" token (the
+  // acted-on prompt legitimately names "dismissed critiques" in a DON'T-do-that
+  // contrast clause).
+  expect(lower).not.toContain("just dismissed");
+  expect(lower).not.toContain("reflect on the mistake");
+  expect(lower).not.toContain("it was wrong");
+  // must carry the acted-on / reinforcement framing
+  expect(lower).toContain("acted on");
+  expect(lower).toContain("correct");
+  expect(lower).toContain("reinforces");
+});
+
+test("buildContextBundle tags the reason by mode", () => {
+  const dismiss = buildContextBundle({ critiqueBody: "c", userReason: "r" });
+  expect(dismiss).toContain("<user_dismiss_reason>");
+  expect(dismiss).not.toContain("<user_acted_on_reason>");
+
+  const acted = buildContextBundle({ critiqueBody: "c", userReason: "r", mode: "acted_on" });
+  expect(acted).toContain("<user_acted_on_reason>");
+  expect(acted).not.toContain("<user_dismiss_reason>");
+});
 
 function fakeSpawn(opts: {
   stdoutText: string;

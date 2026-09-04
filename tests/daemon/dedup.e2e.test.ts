@@ -13,6 +13,7 @@ import {
   stopDaemon,
   type DaemonHandle,
 } from "../../src/daemon/server";
+import { resetNavAvailability } from "../../src/web/routes/nav";
 
 interface Marker {
   state: "claimed" | "done";
@@ -36,6 +37,7 @@ describe("two-entry dedup (e2e)", () => {
       }
     }
     handle = null;
+    resetNavAvailability();
   });
 
   test("HTTP entry + command entry → daemon's handleStopHook runs once; command entry suppresses", async () => {

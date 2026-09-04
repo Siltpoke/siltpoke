@@ -9,6 +9,18 @@ import {
   parseArgs,
 } from "../../src/cli/explain";
 import type { ExplainResult } from "../../src/explain/types";
+import type { StalenessVerdict } from "../../src/repo-graph/staleness-verdict";
+
+/** Fixture for the "explained" outcome's now-required `staleness` field.
+ * Its own rendering (CLI stdout for non-fresh levels) is covered end-to-end
+ * via `runExplain` in `tests/cli/explain-staleness-stdout.test.ts`; these
+ * pre-existing formatHuman/formatJson tests only need SOME valid verdict. */
+const FRESH_STALENESS: StalenessVerdict = {
+  level: "fresh",
+  headline: "index is current",
+  counts: { content_changed: 0, deleted_still_indexed: 0, unindexed_files: 0, indexed: 3, wrong_ratio: 0 },
+  caveat: null,
+};
 
 function makeResult(overrides: Partial<ExplainResult["meta"]> = {}): ExplainResult {
   const meta: ExplainResult["meta"] = {
@@ -84,6 +96,7 @@ describe("formatHuman", () => {
       usage: makeResult().meta.brain_usage,
       softCapExceeded: false,
       softCapUsd: 0.05,
+      staleness: FRESH_STALENESS,
     });
     expect(out).toContain("runDoctor");
     expect(out).toContain("[src/cli/doctor.ts:42-87]");
@@ -101,6 +114,7 @@ describe("formatHuman", () => {
       usage: r.meta.brain_usage,
       softCapExceeded: false,
       softCapUsd: 0.05,
+      staleness: FRESH_STALENESS,
     });
     expect(out.toLowerCase()).toMatch(/low.confidence|⚠/);
   });
@@ -168,8 +182,9 @@ describe("formatJson", () => {
         lowConfidence: false,
         truncated: false,
         usage: makeResult().meta.brain_usage,
-      softCapExceeded: false,
-      softCapUsd: 0.05,
+        softCapExceeded: false,
+        softCapUsd: 0.05,
+        staleness: FRESH_STALENESS,
       }),
     );
     expect(out.success).toBe(true);

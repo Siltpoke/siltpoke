@@ -86,6 +86,7 @@ export async function seedUnhealthyBrainHealth(): Promise<RestoreFn> {
       next_eligible_at: new Date(now.getTime() + 60 * 60_000).toISOString(),
     },
     retry_budget: { date: ts.slice(0, 10), outer_retries_used: 0 },
+    quota_calls_today: {},
   };
   return swapInFile(BRAIN_HEALTH_PATH, `${JSON.stringify(health, null, 2)}\n`);
 }

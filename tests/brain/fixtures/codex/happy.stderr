@@ -1,0 +1,29 @@
+# PROVENANCE NOTE (2026-07-07, codex v0.142.5): the real run3.err (the
+# --json invocation this happy.jsonl fixture mirrors) contains ONLY
+# "Reading additional input from stdin...\n" — codex's --json mode
+# suppresses the human banner on stderr. The banner block below is
+# spliced verbatim from a sibling NON-json probe (run6.err), captured in
+# the SAME probe session with the identical binary version, default
+# model (gpt-5.5), and provider — used here so this fixture can exercise
+# the `model: <x>` stderr-banner-parsing path with real captured text.
+# Comment lines (prefixed #) are not part of any captured codex output;
+# the parser only regexes for a `model: ...` line and ignores the rest.
+#
+# EDITED 2026-09-02, and said here so "captured verbatim" stays true of
+# everything else: the `workdir:` line below is NOT the captured one. It held
+# the real absolute path of the machine the probe ran on, which the public
+# snapshot must not carry, and it is replaced by `/tmp/codex-brain-probe`.
+# Nothing reads that line — the parser looks only for `model:` — so the
+# substitution costs the fixture nothing except this note.
+Reading additional input from stdin...
+OpenAI Codex v0.142.5
+--------
+workdir: /tmp/codex-brain-probe
+model: gpt-5.5
+provider: openai
+approval: on-request
+sandbox: read-only
+reasoning effort: medium
+reasoning summaries: none
+session id: 019f3ec7-772e-7450-968a-08a99e3fd7d1
+--------

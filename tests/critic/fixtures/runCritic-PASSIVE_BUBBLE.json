@@ -20,6 +20,7 @@
       "total_cost_usd": 0.001
     },
     "critiqueId": "c-passive",
+    "evidenceLabel": "not_checked",
     "diffSummary": {
       "intent": "1 file changed · +0 −0 (heuristic summary — Haiku unavailable)",
       "key_changes": [
@@ -43,6 +44,27 @@
       "classification": "exploration",
       "confidence": 0.3,
       "signal_source": "regex"
+    },
+    "providerMeta": {
+      "name": "claude",
+      "billing": "usd",
+      "genAiSystem": "anthropic"
+    },
+    "memoryFunnel": {
+      "rules_in_store": 0,
+      "rules_scope_matched": 0,
+      "rules_selected": 0,
+      "rules_bytes_in_prompt": 0
+    },
+    "promptBytes": {
+      "base": 27,
+      "memory": 0,
+      "recent": 0,
+      "tool_output": 424,
+      "caller_impact": 0,
+      "reverse_deps": 0,
+      "anti_examples": 0,
+      "total": 1396
     }
   },
   "critiqueInput": {

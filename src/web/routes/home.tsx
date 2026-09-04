@@ -18,9 +18,18 @@ import type { TopBarBadge } from "../primitives/TopBar";
 import { Layout } from "../_shared/layout";
 import { getHomeData, type HomeData } from "../screens/Home.data";
 import { tokens } from "../tokens/tokens";
+import { resolveRequestProject } from "../../daemon/project-context";
+import { GLOBAL_ONLY } from "../../memory/memory";
 
 export interface HomeRouteDeps {
   homeBase?: string;
+  /**
+   * Daemon secret — forwarded to `<Layout secret>`, which sets `hx-headers`
+   * on `<body>` (so `ActionChip`'s `hx-post="/api/action"` carries
+   * `X-Siltpoke-Secret`) and projects `data-secret` onto FloatingChat.
+   * Absent → unauthenticated 401 (fail-closed), same as every other route.
+   */
+  secret?: string;
 }
 
 /**
@@ -89,8 +98,21 @@ export function mountHomeRoutes(app: Hono, deps: HomeRouteDeps = {}): void {
 
   app.get("/", async (c) => {
     let data: HomeData;
+    let proj: Awaited<ReturnType<typeof resolveRequestProject>>;
     try {
-      data = await getHomeData({ basePath: homeBase });
+      proj = await resolveRequestProject(homeBase, c.req.query("repo"));
+      // One-time canonical ?repo= seed redirect: promote a fresh landing's
+      // recency/sticky pick to an explicit URL so it's shareable/bookmarkable
+      // and survives a reload without re-guessing. Guarded on the `repo`
+      // query param being absent so a request that already carries ?repo=
+      // (including the redirect target itself) never redirects again — no loop.
+      if (c.req.query("repo") === undefined && proj.proj_hash) {
+        return c.redirect(`${c.req.path}?repo=${proj.proj_hash}`, 302);
+      }
+      data = await getHomeData({
+        basePath: homeBase,
+        memoryScope: proj.project_root ?? GLOBAL_ONLY,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "unknown error";
       return c.html(
@@ -104,8 +126,17 @@ export function mountHomeRoutes(app: Hono, deps: HomeRouteDeps = {}): void {
     const view: "dashboard" | "toy" = viewParam === "toy" ? "toy" : "dashboard";
     const shellName = c.req.query("shell") ?? "blush";
     return c.html(
-      <Layout title={`${data.pet.name} · siltpoke`}>
-        <Home data={data} view={view} shellName={shellName} />
+      <Layout title={`${data.pet.name} · siltpoke`} secret={deps.secret}>
+        <Home
+          data={data}
+          view={view}
+          shellName={shellName}
+          resolvedProject={{
+            source: proj.source,
+            displayName: proj.display_name,
+            projHash: proj.proj_hash,
+          }}
+        />
       </Layout>,
     );
   });

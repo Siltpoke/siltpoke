@@ -1,4 +1,4 @@
-import { test, expect, describe, beforeEach, afterEach } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach, afterAll } from "bun:test";
 import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,9 @@ import {
   repoSummaryPath,
   type RepoSummaryRecord,
 } from "../../src/repo-graph/repo-summary-gen";
+import { anchoredRepoRoot, foreignRepoRoot, cleanupArchRepoRoots } from "../_shared/arch-repo-root";
+
+afterAll(cleanupArchRepoRoots);
 
 describe("buildSummaryContext", () => {
   test("assembles repo name + layers + component descriptions from an arch-model", () => {
@@ -19,7 +22,7 @@ describe("buildSummaryContext", () => {
         { title: { value: "Daemon" }, desc: { value: "Hono HTTP server" } },
         { title: { value: "Critic" }, desc: { value: "rubric + Brain review" } },
       ],
-    });
+    }, null);
     expect(ctx).toContain("Repo name: siltpoke");
     expect(ctx).toContain("Architecture layers: Surfaces, LLM Orchestration");
     expect(ctx).toContain("- Daemon: Hono HTTP server");
@@ -27,15 +30,45 @@ describe("buildSummaryContext", () => {
   });
 
   test("tolerates a component with no description (title only)", () => {
-    const ctx = buildSummaryContext({ boundary: { value: "x" }, nodes: [{ title: { value: "Utils" } }] });
+    const ctx = buildSummaryContext({ boundary: { value: "x" }, nodes: [{ title: { value: "Utils" } }] }, null);
     expect(ctx).toContain("- Utils");
     expect(ctx).not.toContain("- Utils:");
   });
 
   test("degrades to 'unknown' name + empty sections on a malformed arch-model", () => {
-    const ctx = buildSummaryContext({ junk: true });
+    const ctx = buildSummaryContext({ junk: true }, null);
     expect(ctx).toContain("Repo name: unknown");
     expect(ctx).toContain("Architecture layers: ");
+  });
+
+  test("out-of-scope reviewer externals never reach the paid prompt", () => {
+    // The prompt is what Siltpoke pays to send. A model generated before the
+    // repo scope existed still carries these nodes on disk, so the filter has
+    // to run here — not only where the diagram is rendered.
+    const model = {
+      boundary: { value: "some-travel-app" },
+      nodes: [
+        { title: { value: "Search Agent" }, desc: { value: "finds flights" } },
+        {
+          kind: "ext", provenance: "registry-declared", externalFamily: "qoder",
+          title: { value: "Qoder CLI" },
+          desc: { value: "External review CLI (registry-declared; reachability unverified)" },
+        },
+      ],
+    };
+    const ctx = buildSummaryContext(model, foreignRepoRoot());
+    expect(ctx).toContain("- Search Agent: finds flights");
+    expect(ctx).not.toContain("Qoder");
+  });
+
+  test("a repo that carries the registry anchor keeps its reviewer externals", () => {
+    const model = {
+      boundary: { value: "siltpoke" },
+      nodes: [
+        { kind: "ext", provenance: "registry-declared", externalFamily: "qoder", title: { value: "Qoder CLI" } },
+      ],
+    };
+    expect(buildSummaryContext(model, anchoredRepoRoot())).toContain("Qoder CLI");
   });
 });
 

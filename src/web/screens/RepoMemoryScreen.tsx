@@ -14,9 +14,17 @@ import type { RepoMemoryIndex } from "../../repo-memory/types";
 
 export interface RepoMemoryScreenProps {
   index: RepoMemoryIndex | null;
+  /**
+   * The page's resolved proj_hash — baked into the build form's `action`
+   * URL as `?repo=` so `POST /api/repo-memory/build` has an explicit
+   * target. The API route's write guard rejects a bare POST that resolves
+   * only to a recency guess (source "recent") or nothing (source "none");
+   * this is what lets a build from this page count as "explicit" instead.
+   */
+  projHash?: string | null;
 }
 
-export function RepoMemoryScreen({ index }: RepoMemoryScreenProps) {
+export function RepoMemoryScreen({ index, projHash }: RepoMemoryScreenProps) {
   return (
     <Dashboard navSections={CANONICAL_NAV} activeSection="repo-memory">
       <div style={{ padding: 16 }}>
@@ -71,7 +79,18 @@ export function RepoMemoryScreen({ index }: RepoMemoryScreenProps) {
             >
               Run build to create repo-memory index
             </div>
-            <form method="post" action="/api/repo-memory/build">
+            {/*
+              Query string, not a hidden field: a plain (or hx-boosted)
+              POST form sends its fields in the request body, but the API
+              route reads the target project from `c.req.query("repo")` —
+              the same convention every other ?repo= consumer in this app
+              uses (repo-graph, memory-log, explain). Baking the hash into
+              the action URL is what actually reaches the route.
+            */}
+            <form
+              method="post"
+              action={projHash ? `/api/repo-memory/build?repo=${encodeURIComponent(projHash)}` : "/api/repo-memory/build"}
+            >
               <button
                 type="submit"
                 style={{
@@ -79,7 +98,7 @@ export function RepoMemoryScreen({ index }: RepoMemoryScreenProps) {
                   fontFamily: tokens.font.mono,
                   fontSize: 12,
                   background: tokens.color.sky,
-                  color: tokens.color.ink,
+                  color: tokens.color.onSky,
                   border: "none",
                   borderRadius: tokens.radius.sm,
                   cursor: "pointer",
@@ -229,7 +248,18 @@ export function RepoMemoryScreen({ index }: RepoMemoryScreenProps) {
             )}
 
             {/* Build now button */}
-            <form method="post" action="/api/repo-memory/build">
+            {/*
+              Query string, not a hidden field: a plain (or hx-boosted)
+              POST form sends its fields in the request body, but the API
+              route reads the target project from `c.req.query("repo")` —
+              the same convention every other ?repo= consumer in this app
+              uses (repo-graph, memory-log, explain). Baking the hash into
+              the action URL is what actually reaches the route.
+            */}
+            <form
+              method="post"
+              action={projHash ? `/api/repo-memory/build?repo=${encodeURIComponent(projHash)}` : "/api/repo-memory/build"}
+            >
               <button
                 type="submit"
                 style={{

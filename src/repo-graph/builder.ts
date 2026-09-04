@@ -13,22 +13,22 @@
 import { existsSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { parseSource } from "../critic/rubric/tier2/ast-loader";
-import { resolveRepoGraphLocation } from "./proj-hash";
-import { walkProject, type WalkedFile } from "./walker";
-import { extractFile, type ExtractedFile } from "./extractor";
-import { computeCoverage } from "./coverage";
 import { discoverAnchorMap } from "./anchor-discovery";
 import { computeAstSignature } from "./ast-signature";
+import { computeCoverage } from "./coverage";
+import { type ExtractedFile, extractFile } from "./extractor";
 import { computeContentSha, fingerprintMatches } from "./fingerprint";
+import { resolveRepoGraphLocation } from "./proj-hash";
+import { seedSeenWatermark, type WriteSeenFn } from "./seen-seed";
 import {
+  ensureStorageDir,
+  readFingerprints,
   readGraph,
   readMeta,
-  readFingerprints,
-  ensureStorageDir,
-  writeGraph,
-  writeQueryIndex,
   writeFingerprints,
+  writeGraph,
   writeMeta,
+  writeQueryIndex,
 } from "./store";
 import {
   emptyCounters,
@@ -44,6 +44,7 @@ import {
   type SiltpokeGraphEdge,
   type SiltpokeGraphNode,
 } from "./types";
+import { type WalkedFile, walkProject } from "./walker";
 
 export interface IndexBuildOptions {
   cwd: string;
@@ -67,6 +68,14 @@ export interface IndexBuildOptions {
    * free — leaving it undefined keeps the old behavior exactly.
    */
   onProgress?: (done: number, total: number) => void;
+  /**
+   * Test-only override for the `seen.json` seed write (see `seen-seed.ts`).
+   * Production callers leave this undefined. Lets a test inject a failing
+   * write to prove a seed-write error can never propagate out of
+   * `runIndexBuild` and trigger failure cleanup on an otherwise-successful
+   * build.
+   */
+  __seedWriteSeenOverride?: WriteSeenFn;
 }
 
 export interface IndexBuildResult {
@@ -139,7 +148,12 @@ function buildQueryIndex(graph: RepoGraph): QueryIndex {
 
 async function readAndFingerprintFile(
   file: WalkedFile,
-): Promise<{ content: string; fingerprint: FileFingerprint; extracted: ExtractedFile } | null> {
+): Promise<{
+  content: string;
+  fingerprint: FileFingerprint;
+  extracted: ExtractedFile;
+  degraded: boolean;
+} | null> {
   let content: string;
   try {
     content = await readFile(file.absPath, "utf8");
@@ -148,16 +162,22 @@ async function readAndFingerprintFile(
   }
   const tree = await parseSource(content, file.lang);
   if (!tree) return null;
+  // tree-sitter recovers from unparseable input with ERROR / MISSING nodes
+  // rather than failing, so `tree` being non-null does NOT mean the file
+  // parsed cleanly. Extraction still runs — partial data is worth keeping —
+  // but the degradation is reported so it stops being silent.
+  const degraded = tree.rootNode.hasError;
   const fingerprint: FileFingerprint = {
     content_sha256: computeContentSha(content),
     ast_sig: computeAstSignature(tree),
+    degraded,
   };
   const extracted = extractFile(tree, {
     relPath: file.relPath,
     lang: file.lang,
     lineCount: content.split("\n").length,
   });
-  return { content, fingerprint, extracted };
+  return { content, fingerprint, extracted, degraded };
 }
 
 /**
@@ -199,12 +219,22 @@ export async function runIndexBuild(opts: IndexBuildOptions): Promise<IndexBuild
   // Whether a (presumably good) index already existed BEFORE this
   // build. Drives failure cleanup — a cold build that throws is fully removed
   // (no `building:true` orphan, the stale-orphan root cause); a re-index that
-  // throws keeps the prior data but reverts the `building` flag.
+  // throws keeps the prior data but reverts the `building` flag. Also doubles
+  // as the "had a prior index before this build" signal `seedSeenWatermark`
+  // needs (slice ③, C2) — captured here, BEFORE markBuildStart/buildInner run
+  // any writes, so it's never contaminated by this build's own directory
+  // creation.
   const preexisted = existsSync(storage_dir);
 
   await markBuildStart(storage_dir, project_root, proj_hash);
   try {
-    return await buildInner(opts, location, now, start);
+    const result = await buildInner(opts, location, now, start);
+    // Runs AFTER fingerprints are durably written (buildInner has already
+    // returned). See `seedSeenWatermark` (seen-seed.ts) for the seed rules —
+    // it never throws (best-effort), so a seed-write failure can't land in
+    // the `catch` below and wipe this successful build's output.
+    await seedSeenWatermark(storage_dir, project_root, preexisted, opts.__seedWriteSeenOverride);
+    return result;
   } catch (err) {
     await cleanupFailedBuild(storage_dir, preexisted);
     throw err;
@@ -282,7 +312,14 @@ async function buildInner(
         continue;
       }
       const contentSha = computeContentSha(content);
-      if (contentSha === cached.content_sha256) {
+      // `degraded === undefined` means this fingerprint predates the field.
+      // Reusing it would trust "absent" as "clean" forever: the content sha
+      // still matches on every future build, so the file would never be
+      // re-parsed and an already-indexed repo would report 0 degraded files
+      // permanently — the same silent under-extraction the counter exists to
+      // end. Falling through to the parse path costs one re-parse per stale
+      // file, once, and the index self-heals with no user action.
+      if (contentSha === cached.content_sha256 && cached.degraded !== undefined) {
         // Reuse cached nodes + edges. No parse.
         const reusedNodes = nodesByFile.get(file.relPath) ?? [];
         const reusedEdges = edgesByFile.get(file.relPath) ?? [];
@@ -290,6 +327,10 @@ async function buildInner(
         newGraph.edges.push(...reusedEdges);
         newFingerprints.files[file.relPath] = cached;
         counters.files_cached += 1;
+        // The cache path never re-parses, so degradation must come from the
+        // persisted fingerprint or the count silently resets on every
+        // incremental build — which is nearly every build.
+        if (cached.degraded) counters.parse_degraded += 1;
         bumpNodeCounters(counters, reusedNodes);
         bumpEdgeCounters(counters, reusedEdges);
         continue;
@@ -306,6 +347,7 @@ async function buildInner(
     newGraph.edges.push(...parsed.extracted.edges);
     newFingerprints.files[file.relPath] = parsed.fingerprint;
     counters.files_walked += 1;
+    if (parsed.degraded) counters.parse_degraded += 1;
     bumpNodeCounters(counters, parsed.extracted.nodes);
     bumpEdgeCounters(counters, parsed.extracted.edges);
   }

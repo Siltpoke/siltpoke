@@ -8,7 +8,7 @@
   "total_cost_usd": 0,
   "brain_calls": 0,
   "reflections": 0,
-  "trigger_mode": "gates",
+  "review_unit": "commit",
   "quiet_active": false,
   "budget_stage": "ok",
   "daily_token_limit": 500000,

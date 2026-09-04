@@ -5,6 +5,38 @@
  * screen (summary line, rail rows, detail panes).
  */
 import type { CriticCall } from "../../../state/api";
+import { tokens } from "../../tokens/tokens";
+
+/** Family → chip color, shared by the rail rows and the detail pane so a
+ * given CLI family reads the same everywhere. claude/unknown → the quiet ink3. */
+export function familyColor(family: string): string {
+  switch (family) {
+    case "codex":
+      return tokens.color.sky;
+    case "agy":
+      return tokens.color.violet;
+    case "qoder":
+      return tokens.color.amber;
+    case "codebuddy":
+      return tokens.color.moss;
+    default:
+      return tokens.color.ink3;
+  }
+}
+
+/** The builder family recorded on a row (authorFamily), defaulting to claude
+ * for older rows that predate first-class builder provenance. */
+export function builderFamily(c: CriticCall): string {
+  return c.authorFamily || "claude";
+}
+
+/** The reviewer family for a row (the provider that ran the review). `provider`
+ * is recorded as "anthropic" on some claude rows — treat it as claude so a
+ * plain claude run reads single-family. Absent → claude. */
+export function reviewerFamily(c: CriticCall): string {
+  const p = c.provider || "claude";
+  return p === "anthropic" ? "claude" : p;
+}
 
 /**
  * Stable per-row identity used for Alpine row-select state. Matches the

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
-import { join } from "node:path";
 import {
   readProgression,
   writeProgression,
@@ -8,6 +7,7 @@ import {
 } from "../state/progression";
 import { writeState } from "../state/state";
 import { dayKey } from "../state/usage";
+import { siltpokeRoot } from "../installer/paths";
 
 const PET_BUBBLES = [
   "rrrrrr 🐾",
@@ -17,10 +17,6 @@ const PET_BUBBLES = [
   "tail twitches happily",
   "you are forgiven for that one bug",
 ];
-
-function siltpokeHome(envHome: string | undefined): string {
-  return join(envHome ?? "", ".siltpoke");
-}
 
 export interface PetOptions {
   homeBase?: string;
@@ -37,7 +33,7 @@ export interface PetResult {
 }
 
 export async function runPet(opts: PetOptions = {}): Promise<PetResult> {
-  const homeBase = opts.homeBase ?? siltpokeHome(process.env.HOME);
+  const homeBase = opts.homeBase ?? siltpokeRoot();
   const now = (opts.now ?? (() => new Date()))();
   const day = dayKey(now, 0);
 

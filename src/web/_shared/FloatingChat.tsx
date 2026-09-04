@@ -33,7 +33,20 @@ import { RECALL_SURFACE_ENABLED } from "../../chat/recall";
  * of boost lets Alpine's `@submit.prevent="send()"` own the submit, so sending a
  * message no longer resets the user's drilled-in graph view.
  */
-export function FloatingChat() {
+export interface FloatingChatProps {
+  /**
+   * Daemon secret, projected onto the panel root as `data-secret` (same
+   * ancestor idiom `active-repos.ts` / a retired island / `memory-book.ts`
+   * use). `client/islands/floating-chat.ts` reads it in init() and sends it
+   * as `X-Siltpoke-Secret` on every `POST /api/chat` — without this a
+   * cross-origin page could fire a blind CSRF that spends real API budget
+   * (daemon-hardening security audit, finding 2). Absent → empty string,
+   * matching every other gated-route caller's fail-closed default.
+   */
+  secret?: string;
+}
+
+export function FloatingChat({ secret }: FloatingChatProps = {}) {
   return (
     <div
       id="siltpoke-floating-chat"
@@ -42,6 +55,7 @@ export function FloatingChat() {
       x-data="floatingChat"
       x-cloak
       data-recall-enabled={RECALL_SURFACE_ENABLED ? "1" : "0"}
+      data-secret={secret ?? ""}
       class="fixed right-5 bottom-5 z-[9999]"
     >
       {/* collapsed launcher */}
@@ -50,7 +64,21 @@ export function FloatingChat() {
         x-show="!open"
         {...{ "x-on:click": "toggle()" }}
         aria-label="Open siltpoke chat"
-        class="w-[52px] h-[52px] rounded-full flex items-center justify-center border-none bg-ink text-[#fff] cursor-pointer shadow-[0_8px_22px_rgba(31,27,22,0.26)]"
+        // Icon stroke on the launcher's `bg-ink` fill. `ink` flips polarity
+        // between themes (light: near-black, dark: near-white) — `cream` is
+        // its exact opposite-polarity counterpart (light: near-white, dark:
+        // near-black), so `text-cream` on `bg-ink` stays high-contrast in
+        // BOTH themes. The original `text-[#fff]` was frozen white — in dark
+        // mode `bg-ink` becomes light-gray, making a white icon read at
+        // ~1.06:1, the same invisible-icon shape Task 7's review already
+        // found on 4 other `bg-white`/`text-*` pairs in this file.
+        // Shadow: `shadow-[var(--shadow-lg)]`, NOT an ink color-mix — a
+        // shadow simulates depth/occlusion and must stay near-black in BOTH
+        // themes; `ink` flipping to near-white in dark mode turns it into a
+        // glowing halo instead (Task 10b review round 1, Important 2;
+        // `palette.ts`'s own `shadowPalette.dark` comment says this in so
+        // many words). Geometry (8px offset, wide blur) maps onto `lg`.
+        class="w-[52px] h-[52px] rounded-full flex items-center justify-center border-none bg-ink text-cream cursor-pointer shadow-[var(--shadow-lg)]"
       >
         <svg
           width="23"
@@ -69,11 +97,15 @@ export function FloatingChat() {
 
       {/* x-show wrapper (visibility only — keeps flex layout off the toggle) */}
       <div x-show="open">
-        {/* Backdrop — shown only when maximized; click restores corner panel */}
+        {/* Backdrop — shown only when maximized; click restores corner panel.
+            `tokens.shadow.scrim`, NOT an ink color-mix — a scrim must stay
+            near-black in BOTH themes (it dims the page underneath); `ink`
+            flips to near-white in dark mode, which would have brightened it
+            instead (Task 10b review round 1, Important 3). */}
         <div
           x-show="maximized"
           {...{ "x-on:click": "toggleMaximize()" }}
-          class="fixed inset-0 z-[9998] bg-[rgba(31,27,22,0.42)]"
+          class="fixed inset-0 z-[9998] bg-[var(--shadow-scrim)]"
         ></div>
         {/* Panel wrapper — switches between corner and centered-modal layouts */}
         <div
@@ -82,20 +114,20 @@ export function FloatingChat() {
           }}
         >
         <div
-          class="fc-panel relative flex flex-col bg-cream border border-[rgba(31,27,22,0.1)] rounded-[18px] overflow-hidden font-body shadow-[0_16px_48px_rgba(31,27,22,0.22)]"
+          class="fc-panel relative flex flex-col bg-cream border border-[color-mix(in_srgb,var(--color-ink)_10%,transparent)] rounded-[18px] overflow-hidden font-body shadow-[var(--shadow-lg)]"
           {...{
             ":class": "maximized ? 'pointer-events-auto w-[min(880px,92vw)] h-[min(86vh,860px)]' : 'w-96 h-[564px] max-h-[78vh]'",
           }}
         >
           {/* ── header: soft, light ── */}
-          <div class="flex items-center gap-2 px-4 py-[13px] border-b border-b-[rgba(31,27,22,0.06)]">
+          <div class="flex items-center gap-2 px-4 py-[13px] border-b border-b-[color-mix(in_srgb,var(--color-ink)_6%,transparent)]">
             <span class="w-2 h-2 rounded-full bg-ink opacity-[.85]"></span>
             <span class="font-semibold text-sm text-ink">siltpoke</span>
             <button
               type="button"
               {...{ "x-on:click.stop": "toggleHistory()", ":style": "conversations.length ? 'opacity:.9;cursor:pointer' : 'opacity:.3;cursor:not-allowed'" }}
               title="Past chats"
-              class="ml-auto w-[26px] h-[26px] rounded-md border border-[rgba(31,27,22,0.1)] bg-transparent text-ink inline-flex items-center justify-center"
+              class="ml-auto w-[26px] h-[26px] rounded-md border border-[color-mix(in_srgb,var(--color-ink)_10%,transparent)] bg-transparent text-ink inline-flex items-center justify-center"
             >
               {/* Material "history" glyph — clock face with a counter-clockwise
                   rewind arrow. fill=currentColor → inherits text-ink. */}
@@ -109,7 +141,7 @@ export function FloatingChat() {
               type="button"
               {...{ "x-on:click.stop": "toggleRecall()", ":style": "recallMatches.length ? 'opacity:.9;cursor:pointer' : 'opacity:.3;cursor:not-allowed'" }}
               title="Related chats"
-              class="w-[26px] h-[26px] rounded-md border border-[rgba(31,27,22,0.1)] bg-transparent text-ink inline-flex items-center justify-center"
+              class="w-[26px] h-[26px] rounded-md border border-[color-mix(in_srgb,var(--color-ink)_10%,transparent)] bg-transparent text-ink inline-flex items-center justify-center"
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
@@ -122,7 +154,7 @@ export function FloatingChat() {
               type="button"
               {...{ "x-on:click": "toggleMaximize()", ":aria-label": "maximized ? 'Restore chat' : 'Expand chat'" }}
               title="Expand / restore chat"
-              class="w-[26px] h-[26px] rounded-md border border-[rgba(31,27,22,0.1)] bg-transparent text-ink inline-flex items-center justify-center cursor-pointer"
+              class="w-[26px] h-[26px] rounded-md border border-[color-mix(in_srgb,var(--color-ink)_10%,transparent)] bg-transparent text-ink inline-flex items-center justify-center cursor-pointer"
             >
               {/* Expand icon (shown when not maximized) */}
               <svg x-show="!maximized" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -142,7 +174,7 @@ export function FloatingChat() {
             <button
               type="button"
               {...{ "x-on:click": "newConversation()", ":disabled": "!canAddContext()", ":style": "canAddContext() ? 'opacity:.9;cursor:pointer' : 'opacity:.3;cursor:not-allowed'", ":title": "viewingNode() ? \"New chat about the node you're viewing\" : 'New chat'" }}
-              class="w-[26px] h-[26px] rounded-md border border-[rgba(31,27,22,0.1)] bg-transparent text-ink text-base leading-none"
+              class="w-[26px] h-[26px] rounded-md border border-[color-mix(in_srgb,var(--color-ink)_10%,transparent)] bg-transparent text-ink text-base leading-none"
             >
               +
             </button>
@@ -160,10 +192,10 @@ export function FloatingChat() {
           <div
             x-show="historyOpen"
             {...{ "x-on:click.outside": "historyOpen = false" }}
-            class="absolute left-3 right-3 top-[52px] z-10 max-h-[60%] overflow-y-auto bg-cream border border-[rgba(31,27,22,0.12)] rounded-[12px] shadow-[0_8px_24px_rgba(31,27,22,0.18)]"
+            class="absolute left-3 right-3 top-[52px] z-10 max-h-[60%] overflow-y-auto bg-cream border border-[color-mix(in_srgb,var(--color-ink)_12%,transparent)] rounded-[12px] shadow-[var(--shadow-lg)]"
           >
             <template x-for="c in sortedConversations()" {...{ ":key": "c.id" }}>
-              <div class="flex items-center gap-2 px-3 py-2 border-b border-b-[rgba(31,27,22,0.06)] cursor-pointer">
+              <div class="flex items-center gap-2 px-3 py-2 border-b border-b-[color-mix(in_srgb,var(--color-ink)_6%,transparent)] cursor-pointer">
                 <div class="flex-1 min-w-0" {...{ "x-on:click": "openConversation(c.id)" }}>
                   <div class="text-[13px] text-ink truncate" x-text="c.title || c.label"></div>
                   <div class="text-[11px] text-ink opacity-50 truncate flex items-center gap-1.5">
@@ -187,16 +219,16 @@ export function FloatingChat() {
           <div
             x-show="recallOpen"
             {...{ "x-on:click.outside": "recallOpen = false" }}
-            class="absolute left-3 right-3 top-[52px] z-10 max-h-[60%] overflow-y-auto bg-cream border border-[rgba(31,27,22,0.12)] rounded-[12px] shadow-[0_8px_24px_rgba(31,27,22,0.18)]"
+            class="absolute left-3 right-3 top-[52px] z-10 max-h-[60%] overflow-y-auto bg-cream border border-[color-mix(in_srgb,var(--color-ink)_12%,transparent)] rounded-[12px] shadow-[var(--shadow-lg)]"
           >
             <template x-for="m in recallMatches" {...{ ":key": "m.session_id" }}>
               <div
                 {...{ ":data-recall-open": "m.session_id" }}
                 role="button"
                 tabindex={0}
-                class="flex items-start gap-2 px-3 py-2 border-b border-b-[rgba(31,27,22,0.06)] cursor-pointer hover:bg-[rgba(31,27,22,0.03)] last:border-b-0"
+                class="flex items-start gap-2 px-3 py-2 border-b border-b-[color-mix(in_srgb,var(--color-ink)_6%,transparent)] cursor-pointer hover:bg-[color-mix(in_srgb,var(--color-ink)_3%,transparent)] last:border-b-0"
               >
-                <span class="shrink-0 text-[#9d86c2] text-[10px] pt-[2px]">↳</span>
+                <span class="shrink-0 text-violet text-[10px] pt-[2px]">↳</span>
                 <span x-text="m.summary" class="text-[13px] text-ink opacity-75 leading-snug truncate"></span>
               </div>
             </template>
@@ -247,7 +279,7 @@ export function FloatingChat() {
                 <button
                   type="button"
                   {...{ "x-on:click": "sendStarter(p)", "x-text": "p", ":disabled": "streaming" }}
-                  class="rounded-full py-[6px] px-3 text-[12px] text-ink border border-[rgba(31,27,22,0.15)] bg-transparent cursor-pointer opacity-80 hover:opacity-100 hover:bg-[rgba(31,27,22,0.04)] transition-colors duration-150"
+                  class="rounded-full py-[6px] px-3 text-[12px] text-ink border border-[color-mix(in_srgb,var(--color-ink)_15%,transparent)] bg-transparent cursor-pointer opacity-80 hover:opacity-100 hover:bg-[color-mix(in_srgb,var(--color-ink)_4%,transparent)] transition-colors duration-150"
                 ></button>
               </template>
             </div>
@@ -261,7 +293,12 @@ export function FloatingChat() {
                 XSS defense is renderMd's escape-first contract, not the gate. */}
             <template x-for="(m, i) in (active() ? active().messages : [])" {...{ ":key": "i" }}>
               <div
-                {...{ ":style": "m.status === 'failed' ? 'align-self:stretch;max-width:100%;background:rgba(176,60,20,0.05);border:1px solid rgba(176,60,20,0.18);border-radius:12px' : m.status === 'cancelled' ? 'align-self:center;opacity:.45;font-size:11px;padding:2px 0' : m.role === 'user' ? 'align-self:flex-end;background:var(--color-ink);color:var(--color-cream);border-bottom-right-radius:5px' : 'align-self:flex-start;background:#fff;box-shadow:0 1px 3px rgba(31,27,22,.08);border-bottom-left-radius:5px'" }}
+                // Assistant-bubble box-shadow uses var(--shadow-sm), NOT an
+                // ink color-mix — a shadow simulates depth and must stay
+                // near-black in both themes; ink flips to near-white in
+                // dark mode, which would render a glowing halo instead of
+                // a shadow (Task 10b review round 1, Important 2).
+                {...{ ":style": "m.status === 'failed' ? 'align-self:stretch;max-width:100%;background:color-mix(in srgb, var(--color-bubbleFailUrgent) 5%, transparent);border:1px solid color-mix(in srgb, var(--color-bubbleFailUrgent) 18%, transparent);border-radius:12px' : m.status === 'cancelled' ? 'align-self:center;opacity:.45;font-size:11px;padding:2px 0' : m.role === 'user' ? 'align-self:flex-end;background:var(--color-ink);color:var(--color-cream);border-bottom-right-radius:5px' : 'align-self:flex-start;background:var(--color-cream);box-shadow:var(--shadow-sm);border-bottom-left-radius:5px'" }}
                 class="max-w-[82%] py-[9px] px-3 rounded-[15px] text-[13px] leading-[1.5] break-words text-ink"
               >
                 {/* User messages: plain text (x-text handles XSS automatically). */}
@@ -286,18 +323,18 @@ export function FloatingChat() {
                 another conversation's dots. */}
             <div
               x-show="isActiveStreaming()"
-              class="self-start flex items-center gap-1 max-w-[82%] py-[11px] px-3 rounded-[15px] rounded-bl-[5px] bg-white shadow-[0_1px_3px_rgba(31,27,22,.08)]"
+              class="self-start flex items-center gap-1 max-w-[82%] py-[11px] px-3 rounded-[15px] rounded-bl-[5px] bg-cream shadow-[var(--shadow-sm)]"
             >
               <span class="w-[7px] h-[7px] rounded-full bg-ink2 animate-pulse"></span>
               <span class="w-[7px] h-[7px] rounded-full bg-ink2 animate-pulse [animation-delay:200ms]"></span>
               <span class="w-[7px] h-[7px] rounded-full bg-ink2 animate-pulse [animation-delay:400ms]"></span>
             </div>
-            <div x-show="error" class="self-center text-xs text-[#b00] opacity-[.85]" x-text="error"></div>
+            <div x-show="error" class="self-center text-xs text-bubbleTerminalRed opacity-[.85]" x-text="error"></div>
 
             {/* ── desync CTA — fires only when desyncCta is set ── */}
             <div
               x-show="desyncCta !== null"
-              class="self-stretch mt-1 p-3 rounded-[12px] border border-[rgba(31,27,22,0.12)] bg-white text-[12.5px] text-ink"
+              class="self-stretch mt-1 p-3 rounded-[12px] border border-[color-mix(in_srgb,var(--color-ink)_12%,transparent)] bg-cream text-[12.5px] text-ink"
             >
               <p class="mb-2 opacity-70">
                 You're viewing <strong x-text="desyncCta?.targetLabel ?? ''"></strong>, but this chat is about a different node.
@@ -306,14 +343,14 @@ export function FloatingChat() {
                 <button
                   type="button"
                   {...{ "x-on:click": "resolveDesync('reanchor')" }}
-                  class="w-full rounded-[8px] py-[7px] px-3 text-left text-[12px] border border-[rgba(31,27,22,0.15)] bg-transparent cursor-pointer hover:bg-[rgba(31,27,22,0.04)]"
+                  class="w-full rounded-[8px] py-[7px] px-3 text-left text-[12px] border border-[color-mix(in_srgb,var(--color-ink)_15%,transparent)] bg-transparent cursor-pointer hover:bg-[color-mix(in_srgb,var(--color-ink)_4%,transparent)]"
                 >
                   Re-anchor this chat to <strong x-text="desyncCta?.targetLabel ?? ''"></strong>
                 </button>
                 <button
                   type="button"
                   {...{ "x-on:click": "resolveDesync('new')" }}
-                  class="w-full rounded-[8px] py-[7px] px-3 text-left text-[12px] border border-[rgba(31,27,22,0.15)] bg-transparent cursor-pointer hover:bg-[rgba(31,27,22,0.04)]"
+                  class="w-full rounded-[8px] py-[7px] px-3 text-left text-[12px] border border-[color-mix(in_srgb,var(--color-ink)_15%,transparent)] bg-transparent cursor-pointer hover:bg-[color-mix(in_srgb,var(--color-ink)_4%,transparent)]"
                 >
                   New chat about <strong x-text="desyncCta?.targetLabel ?? ''"></strong>
                 </button>
@@ -335,7 +372,7 @@ export function FloatingChat() {
              */}
             <div
               x-show="staleCta !== null"
-              class="self-stretch mt-1 p-3 rounded-[12px] border border-[rgba(31,27,22,0.12)] bg-white text-[12.5px] text-ink"
+              class="self-stretch mt-1 p-3 rounded-[12px] border border-[color-mix(in_srgb,var(--color-ink)_12%,transparent)] bg-cream text-[12.5px] text-ink"
             >
               <p class="mb-2 opacity-70">
                 The file containing <strong x-text="staleCta?.nodeName ?? ''"></strong> has changed since this chat was pinned
@@ -346,14 +383,14 @@ export function FloatingChat() {
                 <button
                   type="button"
                   {...{ "x-on:click": "resolveStale('freeze')" }}
-                  class="w-full rounded-[8px] py-[7px] px-3 text-left text-[12px] border border-[rgba(31,27,22,0.15)] bg-transparent cursor-pointer hover:bg-[rgba(31,27,22,0.04)]"
+                  class="w-full rounded-[8px] py-[7px] px-3 text-left text-[12px] border border-[color-mix(in_srgb,var(--color-ink)_15%,transparent)] bg-transparent cursor-pointer hover:bg-[color-mix(in_srgb,var(--color-ink)_4%,transparent)]"
                 >
                   Keep discussing the version pinned at <span x-text="staleCta?.pinnedAt ? new Date(staleCta.pinnedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : ''"></span>
                 </button>
                 <button
                   type="button"
                   {...{ "x-on:click": "resolveStale('continue')" }}
-                  class="w-full rounded-[8px] py-[7px] px-3 text-left text-[12px] border border-[rgba(31,27,22,0.15)] bg-transparent cursor-pointer hover:bg-[rgba(31,27,22,0.04)]"
+                  class="w-full rounded-[8px] py-[7px] px-3 text-left text-[12px] border border-[color-mix(in_srgb,var(--color-ink)_15%,transparent)] bg-transparent cursor-pointer hover:bg-[color-mix(in_srgb,var(--color-ink)_4%,transparent)]"
                 >
                   Use the current version
                 </button>
@@ -368,13 +405,43 @@ export function FloatingChat() {
              */}
             <div
               x-show="terminalCta != null"
-              class="self-stretch mt-1 p-3 rounded-[12px] border border-[rgba(31,27,22,0.18)] bg-[rgba(176,0,0,0.04)] text-[12.5px] text-ink"
+              class="self-stretch mt-1 p-3 rounded-[12px] border border-[color-mix(in_srgb,var(--color-ink)_18%,transparent)] bg-[color-mix(in_srgb,var(--color-bubbleTerminalRed)_4%,transparent)] text-[12.5px] text-ink"
             >
-              <p class="mb-2 opacity-80">
+              <p
+                class="mb-2 opacity-80"
+                {...{
+                  "x-show": "terminalCta?.reason !== 'critique_gone'",
+                }}
+              >
                 <strong x-text="terminalCta?.nodeName ?? ''"></strong> was renamed or removed — this chat is now read-only.
               </p>
-              <p class="mb-2 text-[11.5px] opacity-55">
+              {/* critique_gone (task 5): the review this chat tried to
+                  anchor to could not be resolved (too old / unresolvable
+                  repo). Honest, cause-specific copy — never a silent
+                  no-op, since the whole point of the signal is to avoid
+                  answering a question about a review we couldn't load. */}
+              <p
+                class="mb-2 opacity-80"
+                {...{ "x-show": "terminalCta?.reason === 'critique_gone'" }}
+              >
+                I can't load that review any more — it may be too old to open.
+              </p>
+              {/* Fix 4: the follow-up line was inherited verbatim from the
+                  node-anchor copy ("...current version of this code"), which
+                  is wrong for a critique — there is no "current version" of a
+                  review to explore. Cause-specific, same x-show split as the
+                  headline above. */}
+              <p
+                class="mb-2 text-[11.5px] opacity-55"
+                {...{ "x-show": "terminalCta?.reason !== 'critique_gone'" }}
+              >
                 Start a new chat to continue exploring the current version of this code.
+              </p>
+              <p
+                class="mb-2 text-[11.5px] opacity-55"
+                {...{ "x-show": "terminalCta?.reason === 'critique_gone'" }}
+              >
+                Start a new chat if you'd like to ask about something else.
               </p>
               <button
                 type="button"
@@ -384,7 +451,7 @@ export function FloatingChat() {
                   ":style": "canAddContext() ? 'cursor:pointer;opacity:.9' : 'cursor:not-allowed;opacity:.4'",
                   "x-text": "viewingNode() ? \"+ Start a new chat about the node you're viewing\" : '+ Start a new chat'",
                 }}
-                class="w-full rounded-[8px] py-[7px] px-3 text-left text-[12px] border border-[rgba(31,27,22,0.15)] bg-transparent"
+                class="w-full rounded-[8px] py-[7px] px-3 text-left text-[12px] border border-[color-mix(in_srgb,var(--color-ink)_15%,transparent)] bg-transparent"
               ></button>
             </div>
 
@@ -396,7 +463,7 @@ export function FloatingChat() {
              */}
             <div
               x-show="blockedCta !== null"
-              class="self-stretch mt-1 p-3 rounded-[12px] border border-[rgba(31,27,22,0.12)] bg-[rgba(255,248,220,0.6)] text-[12.5px] text-ink"
+              class="self-stretch mt-1 p-3 rounded-[12px] border border-[color-mix(in_srgb,var(--color-ink)_12%,transparent)] bg-[color-mix(in_srgb,var(--color-blockedYellow)_60%,transparent)] text-[12.5px] text-ink"
             >
               <p class="mb-2 opacity-80" x-text="blockedCta?.message ?? ''"></p>
               <button
@@ -443,7 +510,7 @@ export function FloatingChat() {
               x-model="draft"
               {...{ ":disabled": "streaming || desyncCta !== null || staleCta !== null || blockedCta !== null || terminalCta != null" }}
               {...{ ":placeholder": "streaming ? 'Siltpoke is replying — one question at a time…' : (viewingNode() ? 'Ask about this node…' : 'Ask anything…')" }}
-              class="flex-1 min-w-0 border border-[rgba(31,27,22,0.1)] rounded-full py-[11px] px-[18px] text-[13px] bg-white outline-none text-ink"
+              class="flex-1 min-w-0 border border-[color-mix(in_srgb,var(--color-ink)_10%,transparent)] rounded-full py-[11px] px-[18px] text-[13px] bg-cream outline-none text-ink"
             />
             {/* Escape-hatch recall icon — gated on RECALL_SURFACE_ENABLED; parked 2026-06-26. */}
             {RECALL_SURFACE_ENABLED && (
@@ -454,7 +521,7 @@ export function FloatingChat() {
               title="Find related past chats for this query"
               aria-label="Find related past chats"
               {...{ ":style": "(!draft.trim() || streaming) ? 'opacity:.2;cursor:not-allowed' : 'opacity:.5;cursor:pointer'" }}
-              class="w-8 h-8 rounded-full border border-[rgba(31,27,22,0.1)] bg-transparent text-[13px] shrink-0 flex items-center justify-center transition-opacity duration-150"
+              class="w-8 h-8 rounded-full border border-[color-mix(in_srgb,var(--color-ink)_10%,transparent)] bg-transparent text-[13px] shrink-0 flex items-center justify-center transition-opacity duration-150"
             >
               🔗
             </button>
@@ -470,7 +537,7 @@ export function FloatingChat() {
                 ":type": "streaming ? 'button' : 'submit'",
                 "x-on:click": "streaming && stopStreaming()",
                 ":disabled": "streaming ? false : (!draft.trim() || desyncCta !== null || staleCta !== null || blockedCta !== null || terminalCta != null)",
-                ":style": "(!streaming && (!draft.trim() || desyncCta !== null || staleCta !== null || blockedCta !== null || terminalCta != null)) ? 'border-radius:50%;background:rgba(31,27,22,.07);color:rgba(31,27,22,.35);cursor:default' : 'border-radius:50%;background:var(--color-ink);color:var(--color-cream);cursor:pointer'",
+                ":style": "(!streaming && (!draft.trim() || desyncCta !== null || staleCta !== null || blockedCta !== null || terminalCta != null)) ? 'border-radius:50%;background:color-mix(in srgb, var(--color-ink) 7%, transparent);color:color-mix(in srgb, var(--color-ink) 35%, transparent);cursor:default' : 'border-radius:50%;background:var(--color-ink);color:var(--color-cream);cursor:pointer'",
                 ":aria-label": "streaming ? 'Stop' : 'Send'",
                 "x-text": "streaming ? '■' : '↑'",
               }}

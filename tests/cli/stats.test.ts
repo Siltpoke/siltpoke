@@ -6,7 +6,7 @@ import { runStats, formatCriticTelemetrySection, formatMemorySection } from "../
 import { appendUsageEvent } from "../../src/state/usage";
 import {
   recordGateDecision,
-  recordGuardReject,
+  recordEvidenceUnverified,
   recordToolRun,
 } from "../../src/state/critic-counters";
 import { writeMemory, emptyMemory, type CoreMemory } from "../../src/memory/memory";
@@ -24,12 +24,12 @@ afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
 });
 
-test("runStats: no events → zeros + default trigger mode", async () => {
+test("runStats: no events → zeros + default review unit", async () => {
   const r = await runStats({ homeBase, now: () => new Date() });
   expect(r.brain_calls).toBe(0);
   expect(r.reflections).toBe(0);
   expect(r.budget_stage).toBe("ok");
-  expect(r.trigger_mode).toBe("gates");
+  expect(r.review_unit).toBe("commit");
   expect(r.quiet_active).toBe(false);
 });
 
@@ -142,8 +142,8 @@ test("formatCriticTelemetrySection: returns empty string for zero runs", () => {
     hardSuppressCount: 0,
     passiveBubbleCount: 0,
     normalAttemptCount: 0,
-    normalRejectedCount: 0,
-    guardRejectReasons: {},
+    normalUnverifiedCount: 0,
+    unverifiedEvidenceReasons: {},
   });
   expect(output).toBe("");
 });
@@ -185,14 +185,23 @@ test("formatCriticTelemetrySection: no warning when abstention rate ≤20%", asy
   expect(section).not.toContain("abstention rate above 20%");
 });
 
-test("formatCriticTelemetrySection: top guard rejects displayed", async () => {
+test("formatCriticTelemetrySection: top unverified citations displayed", async () => {
   await recordGateDecision(homeBase, "NORMAL");
-  await recordGuardReject(homeBase, "snippet not in evidence_corpus: TS2304: Cannot find name foo");
+  await recordEvidenceUnverified(homeBase, "snippet not in evidence_corpus: TS2304: Cannot find name foo");
 
   const r = await runStats({ homeBase });
   const section = formatCriticTelemetrySection(r.criticCounters);
-  expect(section).toContain("top guard rejects");
+  expect(section).toContain("top unverified citations");
   expect(section).toContain("snippet not in evidence_corpus");
+  // "attempted", not "accepted". Nothing is subtracted from this number any
+  // more (the evidence check stopped discarding reviews) — but it is
+  // incremented at classification time, BEFORE the Brain call, so a NORMAL run
+  // whose Brain call died is in it too. An independent reviewer caught the
+  // first draft calling it the accepted count; on the measured store that
+  // overstates by roughly a third.
+  expect(section).toContain("1 NORMAL attempted");
+  expect(section).not.toContain("NORMAL accepted");
+  expect(section).toContain("1 of the NORMAL runs carried an unverified citation");
 });
 
 // ---------------------------------------------------------------------------

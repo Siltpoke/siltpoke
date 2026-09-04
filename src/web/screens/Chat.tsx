@@ -55,9 +55,12 @@ export function Chat() {
           </div>
           {/* Entry kinds: normal user/assistant bubble · failed → full-width
               muted error card (visually distinct from bubbles) · cancelled →
-              quiet centered marker. The islands store FIXED display copy in
-              msg.text for failed/cancelled entries, so this template renders
-              plain text for all kinds (x-text — no HTML injection path). */}
+              quiet centered marker · notice (e.g. index-staleness warning) →
+              quiet full-width info card, teal-coded like the staleness
+              badge elsewhere on the dashboard. The islands store FIXED
+              display copy in msg.text for failed/cancelled/notice entries,
+              so this template renders plain text for all kinds (x-text —
+              no HTML injection path). */}
           <template x-for="(msg, idx) in messages" x-bind:key="idx + '-' + msg.role">
             <div
               style={{
@@ -66,7 +69,7 @@ export function Chat() {
                 maxWidth: "70%",
                 whiteSpace: "pre-wrap",
               }}
-              x-bind:style="msg.status === 'failed' ? { background: '#f7ede4', border: '1px solid #dcb49e', alignSelf: 'stretch', maxWidth: '100%', color: '#1f1b16' } : msg.status === 'cancelled' ? { alignSelf: 'center', color: '#8a7c64', fontSize: '11px', padding: '2px 0' } : msg.role === 'user' ? { background: '#e8dec7', alignSelf: 'flex-end', color: '#1f1b16' } : { background: '#faf6ec', alignSelf: 'flex-start', color: '#1f1b16', border: '1px solid #d8cbab' }"
+              x-bind:style="msg.status === 'failed' ? { background: 'var(--color-bubbleFail)', border: '1px solid var(--color-bubbleFailEdge)', alignSelf: 'stretch', maxWidth: '100%', color: 'var(--color-ink)' } : msg.status === 'notice' ? { background: 'var(--color-tealWash)', border: '1px solid var(--color-tealWashEdge)', alignSelf: 'stretch', maxWidth: '100%', color: 'var(--color-tealInk)', fontSize: '11.5px', fontStyle: 'italic' } : msg.status === 'cancelled' ? { alignSelf: 'center', color: 'var(--color-ink3)', fontSize: '11px', padding: '2px 0' } : msg.role === 'user' ? { background: 'var(--color-paperD)', alignSelf: 'flex-end', color: 'var(--color-ink)' } : { background: 'var(--color-cream)', alignSelf: 'flex-start', color: 'var(--color-ink)', border: '1px solid var(--color-edge)' }"
             >
               <span
                 x-show="msg.status === 'failed'"
@@ -74,6 +77,9 @@ export function Chat() {
                 style={{ color: tokens.color.terra, marginRight: "6px" }}
               >
                 ⚠
+              </span>
+              <span x-show="msg.status === 'notice'" aria-hidden="true" style={{ marginRight: "6px" }}>
+                ·
               </span>
               <span x-text="msg.text" />
             </div>

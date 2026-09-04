@@ -21,8 +21,8 @@ export function MemorySegs() {
             style={{
               fontFamily: tokens.font.mono,
               fontSize: 12,
-              color: "#6366b8",
-              background: "rgba(99,102,184,.09)",
+              color: tokens.color.codeInk,
+              background: "color-mix(in srgb, var(--color-codeInk) 9%, transparent)",
               padding: "1px 5px",
               borderRadius: "4px",
             }}
@@ -87,7 +87,7 @@ export function MemoryAlpineRow() {
             top: "6px",
             bottom: "-13px",
             width: "2px",
-            background: "#e7ddc8",
+            background: tokens.color.edge,
           }}
         />
         <div
@@ -110,7 +110,7 @@ export function MemoryAlpineRow() {
           flex: 1,
           minWidth: 0,
           position: "relative",
-          background: "#fffdf8",
+          background: tokens.color.memCardBg,
           border: `1px solid ${tokens.color.paperD}`,
           borderRadius: "10px",
           padding: "11px 14px",
@@ -152,6 +152,54 @@ export function MemoryAlpineRow() {
               lineHeight: "20px",
             }}
           />
+          {/* 📌 Pin — non-retired FACT rows only (semantic; episodic/procedural
+              have no pinned concept, and setFactPinnedCore rejects retired
+              facts with already_retired). Shown when unpinned; toggles to the
+              filled "📌 Pinned" button below on click.
+              No inline display — same x-show clobber rationale as Delete. */}
+          <button
+            class="memory-row-pin"
+            type="button"
+            x-show="event.type === 'semantic' && event.status !== 'retired' && !event.pinned"
+            x-on:click="setPinned(event.id, true)"
+            style={{
+              fontFamily: tokens.font.mono,
+              fontSize: 10,
+              fontWeight: 600,
+              color: tokens.color.amber,
+              background: "transparent",
+              border: `1px solid ${tokens.color.amber}`,
+              borderRadius: tokens.radius.pill,
+              padding: "0 10px",
+              lineHeight: "20px",
+              cursor: "pointer",
+            }}
+          >
+            📌 Pin
+          </button>
+          {/* 📌 Unpin — the pinned-state counterpart above; filled to read as
+              "active protection" (mirrors the filled ✓ Confirm button's
+              positive-state styling). Click reverts to unpinned. */}
+          <button
+            class="memory-row-unpin"
+            type="button"
+            x-show="event.type === 'semantic' && event.status !== 'retired' && event.pinned"
+            x-on:click="setPinned(event.id, false)"
+            style={{
+              fontFamily: tokens.font.mono,
+              fontSize: 10,
+              fontWeight: 600,
+              color: tokens.color.cream,
+              background: tokens.color.amber,
+              border: `1px solid ${tokens.color.amber}`,
+              borderRadius: tokens.radius.pill,
+              padding: "0 10px",
+              lineHeight: "20px",
+              cursor: "pointer",
+            }}
+          >
+            📌 Pinned
+          </button>
           {/* 🗑 删除 — active facts only; soft-retire (row stays → 退休).
               No inline display — x-show show-path calls removeProperty('display'),
               so adding display here would be clobbered; button default is safe. */}
@@ -365,7 +413,7 @@ export function MemoryAlpineRow() {
           </span>
           <span
             x-text="event.why !== null ? event.why : 'no source recorded (early memory)'"
-            x-bind:style="event.why !== null ? { fontStyle: 'normal', color: '#8a7c64' } : { fontStyle: 'italic', color: '#a8997d' }"
+            x-bind:style="event.why !== null ? { fontStyle: 'normal', color: 'var(--color-ink3)' } : { fontStyle: 'italic', color: 'var(--color-whyFallbackInk)' }"
             style={{ fontSize: 11, color: tokens.color.ink3 }}
           />
           {/* 详情展开▾/收起▴ toggle — right-aligned on the 为什么 row.

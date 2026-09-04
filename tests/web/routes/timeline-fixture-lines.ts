@@ -36,6 +36,22 @@ export interface FixtureCall {
   input_tokens?: number;
   output_tokens?: number;
   omit_usage?: boolean;
+  /**
+   * `m112_guard_reason` — why the evidence guard refused an otherwise-successful
+   * review. HISTORICAL shape: no run since 2026-08-19 writes it, but rows on
+   * disk do, and it still drives `CriticCall.audit_absence`.
+   */
+  guard_reason?: string;
+  /**
+   * `m112_evidence_label` — how much of an ACCEPTED review's evidence was
+   * confirmed. This is the shape a run writes today, and the only way to get
+   * the timeline's "unconfirmed" mark to render at the route/e2e level.
+   */
+  evidence_label?: "verified" | "no_evidence" | "partly_unverified" | "none_verified";
+  /** `m112_evidence_unverified` — how many citations were dropped. */
+  evidence_unverified?: number;
+  /** `m112_reason` — why the run was suppressed. Same purpose as above. */
+  suppress_reason?: string;
 }
 
 function skippedLine(c: FixtureCall): string {
@@ -76,6 +92,15 @@ function firedLine(c: FixtureCall): string {
     session_id: c.session,
     cwd: c.cwd ?? "/Users/foo/projA",
     ...(c.critique_id ? { critique_id: c.critique_id } : {}),
+    ...(c.guard_reason ? { m112_guard_reason: c.guard_reason, m112_accepted: false } : {}),
+    ...(c.evidence_label
+      ? {
+          m112_accepted: true,
+          m112_evidence_label: c.evidence_label,
+          m112_evidence_unverified: c.evidence_unverified ?? 0,
+        }
+      : {}),
+    ...(c.suppress_reason ? { m112_reason: c.suppress_reason } : {}),
     ...(c.diff_snapshot_id ? { diff_snapshot_id: c.diff_snapshot_id } : {}),
     ...(c.diff_summary ? { diff_summary: c.diff_summary } : {}),
     brain_output: {

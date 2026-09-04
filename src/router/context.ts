@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
-import { readFile } from "node:fs/promises";
+
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
+import { normalizeAntigravityEvents } from "./antigravity-transcript";
 import { parseBashCommandForFileWrites } from "./bash-parse";
+import { normalizeCodebuddyEvents } from "./codebuddy-transcript";
+import { normalizeCodexEvents } from "./codex-transcript";
 import { diffAgainstBaseline, type GitBaseline } from "./git-snapshot";
+import { resolveInsideRepo } from "../utils/repo-path";
 
 export interface ContextBundle {
   text: string;
@@ -52,6 +57,24 @@ export interface ExtractChangedFilesOpts {
    * relative + cwd); unverifiable relatives are kept (never drop on doubt).
    */
   pruneMissing?: boolean;
+  /**
+   * Drop paths that do not resolve inside `cwd`. The transcript names every
+   * path a tool touched, so a `> /tmp/build.log` redirect, a scratchpad script
+   * under /private/tmp, `/dev/null`, and stale paths from a pre-migration repo
+   * root all arrive here looking exactly like source edits. Measured over the
+   * 125 August critiques in this repo, 1264 of 2086 changed_files entries (60%)
+   * were repo-external and 124 of 125 critiques carried at least one — and they
+   * are not inert: the god-file rubric fired on a 9915-line /tmp build log and
+   * that finding became the critique's anchors[0], which the acted-on oracle
+   * could then never read (permanent `file_unreadable` abstain).
+   *
+   * Off by default to keep the extractor a pure transcript parser; the Stop
+   * hook opts in. Requires `cwd` — without one nothing is dropped, matching
+   * `pruneMissing`'s never-drop-on-doubt rule. Filters only: a kept path is
+   * returned in the form the transcript wrote it, because downstream consumers
+   * (rubric, evidence corpus, anchors) read those exact strings.
+   */
+  confineToCwd?: boolean;
 }
 
 export interface TranscriptEvent {
@@ -84,7 +107,7 @@ interface ToolUsePart {
   input?: { file_path?: unknown; path?: unknown; command?: unknown };
 }
 
-async function readEvents(
+export async function readEvents(
   transcriptPath: string,
 ): Promise<TranscriptEvent[]> {
   if (!existsSync(transcriptPath)) return [];
@@ -93,7 +116,14 @@ async function readEvents(
     return raw
       .split("\n")
       .map((l) => safeJsonParse(l))
-      .filter((e): e is TranscriptEvent => e !== null);
+      .filter((e): e is TranscriptEvent => e !== null)
+      .flatMap(
+        (e) =>
+          normalizeCodexEvents(e) ??
+          normalizeAntigravityEvents(e) ??
+          normalizeCodebuddyEvents(e) ??
+          [e],
+      );
   } catch {
     return [];
   }
@@ -127,6 +157,35 @@ function unionPaths(...sources: string[][]): string[] {
  * finding survives. We resolve relative paths against `cwd` when we have one;
  * only a relative path with NO cwd is unverifiable → kept (never drop on doubt).
  */
+/**
+ * Drop changed-file paths that do not resolve inside `cwd` — see
+ * `ExtractChangedFilesOpts.confineToCwd` for what gets in and why.
+ *
+ * FAIL-SAFE: if confinement would remove EVERY path, none are removed. An empty
+ * changed-file set makes the critic review nothing, silently — and a cwd that
+ * contains none of the session's edits is far more likely a wrong cwd than a
+ * session that genuinely only touched /tmp. agy `-p` is the known case: its
+ * payload carries no workspacePaths, so `event.cwd` falls back to the host's
+ * own config directory. There, silencing the review outright would be a worse
+ * failure than the repo-external noise this filter exists to remove.
+ *
+ * Residual, stated rather than assumed: containment is decided on resolved
+ * paths, NOT realpath'd ones, so a cwd and an edit expressed through different
+ * symlinks to the same directory (macOS /tmp vs /private/tmp) read as
+ * different roots. That case lands in the fail-safe — no filtering, a logged
+ * warning — rather than in a wrong verdict.
+ */
+export function confineToRepo(paths: string[], cwd: string): string[] {
+  const inside = paths.filter((p) => resolveInsideRepo(cwd, p) !== null);
+  if (paths.length > 0 && inside.length === 0) {
+    console.error(
+      `[siltpoke] every changed file resolved outside cwd (${cwd}) — keeping all ${paths.length}; cwd is probably wrong`,
+    );
+    return paths;
+  }
+  return inside;
+}
+
 function pruneMissingPaths(paths: string[], cwd?: string): string[] {
   return paths.filter((p) => {
     if (isAbsolute(p)) return existsSync(p);
@@ -135,65 +194,90 @@ function pruneMissingPaths(paths: string[], cwd?: string): string[] {
   });
 }
 
-export async function extractChangedFiles(
-  transcriptPath: string,
-  opts?: ExtractChangedFilesOpts,
-): Promise<string[]> {
-  const events = await readEvents(transcriptPath);
-  const transcriptPaths: string[] = [];
+/**
+ * Bash tool_use — parse command string for file-write ops.
+ * INTENTIONAL: Bash detection runs unconditionally (no opts needed) — it
+ * requires no I/O. Only the git-snapshot UNION requires opts.gitBaseline/cwd.
+ * Callers that omit opts now also get Bash-detected paths.
+ */
+function collectBashWritePaths(command: string, out: string[]): void {
+  try {
+    const matches = parseBashCommandForFileWrites(command);
+    for (const match of matches) {
+      for (const file of match.files) {
+        if (file) out.push(file);
+      }
+    }
+  } catch {
+    // parseBashCommandForFileWrites is a pure function and shouldn't throw,
+    // but if it does, degrade gracefully.
+  }
+}
 
+/** Extract a changed-file path (if any) from a single assistant content part. */
+function collectPathsFromPart(part: unknown, out: string[]): void {
+  if (
+    typeof part !== "object" ||
+    part === null ||
+    (part as { type?: string }).type !== "tool_use"
+  ) {
+    return;
+  }
+  const tp = part as ToolUsePart;
+  if (!tp.name) return;
+
+  if (FILE_CHANGE_TOOLS.has(tp.name)) {
+    // Edit / Write / MultiEdit / NotebookEdit — extract file_path or path
+    const path =
+      (typeof tp.input?.file_path === "string" && tp.input.file_path) ||
+      (typeof tp.input?.path === "string" && tp.input.path);
+    if (path) out.push(path);
+    return;
+  }
+
+  if (tp.name === "Bash") {
+    const command = typeof tp.input?.command === "string" ? tp.input.command : "";
+    if (command) collectBashWritePaths(command, out);
+  }
+}
+
+/** Scan every assistant turn's tool_use parts for changed-file paths. */
+function collectToolUsePaths(events: TranscriptEvent[]): string[] {
+  const transcriptPaths: string[] = [];
   for (const ev of events) {
     const role = ev.type ?? ev.role ?? ev.message?.role;
     if (role !== "assistant") continue;
     const content = (ev.message?.content ?? ev.content) as unknown;
     if (!Array.isArray(content)) continue;
     for (const part of content) {
-      if (
-        typeof part !== "object" ||
-        part === null ||
-        (part as { type?: string }).type !== "tool_use"
-      ) {
-        continue;
-      }
-      const tp = part as ToolUsePart;
-      if (!tp.name) continue;
-
-      if (FILE_CHANGE_TOOLS.has(tp.name)) {
-        // Edit / Write / MultiEdit / NotebookEdit — extract file_path or path
-        const path =
-          (typeof tp.input?.file_path === "string" && tp.input.file_path) ||
-          (typeof tp.input?.path === "string" && tp.input.path);
-        if (path) transcriptPaths.push(path);
-      } else if (tp.name === "Bash") {
-        // Bash tool_use — parse command string for file-write ops.
-        // INTENTIONAL: Bash detection runs unconditionally (no opts needed) — it
-        // requires no I/O. Only the git-snapshot UNION requires opts.gitBaseline/cwd.
-        // Callers that omit opts now also get Bash-detected paths.
-        const command = typeof tp.input?.command === "string" ? tp.input.command : "";
-        if (command) {
-          try {
-            const matches = parseBashCommandForFileWrites(command);
-            for (const match of matches) {
-              for (const file of match.files) {
-                if (file) transcriptPaths.push(file);
-              }
-            }
-          } catch {
-            // parseBashCommandForFileWrites is a pure function and shouldn't throw,
-            // but if it does, degrade gracefully.
-          }
-        }
-      }
+      collectPathsFromPart(part, transcriptPaths);
     }
   }
+  return transcriptPaths;
+}
 
+/**
+ * Resolve the final changed-file list per ExtractChangedFilesOpts: union
+ * with the git-snapshot diff when a baseline is available, apply
+ * pruneMissing, and log the same telemetry warnings as before.
+ */
+async function finalizeChangedFiles(
+  transcriptPaths: string[],
+  opts?: ExtractChangedFilesOpts,
+): Promise<string[]> {
   // When no opts provided, return transcript-only result (backwards-compat).
   if (!opts) {
     return unionPaths(transcriptPaths);
   }
 
-  const { cwd, gitBaseline, pruneMissing } = opts;
-  const finish = (paths: string[]): string[] => (pruneMissing ? pruneMissingPaths(paths, cwd) : paths);
+  const { cwd, gitBaseline, pruneMissing, confineToCwd } = opts;
+  const finish = (paths: string[]): string[] => {
+    // Confinement runs FIRST: a repo-external path is not merely stale, and
+    // pruneMissing would keep any that happen to exist on disk (/tmp/build.log
+    // does exist — that is exactly how it reached the rubric).
+    const confined = confineToCwd && cwd ? confineToRepo(paths, cwd) : paths;
+    return pruneMissing ? pruneMissingPaths(confined, cwd) : confined;
+  };
 
   // gitBaseline is explicitly null → non-git session; whitelist-only with warning.
   if (gitBaseline === null) {
@@ -225,6 +309,15 @@ export async function extractChangedFiles(
 
   // opts provided but no gitBaseline (undefined) or no cwd → transcript-only.
   return finish(unionPaths(transcriptPaths));
+}
+
+export async function extractChangedFiles(
+  transcriptPath: string,
+  opts?: ExtractChangedFilesOpts,
+): Promise<string[]> {
+  const events = await readEvents(transcriptPath);
+  const transcriptPaths = collectToolUsePaths(events);
+  return finalizeChangedFiles(transcriptPaths, opts);
 }
 
 export async function extractLatestUserMessage(
@@ -310,6 +403,99 @@ export function extractAssistantText(ev: TranscriptEvent): string | null {
   }
   const joined = pieces.join("\n");
   return joined.length > 0 ? joined : null;
+}
+
+export interface TurnRecord {
+  index: number;
+  userAsk: string;
+  editedFiles: string[];
+  timestamp: string | null;
+}
+
+/**
+ * User-prompt text for a single event, or "" for a tool_result-only user
+ * event. Mirrors extractLatestUserMessage's text-block filter, but scoped to
+ * one event rather than scanning backwards through the whole transcript.
+ */
+function userPromptText(ev: TranscriptEvent): string {
+  const content = (ev.message?.content ?? ev.content) as unknown;
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .filter(
+        (p): p is { type: string; text?: string } =>
+          typeof p === "object" && p !== null && (p as { type?: string }).type === "text",
+      )
+      .map((p) => (typeof p.text === "string" ? p.text : ""))
+      .join("\n")
+      .trim();
+  }
+  return "";
+}
+
+interface OpenTurn {
+  userAsk: string;
+  timestamp: string | null;
+  files: string[];
+}
+
+/**
+ * Structure a transcript into per-user-prompt turns.
+ *
+ * A turn OPENS on a real user prompt (a user-role event whose content has a
+ * text block, or is a non-empty string). A tool_result-only user event
+ * (content is an array of tool_result blocks, no text) does NOT open a new
+ * turn and does NOT wipe the currently open ask. Every assistant event's
+ * tool_use edited-files accumulate into the currently-open turn (deduped via
+ * a Set), so a multi-Edit assistant reply is one turn, not one-per-edit. A
+ * turn is emitted only if it accumulated >= 1 edited file.
+ */
+export function extractTurnsFromEvents(events: TranscriptEvent[]): TurnRecord[] {
+  const turns: TurnRecord[] = [];
+  let open: OpenTurn | null = null;
+
+  const flush = (): void => {
+    if (open && open.files.length > 0) {
+      turns.push({
+        index: turns.length,
+        userAsk: open.userAsk,
+        editedFiles: [...new Set(open.files)],
+        timestamp: open.timestamp,
+      });
+    }
+    open = null;
+  };
+
+  for (const ev of events) {
+    const role = ev.type ?? ev.role ?? ev.message?.role;
+
+    if (role === "user") {
+      const ask = userPromptText(ev);
+      if (ask.length > 0) {
+        flush();
+        open = { userAsk: ask, timestamp: ev.timestamp ?? null, files: [] };
+      }
+      // tool_result-only user event: neither opens a turn nor wipes the ask.
+      continue;
+    }
+
+    if (role === "assistant" && open) {
+      const content = (ev.message?.content ?? ev.content) as unknown;
+      if (Array.isArray(content)) {
+        for (const part of content) collectPathsFromPart(part, open.files);
+      }
+      if (open.timestamp === null && typeof ev.timestamp === "string") {
+        open.timestamp = ev.timestamp;
+      }
+    }
+  }
+
+  flush();
+  return turns;
+}
+
+export async function extractTurns(transcriptPath: string): Promise<TurnRecord[]> {
+  return extractTurnsFromEvents(await readEvents(transcriptPath));
 }
 
 export const DEFAULT_MAX_TRANSCRIPT_TURNS = 3;

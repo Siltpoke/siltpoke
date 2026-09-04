@@ -110,6 +110,54 @@ describe("runTools aggregator", () => {
     expect(result.eslint.status).toBe("not_applicable");
   });
 
+  // Measured 2026-08-22 across 85 days of ~/.siltpoke/telemetry: eslint came
+  // back `error` 3,063 times against 33 `ok`. Reproduced exactly — `bunx eslint`
+  // exits 2 with "ESLint couldn't find an eslint.config.(js|mjs|cjs) file" in
+  // every repo that lints with something else (siltpoke itself uses Biome).
+  //
+  // `hasEslint` only probes whether the BINARY runs, and `bunx eslint --version`
+  // succeeds anywhere because bunx fetches it on demand — so that flag is very
+  // nearly a constant `true`. The field that distinguishes the two cases,
+  // `eslintConfigPaths`, is already collected by getProjectCapabilities and,
+  // before this test, was read nowhere in src/. tsc's sibling scheduling line
+  // has carried exactly this guard all along (`tsconfigPath !== null`).
+  //
+  // The gate is unaffected either way — neither `error` nor `not_applicable` is
+  // `ok`, so neither joins usableTools. What changes is truthfulness: a tool
+  // that was never configured stops reporting itself as broken, which matters
+  // because the coverage floor being designed keys off "a tool ended in error".
+  test("hasEslint but no eslint config found → not scheduled, not an error", async () => {
+    writeFileSync(join(tmp, "src.ts"), "const x = 1;\n");
+
+    const caps = makeCaps({ hasEslint: true, eslintConfigPaths: [] });
+
+    const result = await runTools({
+      cwd: tmp,
+      changedFiles: [join(tmp, "src.ts")],
+      caps,
+    });
+
+    expect(result.eslint.status).toBe("not_applicable");
+    expect(result.eslint.status).not.toBe("error");
+  });
+
+  test("hasEslint with a discovered config → still scheduled", async () => {
+    const configPath = join(tmp, "eslint.config.js");
+    writeFileSync(configPath, "export default [{rules:{}}];\n");
+    writeFileSync(join(tmp, "package.json"), JSON.stringify({ name: "t", type: "module" }));
+    writeFileSync(join(tmp, "src.ts"), "const x = 1;\n");
+
+    const caps = makeCaps({ hasEslint: true, eslintConfigPaths: [configPath] });
+
+    const result = await runTools({
+      cwd: tmp,
+      changedFiles: [join(tmp, "src.ts")],
+      caps,
+    });
+
+    expect(result.eslint.status).not.toBe("not_applicable");
+  });
+
   test("non-git cwd + hasGit=true → git-diff returns not_applicable (runtime error)", async () => {
     // caps says hasGit=true but tmp is not actually a git repo
     // git-diff should return not_applicable (not a git repository)
@@ -154,7 +202,10 @@ describe("runTools aggregator", () => {
     writeFileSync(join(tmp, "src.ts"), "const x = 1;\n");
     writeFileSync(join(tmp, "data.py"), "# python file\n");
 
-    const caps = makeCaps({ hasEslint: true });
+    // eslintConfigPaths must now agree with the file written above — the
+    // scheduler reads it, so a caps object that disagrees with disk is no
+    // longer a valid fixture.
+    const caps = makeCaps({ hasEslint: true, eslintConfigPaths: [join(tmp, "eslint.config.js")] });
 
     const result = await runTools({
       cwd: tmp,

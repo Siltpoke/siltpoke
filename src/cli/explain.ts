@@ -79,6 +79,15 @@ function formatExplained(o: Extract<ExplainOutcome, { kind: "explained" }>): str
   const lines: string[] = [];
   lines.push(o.result.markdown.trimEnd());
   lines.push("");
+  // "fresh" prints NOTHING — negative-test invariant (this surface's own
+  // fresh check); any other level prints a headline + the split counts so the
+  // warning is actionable without a second lookup (mirrors the doctor row).
+  if (o.staleness.level !== "fresh") {
+    const { content_changed, deleted_still_indexed, unindexed_files } = o.staleness.counts;
+    lines.push(
+      `⚠ index ${o.staleness.headline} (${content_changed} changed, ${deleted_still_indexed} deleted, ${unindexed_files} unindexed)`,
+    );
+  }
   if (o.lowConfidence) {
     lines.push(
       `⚠ low confidence — evidence_score ${meta.evidence_score.toFixed(2)} (<0.9). Review citations carefully.`,

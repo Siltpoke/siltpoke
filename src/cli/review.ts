@@ -9,8 +9,14 @@
  * Exit codes:
  *   0  critique written (NORMAL accepted or PASSIVE_BUBBLE), or empty-diff bail
  *   1  abstention (HARD_SUPPRESS) or budget exhausted
- *   2  guard rejected (NORMAL not-accepted)
  *   3  flag/CLI error (--path not supported, unknown flag)
+ *
+ * `2` used to mean "guard rejected (NORMAL not-accepted)" and is now
+ * UNREACHABLE: since 2026-08-19 an unverifiable citation is dropped and the
+ * review is printed with an "unconfirmed" line above it, so that run exits 0
+ * like any other. The code is left unassigned rather than reused — a caller
+ * scripting on exit 2 should see it stop happening, not start meaning
+ * something else.
  */
 
 import { join } from "node:path";
@@ -23,6 +29,7 @@ import { loadBudgetConfig, evaluateBudget } from "../state/budget-config";
 import { loadDailyRollup } from "../state/usage";
 import { runGitDiff } from "../critic/tools/run-git-diff";
 import { spawnWithTimeout } from "../critic/spawn";
+import { siltpokeRoot } from "../installer/paths";
 
 // ---------------------------------------------------------------------------
 // Output helper — use process.stdout.write for easy capture in tests
@@ -123,8 +130,7 @@ async function getChangedFilesFromGit(cwd: string, revisionRange: string | undef
 export async function runReview(opts: ReviewOpts = {}): Promise<ReviewResult> {
   const out = opts.output ?? defaultOutput;
   const cwd = opts.cwd ?? process.cwd();
-  const homeBase =
-    opts.homeBase ?? join(process.env.HOME ?? "", ".siltpoke");
+  const homeBase = opts.homeBase ?? siltpokeRoot();
 
   // --path: not yet supported
   if (opts.path !== undefined) {
@@ -209,6 +215,14 @@ export async function runReview(opts: ReviewOpts = {}): Promise<ReviewResult> {
   if (opts.deps?.callBrainFn) criticDeps.callBrainFn = opts.deps.callBrainFn;
   if (opts.deps?.writeCritiqueFn) criticDeps.writeCritiqueFn = opts.deps.writeCritiqueFn;
 
+  // `--base` names the unit of work, exactly the way the Stop hook's
+  // review-unit gate does (spec D2). Forwarding it is what makes the reviewed
+  // material match the range: without it, `runTools` runs an unscoped
+  // `git diff HEAD`, and on a clean tree that empty result falls back to
+  // `git log -3 -p` — three arbitrary commits instead of `base...HEAD`. The
+  // pre-flight check above already used the range, so omitting it here made
+  // the CLI decide "there is something to review" from one span and then
+  // review a different one.
   const result = await runCritic(
     {
       source: "review-cli",
@@ -216,6 +230,7 @@ export async function runReview(opts: ReviewOpts = {}): Promise<ReviewResult> {
       changedFiles,
       caps,
       gitBaseline: null,
+      ...(revisionRange !== undefined ? { revisionRange } : {}),
       brainContext,
       homeBase,
     },
@@ -236,15 +251,54 @@ export async function runReview(opts: ReviewOpts = {}): Promise<ReviewResult> {
     }
 
     case "NORMAL": {
-      if (!result.accepted) {
+      // The "evidence guard rejected them" exit-2 branch is gone. It used to
+      // fire on 56.5% of reviews and print a reason in place of the review;
+      // the check now drops the unverifiable citations and keeps the review,
+      // so what was an exit code is a line of copy above the output.
+      const critique = result.critique;
+
+      if (result.evidenceLabel === "no_evidence") {
+        // Two different facts reach this one label. Since 2026-09-01 the schema
+        // layer drops citations that fail their own shape, so an all-malformed
+        // list becomes `evidence: []` and lands here — and telling the reader
+        // siltpoke "did not point at any line" would blame the reviewer for a
+        // discard siltpoke performed.
+        const malformed = critique.truncated?.evidence_malformed ?? 0;
         out(
-          "Siltpoke had concerns but the evidence guard rejected them",
+          malformed > 0
+            ? `⚠ unconfirmed — the reviewer pointed at ${malformed} line${malformed === 1 ? "" : "s"}, none in a shape Siltpoke could use`
+            : "⚠ unconfirmed — Siltpoke did not point at any specific line",
         );
-        out(`reason: ${result.reason}`);
-        return { exitCode: 2 };
+        out("");
+      } else if (result.unverifiedCount > 0) {
+        const one = result.unverifiedCount === 1;
+        // "1 quote (all of them)" reads as a mistake, and n=1 is the commonest
+        // real instance of `none_verified`. Singular gets its own phrase.
+        const all =
+          result.evidenceLabel === "none_verified" ? (one ? " (the only one)" : " (all of them)") : "";
+        out(
+          `⚠ unconfirmed — ${result.unverifiedCount} quote${one ? "" : "s"}${all} could not be found in what Siltpoke was given to read, and ${one ? "was" : "were"} dropped`,
+        );
+        out("");
       }
 
-      const critique = result.critique;
+      // How much of the diff this review was shown. Separate line from
+      // "unconfirmed" above, and separate question: that one is about whether
+      // the quotes check out, this one about whether the reviewer saw the
+      // change at all. Siltpoke's own count — the prompt asks the reviewer to
+      // state its coverage and nothing verifies that it did, so a line the
+      // user can trust cannot come from the model.
+      const cov = result.diffCoverage;
+      if (cov !== null && cov.total > cov.shown) {
+        const missed = cov.omitted
+          .map((o) => `${o.count} ${o.tier}`)
+          .join(" · ");
+        out(
+          `⚠ partial diff — Siltpoke showed this review ${cov.shown} of the ${cov.total} changed hunks`,
+        );
+        if (missed.length > 0) out(`  not seen: ${missed}`);
+        out("");
+      }
 
       // Print evidence tool summary line
       if (critique.evidence.length > 0) {

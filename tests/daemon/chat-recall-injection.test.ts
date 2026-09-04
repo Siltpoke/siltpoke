@@ -26,6 +26,8 @@ import { writeGlobal, emptyGlobal } from "../../src/memory/global";
 import type { StreamEvent, StreamChatOptions } from "../../src/daemon/routes/chat-stream";
 import type { Embedder } from "../../src/few-shot/embedder";
 
+const TEST_SECRET = "test-secret";
+
 // ---------------------------------------------------------------------------
 // Deterministic embedder — token-axis encoding, predictable cosine similarity.
 // ---------------------------------------------------------------------------
@@ -102,6 +104,7 @@ describe("POST /api/chat — recall injection", () => {
     mountChatRoutes(app, {
       homeBase: home,
       index: idx,
+      secret: TEST_SECRET,
       recallEmbedder: idEmbedder,
       streamFactory: async function* (opts: StreamChatOptions) {
         capturedSystemPrompt = opts.systemPrompt;
@@ -124,7 +127,7 @@ describe("POST /api/chat — recall injection", () => {
 
     const res = await app.request("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ message: "alpha question" }),
     });
     await res.text(); // drain SSE body
@@ -141,7 +144,7 @@ describe("POST /api/chat — recall injection", () => {
 
     const res = await app.request("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ message: "alpha question" }),
     });
     await res.text();
@@ -161,7 +164,7 @@ describe("POST /api/chat — recall injection", () => {
 
     const res = await app.request("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ message: "alpha question" }),
     });
     await res.text();

@@ -10,7 +10,6 @@
  *
  * Slash commands in .claude-plugin/commands/ wrap this script per action.
  */
-import { join } from "node:path";
 import {
   readProgression,
   writeProgression,
@@ -19,6 +18,7 @@ import {
 } from "../state/progression";
 import { writeState } from "../state/state";
 import { dayKey } from "../state/usage";
+import { siltpokeRoot } from "../installer/paths";
 
 const VALID_ACTIONS: readonly PetAction[] = [
   "feed", "play", "clean", "pet", "sleep", "tease",
@@ -42,10 +42,6 @@ const MOOD_BY_ACTION: Record<PetAction, "happy" | "sleepy" | "sad"> = {
   tease: "sad",
 };
 
-function siltpokeHome(envHome: string | undefined): string {
-  return join(envHome ?? "", ".siltpoke");
-}
-
 export interface ActionResult {
   action: PetAction;
   awarded: number;
@@ -61,7 +57,7 @@ export async function runActionCli(
   action: PetAction,
   opts: { homeBase?: string; now?: () => Date } = {},
 ): Promise<ActionResult> {
-  const homeBase = opts.homeBase ?? siltpokeHome(process.env.HOME);
+  const homeBase = opts.homeBase ?? siltpokeRoot();
   const now = (opts.now ?? (() => new Date()))();
   const day = dayKey(now, 0);
 

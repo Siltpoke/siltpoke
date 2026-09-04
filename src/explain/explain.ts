@@ -26,8 +26,12 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { BrainUsage } from "../brain/brain";
+import { loadRepoGraphConfig } from "../config/repo-graph-config";
+import { siltpokeRoot } from "../installer/paths";
 import { ledgerBrainCall } from "../state/usage";
+import { readIndexStaleness } from "../repo-graph/index-health";
 import { resolveTarget } from "../repo-graph/query";
+import { stalenessVerdict, type StalenessVerdict } from "../repo-graph/staleness-verdict";
 import {
   readFingerprints,
   readGraph,
@@ -115,6 +119,12 @@ export interface ExplainCtx {
   /** Optional audit tag for the ledger row; defaults to the cache key. The
    *  detached daemon explain passes its task id to preserve today's tag. */
   ledgerSessionId?: string;
+  /** Siltpoke home dir (`~/.siltpoke`), used to load the repo-graph config's
+   *  `staleness_warn_pct` and to locate the fingerprints the staleness verdict
+   *  compares against. Absent = falls back to `siltpokeRoot()` (mirrors how
+   *  `ledgerBasePath` callers already assume today's default root); only test
+   *  injection needs to pass this explicitly. */
+  home?: string;
 }
 
 export interface ExplainOptions {
@@ -134,6 +144,10 @@ export type ExplainOutcome =
       softCapExceeded: boolean;
       /** The soft cap value that was checked, for display. */
       softCapUsd: number;
+      /** Index-staleness verdict for the repo-graph this explanation was drawn
+       *  from. Attached on BOTH the cache-hit AND cache-miss success returns —
+       *  a cached explanation must not silently drop the warning (R9). */
+      staleness: StalenessVerdict;
     }
   | { kind: "ambiguous"; candidates: NodeCandidate[] }
   | { kind: "not_found"; target: string; suggestions: string[] }
@@ -178,7 +192,7 @@ export async function runExplain(
     return {
       kind: "pre_check_failed",
       message:
-        "No repo-graph found. Run `/siltpoke-index` first to build the structural index.",
+        "No repo-graph found. Open Code Map and pick this repo to build the structural index.",
     };
   }
   const meta = await readMeta(ctx.graphStorageDir);
@@ -186,9 +200,20 @@ export async function runExplain(
     return {
       kind: "pre_check_failed",
       message:
-        "Repo-graph meta.json missing or unsupported. Run `/siltpoke-index --force`.",
+        "Repo-graph meta.json missing or unsupported. Re-index this repo from Code Map.",
     };
   }
+
+  // Staleness verdict — computed ONCE per `runExplain` call (this single
+  // `const` IS the memoization; deliberately not a module-global, R14) and
+  // attached to BOTH the cache-hit and cache-miss "explained" returns below
+  // so a served-from-cache explanation never silently drops the warning (R9).
+  const home = ctx.home ?? siltpokeRoot();
+  const rgCfg = await loadRepoGraphConfig(home);
+  const staleness = stalenessVerdict(
+    await readIndexStaleness({ cwd: ctx.cwd, home }),
+    rgCfg.staleness_warn_pct,
+  );
 
   // Step 2 — load graph + queryIndex
   const graph = await readGraph(ctx.graphStorageDir);
@@ -238,6 +263,7 @@ export async function runExplain(
         usage: cached.meta.brain_usage,
         softCapExceeded: cachedCost > softCap,
         softCapUsd: softCap,
+        staleness,
       };
     }
   }
@@ -335,5 +361,6 @@ export async function runExplain(
     usage,
     softCapExceeded,
     softCapUsd: softCap,
+    staleness,
   };
 }

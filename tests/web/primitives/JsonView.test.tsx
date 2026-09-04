@@ -42,8 +42,8 @@ describe("JsonView", () => {
 
   test("renders object keys with key color styling", () => {
     const html = String(<JsonView value={{ myKey: "myVal" }} />);
-    // Key color is sky (#7fb0c8)
-    expect(html).toContain("7fb0c8");
+    // Key color is tokens.color.sky — SSR renders the var() indirection.
+    expect(html).toContain("var(--color-sky)");
     expect(html).toContain("myKey");
   });
 

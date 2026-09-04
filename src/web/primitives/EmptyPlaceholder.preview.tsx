@@ -19,7 +19,7 @@ const stories: PreviewStory[] = [
             style={{
               padding: "6px 12px",
               background: tokens.color.terra,
-              color: "#fff",
+              color: tokens.color.onTerra,
               border: "none",
               borderRadius: 5,
               cursor: "pointer",

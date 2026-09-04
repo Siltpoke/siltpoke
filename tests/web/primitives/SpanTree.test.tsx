@@ -160,7 +160,9 @@ describe("SpanTree", () => {
         activeTab="io"
       />
     );
-    // Active span has solid colored border, inactive has transparent
-    expect(html).toContain("3px solid #7fb0c8"); // KIND_COLOR.llm
+    // Active span has solid colored border, inactive has transparent.
+    // Task 10b batch 2: KIND_COLOR.llm is now `tokens.color.sky` (=
+    // `var(--color-sky)`), not the raw hex — same value, theme-aware.
+    expect(html).toContain("3px solid var(--color-sky)"); // KIND_COLOR.llm
   });
 });

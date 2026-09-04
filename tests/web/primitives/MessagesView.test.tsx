@@ -79,9 +79,10 @@ describe("MessagesView", () => {
       ],
     });
     const html = String(<MessagesView inputJson={input} />);
-    // User has sky color (#7fb0c8), assistant has moss (#7a9a5e)
-    expect(html).toContain("7fb0c8"); // sky = user
-    expect(html).toContain("7a9a5e"); // moss = assistant
+    // User has sky color (tokens.color.sky), assistant has moss
+    // (tokens.color.moss) — SSR renders the var() indirection.
+    expect(html).toContain("var(--color-sky)"); // sky = user
+    expect(html).toContain("var(--color-moss)"); // moss = assistant
   });
 
   test("truncates very long content", () => {

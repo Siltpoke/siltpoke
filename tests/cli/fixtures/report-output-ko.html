@@ -1062,8 +1062,8 @@
       <select id="cfg-language" data-config-key="language" data-config-type="string"><option value="en">English</option><option value="zh-CN">中文 (简体)</option><option value="zh-TW">中文 (繁體)</option><option value="ja">日本語</option><option value="ko" selected>한국어</option><option value="es">Español</option><option value="fr">Français</option><option value="de">Deutsch</option></select>
     </div>
     <div class="cfg-row">
-      <label for="cfg-trigger" class="cfg-label">트리거 모드</label>
-      <select id="cfg-trigger" data-config-key="triggerMode" data-config-type="string"><option value="always">always</option><option value="gates" selected>gates</option><option value="on_demand">on_demand</option><option value="hybrid">hybrid</option></select>
+      <label for="cfg-review-unit" class="cfg-label">리뷰 단위</label>
+      <select id="cfg-review-unit" data-config-key="reviewUnit" data-config-type="string"><option value="commit" selected>commit</option><option value="pr">pr</option></select>
     </div>
     <div class="cfg-divider"></div>
     
@@ -1123,7 +1123,7 @@
     <div class="stat"><div class="stat-v">0</div><div class="stat-k">리플렉션</div></div>
     <div class="stat"><div class="stat-v">$0.0000</div><div class="stat-k">지출</div></div>
     <div class="stat"><div class="stat-v">0%</div><div class="stat-k">예산</div></div>
-    <div class="stat"><div class="stat-v">gates</div><div class="stat-k">트리거 모드</div></div>
+    <div class="stat"><div class="stat-v">commit</div><div class="stat-k">리뷰 단위</div></div>
     <div class="stat"><div class="stat-v">꺼짐</div><div class="stat-k">조용 시간</div></div>
   </div></div>
 </details>
@@ -1193,12 +1193,13 @@ is mirrored by the <code>/siltpoke-help</code> slash command — keep them in sy
 </blockquote>
 <hr>
 <h2>What Siltpoke does</h2>
-<p>A separate <code>claude -p</code> subprocess reads over Claude&#39;s shoulder after
-every turn, finds bugs Claude missed, and writes a review to disk.
+<p>A separate <code>claude -p</code> subprocess reads over your coding agent&#39;s work after
+each supported turn, finds bugs the writing-side agent missed, and writes a
+review to disk.
 <strong>Reviews never auto-inject into your chat</strong> — you pull them in
 explicitly when you want them.</p>
 <hr>
-<h2>Daily loop (the 3 commands you&#39;ll actually use)</h2>
+<h2>Daily loop in Claude Code (the 3 commands you&#39;ll actually use)</h2>
 <pre><code>/siltpoke-inbox            List pending reviews (read-only)
 /siltpoke-forward &lt;id&gt;     Pull a specific review into the chat (+10 XP if fresh)
 /siltpoke-dismiss &lt;id&gt; &lt;reason&gt;   Reject + Siltpoke learns from why it was wrong
@@ -1215,7 +1216,64 @@ explicitly when you want them.</p>
 </li>
 </ol>
 <hr>
+<h2>Daily loop in Codex</h2>
+<p><strong>Plugin-native install (recommended):</strong></p>
+<pre><code class="language-bash">codex plugin marketplace add https://github.com/Siltpoke/siltpoke
+codex plugin add siltpoke
+codex plugin list                                      # verify: siltpoke … installed, enabled
+</code></pre>
+<p>This installs Siltpoke with reviews included — the review hooks ride the plugin (no source clone needed).</p>
+<p><strong>From source (alternative):</strong></p>
+<p>If you prefer to install from a cloned repo:</p>
+<pre><code class="language-bash">codex plugin marketplace add ~/path/to/siltpoke-repo
+codex plugin list                                     # verify: siltpoke … installed, enabled
+</code></pre>
+<p>Then use natural language instead of Siltpoke slash commands:</p>
+<pre><code>open the Siltpoke dashboard
+show my Siltpoke inbox
+show Siltpoke memory
+run Siltpoke setup
+</code></pre>
+<p>Current boundary: Codex does not expose Siltpoke as custom top-level
+<code>/siltpoke-*</code> slash commands, and <code>/prompts:siltpoke-dashboard</code> is not the
+supported route. The stable Codex surface is the installed Siltpoke
+plugin/skill plus the Codex <code>Stop</code> and <code>SessionStart</code> hooks.</p>
+<hr>
+<h2>Daily loop in CodeBuddy / Qoder</h2>
+<p>Both are Claude Code forks — they reuse the existing <code>.claude-plugin/</code>
+(auto-discover <code>hooks/hooks.json</code>, expand <code>${CLAUDE_PLUGIN_ROOT}</code>), so
+plugin-native install works the same way as Claude Code and Codex.</p>
+<p><strong>Plugin-native install (recommended):</strong></p>
+<p>CodeBuddy (binary <code>codebuddy</code>):</p>
+<pre><code class="language-bash">codebuddy plugin marketplace add https://github.com/Siltpoke/siltpoke
+codebuddy plugin install siltpoke@siltpoke
+</code></pre>
+<p>Qoder (binary <code>qodercli</code>, not <code>qoder</code>):</p>
+<pre><code class="language-bash">qodercli plugin marketplace add https://github.com/Siltpoke/siltpoke
+qodercli plugin install siltpoke@siltpoke
+</code></pre>
+<p>The <strong><code>@siltpoke</code> marketplace qualifier is required</strong> — a bare
+<code>codebuddy plugin install siltpoke</code> (or the <code>qodercli</code> equivalent) fails with
+<code>Marketplace &#39;undefined&#39; is not ready</code>. Restart CodeBuddy, or run
+<code>qodercli /plugins reload</code> (or restart Qoder), to load the plugin hooks.
+Review runs plugin-native — no source clone needed.</p>
+<p><strong>From source (fallback):</strong></p>
+<pre><code class="language-bash">git clone https://github.com/Siltpoke/siltpoke.git ~/siltpoke
+cd ~/siltpoke
+bun install
+bun run setup --agent codebuddy,qoder
+</code></pre>
+<p>Then use natural language instead of Siltpoke slash commands — neither
+CodeBuddy nor Qoder expose custom top-level <code>/siltpoke-*</code> slash commands:</p>
+<pre><code>open the Siltpoke dashboard
+show my Siltpoke inbox
+show Siltpoke memory
+run Siltpoke setup
+</code></pre>
+<hr>
 <h2>Full slash-command reference</h2>
+<p>These commands are for Claude Code. In Codex, ask for the same workflow in
+plain language through the Siltpoke skill/plugin.</p>
 <table>
 <thead>
 <tr>
@@ -1261,11 +1319,15 @@ explicitly when you want them.</p>
 </tr>
 <tr>
 <td><code>/siltpoke-stats</code></td>
-<td>Today&#39;s token spend + budget stage + trigger mode</td>
+<td>Today&#39;s token spend + budget stage + review unit</td>
 </tr>
 <tr>
 <td><code>/siltpoke-pet</code></td>
 <td>+5 XP (shared 100 action-XP/day cap)</td>
+</tr>
+<tr>
+<td><code>/siltpoke-menubar &lt;install|status|remove&gt;</code></td>
+<td>Manage the macOS menu-bar pet (see § below)</td>
 </tr>
 <tr>
 <td><code>/siltpoke-help</code></td>
@@ -1283,43 +1345,225 @@ Sections: pet header, today&#39;s metrics, 7-day bar chart, per-project table,
 pending-review inbox grouped by project, last 30 brain calls, recent
 verdicts.</p>
 <hr>
-<h2>Trigger modes</h2>
-<p>Controls <em>when</em> Siltpoke actually runs Brain:</p>
+<h2>Daemon autostart (opt-in)</h2>
+<p>The daemon is <strong>optional</strong>. Core review runs entirely inside the Stop
+hook — the daemon only powers the web surfaces (dashboard, floating
+chat, repo-index). So <code>bun run setup</code> asks &quot;开机自启 siltpoke daemon？&quot;
+and defaults to <strong>no</strong>: nothing extra installed, and no <code>ECONNREFUSED</code>
+on reboot from a hook reaching for a server that isn&#39;t there.</p>
+<p>Turn it on whenever you want the dashboard — just open it:</p>
+<pre><code class="language-bash">/siltpoke-dashboard    # starts the daemon and enables it so it stays up
+</code></pre>
+<p>That flips <code>daemon.enabled</code> on in <code>~/.siltpoke/config.json</code>, so the
+Stop hook keeps the daemon alive from then on. To also survive reboots,
+install autostart:</p>
+<ul>
+<li>macOS: a LaunchAgent at <code>~/Library/LaunchAgents/io.siltpoke.daemon.plist</code>
+(<code>RunAtLoad</code> + <code>KeepAlive</code> — relaunches if it crashes).</li>
+<li>Linux: a systemd user unit <code>siltpoked.service</code> (<code>Restart=always</code>).</li>
+</ul>
+<p>Install/refresh any time: <code>bun src/cli/daemon.ts install-autostart</code>.
+<code>bun run uninstall</code> removes it along with everything else.</p>
+<p>Two caveats:</p>
+<ul>
+<li><strong>The plist/unit hardcodes this repo&#39;s path.</strong> If you move the repo,
+re-run <code>install-autostart</code> to repair it.</li>
+<li><strong>Daemon off = a sleeping pet, never a red error.</strong> With the daemon
+disabled (the default) the Stop hook does not respawn it — reviews,
+the statusline pet, and the menu-bar pet all keep working without it.
+<code>/siltpoke-doctor</code> reads a stopped daemon as a normal info row, and
+only flags it when you&#39;ve enabled it but it&#39;s unreachable.</li>
+</ul>
+<hr>
+<h2>Menu-bar pet (SwiftBar)</h2>
+<p>macOS only. Where the dashboard and chat are per-project, the
+menu-bar pet is <strong>machine-global</strong> — one <a href="https://github.com/swiftbar/SwiftBar">SwiftBar</a>
+menu-bar icon aggregating pending reviews across <em>every</em> active
+Siltpoke session on the machine, so you don&#39;t have to tab through
+each project&#39;s inbox to notice a review landed.</p>
+<p>Install it either from the setup wizard (<code>bun run setup</code> asks &quot;Add
+the menu-bar pet?&quot; right after the autostart question) or any time
+after the fact:</p>
+<pre><code class="language-bash">/siltpoke-menubar install   # or: bun src/cli/menubar.ts install
+</code></pre>
+<p>Consent-driven, same as autostart: it asks before installing SwiftBar
+via Homebrew (skipped if SwiftBar&#39;s already there) and before writing
+the plugin shim (<code>~/Library/Application Support/SwiftBar/plugins/siltpoke.1m.sh</code>).
+Declining at any step installs/writes nothing.</p>
+<p>Once running, the menu-bar title is the total pending-review count;
+opening it lists read-only cards, newest first, each tagged
+<code>repo · branch · #session</code> so you know at a glance which project and
+branch a review came from, with a link into the dashboard Timeline
+for the full detail. Menu-bar notifications go through the same
+gates as everything else — <code>/siltpoke-mute</code> and quiet-hours suppress
+them exactly like chat-surfaced reviews.</p>
+<p><code>/siltpoke-menubar status</code> reports whether the shim is installed;
+<code>/siltpoke-menubar remove</code> deletes it (running the command is the
+consent — no extra prompt, matching <code>/siltpoke-mute</code> /
+<code>/siltpoke-unmute</code>).</p>
+<hr>
+<h2>Review unit</h2>
+<p>Controls <em>when</em> Siltpoke actually runs Brain — by <strong>unit of work</strong>, not by
+which editor event fired:</p>
 <table>
 <thead>
 <tr>
-<th>Mode</th>
+<th>Unit</th>
 <th>Behavior</th>
 </tr>
 </thead>
 <tbody><tr>
-<td><code>always</code></td>
-<td>Every supported event (most expensive)</td>
+<td><code>commit</code> (default)</td>
+<td>Reviews when a commit closes: HEAD moved and the tree changed with it</td>
 </tr>
 <tr>
-<td><code>gates</code> (default)</td>
-<td>Only on configured <code>gateEvents</code> (default: <code>Stop</code> + <code>PreCompact</code>)</td>
-</tr>
-<tr>
-<td><code>on_demand</code></td>
-<td>Never, unless <code>/siltpoke-wake</code> was just used</td>
-</tr>
-<tr>
-<td><code>hybrid</code></td>
-<td><code>gates</code> + <code>/siltpoke-wake</code> always bypasses</td>
+<td><code>pr</code></td>
+<td>Reviews the whole branch against its base, not one commit at a time</td>
 </tr>
 </tbody></table>
 <p>Change in <code>~/.siltpoke/config.json</code>:</p>
 <pre><code class="language-json">{
-  &quot;triggerMode&quot;: &quot;on_demand&quot;
+  &quot;reviewUnit&quot;: &quot;pr&quot;
 }
 </code></pre>
+<p>Siltpoke stays quiet when nothing closed — no new commit, or a commit whose
+tree is identical to the last reviewed one (an amend, a rebase that changed
+nothing). A turn that touched only prose is skipped too; a file under
+<code>prompts/</code>, or any <code>*.prompt.md</code>, counts as code.</p>
+<blockquote>
+<p><strong>Replaces <code>triggerMode</code>.</strong> The old key had four values — <code>always</code>, <code>gates</code>,
+<code>on_demand</code>, <code>hybrid</code> — and asked &quot;is this hook event one I was configured
+for&quot;. Measured over 35,184 real triggers it blocked <strong>2</strong>. A config still
+carrying any of those four values loads without error and behaves as
+<code>commit</code>, and the old key is never rewritten, so downgrading finds your
+setting intact.</p>
+</blockquote>
+<hr>
+<h2>Reviewer Brain provider (cross-family review)</h2>
+<p>By default the critic&#39;s Brain is <code>claude -p</code>. You can point it at a <strong>different
+model family</strong> — the reviewer then doesn&#39;t share the blind spots of the agent
+that wrote the code:</p>
+<pre><code class="language-json">{
+  &quot;reviewer_provider&quot;: &quot;codex&quot;
+}
+</code></pre>
+<p>Values: <code>&quot;claude&quot;</code> (default) | <code>&quot;codex&quot;</code> (OpenAI Codex CLI must be installed
+and logged in) | <code>&quot;agy&quot;</code> (Antigravity CLI must be installed and logged in) |
+<code>&quot;qoder&quot;</code> (Qoder CLI must be installed and logged in) | <code>&quot;codebuddy&quot;</code>
+(CodeBuddy CLI must be installed and logged in).
+<code>SILTPOKE_REVIEWER_PROVIDER</code> env var overrides the config for one-off
+tests/smoke — <code>/siltpoke-doctor</code> shows the effective value and marks
+env overrides.</p>
+<p>You can also pick <strong>which model</strong> that reviewer runs with the optional
+<code>reviewer_model</code> key:</p>
+<pre><code class="language-json">{
+  &quot;reviewer_provider&quot;: &quot;agy&quot;,
+  &quot;reviewer_model&quot;: &quot;gemini-2.5-pro&quot;
+}
+</code></pre>
+<p><code>reviewer_model</code> reaches <code>agy</code> / <code>qoder</code> / <code>codebuddy</code> as their <code>--model</code> flag.
+<strong><code>codex</code> ignores it</strong> (the Codex CLI takes no model flag under ChatGPT auth — its
+served model is whatever the account defaults to). Unset = each provider&#39;s own
+default. <code>/siltpoke-doctor</code> shows the resolved <code>model=…</code> on the reviewer row.</p>
+<p><strong>Scope (allowlist)</strong>: only the per-turn <strong>critic</strong> (and the eval harness)
+honor this key. Chat, Code Map explanations, memory extraction, and every other
+Brain consumer stay on claude by code — migrating them is tracked separately.</p>
+<p><strong>What to know before switching:</strong></p>
+<ul>
+<li><strong>Billing is ChatGPT-plan quota, not dollars.</strong> Codex calls record
+<code>cost_usd: null</code> in the ledger (never a fabricated dollar figure); their
+tokens still count against your <code>dailyTokenLimit</code>, and a separate
+<strong>50 calls/day cap</strong> brakes runaway quota use.</li>
+<li><strong>The served model is not pinnable</strong> under ChatGPT auth — siltpoke records
+the configured model from <code>~/.codex/config.toml</code> as provenance, and OpenAI
+may rotate what that name maps to.</li>
+<li><strong>Review quality is eval-gated.</strong> Codex becomes a <em>documented-supported</em>
+default only after passing the release gate
+(an internal release gate); switching
+before that works but logs a one-time warning, and <code>/siltpoke-doctor</code>&#39;s
+reviewer row shows whether any eval verdict certifies the provider.</li>
+<li><strong>No silent fallback.</strong> If codex is configured but missing/broken, the
+review is skipped (fail-soft) and doctor warns — siltpoke never silently
+swaps back to claude, because a same-family review pretending to be
+cross-family would be a lie.</li>
+<li><strong>Recursion is guarded</strong> — the internal codex call cannot trigger a
+review-of-review (siltpoke&#39;s own hooks see an internal marker and stand
+down). Caveat: <em>third-party</em> hooks you&#39;ve configured in your own codex
+setup will still fire inside these internal calls.</li>
+</ul>
+<p><strong>For Antigravity (<code>agy -p</code>)</strong>:</p>
+<ul>
+<li><strong>Billing is Google Code Assist quota, not dollars.</strong> Agy calls record
+<code>cost_usd: null</code> in the ledger (never a fabricated dollar figure); their
+tokens still count against your <code>dailyTokenLimit</code>, and a separate
+<strong>per-provider call-count cap</strong> brakes runaway quota use.</li>
+<li><strong>Cross-family honesty is enforced.</strong> If agy is configured to use a
+Claude-family model as its own provider, siltpoke logs a one-time warning
+— using a Claude model as the reviewer when a Claude model wrote the code
+defeats the point of cross-family review. Prefer a different model family
+in agy&#39;s configuration.</li>
+<li><strong>Review quality is uncertified.</strong> Agy becomes a <em>documented-supported</em>
+default only after passing the release gate
+(an internal release gate); switching
+before that works but logs a one-time warning, and <code>/siltpoke-doctor</code>&#39;s
+reviewer row shows whether any eval verdict certifies the provider.</li>
+<li><strong>No silent fallback.</strong> If agy is configured but missing/broken, the
+review is skipped (fail-soft) and doctor warns — siltpoke never silently
+swaps back to claude, because a same-family review pretending to be
+cross-family would be a lie.</li>
+</ul>
+<p><strong>For Qoder (<code>qodercli -p</code>)</strong>:</p>
+<ul>
+<li><strong>Billing is Alibaba/Qwen plan quota, not dollars.</strong> Qoder calls record
+<code>cost_usd: null</code> in the ledger (never a fabricated dollar figure); their
+tokens still count against your <code>dailyTokenLimit</code>, and a separate
+<strong>per-provider call-count cap</strong> brakes runaway quota use.</li>
+<li><strong>The served model is configured, not attested.</strong> siltpoke records the
+configured model from qoder&#39;s own config as provenance, the same
+caveat as codex and agy — there&#39;s no way to independently confirm
+what actually served the request.</li>
+<li><strong>Review quality is uncertified.</strong> Qoder becomes a <em>documented-supported</em>
+default only after passing the release gate
+(an internal release gate); switching
+before that works but logs a one-time warning, and <code>/siltpoke-doctor</code>&#39;s
+reviewer row shows whether any eval verdict certifies the provider.</li>
+<li><strong>No silent fallback.</strong> If qodercli is configured but missing/broken, the
+review is skipped (fail-soft) and doctor warns — siltpoke never silently
+swaps back to claude, because a same-family review pretending to be
+cross-family would be a lie.</li>
+</ul>
+<p><strong>For CodeBuddy (<code>codebuddy -p</code>)</strong>:</p>
+<ul>
+<li><strong>Billing is Tencent plan quota, not dollars.</strong> CodeBuddy calls record
+<code>cost_usd: null</code> in the ledger (never a fabricated dollar figure); their
+tokens still count against your <code>dailyTokenLimit</code>, and a separate
+<strong>per-provider call-count cap</strong> brakes runaway quota use.</li>
+<li><strong>The served model is configured, not attested.</strong> siltpoke records the
+configured model from codebuddy&#39;s own config as provenance, the same
+caveat as codex, agy, and qoder — there&#39;s no way to independently confirm
+what actually served the request.</li>
+<li><strong>Review quality is uncertified.</strong> CodeBuddy becomes a <em>documented-supported</em>
+default only after passing the release gate
+(an internal release gate); switching
+before that works but logs a one-time warning, and <code>/siltpoke-doctor</code>&#39;s
+reviewer row shows whether any eval verdict certifies the provider.</li>
+<li><strong>No silent fallback.</strong> If codebuddy is configured but missing/broken, the
+review is skipped (fail-soft) and doctor warns — siltpoke never silently
+swaps back to claude, because a same-family review pretending to be
+cross-family would be a lie.</li>
+<li><strong>Built against the shared CC-fork envelope shape, live-credit smoke
+pending.</strong> CodeBuddy&#39;s implementation reuses the same claude-shaped single
+envelope parse that qoder&#39;s real fixture already proved — but the account
+used to author this provider was out of credits (429 &quot;Credits exhausted&quot;),
+so there is no real-output fixture or live smoke test for codebuddy yet.
+It works against the proven shape, not against a confirmed real reply.</li>
+</ul>
 <hr>
 <h2>Cost control</h2>
 <p>Default <code>~$0.04–$0.10/day</code> thanks to prompt caching (~70k tokens cached,
 calls 2+ cost ~$0.001).</p>
 <pre><code class="language-json">{
-  &quot;triggerMode&quot;: &quot;on_demand&quot;,
+  &quot;reviewUnit&quot;: &quot;pr&quot;,
   &quot;budget&quot;: { &quot;dailyTokenLimit&quot;: 100000 },
   &quot;quietHours&quot;: { &quot;start&quot;: &quot;23:00&quot;, &quot;end&quot;: &quot;08:00&quot; }
 }
@@ -1473,8 +1717,12 @@ Siltpoke sees the rule → won&#39;t make the same wrong review again.</p>
 <td><code>cat ~/.claude/settings.json | jq .statusLine</code> → should point at Siltpoke wrapper. Then restart Claude Code.</td>
 </tr>
 <tr>
+<td>Codex does not recognize <code>/siltpoke-*</code></td>
+<td>Expected for current Codex support. Use natural language through the installed Siltpoke skill/plugin, for example &quot;open the Siltpoke dashboard&quot;.</td>
+</tr>
+<tr>
 <td>Brain never runs</td>
-<td><code>/siltpoke-stats</code> then <code>tail -f ~/.siltpoke/brain-calls.jsonl</code> — look for <code>skipped</code> reasons: <code>quiet_hours</code>, <code>budget_hard_stop</code>, <code>no_change</code>, <code>wrong_event_mode</code>, <code>on_demand_no_bypass</code>.</td>
+<td><code>/siltpoke-stats</code> then <code>tail -f ~/.siltpoke/brain-calls.jsonl</code> — look for <code>skipped</code> reasons: <code>quiet_hours</code>, <code>budget_hard_stop</code>, <code>no_change</code>, <code>no_new_commit</code>, <code>tree_unchanged</code>, <code>docs_only</code>, <code>not_a_git_repo</code>.</td>
 </tr>
 <tr>
 <td>Cache hits always zero</td>

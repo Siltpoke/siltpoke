@@ -93,6 +93,15 @@ const CANNED_CALL: CriticCall = {
   reasoning: null,
   timing: null,
   critique_id: "c-golden-1",
+  // The dominant real absence (53.5% of fired reviews on a measured store), so
+  // the captured BlockA-null golden is evidence that per-reason copy renders.
+  //
+  // This field is REQUIRED on CriticCall, but the `as unknown as` below makes
+  // tsc blind to its absence — and the first re-capture after the field was
+  // added produced a BlankA-null golden with an empty placeholder, because
+  // `AUDIT_ABSENCE_COPY[undefined]` is `undefined`. The cast is why tsc could
+  // not catch it; `auditAbsenceNote` now also refuses to render blank.
+  audit_absence: "evidence_empty",
   v2: null,
 } as unknown as CriticCall;
 
@@ -101,7 +110,13 @@ function diffOrCapture(html: string, fixtureName: string): void {
   if (CAPTURE || !existsSync(fixturePath)) {
     mkdirSync(dirname(fixturePath), { recursive: true });
     writeFileSync(fixturePath, html, "utf8");
-    expect(html).toBe(html);
+    // Was `expect(html).toBe(html)` — a tautology, so a capture run could not
+    // fail and "12 pass" in capture mode proved nothing. That mattered
+    // concretely: the first capture after `audit_absence` was added wrote a
+    // BlockA-null fixture whose placeholder was EMPTY, and the run still
+    // reported all-green. Capture cannot compare against a baseline, but it can
+    // refuse to enshrine a component that rendered nothing.
+    expect(html.length).toBeGreaterThan(0);
     return;
   }
   const expected = readFileSync(fixturePath, "utf8");
@@ -126,42 +141,68 @@ test("golden: BlockA v2=canned", () => {
     "BlockA-canned.html",
   );
 });
+/**
+ * The commonest real shape and the one that had no golden: no sidecar, but the
+ * row carries its own record of what was read. `BlockA-null` above keeps the
+ * genuinely-empty row (`diff_summary: null`), so the two goldens now cover both
+ * halves of what "v2=null" used to collapse into one placeholder.
+ */
+test("golden: BlockA v2=null but the row carries diff_summary + the user's words", () => {
+  const rowOnly = {
+    ...CANNED_CALL,
+    diff_summary: {
+      intent: "reuse the existing format helper",
+      key_changes: ["dropped the forked helper"],
+      risks: [],
+      file_count: 2,
+      files_with_purpose: [
+        { path: "/fixture/proj-a/src/format.ts", purpose: "call the shared util" },
+        { path: "/fixture/proj-a/src/utils.ts", purpose: "export the util" },
+      ],
+      source: "haiku",
+    },
+    user_raw_query: "did I just reimplement something that already exists",
+    user_raw_query_truncated: false,
+    agent_reply: "Yes — utils.ts already exports the same formatter.",
+  } as unknown as CriticCall;
+  diffOrCapture(String(<BlockA v2={null} c={rowOnly} />), "BlockA-rowOnly.html");
+});
 
 // Block C ──────────────────────────────────────────────────────────────────
 test("golden: BlockC v2=null", () => {
   diffOrCapture(
-    String(<BlockC v2={null} cwd="/fixture/proj-a" />),
+    String(<BlockC v2={null} cwd="/fixture/proj-a" absence="evidence_empty" />),
     "BlockC-null.html",
   );
 });
 test("golden: BlockC v2=canned", () => {
   diffOrCapture(
-    String(<BlockC v2={CANNED_V2} cwd="/fixture/proj-a" />),
+    String(<BlockC v2={CANNED_V2} cwd="/fixture/proj-a" absence="present" />),
     "BlockC-canned.html",
   );
 });
 test("golden: BlockC v2=pipelineRanClean (schemaVersion=2, 0 triggers)", () => {
   const cleanV2: V2SidecarData = { ...CANNED_V2, rubric_triggers: [] };
   diffOrCapture(
-    String(<BlockC v2={cleanV2} cwd="/fixture/proj-a" />),
+    String(<BlockC v2={cleanV2} cwd="/fixture/proj-a" absence="present" />),
     "BlockC-pipelineRanClean.html",
   );
 });
 test("golden: BlockC v2=legacy (schemaVersion=1)", () => {
   const legacyV2: V2SidecarData = { ...CANNED_V2, schemaVersion: 1, rubric_triggers: [] };
   diffOrCapture(
-    String(<BlockC v2={legacyV2} cwd="/fixture/proj-a" />),
+    String(<BlockC v2={legacyV2} cwd="/fixture/proj-a" absence="present" />),
     "BlockC-legacy.html",
   );
 });
 
 // Block D ──────────────────────────────────────────────────────────────────
 test("golden: BlockD v2=null", () => {
-  diffOrCapture(String(<BlockD v2={null} />), "BlockD-null.html");
+  diffOrCapture(String(<BlockD v2={null} absence="evidence_empty" />), "BlockD-null.html");
 });
 test("golden: BlockD v2=canned", () => {
   diffOrCapture(
-    String(<BlockD v2={CANNED_V2} critiqueId="c-golden-1" />),
+    String(<BlockD v2={CANNED_V2} critiqueId="c-golden-1" absence="present" />),
     "BlockD-canned.html",
   );
 });

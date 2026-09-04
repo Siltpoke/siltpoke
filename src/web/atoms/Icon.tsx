@@ -24,7 +24,7 @@ export type IconName =
   | "explain"
   | "repo-graph"
   | "chat"
-;
+  | "settings";
 
 const PATHS: Record<IconName, string> = {
   // House outline
@@ -43,6 +43,11 @@ const PATHS: Record<IconName, string> = {
   traces: "M3 3 L12 3 L12 5 L3 5 Z M3 7 L14 7 L14 9 L3 9 Z M3 11 L8 11 L8 13 L3 13 Z",
   // Database cylinder (memory)
   memory: "M3 4 C3 2.5 5.5 2 8 2 C10.5 2 13 2.5 13 4 L13 12 C13 13.5 10.5 14 8 14 C5.5 14 3 13.5 3 12 Z M3 4 C3 5.5 5.5 6 8 6 C10.5 6 13 5.5 13 4 M3 8 C3 9.5 5.5 10 8 10 C10.5 10 13 9.5 13 8",
+  // Open book — two page curves meeting at a spine (knowledge).
+  // Deliberately NOT the database cylinder above: /memory and /knowledge used
+  // to share that glyph, and two sidebar rows drawing the same picture is a
+  // nav that cannot be read at a glance. The cylinder stayed with /memory,
+  // which really is a store; /knowledge is a shelf of documents.
   // Lightbulb (matches CLI 💡 hint for /siltpoke-explain).
   // Bulb outline + 3 filament lines below.
   explain: "M5 6.5 A3 3 0 0 1 11 6.5 C11 8.5 10 9.5 10 11 L6 11 C6 9.5 5 8.5 5 6.5 Z M6.5 12.5 L9.5 12.5 M7 14 L9 14",
@@ -54,9 +59,24 @@ const PATHS: Record<IconName, string> = {
   // Terminal prompt ›_
   // Gear
   // Question mark in circle
+  // Gear — hub circle + 8 spokes (settings).
+  settings:
+    "M8 5.5 A2.5 2.5 0 1 0 8 10.5 A2.5 2.5 0 1 0 8 5.5 M8 1.5 L8 3.5 M8 12.5 L8 14.5 M1.5 8 L3.5 8 M12.5 8 L14.5 8 M3.4 3.4 L4.8 4.8 M11.2 11.2 L12.6 12.6 M12.6 3.4 L11.2 4.8 M4.8 11.2 L3.4 12.6",
 };
 
 const KNOWN = new Set(Object.keys(PATHS));
+
+/**
+ * The registry's own key set, exported so a caller that stores icon names as
+ * plain strings can be checked against it.
+ *
+ * `NavEntry.icon` is typed `string`, and an unknown name falls THROUGH to being
+ * rendered as raw text (the back-compat path below) rather than failing — so a
+ * typo in `nav.ts` produces a sidebar row with the literal word in it and no
+ * error anywhere. `tests/web/routes/nav.test.ts` asserts every nav icon is in
+ * here, which is the only thing standing between that typo and a shipped page.
+ */
+export const ICON_NAMES: ReadonlySet<string> = KNOWN;
 
 export interface IconProps {
   /** Icon name (registry key) OR a raw glyph string for back-compat. */

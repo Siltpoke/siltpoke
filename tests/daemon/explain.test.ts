@@ -9,7 +9,7 @@
  *                                  shape; first-class Brain token streaming
  *                                  is a follow-up if in-house use needs it)
  */
-import { test, expect, describe, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -66,7 +66,15 @@ async function seedExplanation(opts: {
 
 function makeApp(): Hono {
   const app = new Hono();
-  mountExplainRoutes(app, { cwd, secret: SECRET });
+  // homeBase is unused by these tests (project resolution is short-circuited
+  // via resolveProjectRoot below so requests hit `cwd` directly, mirroring
+  // the pre-per-request-resolution behavior these tests were written against).
+  mountExplainRoutes(app, {
+    cwd,
+    homeBase: cwd,
+    secret: SECRET,
+    resolveProjectRoot: async () => cwd,
+  });
   return app;
 }
 

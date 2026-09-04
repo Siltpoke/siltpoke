@@ -1,5 +1,6 @@
 import { describe, test, expect, afterEach } from "bun:test";
 import { startDaemon, stopDaemon, type DaemonHandle } from "../../src/daemon/server";
+import { resetNavAvailability } from "../../src/web/routes/nav";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,7 @@ describe("daemon smoke (real port)", () => {
       try { await stopDaemon(handle); } catch {}
     }
     handle = null;
+    resetNavAvailability();
   });
 
   test("Bun.serve binds 127.0.0.1 and /api/ping responds", async () => {

@@ -20,6 +20,10 @@ export function computeFingerprint(content: string, tree: Tree): FileFingerprint
   return {
     content_sha256: computeContentSha(content),
     ast_sig: computeAstSignature(tree),
+    // Must stay in lockstep with the builder's own fingerprint construction:
+    // a fingerprint written WITHOUT this field reads as "unknown" and forces a
+    // re-parse forever, permanently defeating the cache for those files.
+    degraded: tree.rootNode.hasError,
   };
 }
 

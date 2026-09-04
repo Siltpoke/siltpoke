@@ -1,0 +1,152 @@
+[
+  {
+    "type": "message",
+    "role": "user",
+    "content": [
+      {
+        "type": "input_text",
+        "text": "<system-reminder data-role=\"memory\"><memory>\n# auto memory\n\n…(trimmed)"
+      },
+      {
+        "type": "input_text",
+        "text": "<system-reminder>\nAs you answer the user's questions, you ca…(trimmed)"
+      },
+      {
+        "type": "input_text",
+        "text": "<user_query>say hi</user_query>…(trimmed)"
+      }
+    ],
+    "providerData": {
+      "agent": "cli"
+    },
+    "id": "54a976f9-b550-4513-8f17-83be14c93346",
+    "timestamp": 1783809396088,
+    "sessionId": "a2fcbc7e-4e9c-4ad2-a4b9-edf3821e1197"
+  },
+  {
+    "type": "file-history-snapshot",
+    "id": "3edbffe6-3869-40ed-8444-10cc758087f9",
+    "timestamp": 1783809396097,
+    "isSnapshotUpdate": false,
+    "snapshot": {
+      "messageId": "54a976f9-b550-4513-8f17-83be14c93346",
+      "trackedFileBackups": {}
+    }
+  },
+  {
+    "providerData": {
+      "messageId": "9b0370ff38ea45808addf52b1f1490cb",
+      "model": "default-model",
+      "requestModelId": "default-model",
+      "requestModelName": "Default",
+      "traceId": "40e0589579763b1b0dc9d092002ea37a",
+      "conversationRequestId": "8c2cb78d3110496c86ca6751ca064c9f",
+      "agent": "cli"
+    },
+    "type": "reasoning",
+    "content": [],
+    "rawContent": [
+      {
+        "type": "reasoning_text",
+        "text": "The user just wants to say hi."
+      }
+    ],
+    "timestamp": 1783809399864,
+    "id": "a1f806d2-3ff3-4784-85d5-96995cd70db0",
+    "sessionId": "a2fcbc7e-4e9c-4ad2-a4b9-edf3821e1197",
+    "parentId": "54a976f9-b550-4513-8f17-83be14c93346"
+  },
+  {
+    "id": "9b0370ff38ea45808addf52b1f1490cb",
+    "type": "message",
+    "role": "assistant",
+    "status": "completed",
+    "content": [
+      {
+        "providerData": {
+          "annotations": []
+        },
+        "type": "output_text",
+        "text": "Hi! How can I help you today?…(trimmed)"
+      }
+    ],
+    "timestamp": 1783809399864,
+    "providerData": {
+      "messageId": "9b0370ff38ea45808addf52b1f1490cb",
+      "model": "default-model",
+      "requestModelId": "default-model",
+      "requestModelName": "Default",
+      "traceId": "40e0589579763b1b0dc9d092002ea37a",
+      "conversationRequestId": "8c2cb78d3110496c86ca6751ca064c9f",
+      "rawUsage": {
+        "prompt_tokens": 25084,
+        "completion_tokens": 28,
+        "total_tokens": 25112,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": 0,
+          "cached_tokens": 0
+        },
+        "prompt_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": 0,
+          "cached_tokens": 25074
+        },
+        "prompt_cache_hit_tokens": 25074,
+        "prompt_cache_miss_tokens": 10,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "prompt_cache_write_tokens": 0,
+        "completion_thinking_tokens": 0,
+        "credit": 0.72,
+        "cached_tokens": 0
+      },
+      "agent": "cli",
+      "usage": {
+        "requests": 1,
+        "inputTokens": 25084,
+        "outputTokens": 28,
+        "totalTokens": 25112,
+        "inputTokensDetails": [
+          {
+            "cached_tokens": 25074
+          }
+        ],
+        "outputTokensDetails": [
+          {
+            "reasoning_tokens": 0
+          }
+        ]
+      }
+    },
+    "sessionId": "a2fcbc7e-4e9c-4ad2-a4b9-edf3821e1197",
+    "parentId": "a1f806d2-3ff3-4784-85d5-96995cd70db0"
+  },
+  {
+    "type": "result",
+    "subtype": "success",
+    "is_error": false,
+    "result": "Hi! How can I help you today?",
+    "uuid": "fe89d1b8-0cf4-472a-8689-6ac788bca972",
+    "session_id": "a2fcbc7e-4e9c-4ad2-a4b9-edf3821e1197",
+    "duration_ms": 4678,
+    "duration_api_ms": 3699,
+    "num_turns": 3,
+    "total_cost_usd": 0,
+    "usage": {
+      "input_tokens": 25084,
+      "output_tokens": 28,
+      "cache_creation_input_tokens": 10,
+      "cache_read_input_tokens": 25074,
+      "cache_creation": null,
+      "server_tool_use": null,
+      "service_tier": null
+    },
+    "permission_denials": [],
+    "__timestamp": "2026-07-11T22:36:40.879Z"
+  }
+]

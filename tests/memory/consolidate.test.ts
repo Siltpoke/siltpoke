@@ -1031,3 +1031,180 @@ describe("isRubricNoiseCritique", () => {
     expect(isRubricNoiseCritique("")).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Extract-role seam (single-brain S2, task 8)
+//
+// consolidate() builds ONE role-routed brainFn (`makeRoleRawBrain(homeBase,
+// "extract")`) and injects it into BOTH callSummarizerBrain and
+// extractEventFragments — neither leaf function receives `homeBase` itself.
+// These tests avoid `mock.module` (verified in earlier single-brain tasks to
+// leak across test files in this Bun version) in favor of (a) a spy-based
+// assertion that both leaves receive the SAME seam, and (b) a real
+// end-to-end run against a non-claude ("qoder") extract-role provider, same
+// PATH-shadowed-binary technique as tests/memory/extract-facts.test.ts and
+// tests/memory/tag-entities.test.ts.
+// ---------------------------------------------------------------------------
+
+describe("consolidate() — extract role seam (single-brain S2 task 8)", () => {
+  test("summarizer + event extractor both receive the SAME injected brainFn seam", async () => {
+    const now = new Date();
+    const eightDaysAgo = new Date(now.getTime() - 8 * 24 * 3600 * 1000).toISOString();
+    const mem = makeMemory({ last_consolidated_at: eightDaysAgo });
+
+    const fakeCommit: CommitSignal = {
+      sha: "seam1234abcd",
+      subject: "feat: exercise the extract-role seam",
+      files: ["src/memory/consolidate.ts"],
+      additions: 10,
+      deletions: 1,
+      date: now.toISOString(),
+    };
+
+    let summarizerBrainFn: unknown;
+    let extractBrainFn: unknown;
+
+    const result = await consolidate(
+      makeOpts({
+        homeBase: "/nonexistent/path/seam-test",
+        // projectBase required so consolidate() derives a projectRoot and the
+        // commit stub below is consulted (knownRefs.size > 0 gates the event
+        // extractor call — see consolidate.ts's cost-guard comment).
+        projectBase: "/fake/project/.siltpoke",
+        now,
+        deps: {
+          readMemory: async () => mem,
+          writeMemory: async () => {},
+          callSummarizerBrain: async (_context, opts) => {
+            summarizerBrainFn = opts?.brainFn;
+            return makeSummarizerOutput();
+          },
+          extractEventFragments: async (_context, opts) => {
+            extractBrainFn = opts?.brainFn;
+            return [];
+          },
+          loadRecentCritiques: async () => ["critique text"],
+          loadRecentDismissals: async () => [],
+          loadRecentChatMessages: async () => [],
+          loadRecentCommits: async () => [fakeCommit],
+          loadAllCritiqueEntries: async () => [],
+        },
+      }),
+    );
+
+    expect(result.ran).toBe(true);
+    expect(typeof summarizerBrainFn).toBe("function");
+    expect(typeof extractBrainFn).toBe("function");
+    // Built ONCE in consolidate() and injected into both — same reference,
+    // not two independently-constructed role brains.
+    expect(summarizerBrainFn).toBe(extractBrainFn);
+  });
+
+  test("default (no config.json) → extract role resolves to the SAME pinned claude model both leaves hardcoded pre-migration (byte-identical)", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+
+    const tmpHome = mkdtempSync(join(tmpdir(), "consolidate-seam-default-"));
+    try {
+      // No config.json written → loadBrainConfig defaults to claude for
+      // every role. resolveRole is the pure function makeRoleRawBrain calls
+      // internally to force the model on every request — asserting it
+      // directly (rather than spawning a real `claude -p` subprocess) proves
+      // the default seam resolves to the exact pinned string both leaf
+      // functions hardcoded as DEFAULT_MODEL before this task deleted it.
+      const { loadBrainConfig } = await import("../../src/brain/brain-config");
+      const { resolveRole } = await import("../../src/brain/registry");
+      const config = await loadBrainConfig(tmpHome);
+      const resolved = resolveRole(config, "extract");
+      expect(resolved.family).toBe("claude");
+      expect(resolved.model).toBe("claude-haiku-4-5-20251001");
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  test("config.json selecting a non-claude extract provider → the REAL (unstubbed) summarizer + event extractor both reach it via the shared seam", async () => {
+    const { mkdtempSync, writeFileSync, chmodSync, rmSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+
+    const tmpHome = mkdtempSync(join(tmpdir(), "consolidate-seam-qoder-home-"));
+    const tmpBin = mkdtempSync(join(tmpdir(), "consolidate-seam-qoder-bin-"));
+    const originalPath = process.env.PATH;
+    const callLog = join(tmpHome, "qoder-calls.log");
+
+    try {
+      writeFileSync(
+        join(tmpHome, "config.json"),
+        JSON.stringify({ brain: { roles: { extract: { provider: "qoder" } } } }),
+      );
+
+      const fakeBin = join(tmpBin, "qodercli");
+      writeFileSync(
+        fakeBin,
+        [
+          "#!/usr/bin/env bun",
+          `require("node:fs").appendFileSync(${JSON.stringify(callLog)}, "call\\n");`,
+          // Envelope satisfies BOTH the summarizer's { candidates } schema and
+          // the event extractor's { events } schema — the same fake binary
+          // answers whichever caller reaches it via the shared seam.
+          'const inner = JSON.stringify({ candidates: [], events: [] });',
+          'const envelope = { type: "result", subtype: "success", is_error: false, result: inner, total_cost_usd: 0, usage: { input_tokens: 3, output_tokens: 2 } };',
+          "process.stdout.write(JSON.stringify(envelope));",
+          "",
+        ].join("\n"),
+      );
+      chmodSync(fakeBin, 0o755);
+      process.env.PATH = `${tmpBin}:${originalPath ?? ""}`;
+
+      const now = new Date();
+      const eightDaysAgo = new Date(now.getTime() - 8 * 24 * 3600 * 1000).toISOString();
+      const mem = makeMemory({ last_consolidated_at: eightDaysAgo });
+
+      const fakeCommit: CommitSignal = {
+        sha: "qoder1234abcd",
+        subject: "feat: exercise the qoder extract-role seam",
+        files: ["src/memory/consolidate.ts"],
+        additions: 5,
+        deletions: 0,
+        date: now.toISOString(),
+      };
+
+      const result = await consolidate(
+        makeOpts({
+          homeBase: tmpHome,
+          projectBase: "/fake/project/.siltpoke",
+          now,
+          deps: {
+            readMemory: async () => mem,
+            writeMemory: async () => {},
+            // callSummarizerBrain / extractEventFragments intentionally NOT
+            // stubbed — this exercises the REAL leaf functions, which now
+            // only reach the qoder binary because consolidate injects the
+            // role-routed brainFn into both.
+            loadRecentCritiques: async () => ["critique text"],
+            loadRecentDismissals: async () => [],
+            loadRecentChatMessages: async () => [],
+            loadRecentCommits: async () => [fakeCommit],
+            loadAllCritiqueEntries: async () => [],
+          },
+        }),
+      );
+
+      expect(result.ran).toBe(true);
+      // The fake qodercli binary was invoked exactly twice — once for the
+      // summarizer, once for the event extractor — proving BOTH leaves
+      // reached the SAME non-claude extract-role provider via consolidate's
+      // shared seam (not just one of them, and not a stale claude default).
+      const { readFileSync, existsSync } = await import("node:fs");
+      expect(existsSync(callLog)).toBe(true);
+      const calls = readFileSync(callLog, "utf8").trim().split("\n").filter(Boolean);
+      expect(calls.length).toBe(2);
+    } finally {
+      process.env.PATH = originalPath;
+      rmSync(tmpHome, { recursive: true, force: true });
+      rmSync(tmpBin, { recursive: true, force: true });
+    }
+  });
+});

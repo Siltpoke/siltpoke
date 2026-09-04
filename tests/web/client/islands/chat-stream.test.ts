@@ -495,6 +495,75 @@ describe("SSE error events render reason-mapped error cards", () => {
   });
 });
 
+// ─── staleness SSE event → quiet in-transcript notice (final-review FIX 2) ──
+// Regression coverage for the "attach but never render" dead guard: the
+// server (src/daemon/routes/chat.ts) emits a distinct `event: staleness`
+// frame once, right after message_start, whenever repo-graph was queried
+// this turn. Prior to this fix the event was parsed (`for (const ev of
+// events)`) but no branch matched its name, so it silently vanished — the
+// dashboard chat user never saw the drift the server computed.
+describe("staleness SSE event renders a notice (or nothing when fresh)", () => {
+  beforeEach(() => {
+    (globalThis as unknown as { window: { addEventListener: () => void; removeEventListener: () => void } }).window = {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    };
+  });
+
+  async function sendWithEvents(chunks: string[]) {
+    const fakeFetch = mock(() => Promise.resolve(makeResponse(chunks)));
+    const island = makeChatStreamData(fakeFetch as unknown as typeof fetch);
+    island.init();
+    island.input = "hi";
+    await island.send();
+    return island;
+  }
+
+  it('level "stale" → notice message with headline + split counts', async () => {
+    const verdict = {
+      level: "stale",
+      headline: "40% out of date — re-index recommended",
+      counts: { content_changed: 2, deleted_still_indexed: 1, unindexed_files: 3, indexed: 5, wrong_ratio: 0.4 },
+      caveat: null,
+    };
+    const island = await sendWithEvents([
+      `event: staleness\ndata: ${JSON.stringify(verdict)}\n\n`,
+      'event: content_block_delta\ndata: {"text":"hi there"}\n\n',
+    ]);
+    const notices = island.messages.filter((m) => m.status === "notice");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]!.text).toContain("40% out of date — re-index recommended");
+    expect(notices[0]!.text).toContain("2 changed");
+    expect(notices[0]!.text).toContain("1 deleted");
+    expect(notices[0]!.text).toContain("3 unindexed");
+  });
+
+  it('level "fresh" → renders nothing (no notice message)', async () => {
+    const verdict = {
+      level: "fresh",
+      headline: "index is current",
+      counts: { content_changed: 0, deleted_still_indexed: 0, unindexed_files: 0, indexed: 5, wrong_ratio: 0 },
+      caveat: null,
+    };
+    const island = await sendWithEvents([
+      `event: staleness\ndata: ${JSON.stringify(verdict)}\n\n`,
+      'event: content_block_delta\ndata: {"text":"hi there"}\n\n',
+    ]);
+    expect(island.messages.filter((m) => m.status === "notice")).toHaveLength(0);
+  });
+
+  it("malformed staleness-event JSON → no crash, no notice, turn still completes", async () => {
+    const island = await sendWithEvents([
+      "event: staleness\ndata: {not json\n\n",
+      'event: content_block_delta\ndata: {"text":"hi there"}\n\n',
+    ]);
+    expect(island.messages.filter((m) => m.status === "notice")).toHaveLength(0);
+    expect(island.error).toBeNull();
+    const assistant = island.messages.find((m) => m.role === "assistant" && !m.status);
+    expect(assistant?.text).toBe("hi there");
+  });
+});
+
 // ─── stop() aborts the stream → quiet cancelled marker ──────────────────────
 
 describe("stop() cancels the in-flight turn with a quiet marker", () => {

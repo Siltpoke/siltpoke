@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { mountRepoGraphWebRoutes } from "../../../src/web/routes/repo-graph";
+import { createPageCache } from "../../../src/web/routes/repo-graph-cache";
 
 const HASH = "aaaabbbbcccc";
 let tmp: string;
@@ -55,7 +56,11 @@ const VALID_FILE = {
 
 async function get(): Promise<{ html: string; payload: Record<string, unknown> }> {
   const app = new Hono();
-  mountRepoGraphWebRoutes(app, { cwd: projectRoot, home });
+  // Fresh page cache per mount — the render cache is a process-wide singleton
+  // in production, and these tests reuse one fixed HASH with authored files
+  // that validate to the same shape, so a shared cache would serve the first
+  // test's render to the others and mask each test's own render path.
+  mountRepoGraphWebRoutes(app, { cwd: projectRoot, home, pageCache: createPageCache() });
   const res = await app.fetch(new Request(`http://localhost/repo-graph?repo=${HASH}`));
   const html = await res.text();
   const match = /data-initial="([^"]+)"/.exec(html);

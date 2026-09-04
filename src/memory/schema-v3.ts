@@ -125,6 +125,11 @@ export const globalSchema = z.object({
     name: "",
     communication_style: "neutral" as const,
   })),
+  // User-level facts (kind "style" | "profile") — cwd-independent so they
+  // survive across repos and under launchd (daemon cwd=/). Same factSchema as
+  // projectMemorySchema.facts. Untagged (null) facts stay project-scoped.
+  // `.default([])` coerces pre-existing global.json files with no facts field.
+  facts: z.array(factSchema).default([]),
 });
 export type GlobalMemory = z.infer<typeof globalSchema>;
 

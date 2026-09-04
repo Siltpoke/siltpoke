@@ -3,7 +3,7 @@
 /**
  * Natural-language memory-edit intent parser.
  *
- * The /memory composer sends free text ("记得我喜欢粉红色"). This module makes a
+ * The /memory composer sends free text (). This module makes a
  * single Brain call (haiku) that extracts an atomic candidate claim and
  * classifies it against the user's current ACTIVE facts:
  *   - "add"       — net-new; no existing fact matches or contradicts.
@@ -47,11 +47,9 @@ export type BrainRawFn = (opts: {
 
 export interface ParseMemoryEditDeps {
   brainFn?: BrainRawFn;
-  model?: string;
   timeoutMs?: number;
 }
 
-const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_CLAIM_LEN = 280;
 
@@ -95,13 +93,11 @@ export async function parseMemoryEdit(
   const brainFn =
     deps.brainFn ??
     (async (opts) => (await import("../brain/brain")).callBrainRaw(opts));
-  const model = deps.model ?? DEFAULT_MODEL;
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   const raw = await brainFn({
     systemPrompt: NL_EDIT_SYSTEM_PROMPT,
     contextBundle: assemblePrompt(text, activeFacts),
-    model,
     timeoutMs,
   });
 

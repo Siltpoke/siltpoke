@@ -13,7 +13,7 @@
  * Brain success — the strip simply stops rendering.
  */
 import type { Hono } from "hono";
-import { join } from "node:path";
+import { siltpokeRoot } from "../../installer/paths";
 import {
   readBrainHealth,
   brainUnhealthySignal,
@@ -25,7 +25,7 @@ export interface BrainHealthRouteDeps {
 }
 
 function defaultHomeBase(): string {
-  return join(process.env.HOME ?? "", ".siltpoke");
+  return siltpokeRoot();
 }
 
 export function mountBrainHealthRoute(

@@ -16,6 +16,11 @@ import { mountCriticRoutes } from "../../src/web/routes/critic";
 
 let homeBase: string;
 
+// POST /api/critic/action + POST /api/critic/budget are secret-gated
+// (daemon-hardening security audit, finding 2). Every request below now
+// carries this header — see `authHeaders()`.
+const TEST_SECRET = "test-secret";
+
 beforeEach(async () => {
   homeBase = join(tmpdir(), `critic-actions-test-${randomUUID()}`);
   await mkdir(homeBase, { recursive: true });
@@ -23,8 +28,12 @@ beforeEach(async () => {
 
 function buildApp(): Hono {
   const app = new Hono();
-  mountCriticRoutes(app, { homeBase });
+  mountCriticRoutes(app, { homeBase, secret: TEST_SECRET });
   return app;
+}
+
+function authHeaders(): Record<string, string> {
+  return { "content-type": "application/json", "X-Siltpoke-Secret": TEST_SECRET };
 }
 
 describe("POST /api/critic/action", () => {
@@ -32,7 +41,7 @@ describe("POST /api/critic/action", () => {
     const app = buildApp();
     const res = await app.request("/api/critic/action", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders(),
       body: JSON.stringify({
         session_id: "s1",
         timestamp: "2026-05-19T14:00:00Z",
@@ -59,7 +68,7 @@ describe("POST /api/critic/action", () => {
     const app = buildApp();
     const res = await app.request("/api/critic/action", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders(),
       body: JSON.stringify({
         session_id: "s2",
         timestamp: "2026-05-19T14:05:00Z",
@@ -76,7 +85,7 @@ describe("POST /api/critic/action", () => {
     const app = buildApp();
     const res = await app.request("/api/critic/action", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders(),
       body: JSON.stringify({ session_id: "s1", timestamp: "t1", action: "clear" }),
     });
     expect(res.status).toBe(200);
@@ -89,7 +98,7 @@ describe("POST /api/critic/action", () => {
     const app = buildApp();
     const res = await app.request("/api/critic/action", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders(),
       body: JSON.stringify({ session_id: "s1", timestamp: "t", action: "explode" }),
     });
     expect(res.status).toBe(400);
@@ -99,7 +108,7 @@ describe("POST /api/critic/action", () => {
     const app = buildApp();
     const res = await app.request("/api/critic/action", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders(),
       body: JSON.stringify({ timestamp: "t", action: "dismiss" }),
     });
     expect(res.status).toBe(400);
@@ -109,7 +118,7 @@ describe("POST /api/critic/action", () => {
     const app = buildApp();
     const res = await app.request("/api/critic/action", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders(),
       body: "not json",
     });
     expect(res.status).toBe(400);
@@ -119,7 +128,7 @@ describe("POST /api/critic/action", () => {
     const app = buildApp();
     const res = await app.request("/api/critic/budget", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders(),
       body: JSON.stringify({
         dailyTokenLimit: 1_000_000,
         softWarnAtPercent: 70,
@@ -138,7 +147,7 @@ describe("POST /api/critic/action", () => {
     const app = buildApp();
     const res = await app.request("/api/critic/budget", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders(),
       body: JSON.stringify({ softWarnAtPercent: 999 }),
     });
     expect(res.status).toBe(400);
@@ -149,7 +158,7 @@ describe("POST /api/critic/action", () => {
     const app = buildApp();
     const res = await app.request("/api/critic/budget", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders(),
       body: JSON.stringify({ softWarnAtPercent: 60 }),
     });
     expect(res.status).toBe(200);
@@ -163,12 +172,12 @@ describe("POST /api/critic/action", () => {
     const app = buildApp();
     await app.request("/api/critic/action", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders(),
       body: JSON.stringify({ session_id: "s1", timestamp: "t1", action: "dismiss" }),
     });
     await app.request("/api/critic/action", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders(),
       body: JSON.stringify({ session_id: "s1", timestamp: "t1", action: "ack" }),
     });
     const raw = await readFile(join(homeBase, "critic-actions.jsonl"), "utf8");
@@ -176,5 +185,40 @@ describe("POST /api/critic/action", () => {
     expect(lines.length).toBe(2);
     expect(JSON.parse(lines[0]!).action).toBe("dismiss");
     expect(JSON.parse(lines[1]!).action).toBe("ack");
+  });
+
+  // daemon-hardening security audit, finding 2 — both routes are
+  // secret-gated (blind cross-origin CSRF otherwise: budget rewrites the
+  // spend guardrail; action writes a dismiss/ack entry).
+  test("POST /api/critic/budget without the secret → 401, no config write", async () => {
+    const app = buildApp();
+    const res = await app.request("/api/critic/budget", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dailyTokenLimit: 1_000_000 }),
+    });
+    expect(res.status).toBe(401);
+    expect(existsSync(join(homeBase, "config.json"))).toBe(false);
+  });
+
+  test("POST /api/critic/budget with the correct secret → 200", async () => {
+    const app = buildApp();
+    const res = await app.request("/api/critic/budget", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ dailyTokenLimit: 1_000_000 }),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  test("POST /api/critic/action without the secret → 401, no jsonl write", async () => {
+    const app = buildApp();
+    const res = await app.request("/api/critic/action", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session_id: "s1", timestamp: "t1", action: "dismiss" }),
+    });
+    expect(res.status).toBe(401);
+    expect(existsSync(join(homeBase, "critic-actions.jsonl"))).toBe(false);
   });
 });

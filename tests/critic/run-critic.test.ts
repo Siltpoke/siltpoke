@@ -6,7 +6,10 @@
  */
 
 import { describe, expect, test, } from "bun:test";
-import type { BrainCallResult, CallBrainOptions } from "../../src/brain/brain";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { BrainError, type BrainCallRawResult, type BrainCallResult, type CallBrainOptions } from "../../src/brain/brain";
 import type { BrainOutput } from "../../src/brain/schema";
 import type { ProjectCapabilities } from "../../src/critic/capabilities";
 import { type RunCriticDeps, type RunCriticOpts, runCritic } from "../../src/critic/run-critic";
@@ -233,6 +236,145 @@ describe("runCritic — PASSIVE_BUBBLE path", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Track #7 T3 (deferred T2 item) — the reviewed-repo cwd must reach
+// callBrainFn (so the codex adapter's `-C` targets the right repo, not the
+// daemon's own frozen process.cwd()).
+// ---------------------------------------------------------------------------
+
+describe("runCritic — reviewed-repo cwd threading (track #7 T3)", () => {
+  test("PASSIVE_BUBBLE — callBrainFn receives brainContext.cwd", async () => {
+    let capturedCwd: string | undefined;
+    const deps: RunCriticDeps = {
+      runToolsFn: async () => makeCleanWithDiff(),
+      callBrainFn: async (opts) => {
+        capturedCwd = opts.cwd;
+        return {
+          output: makeFakeBrainOutput({ mood: "happy", pose: "base", evidence: [] }),
+          usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 10, output_tokens: 5, total_cost_usd: 0 },
+        };
+      },
+      writeCritiqueFn: async () => ({ id: "c-cwd-passive", path: "/tmp/test" }),
+    };
+
+    const result = await runCritic(
+      makeOpts({ brainContext: { ...makeOpts().brainContext, cwd: "/repo/under/review" } }),
+      deps,
+    );
+
+    expect(result.decision).toBe("PASSIVE_BUBBLE");
+    expect(capturedCwd).toBe("/repo/under/review");
+  });
+
+  test("NORMAL — callBrainFn receives brainContext.cwd", async () => {
+    let capturedCwd: string | undefined;
+    const deps: RunCriticDeps = {
+      runToolsFn: async () => makeWithTscError(),
+      callBrainFn: async (opts) => {
+        capturedCwd = opts.cwd;
+        return {
+          output: makeFakeBrainOutput({
+            evidence: [{ tool: "tsc", file: "src/foo.ts", line: 10, snippet: "let x: string = badValue;" }],
+          }),
+          usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 10, output_tokens: 5, total_cost_usd: 0 },
+        };
+      },
+      writeCritiqueFn: async () => ({ id: "c-cwd-normal", path: "/tmp/test" }),
+    };
+
+    const result = await runCritic(
+      makeOpts({ brainContext: { ...makeOpts().brainContext, cwd: "/repo/under/review" } }),
+      deps,
+    );
+
+    expect(result.decision).toBe("NORMAL");
+    expect(capturedCwd).toBe("/repo/under/review");
+  });
+});
+
+describe("runCritic — diff-summary extract-role wiring (single-brain #10, S2, task 10)", () => {
+  // Minimal fake of `claude -p --output-format json`, mirroring
+  // tests/brain/role-brain.test.ts's fakeClaudeSpawn — captures argv so the
+  // test can assert which --model actually reached the (faked) subprocess.
+  function fakeClaudeSpawn(innerResult: string, capture?: { argv?: string[] }) {
+    return ((argv: string[]) => {
+      if (capture) capture.argv = argv;
+      const events = [{ type: "result", result: innerResult, total_cost_usd: 0, usage: {} }];
+      return {
+        stdin: { write() {}, end() {} },
+        stdout: new Response(JSON.stringify(events)).body,
+        stderr: new Response("").body,
+        exited: Promise.resolve(0),
+        kill() {},
+      } as unknown as ReturnType<typeof Bun.spawn>;
+    }) as unknown as typeof Bun.spawn;
+  }
+
+  test("with homeBase — runDiffSummaryFn's callFn is genuinely role-routed to extract (pinned model)", async () => {
+    const home = mkdtempSync(join(tmpdir(), "run-critic-diff-summary-"));
+    try {
+      let capturedCallFn: ((opts: CallBrainOptions) => Promise<BrainCallRawResult>) | undefined;
+      const deps: RunCriticDeps = {
+        runToolsFn: async () => makeCleanWithDiff(),
+        callBrainFn: async () => ({
+          output: makeFakeBrainOutput({ mood: "happy", pose: "base", evidence: [] }),
+          usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 50, output_tokens: 20, total_cost_usd: 0 },
+        }),
+        writeCritiqueFn: async () => ({ id: "c-diff-summary-wiring", path: "/tmp" }),
+        runDiffSummaryFn: async (opts) => {
+          capturedCallFn = opts.callFn;
+          return null;
+        },
+      };
+
+      await runCritic(makeOpts({ homeBase: home }), deps);
+
+      expect(capturedCallFn).toBeDefined();
+
+      // Prove it's genuinely role-routed (not just "some function" survives
+      // the wiring): invoke the captured callFn with a fake spawn and assert
+      // the `extract` role's pinned default model reached `claude -p --model`
+      // — this is what makeRoleRawBrain(homeBase, "extract") does and a
+      // hand-rolled stub would not.
+      const capture: { argv?: string[] } = {};
+      const out = await capturedCallFn!({
+        systemPrompt: "sys",
+        contextBundle: "diff",
+        spawnFn: fakeClaudeSpawn(JSON.stringify({ intent: "x" }), capture),
+      });
+      expect(out.output).toEqual({ intent: "x" });
+      const modelIdx = capture.argv?.indexOf("--model") ?? -1;
+      expect(modelIdx).toBeGreaterThanOrEqual(0);
+      expect(capture.argv?.[modelIdx + 1]).toBe("claude-haiku-4-5-20251001");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("without homeBase — runDiffSummaryFn's callFn is undefined (falls back to its own lazy default)", async () => {
+    let receivedCallFn: unknown;
+    let sawCall = false;
+    const deps: RunCriticDeps = {
+      runToolsFn: async () => makeCleanWithDiff(),
+      callBrainFn: async () => ({
+        output: makeFakeBrainOutput({ mood: "happy", pose: "base", evidence: [] }),
+        usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 50, output_tokens: 20, total_cost_usd: 0 },
+      }),
+      writeCritiqueFn: async () => ({ id: "c-diff-summary-no-homebase", path: "/tmp" }),
+      runDiffSummaryFn: async (opts) => {
+        sawCall = true;
+        receivedCallFn = opts.callFn;
+        return null;
+      },
+    };
+
+    await runCritic(makeOpts({ homeBase: undefined }), deps);
+
+    expect(sawCall).toBe(true);
+    expect(receivedCallFn).toBeUndefined();
+  });
+});
+
 describe("runCritic — NORMAL accepted path", () => {
   test("tsc error + snippet in corpus → guard accepts, critique written, returns accepted:true", async () => {
     let writeCalled = false;
@@ -303,8 +445,14 @@ describe("runCritic — NORMAL accepted path", () => {
   });
 });
 
-describe("runCritic — NORMAL rejected path", () => {
-  test("fabricated snippet not in corpus → guard rejects, no writeCritique, returns accepted:false", async () => {
+describe("runCritic — NORMAL unverified-evidence path", () => {
+  // Renamed from "NORMAL rejected path" on 2026-08-19. Both cases below used
+  // to end the review; both now end only the citation. The assertions moved
+  // with them: `accepted === false` / `writeCalled === false` became the label,
+  // the count, and the fact that the review IS written with its bad citation
+  // stripped out. Asserting the old pair would have been asserting a branch
+  // that can no longer be taken.
+  test("fabricated snippet not in corpus → citation dropped, review still written", async () => {
     let writeCalled = false;
 
     const fabricatedSnippet = "this snippet was hallucinated by the LLM!";
@@ -332,19 +480,19 @@ describe("runCritic — NORMAL rejected path", () => {
     const result = await runCritic(makeOpts(), deps);
 
     expect(result.decision).toBe("NORMAL");
-    // After narrowing decision + accepted, access reason safely via type assertion
-    // (the assertion is safe because the expect above guarantees NORMAL + not-accepted)
-    expect(
-      result.decision === "NORMAL" && !result.accepted,
-    ).toBe(true);
-    if (result.decision === "NORMAL" && !result.accepted) {
-      const reason: string = result.reason;
-      expect(reason).toContain("snippet not in evidence_corpus");
+    if (result.decision === "NORMAL") {
+      expect(result.evidenceLabel).toBe("none_verified");
+      expect(result.unverifiedCount).toBe(1);
+      // The hallucinated snippet does not reach the persisted critique — the
+      // anti-hallucination half of the guard is unchanged.
+      expect(result.critique.evidence).toEqual([]);
+      // ...and the reviewer's prose does, which is the half that changed.
+      expect(result.critique.critique_for_claude.length).toBeGreaterThan(0);
     }
-    expect(writeCalled).toBe(false);
+    expect(writeCalled).toBe(true);
   });
 
-  test("NORMAL mode with empty evidence array → guard rejects", async () => {
+  test("NORMAL mode with empty evidence array → review still written, labelled no_evidence", async () => {
     let writeCalled = false;
 
     const brainOutput = makeFakeBrainOutput({
@@ -363,14 +511,13 @@ describe("runCritic — NORMAL rejected path", () => {
     const result = await runCritic(makeOpts(), deps);
 
     expect(result.decision).toBe("NORMAL");
-    expect(
-      result.decision === "NORMAL" && !result.accepted,
-    ).toBe(true);
-    if (result.decision === "NORMAL" && !result.accepted) {
-      const reason: string = result.reason;
-      expect(reason).toContain("evidence array empty");
+    if (result.decision === "NORMAL") {
+      expect(result.evidenceLabel).toBe("no_evidence");
+      // Nothing was cited, so nothing was dropped. A `1` here would mean the
+      // empty case had been folded into the unverified case.
+      expect(result.unverifiedCount).toBe(0);
     }
-    expect(writeCalled).toBe(false);
+    expect(writeCalled).toBe(true);
   });
 });
 
@@ -455,12 +602,15 @@ describe("runCritic — NORMAL caller-impact wiring", () => {
     expect(writeCalled).toBe(true);
   });
 
-  test("NEGATIVE CONTROL: resolver unavailable → no block → same caller-token citation IS guard-rejected", async () => {
+  test("NEGATIVE CONTROL: resolver unavailable → no block → same caller-token citation IS dropped", async () => {
     // Proves the corpus extension is causally necessary: identical Brain output
     // (citing CALLER_TOKEN, file=changed src/foo.ts so the file-check passes),
     // but with NO caller block the token never enters the corpus → snippet check
-    // fails → guard rejects. If this still accepted, the positive test would be
-    // proving nothing (token coincidentally in tool output).
+    // fails → the citation is dropped. If it still verified, the positive test
+    // would be proving nothing (token coincidentally in tool output).
+    //
+    // The control reads `evidenceLabel` since 2026-08-19; `accepted` is now
+    // constant on this path and a control asserting a constant is dead.
     let writeCalled = false;
     const brainOutput = makeFakeBrainOutput({
       evidence: [{ tool: "ripgrep", file: "src/foo.ts", line: 1, snippet: CALLER_TOKEN }],
@@ -483,9 +633,10 @@ describe("runCritic — NORMAL caller-impact wiring", () => {
     const result = await runCritic(makeOpts(), deps);
     expect(result.decision).toBe("NORMAL");
     if (result.decision === "NORMAL") {
-      expect(result.accepted).toBe(false); // snippet not in corpus → rejected
+      expect(result.evidenceLabel).toBe("none_verified"); // snippet not in corpus
+      expect(result.critique.evidence).toEqual([]);
     }
-    expect(writeCalled).toBe(false);
+    expect(writeCalled).toBe(true);
   });
 
   test("FAIL-SOFT: a resolver that THROWS is swallowed → critic proceeds normally", async () => {
@@ -607,6 +758,101 @@ describe("runCritic — error resilience", () => {
 
     expect(result.decision).toBe("HARD_SUPPRESS");
     expect(writeCalled).toBe(false);
+  });
+
+  test("Brain call throws in NORMAL path with an ordinary (non-quota) BrainError → HARD_SUPPRESS, skipCode undefined", async () => {
+    const deps: RunCriticDeps = {
+      runToolsFn: async () => makeWithTscError(),
+      callBrainFn: async () => {
+        throw new BrainError("claude -p exited with code 1: rate limit exceeded", undefined, {
+          exitCode: 1,
+          stderr: "rate limit exceeded",
+          stdout: "",
+        });
+      },
+      writeCritiqueFn: async () => ({ id: "c-brain-err-2", path: "/tmp" }),
+    };
+
+    const result = await runCritic(makeOpts(), deps);
+
+    expect(result.decision).toBe("HARD_SUPPRESS");
+    if (result.decision === "HARD_SUPPRESS") {
+      expect(result.skipCode).toBeUndefined();
+    }
+  });
+
+  test("Brain call throws a code:\"quota_cap\" BrainError in NORMAL path → HARD_SUPPRESS carries skipCode:\"quota_cap\"", async () => {
+    let writeCalled = false;
+
+    const deps: RunCriticDeps = {
+      runToolsFn: async () => makeWithTscError(),
+      callBrainFn: async () => {
+        throw new BrainError(
+          '[brain-quota-cap] daily call cap (50/day) reached for quota-billed provider "codex" — call skipped, $0 spent',
+          undefined,
+          undefined,
+          "quota_cap",
+        );
+      },
+      writeCritiqueFn: async () => {
+        writeCalled = true;
+        return { id: "c-quota-cap", path: "/tmp" };
+      },
+    };
+
+    const result = await runCritic(makeOpts(), deps);
+
+    expect(result.decision).toBe("HARD_SUPPRESS");
+    expect(writeCalled).toBe(false);
+    if (result.decision === "HARD_SUPPRESS") {
+      expect(result.skipCode).toBe("quota_cap");
+      expect(result.reason).toMatch(/cap/i);
+    }
+  });
+
+  test("Brain call throws a code:\"agy_prompt_too_large\" BrainError in NORMAL path → HARD_SUPPRESS carries its OWN skipCode, not collapsed into quota_cap", async () => {
+    const deps: RunCriticDeps = {
+      runToolsFn: async () => makeWithTscError(),
+      callBrainFn: async () => {
+        throw new BrainError(
+          "agy -p: merged prompt too large (250000 bytes > 200000 byte cap)",
+          undefined,
+          undefined,
+          "agy_prompt_too_large",
+        );
+      },
+      writeCritiqueFn: async () => ({ id: "c-agy-too-large", path: "/tmp" }),
+    };
+
+    const result = await runCritic(makeOpts(), deps);
+
+    expect(result.decision).toBe("HARD_SUPPRESS");
+    if (result.decision === "HARD_SUPPRESS") {
+      expect(result.skipCode).toBe("agy_prompt_too_large");
+      expect(result.skipCode).not.toBe("quota_cap");
+    }
+  });
+
+  test("Brain call throws a code:\"quota_cap\" BrainError in PASSIVE_BUBBLE path → HARD_SUPPRESS carries skipCode:\"quota_cap\"", async () => {
+    const deps: RunCriticDeps = {
+      runToolsFn: async () => makeCleanWithDiff(),
+      callBrainFn: async () => {
+        throw new BrainError(
+          '[brain-quota-cap] daily call cap (50/day) reached for quota-billed provider "codex" — call skipped, $0 spent',
+          undefined,
+          undefined,
+          "quota_cap",
+        );
+      },
+      writeCritiqueFn: async () => ({ id: "c-quota-cap-pb", path: "/tmp" }),
+    };
+
+    const result = await runCritic(makeOpts(), deps);
+
+    expect(result.decision).toBe("HARD_SUPPRESS");
+    if (result.decision === "HARD_SUPPRESS") {
+      expect(result.skipCode).toBe("quota_cap");
+    }
   });
 });
 
@@ -908,5 +1154,499 @@ describe("runCritic — span attributes (kind + input + output)", () => {
       if (typeof inp === "string") expect(inp.length).toBeLessThanOrEqual(8192);
       if (typeof out === "string") expect(out.length).toBeLessThanOrEqual(8192);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// diff-summary span truthfulness (single-brain #10, S2, task 10 follow-up
+// fix): the summarizer span's gen_ai.* attributes must reflect the
+// ACTUALLY-configured `extract` role, not a hardcoded "anthropic" + pinned
+// Haiku label — regardless of which family the diff-summary call itself
+// (already role-routed per the S2/task-10 wiring tests above) is sent to.
+// ---------------------------------------------------------------------------
+
+describe("runCritic — diff-summary span reports the configured extract family (task 10 span-truthfulness fix)", () => {
+  test("default config (no homeBase) — span stays anthropic + pinned Haiku, byte-identical to pre-fix", async () => {
+    const tracer = new Tracer();
+    const store = new FakeTraceStore();
+
+    const deps: RunCriticDeps = {
+      runToolsFn: async () => makeCleanWithDiff(),
+      callBrainFn: async () => ({
+        output: makeFakeBrainOutput({ mood: "happy", pose: "base", evidence: [] }),
+        usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 50, output_tokens: 20, total_cost_usd: 0 },
+      }),
+      writeCritiqueFn: async () => ({ id: "c-diff-summary-span-default", path: "/tmp" }),
+      runDiffSummaryFn: async () => ({
+        summary: { intent: "x", key_changes: [], file_count: 1, risks: [], files_with_purpose: [], source: "haiku" as const },
+        usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 10, output_tokens: 5, total_cost_usd: 0 },
+      }),
+    };
+
+    await runCritic(makeOpts({ homeBase: undefined, tracer: tracer as never, traceStore: store as never }), deps);
+
+    const summarizerSpan = store.spans.find((s) => s.name === "siltpoke.summarizer.haiku");
+    expect(summarizerSpan).toBeDefined();
+    expect(summarizerSpan?.attributes["gen_ai.system"]).toBe("anthropic");
+    expect(summarizerSpan?.attributes["gen_ai.request.model"]).toBe("claude-haiku-4-5-20251001");
+  });
+
+  test("config extract→qoder — span reports qoder's genAiSystem (alibaba) + configured model, NOT anthropic", async () => {
+    const home = mkdtempSync(join(tmpdir(), "run-critic-diff-summary-span-"));
+    try {
+      writeFileSync(
+        join(home, "config.json"),
+        JSON.stringify({ brain: { roles: { extract: { provider: "qoder", model: "qwen-max-latest" } } } }),
+        "utf8",
+      );
+
+      const tracer = new Tracer();
+      const store = new FakeTraceStore();
+
+      const deps: RunCriticDeps = {
+        runToolsFn: async () => makeCleanWithDiff(),
+        callBrainFn: async () => ({
+          output: makeFakeBrainOutput({ mood: "happy", pose: "base", evidence: [] }),
+          usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 50, output_tokens: 20, total_cost_usd: 0 },
+        }),
+        writeCritiqueFn: async () => ({ id: "c-diff-summary-span-qoder", path: "/tmp" }),
+        // Stub the pre-pass call itself (not under test here — the S2/task-10
+        // wiring tests above already prove the callFn is genuinely
+        // role-routed); this test only asserts the SPAN ATTRIBUTES.
+        runDiffSummaryFn: async () => ({
+          summary: { intent: "x", key_changes: [], file_count: 1, risks: [], files_with_purpose: [], source: "haiku" as const },
+          usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 10, output_tokens: 5, total_cost_usd: 0 },
+        }),
+      };
+
+      await runCritic(makeOpts({ homeBase: home, tracer: tracer as never, traceStore: store as never }), deps);
+
+      const summarizerSpan = store.spans.find((s) => s.name === "siltpoke.summarizer.haiku");
+      expect(summarizerSpan).toBeDefined();
+      expect(summarizerSpan?.attributes["gen_ai.system"]).toBe("alibaba");
+      expect(summarizerSpan?.attributes["gen_ai.system"]).not.toBe("anthropic");
+      expect(summarizerSpan?.attributes["gen_ai.request.model"]).toBe("qwen-max-latest");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Defect ② — the safety net is structurally unreachable on PASSIVE_BUBBLE.
+//
+// `diffSummary` is declared at run-critic.ts:332 and assigned ONLY inside
+// finalizeSummary(). The PASSIVE_BUBBLE branch passes it by VALUE into the phase
+// and calls finalizeSummary() on the next line, so the phase always receives
+// undefined and autoPromoteSeverity's `hasRisks` is always false.
+//
+// NORMAL does not have this bug: it passes the PROMISE and the phase awaits it.
+//
+// Measured on production data: of PASSIVE_BUBBLE runs whose summary HAD risks,
+// 1,500 / 1,843 (81.4%) still shipped severity=info with an empty critique, and
+// the hasRisks branch has produced 0 of 2,643 outputs in its lifetime.
+// ---------------------------------------------------------------------------
+
+describe("runCritic — PASSIVE_BUBBLE safety net (defect ②)", () => {
+  const RISKY_SUMMARY = {
+    intent: "risky change",
+    key_changes: ["touched auth"],
+    risks: ["drops the tenant check", "no test covers the empty-token path"],
+    file_count: 1,
+    files_with_purpose: [{ path: "src/foo.ts", purpose: "auth" }],
+    source: "haiku" as const,
+  };
+
+  function happyBrain(): BrainOutput {
+    return makeFakeBrainOutput({
+      mood: "happy",
+      pose: "base",
+      bubble_short: "Clean refactor",
+      bubble_long: "",
+      critique_for_claude: "",
+      severity: "info",
+      evidence: [],
+    });
+  }
+
+  test("AC4: the phase receives a defined summary whose risks are non-empty", async () => {
+    let written: BrainOutput | undefined;
+    const deps: RunCriticDeps = {
+      runToolsFn: async () => makeCleanWithDiff(),
+      callBrainFn: async () => ({
+        output: happyBrain(),
+        usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 10, output_tokens: 10, total_cost_usd: 0 },
+      }),
+      runDiffSummaryFn: async () => ({
+        summary: RISKY_SUMMARY,
+        usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 5, output_tokens: 5, total_cost_usd: 0 },
+      }),
+      writeCritiqueFn: async (_base, input) => {
+        written = input.brain_output;
+        return { id: "c-net", path: "/tmp/test" };
+      },
+    };
+
+    const result = await runCritic(makeOpts(), deps);
+    expect(result.decision).toBe("PASSIVE_BUBBLE");
+    // If the summary reached autoPromoteSeverity at all, severity moved off info.
+    expect(written?.severity).toBe("low");
+  });
+
+  test("AC5: the risks Haiku already paid for reach the persisted critique", async () => {
+    let written: BrainOutput | undefined;
+    const deps: RunCriticDeps = {
+      runToolsFn: async () => makeCleanWithDiff(),
+      callBrainFn: async () => ({
+        output: happyBrain(),
+        usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 10, output_tokens: 10, total_cost_usd: 0 },
+      }),
+      runDiffSummaryFn: async () => ({
+        summary: RISKY_SUMMARY,
+        usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 5, output_tokens: 5, total_cost_usd: 0 },
+      }),
+      writeCritiqueFn: async (_base, input) => {
+        written = input.brain_output;
+        return { id: "c-net", path: "/tmp/test" };
+      },
+    };
+
+    await runCritic(makeOpts(), deps);
+    expect(written?.critique_for_claude).toContain("Diff-summary risks (Haiku pre-pass):");
+    expect(written?.critique_for_claude).toContain("drops the tenant check");
+    // And the bubble must stop saying the happy thing while risks are flagged.
+    expect(written?.mood).not.toBe("happy");
+  });
+
+  test("AC4b (positive control): no risks -> no promotion, bubble untouched", async () => {
+    let written: BrainOutput | undefined;
+    const deps: RunCriticDeps = {
+      runToolsFn: async () => makeCleanWithDiff(),
+      callBrainFn: async () => ({
+        output: happyBrain(),
+        usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 10, output_tokens: 10, total_cost_usd: 0 },
+      }),
+      runDiffSummaryFn: async () => ({
+        summary: { ...RISKY_SUMMARY, risks: [] },
+        usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 5, output_tokens: 5, total_cost_usd: 0 },
+      }),
+      writeCritiqueFn: async (_base, input) => {
+        written = input.brain_output;
+        return { id: "c-net", path: "/tmp/test" };
+      },
+    };
+
+    await runCritic(makeOpts(), deps);
+    // Without this, AC4/AC5 could pass for an implementation that promotes
+    // unconditionally -- which would make every clean run look concerning.
+    expect(written?.severity).toBe("info");
+    expect(written?.mood).toBe("happy");
+    expect(written?.critique_for_claude).toBe("");
+  });
+
+  test("AC5b: a REJECTING summary promise must not break the path", async () => {
+    // This is the regression the first draft of the fix would have shipped:
+    // awaiting the raw promise inside the phase throws past finalizeSummary's
+    // catch, its diffSummaryError capture, and the heuristic fallback.
+    let written = false;
+    const deps: RunCriticDeps = {
+      runToolsFn: async () => makeCleanWithDiff(),
+      callBrainFn: async () => ({
+        output: happyBrain(),
+        usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 10, output_tokens: 10, total_cost_usd: 0 },
+      }),
+      runDiffSummaryFn: async () => {
+        throw new BrainError("summariser exploded");
+      },
+      writeCritiqueFn: async () => {
+        written = true;
+        return { id: "c-net", path: "/tmp/test" };
+      },
+    };
+
+    const result = await runCritic(makeOpts(), deps);
+    expect(result.decision).toBe("PASSIVE_BUBBLE");
+    expect(written).toBe(true);
+    expect(result.summaryError).toContain("summariser exploded");
+    // The heuristic fallback still fills in, so the dashboard shows something.
+    expect(result.diffSummary?.source).toBe("heuristic");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// finalizeSummary idempotence.
+//
+// Defect ②'s fix has the PASSIVE_BUBBLE phase settle the summary itself, while
+// the caller's own `await finalizeSummary()` stays put — it is still the only
+// one on the paths where the phase returns early. So finalizeSummary now runs
+// twice on the happy path and must be a no-op the second time.
+//
+// A mutation run found this uncovered: neutering the `summarySettled` guard left
+// all 39 tests green. The observable damage is a duplicated audit line in
+// logs/diff-summary.log, which is what this asserts. (`timing.summary_ms` also
+// gets recomputed, but that field is already known to measure the wrong thing —
+// defect ⑨ — so it is not the thing to pin behaviour on.)
+// ---------------------------------------------------------------------------
+
+describe("runCritic — finalizeSummary runs its side effects once", () => {
+  test("one PASSIVE_BUBBLE run appends exactly one diff-summary.log line", async () => {
+    const home = mkdtempSync(join(tmpdir(), "siltpoke-finalize-"));
+    try {
+      const deps: RunCriticDeps = {
+        runToolsFn: async () => makeCleanWithDiff(),
+        callBrainFn: async () => ({
+          output: makeFakeBrainOutput({ severity: "info", critique_for_claude: "", evidence: [] }),
+          usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 10, output_tokens: 10, total_cost_usd: 0 },
+        }),
+        runDiffSummaryFn: async () => ({
+          summary: {
+            intent: "x",
+            key_changes: ["k"],
+            risks: ["r"],
+            file_count: 1,
+            files_with_purpose: [{ path: "src/foo.ts", purpose: "p" }],
+            source: "haiku" as const,
+          },
+          usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 1, output_tokens: 1, total_cost_usd: 0 },
+        }),
+        writeCritiqueFn: async () => ({ id: "c-once", path: "/tmp/test" }),
+      };
+
+      const result = await runCritic(makeOpts({ homeBase: home }), deps);
+      expect(result.decision).toBe("PASSIVE_BUBBLE");
+
+      const { readFileSync } = await import("node:fs");
+      const log = readFileSync(join(home, "logs", "diff-summary.log"), "utf8");
+      const lines = log.split("\n").filter((l) => l.trim().length > 0);
+      expect(lines.length).toBe(1);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC8 — what the brain.find span records, decided rather than inherited.
+//
+// autoPromoteSeverity mutates the critique IN PLACE, and `critique` is the same
+// object reference as `brainResult.output`. tracer.setOutput runs at
+// passive-bubble.ts:130, BEFORE the promotion at :166 — so whether the span shows
+// the promoted or the un-promoted severity depends entirely on whether setOutput
+// serialises eagerly or holds the reference. Reading the code says eagerly
+// (tracer.ts:138 calls jsonSerialize immediately); this asserts it, because "the
+// span records the raw model output" is a claim the code has to keep, not a
+// comment that happens to be true today.
+//
+// The eager behaviour is the one we want: siltpoke.brain.find is the record of
+// what the reviewer model actually returned. The promoted value is what the user
+// sees, and it is asserted separately by AC4/AC5.
+// ---------------------------------------------------------------------------
+
+describe("runCritic — brain.find span records the raw Brain output (AC8)", () => {
+  test("span shows severity=info while the persisted critique shows the promotion", async () => {
+    const tracer = new Tracer();
+    const store = new FakeTraceStore();
+    let written: BrainOutput | undefined;
+
+    const deps: RunCriticDeps = {
+      runToolsFn: async () => makeCleanWithDiff(),
+      callBrainFn: async () => ({
+        output: makeFakeBrainOutput({
+          mood: "happy",
+          pose: "base",
+          bubble_short: "Clean refactor",
+          critique_for_claude: "",
+          severity: "info",
+          evidence: [],
+        }),
+        usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 10, output_tokens: 10, total_cost_usd: 0 },
+      }),
+      runDiffSummaryFn: async () => ({
+        summary: {
+          intent: "risky",
+          key_changes: ["k"],
+          risks: ["drops the tenant check"],
+          file_count: 1,
+          files_with_purpose: [{ path: "src/foo.ts", purpose: "p" }],
+          source: "haiku" as const,
+        },
+        usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 1, output_tokens: 1, total_cost_usd: 0 },
+      }),
+      writeCritiqueFn: async (_base, input) => {
+        written = input.brain_output;
+        return { id: "c-span", path: "/tmp/test" };
+      },
+    };
+
+    await runCritic(makeOpts({ tracer: tracer as never, traceStore: store as never }), deps);
+
+    // The promotion happened...
+    expect(written?.severity).toBe("low");
+
+    // ...and the brain.find span still holds what the model itself said.
+    const brainSpan = store.spans.find((s) => s.name === "siltpoke.brain.find");
+    expect(brainSpan).toBeDefined();
+    const output = String(brainSpan?.attributes["siltpoke.output"] ?? "");
+    // The span attribute holds pretty-printed JSON, hence the space.
+    expect(output).toContain('"severity": "info"');
+    expect(output).not.toContain('"severity": "low"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC7 — the latency claim, measured rather than asserted.
+//
+// D1 chose to have the phase settle the summary itself rather than serialise it
+// in front of the Brain call. The first draft of the spec called that "zero added
+// latency", which a cross-family review corrected: it is zero only when the
+// summary settles before the Brain call returns, so the honest claim is that the
+// path costs max(T_brain, T_summary) rather than their sum.
+//
+// The test must use OVERLAPPING controlled timers. Instantly-resolved fixture
+// promises make every implementation pass, including the serialised one D1
+// rejected -- which is exactly how this AC was vacuous in its first form.
+// ---------------------------------------------------------------------------
+
+describe("runCritic — the summary overlaps the Brain call, not queues behind it (AC7)", () => {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  test("PASSIVE_BUBBLE total is about max(T_brain, T_summary), not the sum", async () => {
+    const T_BRAIN = 120;
+    const T_SUMMARY = 150;
+
+    const deps: RunCriticDeps = {
+      runToolsFn: async () => makeCleanWithDiff(),
+      callBrainFn: async () => {
+        await sleep(T_BRAIN);
+        return {
+          output: makeFakeBrainOutput({ severity: "info", critique_for_claude: "", evidence: [] }),
+          usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 10, output_tokens: 10, total_cost_usd: 0 },
+        };
+      },
+      runDiffSummaryFn: async () => {
+        await sleep(T_SUMMARY);
+        return {
+          summary: {
+            intent: "x",
+            key_changes: ["k"],
+            risks: ["r"],
+            file_count: 1,
+            files_with_purpose: [{ path: "src/foo.ts", purpose: "p" }],
+            source: "haiku" as const,
+          },
+          usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 1, output_tokens: 1, total_cost_usd: 0 },
+        };
+      },
+      writeCritiqueFn: async () => ({ id: "c-timing", path: "/tmp/test" }),
+    };
+
+    const started = Date.now();
+    const result = await runCritic(makeOpts(), deps);
+    const elapsed = Date.now() - started;
+
+    expect(result.decision).toBe("PASSIVE_BUBBLE");
+    // Serialised would be >= 270ms. Overlapped is ~150ms. The midpoint is a wide
+    // enough gate to stay stable on a loaded machine while still failing the
+    // serialised implementation outright.
+    expect(elapsed).toBeLessThan(T_BRAIN + T_SUMMARY - 40);
+    // And it genuinely waited for the summary -- otherwise this asserts nothing
+    // about ordering, only that the run was fast.
+    expect(elapsed).toBeGreaterThanOrEqual(T_SUMMARY - 20);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC6 — NORMAL is unchanged, proven on the inputs that could break it.
+//
+// Both paths share coerceLengths and both consume the summary, so a happy-path
+// -only assertion is vacuous. These are the two shapes this slice actually
+// touched: an over-cap summary, and a rejecting summary promise.
+// ---------------------------------------------------------------------------
+
+describe("runCritic — NORMAL path is unaffected by the summary changes (AC6)", () => {
+  // Composed rather than reused: the existing tsc-error fixtures carry an empty
+  // `parsed` for git-diff, which makes diffBody empty and skips the summariser
+  // entirely — the test would then pass while asserting nothing about NORMAL's
+  // handling of a summary. This one has real hunks AND a real tsc finding.
+  const normalTools = () => {
+    const base = makeCleanWithDiff();
+    return {
+      ...base,
+      tsc: makeWithTscError().tsc,
+    };
+  };
+
+  test("over-cap arrays: NORMAL still completes and gets the truncation counts", async () => {
+    let written: BrainOutput | undefined;
+    const deps: RunCriticDeps = {
+      runToolsFn: async () => normalTools(),
+      callBrainFn: async () => ({
+        output: makeFakeBrainOutput({ severity: "medium", critique_for_claude: "real finding", evidence: [] }),
+        usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 10, output_tokens: 10, total_cost_usd: 0 },
+      }),
+      runDiffSummaryFn: async () => ({
+        // Already coerced by runDiffSummary in production; here the dep is stubbed,
+        // so the point is that NORMAL carries whatever shape it is handed without
+        // choking on the new field.
+        summary: {
+          intent: "x",
+          key_changes: ["a", "b", "c", "d", "e", "f", "g", "h"],
+          risks: ["r1", "r2", "r3", "r4", "r5", "r6"],
+          file_count: 1,
+          files_with_purpose: [{ path: "src/foo.ts", purpose: "p" }],
+          source: "haiku" as const,
+          truncated: { key_changes: 1, risks: 1 },
+        },
+        usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 1, output_tokens: 1, total_cost_usd: 0 },
+      }),
+      writeCritiqueFn: async (_base, input) => {
+        written = input.brain_output;
+        return { id: "c-normal", path: "/tmp/test" };
+      },
+    };
+
+    const result = await runCritic(makeOpts(), deps);
+    expect(result.decision).toBe("NORMAL");
+    // The new field survives the NORMAL path's own summary handling, which is a
+    // different code path from PASSIVE_BUBBLE's and reads phase.diffSummary.
+    expect(result.diffSummary?.truncated).toEqual({ key_changes: 1, risks: 1 });
+    // An empty evidence array used to make this run guard_rejected, so
+    // writeCritiqueFn never fired and this asserted `written` was undefined.
+    // Since 2026-08-19 the review is written and labelled instead, so the
+    // write DOES fire — and it carries the severity the safety net left alone
+    // (that property is unit-tested directly in
+    // tests/critic/auto-promote-severity.test.ts; asserted here only to the
+    // extent that the persisted object is the reviewer's, not an empty stub).
+    expect(written).toBeDefined();
+    expect(written?.critique_for_claude).toBe("real finding");
+    expect(written?.evidence).toEqual([]);
+  });
+
+  test("rejecting summary promise: NORMAL still completes, with the heuristic fallback", async () => {
+    const deps: RunCriticDeps = {
+      runToolsFn: async () => normalTools(),
+      callBrainFn: async () => ({
+        output: makeFakeBrainOutput({ severity: "medium", critique_for_claude: "real finding", evidence: [] }),
+        usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 10, output_tokens: 10, total_cost_usd: 0 },
+      }),
+      runDiffSummaryFn: async () => {
+        throw new BrainError("summariser exploded on NORMAL");
+      },
+      writeCritiqueFn: async () => ({ id: "c-normal", path: "/tmp/test" }),
+    };
+
+    const result = await runCritic(makeOpts(), deps);
+    expect(result.decision).toBe("NORMAL");
+    // The heuristic fallback fires, so the dashboard still shows a summary.
+    expect(result.diffSummary?.source).toBe("heuristic");
+    // ...and NORMAL now reports the summariser failure, same as PASSIVE_BUBBLE.
+    //
+    // This assertion was `toBeUndefined()` until 2026-08-19, and the asymmetry
+    // it recorded turns out to have been an artifact: this fixture's empty
+    // evidence array sent it down the guard-rejected return, and THAT return
+    // was the one that omitted `summaryError`. Removing the rejection branch
+    // removed the asymmetry with it — nothing here was fixed on purpose, so it
+    // is recorded rather than claimed as a feature.
+    expect(result.summaryError).toBe("summariser exploded on NORMAL");
   });
 });

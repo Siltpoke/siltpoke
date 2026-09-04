@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadFixtures, type Fixture } from "./harness";
+import { siltpokeRoot } from "../installer/paths";
 
 export { loadFixtures };
 
-const SEED_SET_PATH = join(homedir(), ".siltpoke", "eval", "seed-set.jsonl");
+const SEED_SET_PATH = join(siltpokeRoot(), "eval", "seed-set.jsonl");
 
 /**
  * Load eval fixtures from a seed-set JSONL file at `~/.siltpoke/eval/seed-set.jsonl`.

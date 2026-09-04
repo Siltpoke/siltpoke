@@ -36,6 +36,16 @@ import {
 
 // ── temp-home harness ────────────────────────────────────────────────────────
 
+const TEST_SECRET = "test-secret";
+
+const ELIGIBLE_PROJECT = async () => ({
+  project_id: null,
+  proj_hash: null,
+  project_root: null,
+  display_name: null,
+  source: "explicit" as const,
+});
+
 const teardowns: (() => void)[] = [];
 afterEach(() => {
   while (teardowns.length > 0) teardowns.pop()?.();
@@ -141,7 +151,7 @@ function buildApp(
   factory: (opts: StreamChatOptions) => AsyncGenerator<StreamEvent, void, void>,
 ): Hono {
   const app = new Hono();
-  mountChatRoutes(app, { homeBase: home, index: idx, streamFactory: factory });
+  mountChatRoutes(app, { homeBase: home, resolveProject: ELIGIBLE_PROJECT, index: idx, streamFactory: factory, secret: TEST_SECRET });
   return app;
 }
 
@@ -173,7 +183,7 @@ async function send(
 ): Promise<{ sid: string; sse: string; frames: SseFrame[] }> {
   const res = await app.request("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
     body: JSON.stringify(body),
   });
   expect(res.status).toBe(200);

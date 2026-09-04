@@ -5,7 +5,7 @@
  *
  * WHY (eval evidence): a paid calibration run found the ONLY
  * systematic extractor failure was the numeric trap — 1/6 exact match. Haiku
- * classifies "我有 3 只猫" against stored "用户养了 2 只猫" as contradict at
+ * classifies  against stored  as contradict at
  * confidence 0.95-1.0, ignoring the prompt's numeric-specifics guard, and
  * because its confidence curve is flat at the extremes the threshold ladder
  * cannot catch it. So the guard is promoted from prompt (defense-in-depth)
@@ -20,23 +20,23 @@
  *   2. Either side has NO numeric token → false (nothing numeric to differ on).
  *   3. Token sequences identical → false (same numbers ≠ a numeric-difference
  *      case; this also protects true contradictions that merely share a zh
- *      numeral, e.g. "在一家AI创业公司做后端" vs "用户在一家银行工作" — both
- *      carry "一", sequences match, guard stays out of the way).
+ *      numeral, e.g.  vs  — both
+ *      carry , sequences match, guard stays out of the way).
  *   4. Residues = both texts minus their numeric tokens, lowercased, stripped
  *      of whitespace + punctuation/symbols (zh + ascii).
  *   5. Residue similarity ≥ 0.6 → true. Residue shorter than 2 chars on either
- *      side → fall back to strict equality ("90后" vs "00后" → residues "后").
+ *      side → fall back to strict equality ("90后" vs "00后" → residues ).
  *
  * SIMILARITY METRIC (deliberate deviation from the plain bigram-Dice sketch,
  * measured on the real cached eval outputs): extracted claims are often
- * subject-dropped fragments ("有 3 只猫") while stored candidates are canonical
- * third-person ("用户养了 2 只猫"). Dice punishes that length asymmetry — the
+ * subject-dropped fragments () while stored candidates are canonical
+ * third-person (). Dice punishes that length asymmetry — the
  * flagship cat pair scores 0.25 and the guard never fires. Instead we score
  * CONTAINMENT (overlap coefficient, |A∩B| / min(|A|,|B|)) over the union of
  * character UNIGRAMS + BIGRAMS of the residues — CJK-friendly (single hanzi
  * carry meaning; bigrams keep en discriminative) and fragment-tolerant. On the
  * cached eval pairs: true numeric traps score 0.60-1.0, impostor pairs
- * ("我有3只猫" vs "用户住在2楼") score 0.
+ * ( vs ) score 0.
  *
  * CONSERVATIVE DIRECTION: a false POSITIVE here downgrades a contradict to a
  * plain add — the claim still lands, coexisting with the old fact, fully
@@ -46,15 +46,15 @@
  *
  * Known accepted misses: cross-language pairs (the extractor sometimes answers
  * an English message with a Chinese fact — eval case nt-en-01) share no
- * residue grams and stay contradicts; and "3" vs "三" count as DIFFERENT
+ * residue grams and stay contradicts; and "3" vs  count as DIFFERENT
  * tokens (no numeral normalization), which only ever fires the guard more —
  * still the safe direction.
  *
- * @example numericallyEquivalent("有 3 只猫", "用户养了 2 只猫")        // true
- * @example numericallyEquivalent("每周跑步 5 次", "用户每周跑步 3 次")   // true
- * @example numericallyEquivalent("我有 2 只猫", "用户养了 2 只猫")      // false (same numbers)
- * @example numericallyEquivalent("用户养狗", "用户养鱼")                // false (no numbers)
- * @example numericallyEquivalent("我有3只猫", "用户住在2楼")            // false (different topic)
+ * @example numericallyEquivalent(, )        // true
+ * @example numericallyEquivalent(, )   // true
+ * @example numericallyEquivalent(, )      // false (same numbers)
+ * @example numericallyEquivalent(, )                // false (no numbers)
+ * @example numericallyEquivalent(, )            // false (different topic)
  */
 
 /**

@@ -14,10 +14,10 @@
  *   1  no memory store found
  */
 
-import { join } from "node:path";
 import { readMemory, writeMemory } from "../memory/memory";
 import { tagUntaggedEntities } from "../memory/tag-entities";
 import type { CoreMemory } from "../memory/memory";
+import { siltpokeRoot } from "../installer/paths";
 
 export type OutputFn = (msg: string) => void;
 
@@ -38,7 +38,7 @@ export async function runTagEntities(opts: TagEntitiesCliOpts = {}): Promise<num
   const read = opts.readMemory ?? readMemory;
   const write = opts.writeMemory ?? writeMemory;
   const tag = opts.tagFn ?? tagUntaggedEntities;
-  const homeBase = opts.homeBase ?? join(process.env.HOME ?? "", ".siltpoke");
+  const homeBase = opts.homeBase ?? siltpokeRoot();
 
   let before: CoreMemory | null;
   try {
@@ -87,7 +87,7 @@ export async function runTagEntities(opts: TagEntitiesCliOpts = {}): Promise<num
 }
 
 if (import.meta.main) {
-  const homeBase = join(process.env.HOME ?? "", ".siltpoke");
+  const homeBase = siltpokeRoot();
   const code = await runTagEntities({ homeBase });
   process.exit(code);
 }

@@ -19,11 +19,20 @@ export interface SpeciesArt {
 
 export interface Species {
   name: string;
+  /**
+   * Compact single-glyph face for the macOS menu-bar pet — a small,
+   * species-recognizable emoji "head" (🐱 / 🤖 / …). Deliberately STABLE
+   * (not mood-driven): the menu bar aggregates many sessions at once, so it
+   * can't flip expressions the way the per-session statusline face does.
+   * Severity/attention is carried by the `⚠N` badge instead.
+   */
+  menubarEmoji: string;
   art: SpeciesArt;
 }
 
 const slime: Species = {
   name: "slime",
+  menubarEmoji: "🟢",
   art: {
     base: [" .---. ", " (o.o) ", " (___) "].join("\n"),
     concerned: [" .---. ", " (>.<) ", " (___) "].join("\n"),
@@ -40,6 +49,7 @@ const slime: Species = {
 
 const cat: Species = {
   name: "cat",
+  menubarEmoji: "🐱",
   art: {
     base: [" /\\_/\\ ", " (o.o) ", " > ^ < "].join("\n"),
     concerned: [" /\\_/\\ ", " (>.<) ", " > _ < "].join("\n"),
@@ -56,6 +66,7 @@ const cat: Species = {
 
 const owl: Species = {
   name: "owl",
+  menubarEmoji: "🦉",
   art: {
     base: [" ,-,-, ", " (O,O) ", " ===== "].join("\n"),
     concerned: [" ,-,-, ", " (>,<) ", " ===== "].join("\n"),
@@ -72,6 +83,7 @@ const owl: Species = {
 
 const robot: Species = {
   name: "robot",
+  menubarEmoji: "🤖",
   art: {
     base: [" [---] ", " |o-o| ", " [___] "].join("\n"),
     concerned: [" [---] ", " |x-x| ", " [___] "].join("\n"),
@@ -88,6 +100,7 @@ const robot: Species = {
 
 const bunny: Species = {
   name: "bunny",
+  menubarEmoji: "🐰",
   art: {
     base: [" (\\_/) ", " (o.o) ", " (=v=) "].join("\n"),
     concerned: [" (\\_/) ", " (>.<) ", " (=v=) "].join("\n"),

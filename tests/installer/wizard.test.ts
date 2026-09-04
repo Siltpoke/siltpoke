@@ -3,6 +3,7 @@ import {
   askYesNo,
   askText,
   askChoice,
+  askLabeledMultiChoice,
   type WizardIO,
 } from "../../src/installer/wizard";
 
@@ -85,4 +86,51 @@ test("ANSI cyan prefix present in prompts", async () => {
   const io = fakeIO(["y"]);
   await askYesNo(io, "ok?");
   expect(io.output.join("")).toContain("\x1b[36m");
+});
+
+test("askLabeledMultiChoice: select multiple by index", async () => {
+  const choices = [
+    { value: "claude-code", label: "Claude Code" },
+    { value: "codex", label: "Codex" },
+  ] as const;
+  const got = await askLabeledMultiChoice(
+    fakeIO(["1, 2"]),
+    "agents?",
+    choices,
+    ["claude-code"],
+  );
+  expect(got).toEqual(["claude-code", "codex"]);
+});
+
+test("askLabeledMultiChoice: empty input uses defaults", async () => {
+  const choices = [
+    { value: "claude-code", label: "Claude Code" },
+    { value: "codex", label: "Codex" },
+  ] as const;
+  const got = await askLabeledMultiChoice(
+    fakeIO([""]),
+    "agents?",
+    choices,
+    ["claude-code"],
+  );
+  expect(got).toEqual(["claude-code"]);
+});
+
+test("askChoice: choice value 'y' collides with --yes sentinel", async () => {
+  const choices = ["y", "no", "maybe"] as const;
+  const io = fakeIO([]);
+  await expect(askChoice(io, "proceed?", choices)).rejects.toThrow(
+    "choice value 'y'/'Y' collides with the --yes accept-default sentinel",
+  );
+});
+
+test("askLabeledMultiChoice: choice value 'Y' collides with --yes sentinel", async () => {
+  const choices = [
+    { value: "Y" as const, label: "Yes" },
+    { value: "N" as const, label: "No" },
+  ];
+  const io = fakeIO([]);
+  await expect(askLabeledMultiChoice(io, "proceed?", choices, [])).rejects.toThrow(
+    "choice value 'y'/'Y' collides with the --yes accept-default sentinel",
+  );
 });

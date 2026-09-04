@@ -81,8 +81,13 @@ function isTsconfigFile(name: string): boolean {
   return /^tsconfig.*\.json$/.test(name);
 }
 
+// `mts` / `cts` are included because ESLint 9 accepts them and this list is now
+// load-bearing: run-tools schedules eslint only when this pattern found a config,
+// so a name missing here silently disables the tool for a repo that has one.
+// Before that change the omission was harmless — eslint ran regardless and
+// resolved its own config — which is exactly why it went unnoticed.
 const ESLINT_CONFIG_PATTERN =
-  /^\.eslintrc(\.(json|ya?ml|js|cjs|mjs))?$|^eslint\.config\.(js|mjs|cjs|ts)$/;
+  /^\.eslintrc(\.(json|ya?ml|js|cjs|mjs))?$|^eslint\.config\.(js|mjs|cjs|ts|mts|cts)$/;
 
 function isEslintConfigFile(name: string): boolean {
   return ESLINT_CONFIG_PATTERN.test(name);

@@ -39,7 +39,7 @@ test("card: defaults render when no state/config", async () => {
   expect(r.level).toBe(1);
   expect(r.xp).toBe(0);
   expect(r.brain_calls_today).toBe(0);
-  expect(r.trigger_mode).toBe("gates");
+  expect(r.review_unit).toBe("commit");
   expect(r.card_text).toContain("Siltpoke the slime");
 });
 
@@ -327,7 +327,9 @@ test("card shows ⚠ brain line when ≥2 consecutive transient failures", async
   writeBrainHealth(homeBase, h);
   const r = await runCard({ homeBase, now: () => noon });
   expect(r.brain_warning).toContain("ambiguous");
-  expect(r.card_text).toContain("⚠ brain: ambiguous");
+  // Wording follows `brainUnhealthySignal`: state first. An `ambiguous` pair
+  // opens no breaker, so this is the past-tense branch.
+  expect(r.card_text).toContain("2 ambiguous failures");
 });
 
 test("permanent class surfaces on the card at the FIRST failure", async () => {
@@ -335,8 +337,11 @@ test("permanent class surfaces on the card at the FIRST failure", async () => {
   h = recordFailure(h, { class: "permanent", exit_code: 1, stderr_excerpt: "Invalid API key", ts: noon.toISOString() });
   writeBrainHealth(homeBase, h);
   const r = await runCard({ homeBase, now: () => noon });
-  expect(r.card_text).toContain("⚠ brain: permanent");
+  expect(r.card_text).toContain("permanent");
+  // The reason survives on the card specifically because there is no tooltip
+  // here — see `brainUnhealthySignal`'s permanent branch.
   expect(r.card_text).toContain("Invalid API key");
+  expect(r.card_text).toContain("/siltpoke-wake");
 });
 
 test("card line clears automatically after the next success (no user ack)", async () => {

@@ -17,6 +17,7 @@ export { buildLogRows, injectSupersedeRows } from "./action-log-client";
 
 import type { EntityRef } from "../../../memory/entity";
 import { groupByEntity } from "../../../memory/entity";
+import { tokens } from "../../tokens/tokens";
 import type { FactEvent, LogRow } from "./action-log-client";
 import { buildLogRows, injectSupersedeRows } from "./action-log-client";
 
@@ -69,6 +70,13 @@ export interface MemoryEventClient {
   kind?: "style" | "profile" | null;
   /** Named entities this fact is about (Fact.entities), for the "by entity" view. */
   entities?: EntityRef[] | null;
+  /**
+   * Manual decay-protection flag (Fact.pinned). Drives the 📌 pin/unpin
+   * control on /memory (POST /api/facts/:id/pin). undefined/absent for
+   * non-fact rows (episodic/procedural) and legacy SSR payloads that predate
+   * this field — treated as unpinned.
+   */
+  pinned?: boolean;
 }
 
 export interface RecentChatClient {
@@ -101,24 +109,24 @@ export interface StatusMeta {
 export const TYPE_META: Record<MemoryType, TypeMeta> = {
   semantic: {
     label: "Semantic",
-    color: "#7fb0c8",
-    ink: "#5a86a0",
-    bg: "rgba(127,176,200,.13)",
-    bd: "rgba(127,176,200,.45)",
+    color: tokens.color.sky,
+    ink: tokens.color.memTypeInkSemantic,
+    bg: "color-mix(in srgb, var(--color-sky) 13%, transparent)",
+    bd: "color-mix(in srgb, var(--color-sky) 45%, transparent)",
   },
   episodic: {
     label: "Episodic",
-    color: "#9d86c2",
-    ink: "#8a72a8",
-    bg: "rgba(157,134,194,.13)",
-    bd: "rgba(157,134,194,.45)",
+    color: tokens.color.violet,
+    ink: tokens.color.memTypeInkEpisodic,
+    bg: "color-mix(in srgb, var(--color-violet) 13%, transparent)",
+    bd: "color-mix(in srgb, var(--color-violet) 45%, transparent)",
   },
   procedural: {
     label: "Procedural",
-    color: "#7a9a5e",
-    ink: "#5e7048",
-    bg: "rgba(122,154,94,.14)",
-    bd: "rgba(122,154,94,.45)",
+    color: tokens.color.moss,
+    ink: tokens.color.memTypeInkProcedural,
+    bg: "color-mix(in srgb, var(--color-moss) 14%, transparent)",
+    bd: "color-mix(in srgb, var(--color-moss) 45%, transparent)",
   },
 };
 
@@ -126,21 +134,24 @@ export const TYPE_META: Record<MemoryType, TypeMeta> = {
 export const STATUS_META: Record<MemoryStatus, StatusMeta> = {
   active: {
     label: "Active",
-    ink: "#5a7a3e",
-    bg: "rgba(122,154,94,.15)",
-    bd: "rgba(122,154,94,.45)",
+    ink: tokens.color.memStatusActiveInk,
+    bg: "color-mix(in srgb, var(--color-moss) 15%, transparent)",
+    bd: "color-mix(in srgb, var(--color-moss) 45%, transparent)",
   },
   pending: {
     label: "Pending",
-    ink: "#a06a1e",
-    bg: "rgba(232,168,92,.18)",
-    bd: "rgba(232,168,92,.5)",
+    ink: tokens.color.memStatusPendingInk,
+    // 18% — also MemoryComposer.tsx's `awaitingPillStyle.background`, which
+    // was independently hand-tuned to 20%; consolidated to this one % (the
+    // classification's "collapse the two %s into one" finding).
+    bg: "color-mix(in srgb, var(--color-amber) 18%, transparent)",
+    bd: "color-mix(in srgb, var(--color-amber) 50%, transparent)",
   },
   retired: {
     label: "Retired",
-    ink: "#b84a4a",
-    bg: "rgba(217,107,107,.13)",
-    bd: "rgba(217,107,107,.4)",
+    ink: tokens.color.memStatusRetiredInk,
+    bg: "color-mix(in srgb, var(--color-terra) 13%, transparent)",
+    bd: "color-mix(in srgb, var(--color-terra) 40%, transparent)",
   },
 };
 
@@ -151,25 +162,25 @@ export const MODAL_META: Record<
   semantic: {
     title: "Semantic Memory",
     en: "SEMANTIC",
-    color: "#7fb0c8",
+    color: tokens.color.sky,
     desc: "Facts and knowledge — about this repo and your preferences",
   },
   episodic: {
     title: "Episodic Memory",
     en: "EPISODIC",
-    color: "#9d86c2",
+    color: tokens.color.violet,
     desc: "Things that happened — what it did, how you reacted",
   },
   procedural: {
     title: "Procedural Memory",
     en: "PROCEDURAL",
-    color: "#7a9a5e",
+    color: tokens.color.moss,
     desc: "Learned rules — how it does things (personality tuning in Settings)",
   },
   working: {
     title: "Working Memory",
     en: "WORKING",
-    color: "#d96b6b",
+    color: tokens.color.terra,
     desc: "Short-term — current conversation + cross-chat recall, not written to the Memory Book",
   },
 };
@@ -264,7 +275,7 @@ export interface Proposal {
   contradictedText?: string;
   /** The user's ORIGINAL typed message — stored as the new fact's save_reason
    * on confirm so a hand-typed memory's 为什么 line shows the user's own words
-   * (provenance), not the "没记下来源（早期记忆）" fallback. */
+   * (provenance), not the  fallback. */
   sourceText?: string;
 }
 
@@ -428,12 +439,12 @@ export function deriveClientSummary(m: MemoryEventClient, events: FactEvent[]): 
 }
 
 const STREAM_BADGE: Record<string, { label: string; color: string }> = {
-  user:      { label: "✍️ you typed",     color: "#9d86c2" }, // violet
-  commit:    { label: "🤖 from commits",  color: "#7a9a5e" }, // moss
-  chat:      { label: "💬 from chat",     color: "#7fb0c8" }, // sky
-  critique:  { label: "🔍 from review", color: "#e8a85c" }, // amber
-  dismissal: { label: "👋 dismissed",     color: "#d96b6b" }, // terra
-  remember:  { label: "💾 remembered",    color: "#5a4f3f" }, // ink2
+  user:      { label: "✍️ you typed",     color: tokens.color.violet },
+  commit:    { label: "🤖 from commits",  color: tokens.color.moss },
+  chat:      { label: "💬 from chat",     color: tokens.color.sky },
+  critique:  { label: "🔍 from review", color: tokens.color.amber },
+  dismissal: { label: "👋 dismissed",     color: tokens.color.terra },
+  remember:  { label: "💾 remembered",    color: tokens.color.ink2 },
 };
 
 function streamBadgeMeta(stream?: string | null): { badge: string | null; color: string } {
@@ -446,9 +457,9 @@ function streamBadgeMeta(stream?: string | null): { badge: string | null; color:
 // 🪪 for profile (NOT 💬 — that's the chat STREAM badge; a fact can carry both,
 // so the kind badge needs a distinct glyph). Shown on fact rows only.
 const KIND_BADGE: Record<"style" | "profile" | "untagged", { label: string; color: string }> = {
-  style: { label: "🎯 style", color: "#c2783a" }, // shapes the critic's critiques
-  profile: { label: "🪪 profile", color: "#6b7a9a" }, // chat-only — kept out of code reviews
-  untagged: { label: "❓ untagged", color: "#a89a86" }, // not yet classified
+  style: { label: "🎯 style", color: tokens.color.memKindStyle }, // shapes the critic's critiques
+  profile: { label: "🪪 profile", color: tokens.color.memKindProfile }, // chat-only — kept out of code reviews
+  untagged: { label: "❓ untagged", color: tokens.color.memKindUntagged }, // not yet classified
 };
 
 function kindBadgeMeta(kind?: "style" | "profile" | null): { badge: string; color: string } {
@@ -496,7 +507,7 @@ export function decorateRow(m: MemoryEventClient, all?: MemoryEventClient[]): De
     statusInk: s.ink,
     statusBg: s.bg,
     statusBd: s.bd,
-    cardBg: m.status === "retired" ? "#f6f1e6" : "#fffdf8",
+    cardBg: m.status === "retired" ? tokens.color.memCardBgRetired : tokens.color.memCardBg,
     segs: segs(m.text),
     reaffirmCount: m.recall_count ?? 0,
     reaffirmAt: m.last_confirmed_at
@@ -566,7 +577,7 @@ export function groupMemoriesByEntity(
 }
 
 /**
- * Deterministic "改记忆" matcher (NO LLM).
+ * Deterministic  matcher (NO LLM).
  * Forget/retire intent + exactly one matching non-retired semantic fact →
  * actionable proposal. Otherwise an honest non-actionable proposal.
  */

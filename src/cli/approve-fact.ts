@@ -20,20 +20,19 @@
  *   3  CLI flag error (missing id)
  */
 
-import { join } from "node:path";
-import type { CoreMemory } from "../memory/memory";
 import { readMemory, writeMemory } from "../memory/memory";
 import { approveFactCore } from "../memory/transitions";
+import {
+  defaultOutput,
+  loadMemoryOrReport,
+  parseSingleFactIdArg,
+  runFactCliMain,
+  writeMemoryOrReport,
+  type OutputFn,
+  type ParsedFactIdArgs,
+} from "./fact-cli-shared";
 
-// ---------------------------------------------------------------------------
-// Output helper
-// ---------------------------------------------------------------------------
-
-export type OutputFn = (msg: string) => void;
-
-const defaultOutput: OutputFn = (msg: string) => {
-  process.stdout.write(`${msg}\n`);
-};
+export type { OutputFn };
 
 // ---------------------------------------------------------------------------
 // Types
@@ -55,25 +54,8 @@ export type ApproveFactOpts = {
 // Arg parsing
 // ---------------------------------------------------------------------------
 
-type ParsedArgs =
-  | { ok: true; id: string }
-  | { ok: false; message: string };
-
-export function parseApproveFactArgs(argv: string[]): ParsedArgs {
-  const positional: string[] = [];
-
-  for (const arg of argv) {
-    if (arg.startsWith("--")) {
-      return { ok: false, message: `unknown flag: ${arg}` };
-    }
-    positional.push(arg);
-  }
-
-  if (positional.length === 0) {
-    return { ok: false, message: "missing fact id — usage: siltpoke approve <fact-id>" };
-  }
-
-  return { ok: true, id: positional[0]! };
+export function parseApproveFactArgs(argv: string[]): ParsedFactIdArgs {
+  return parseSingleFactIdArg(argv, "approve");
 }
 
 // ---------------------------------------------------------------------------
@@ -95,21 +77,10 @@ export async function runApproveFact(opts: ApproveFactOpts): Promise<number> {
 
   const { id } = parsed;
 
-  // Load memory
-  let memory: CoreMemory | null;
-  try {
-    memory = await readFn(opts.homeBase);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    out(`siltpoke approve: read failed: ${msg}`);
-    return 1;
-  }
-
-  // Empty memory → fact-not-found (preserves existing behavior when no file).
-  if (!memory) {
-    out(`siltpoke approve: fact not found: ${id}`);
-    return 1;
-  }
+  // Load memory (read error or empty store both report "fact not found").
+  const loaded = await loadMemoryOrReport(readFn, opts.homeBase, "approve", id, out);
+  if (!loaded.ok) return loaded.exitCode;
+  const { memory } = loaded;
 
   // Delegate find/status-guard/mutation to pure core.
   const result = approveFactCore(memory, id, () => now.toISOString());
@@ -139,13 +110,8 @@ export async function runApproveFact(opts: ApproveFactOpts): Promise<number> {
     }
   }
 
-  try {
-    await writeFn(opts.homeBase, result.memory);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    out(`siltpoke approve: write failed: ${msg}`);
-    return 1;
-  }
+  const writeErr = await writeMemoryOrReport(writeFn, opts.homeBase, result.memory, "approve", out);
+  if (writeErr !== null) return writeErr;
 
   out(`approved fact ${id}: ${result.fact.text}`);
   return 0;
@@ -156,8 +122,5 @@ export async function runApproveFact(opts: ApproveFactOpts): Promise<number> {
 // ---------------------------------------------------------------------------
 
 if (import.meta.main) {
-  const rawArgs = process.argv.slice(2);
-  const homeBase = join(process.env.HOME ?? "", ".siltpoke");
-  const code = await runApproveFact({ argv: rawArgs, homeBase });
-  process.exit(code);
+  await runFactCliMain(runApproveFact);
 }

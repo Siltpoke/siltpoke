@@ -19,8 +19,9 @@ import {
   randomName,
   applyMatchMode,
   QUIZ_LIKERT_ITEMS,
-  QUIZ_FINALE,
+  QUIZ_FINALES,
   type Dials,
+  type FinaleLetter,
   type MatchMode,
   type QuizAnswers,
   type QuizLikertAnswer,
@@ -87,7 +88,7 @@ function buildMethods(
     {
       value: "quiz",
       label:
-        "Take a 6-question personality quiz (~$0.001 Brain call, ~90 seconds)",
+        "Take a quick personality quiz — 5 statements + a few scenarios (~$0.001 Brain call, ~90 seconds)",
     },
   ];
   if (memoryFileCount > 0) {
@@ -295,7 +296,9 @@ export async function runPersonalityWizard(
   }
 
   if (method === "quiz") {
-    io.write(`\n  Quick personality quiz — 5 statements + 1 scenario.\n`);
+    io.write(
+      `\n  Quick personality quiz — 5 statements + ${QUIZ_FINALES.length} scenarios.\n`,
+    );
     io.write(`  Rate each from 1 (strongly disagree) to 5 (strongly agree).\n\n`);
     const likertAnswers: QuizLikertAnswer[] = [];
     for (let i = 0; i < QUIZ_LIKERT_ITEMS.length; i++) {
@@ -304,17 +307,21 @@ export async function runPersonalityWizard(
       likertAnswers.push({ itemIndex: i, score });
     }
 
-    io.write(`\n  One more — scenario question:\n\n`);
-    const finaleChoice = await askLabeledChoice<"a" | "b" | "c" | "d">(
-      io,
-      QUIZ_FINALE.text,
-      QUIZ_FINALE.options.map((o) => ({ value: o.letter, label: o.text })),
-      "a",
-    );
+    io.write(`\n  A few scenario questions:\n\n`);
+    const finaleAnswers: FinaleLetter[] = [];
+    for (const scenario of QUIZ_FINALES) {
+      const choice = await askLabeledChoice<FinaleLetter>(
+        io,
+        scenario.text,
+        scenario.options.map((o) => ({ value: o.letter, label: o.text })),
+        scenario.options[0]!.letter,
+      );
+      finaleAnswers.push(choice);
+    }
 
     const answers: QuizAnswers = {
       likert: likertAnswers,
-      finale: { letter: finaleChoice },
+      finales: finaleAnswers,
     };
     dials = scoreQuiz(answers, matchMode);
 

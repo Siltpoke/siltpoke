@@ -7,8 +7,9 @@ import { AppChrome } from "../atoms/AppChrome";
 import { NavItem } from "../atoms/NavItem";
 import { SectionLabel } from "../atoms/SectionLabel";
 import type { Section } from "../client/stores/navState";
-import { CANONICAL_NAV } from "../routes/nav";
+import { availableNavSections, CANONICAL_NAV } from "../routes/nav";
 import type { NavEntry, NavSection } from "../routes/nav";
+import { iconFor, labelFor } from "../_shared/theme-state";
 
 /** Merge navMetaOverrides into a NavSection array, overriding each entry's meta. */
 function applyNavMetaOverrides(
@@ -90,9 +91,9 @@ export function Dashboard(props: DashboardProps) {
   // Priority: navSections > navItems > CANONICAL_NAV (sectioned).
   const baseSections: readonly NavSection[] | null =
     navSections !== undefined
-      ? navSections
+      ? availableNavSections(navSections)
       : navItems === undefined
-        ? CANONICAL_NAV
+        ? availableNavSections()
         : null;
 
   // Apply live meta overrides when rendering sectioned path.
@@ -183,6 +184,7 @@ export function Dashboard(props: DashboardProps) {
             )}
             <button
               aria-label="Toggle sidebar"
+              data-sidebar-collapse
               x-on:click="toggle()"
               style={{
                 background: "transparent",
@@ -258,40 +260,117 @@ export function Dashboard(props: DashboardProps) {
                 ))}
           </div>
 
-          {/* Daemon footer — green dot + daemon identity.
-             Single-line: no fake budget number (Wave 2 wires real tracker). */}
+          {/* Daemon identity + theme toggle. The toggle deliberately does NOT
+              carry x-show="!collapsed" — the whole point of the control is
+              to be reachable the moment the screen is too bright, including
+              in the 52px rail. Single-line: no fake budget number (Wave 2
+              wires real tracker). */}
           <div
             class="sidebar-footer"
             style={{
               padding: "8px 10px",
               borderTop: `1px solid ${tokens.color.edge}`,
               flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 6,
             }}
-            x-show="!collapsed"
+            {...{
+              // Collapsed, the daemon text is hidden and the toggle is the only
+              // child — space-between would leave it flush-left with 17px of
+              // slack. Mirrors the brand chip's binding at the top of the rail.
+              "x-bind:style": "{ justifyContent: collapsed ? 'center' : 'space-between' }",
+            }}
           >
-            <div
+            {/* The sidebar's daemon line is gone, deliberately. It showed a
+                status dot whose colour was the constant `tokens.color.moss` —
+                green whether or not the daemon was reachable, so it reported
+                nothing — beside a port the reader can already see in the
+                address bar. Two pieces of noise, one of them a lamp wired to
+                always-on. Removed 2026-09-03 rather than made real: a
+                connectedness indicator is worth building only when it is
+                bound to something, and the page rendering at all already
+                proves the daemon answered. */}
+
+
+            {/* SSR renders the `system` state statically — a real glyph as the
+                button's child and a real aria-label — and Alpine overwrites
+                both on hydrate (x-text replaces children, x-bind:aria-label
+                replaces the attribute). Without the static pair the button
+                ships as an empty, unnamed 25x19 box: a screen reader sees an
+                unnamed control (WCAG 4.1.2) until the bundle runs, and
+                permanently if it fails to load. `data-state` is likewise
+                seeded so the e2e state assertions are meaningful pre-hydrate. */}
+            <button
+              type="button"
+              data-theme-toggle
+              data-state="system"
+              title={labelFor("system")}
+              aria-label={`Theme: ${labelFor("system")}`}
+              x-data="themeToggle"
+              x-bind:data-state="state"
+              x-bind:title="label"
+              x-bind:aria-label="'Theme: ' + label"
+              x-on:click="cycle()"
               style={{
-                display: "flex",
+                background: "transparent",
+                border: `1px solid ${tokens.color.edge}`,
+                borderRadius: tokens.radius.sm,
+                color: tokens.color.ink3,
+                cursor: "pointer",
+                fontSize: 11,
+                lineHeight: 1,
+                padding: "3px 6px",
+                flexShrink: 0,
+                display: "inline-flex",
                 alignItems: "center",
                 gap: 5,
-                fontFamily: tokens.font.mono,
-                fontSize: 10,
-                color: tokens.color.ink3,
               }}
             >
-              <span
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  background: tokens.color.moss,
-                  flexShrink: 0,
-                  display: "inline-block",
-                }}
-              />
-              daemon · :9876
-            </div>
+              {/* Two children rather than `x-text` on the button itself: the
+                  glyph alone said nothing about what the control does or which
+                  mode is active — the label carries that. `x-text` on the
+                  button would replace both children on hydrate, so the icon
+                  and the word are bound separately. The word hides when the
+                  sidebar collapses, where only the 52px icon rail is left. */}
+              <span x-text="icon">{iconFor("system")}</span>
+              <span x-show="!collapsed" x-text="label" style={{ whiteSpace: "nowrap" }}>
+                {labelFor("system")}
+              </span>
+            </button>
           </div>
+
+          {/* Which build this daemon is actually serving — its own row, since
+              the row above is a two-column space-between flex and a third
+              child there would displace the theme toggle.
+
+              Hydrated from /api/version rather than SSR'd: the line belongs in
+              the shared shell, and passing it as a prop would mean touching
+              every screen AND binding each screen's SSR test to the machine's
+              git state. Renders nothing until the fetch succeeds — a stale
+              daemon already looks like a healthy one, so a placeholder here
+              would rebuild the very failure this line exists to end. */}
+          <div
+            x-data="buildStamp"
+            data-build-url="/api/version"
+            data-build-stamp
+            x-show="!collapsed && ready"
+            x-bind:title="line.title"
+            x-bind:style="{ color: tone() }"
+            style={{
+              display: "none",
+              padding: "0 10px 8px",
+              flexShrink: 0,
+              fontFamily: tokens.font.mono,
+              fontSize: 10,
+              color: tokens.color.ink3,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+            x-text="line.text"
+          />
         </aside>
 
         {/* Main content area */}

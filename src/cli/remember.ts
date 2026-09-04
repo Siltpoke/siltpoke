@@ -14,10 +14,12 @@
  *   3  CLI flag error (unknown flag, missing claim, malformed --type)
  */
 
-import { join } from "node:path";
 import { z } from "zod";
-import { readMemory, writeMemory, newId, emptyMemory } from "../memory/memory";
+import type { BrainCallRawResult, CallBrainOptions } from "../brain/brain";
+import { makeRoleRawBrain } from "../brain/role-brain";
 import type { CoreMemory } from "../memory/memory";
+import { emptyMemory, newId, readMemory, writeMemory } from "../memory/memory";
+import { siltpokeRoot } from "../installer/paths";
 
 // ---------------------------------------------------------------------------
 // Output helper — process.stdout.write for easy test capture
@@ -101,7 +103,6 @@ const TYPE_INFERENCE_SYSTEM_PROMPT =
   "You categorize a user's memory claim. Reply with JSON only: {\"type\": \"fact\"} or {\"type\": \"goal\"} or {\"type\": \"constraint\"}. " +
   "No other text. fact = observable truth about the user. goal = something they want to achieve. constraint = rule/preference to always follow.";
 
-const TYPE_INFERENCE_MODEL = "claude-haiku-4-5-20251001";
 const TYPE_INFERENCE_TIMEOUT_MS = 15_000;
 
 const TYPE_ENUM = z.enum(["fact", "goal", "constraint"]);
@@ -119,12 +120,22 @@ export function parseInferredType(raw: unknown): RememberType | null {
   return null;
 }
 
-export async function inferMemoryType(claim: string): Promise<RememberType> {
-  const { callBrainRaw } = await import("../brain/brain");
-  const result = await callBrainRaw({
+/**
+ * @param rawBrain injected raw-brain call (single-brain S2, task 11).
+ *   Defaults to a lazy `callBrainRaw` import so any direct caller keeps the
+ *   pre-migration behavior (always claude, no homeBase-resolved model).
+ *   Production callers (runRemember) inject `makeRoleRawBrain(homeBase,
+ *   "extract")` instead, which forces the resolved model itself — this
+ *   function no longer sets `model` on the options it builds.
+ */
+export async function inferMemoryType(
+  claim: string,
+  rawBrain: (opts: CallBrainOptions) => Promise<BrainCallRawResult> = (opts) =>
+    import("../brain/brain").then(({ callBrainRaw }) => callBrainRaw(opts)),
+): Promise<RememberType> {
+  const result = await rawBrain({
     systemPrompt: TYPE_INFERENCE_SYSTEM_PROMPT,
     contextBundle: `Classify this claim: "${claim}"`,
-    model: TYPE_INFERENCE_MODEL,
     timeoutMs: TYPE_INFERENCE_TIMEOUT_MS,
   });
 
@@ -221,7 +232,9 @@ export async function runRemember(opts: RememberOpts): Promise<number> {
   const now = opts.now ?? new Date();
   const readFn = opts.deps?.readMemory ?? readMemory;
   const writeFn = opts.deps?.writeMemory ?? writeMemory;
-  const inferFn = opts.deps?.inferTypeFn ?? inferMemoryType;
+  const inferFn =
+    opts.deps?.inferTypeFn ??
+    ((claim: string) => inferMemoryType(claim, makeRoleRawBrain(opts.homeBase, "extract")));
 
   // Parse args
   const parsed = parseRememberArgs(opts.argv);
@@ -298,7 +311,7 @@ export async function runRemember(opts: RememberOpts): Promise<number> {
 
 if (import.meta.main) {
   const rawArgs = process.argv.slice(2);
-  const homeBase = join(process.env.HOME ?? "", ".siltpoke");
+  const homeBase = siltpokeRoot();
   const code = await runRemember({ argv: rawArgs, homeBase });
   process.exit(code);
 }

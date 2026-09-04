@@ -103,7 +103,10 @@ test("memory book: view toggle shows 4 type cards", async ({ page }) => {
 
   await page.locator(".memory-view-btn").filter({ hasText: "By type" }).click();
 
-  const cards = page.locator(".memory-type-card");
+  // The 4 real memory-type cards carry a `memory-type-card-<type>` suffix class;
+  // ActiveReposPanel also reuses the bare `.memory-type-card` class (making a
+  // plain `.memory-type-card` count 5), so scope to the suffixed cards.
+  const cards = page.locator('[class*="memory-type-card-"]');
   await expect(cards).toHaveCount(4);
   await expect(cards.filter({ hasText: /Semantic/ })).toBeVisible();
   await expect(cards.filter({ hasText: /Episodic/ })).toBeVisible();
@@ -1251,8 +1254,13 @@ test("memory book: 删除 updates action-log live — expanded rail shows 🌙 �
   const rail = row.locator(".memory-action-log-rail");
   await expect(rail).toBeVisible({ timeout: 3_000 });
 
-  // At least one log event verb must contain "退休" (🌙 退休) — the retire event
+  // At least one log event verb must contain  (🌙 退休) — the retire event
   // that was appended live by the mutation handler.
-  const retiredVerb = rail.locator(".memory-action-log-verb", { hasText: "Retired" });
+  // .first(): the sibling test ()
+  // runs retire→reactivate→retire on this SAME seeded fact, so its immutable
+  // event log holds two real "retired" events. When they straddle a minute
+  // boundary (under full-suite load) the rail renders two "○ Retired" verbs;
+  // the intent here is "a Retired verb appeared live", so scope to the first.
+  const retiredVerb = rail.locator(".memory-action-log-verb", { hasText: "Retired" }).first();
   await expect(retiredVerb).toBeAttached({ timeout: 3_000 });
 });

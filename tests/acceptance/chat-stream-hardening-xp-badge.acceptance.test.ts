@@ -153,9 +153,13 @@ function homeApp(homeBase: string): Hono {
   return app;
 }
 
+// POST /api/action is secret-gated (daemon-hardening security audit,
+// finding 2) — every request below now carries this header.
+const TEST_SECRET = "test-secret";
+
 function dashboardApp(homeBase: string): Hono {
   const app = new Hono();
-  mountDashboardRoutes(app, { homeBase });
+  mountDashboardRoutes(app, { homeBase, secret: TEST_SECRET });
   return app;
 }
 
@@ -181,6 +185,7 @@ async function postActionHtmx(
     headers: {
       "content-type": "application/x-www-form-urlencoded",
       "HX-Request": "true",
+      "X-Siltpoke-Secret": TEST_SECRET,
     },
     body: `action=${action}`,
   });
@@ -237,7 +242,7 @@ describe("Home badge reads awarded ledger (actionXpToday) with capped state", ()
     // would want +5 XP) and reports it awarded nothing because of the cap.
     const res = await dashboardApp(homeBase).request("/api/action", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ action: "feed" }),
     });
     expect(res.status).toBe(200);
@@ -409,7 +414,7 @@ describe("exactly one price table (ACTION_BASE_XP); dead symbols gone; vitalsWri
     // First action of the day triggers the yesterday snapshot write.
     const res = await dashboardApp(homeBase).request("/api/action", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ action: "feed" }),
     });
     expect(res.status).toBe(200);

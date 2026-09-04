@@ -283,3 +283,129 @@ describe("DELETE /api/repo-graph/repos/:hash — forget", () => {
     await readSSE(await indexing);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The child's stderr must reach the SSE error event.
+//
+// `defaultIndexRunner` used to spawn with `stderr: "ignore"`. Combined with the
+// dist/ path bug (see repo-graph-indexer-target.test.ts) that meant every
+// dashboard index emitted `error: Module not found …` and the string went
+// nowhere at all — no log, no UI. Capturing it is only half a fix; this pins
+// the other half, that it survives the trip to the client.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A failed or cancelled RE-index must not destroy the index already on disk.
+//
+// The route used to call removeRepoIndex unconditionally on every non-success
+// outcome, which erased builder.ts's own cold-vs-reindex distinction — so a
+// failed re-index threw away a working map, and so did pressing Cancel on one.
+// The unit tests in tests/repo-graph/discard-failed-build.test.ts pin the
+// DECISION; these pin that the route actually routes through it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("a non-success outcome preserves a prior good index", () => {
+  /** Seed what markBuildStart leaves for a re-index: prior fields + building. */
+  function seedPriorGood(hash: string): string {
+    const dir = join(home, "repo-memory", hash);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "meta.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        project_root: proj,
+        proj_hash: hash,
+        last_indexed_ts: "2026-08-01T10:00:00.000Z",
+        counters: { files_walked: 9 },
+        building: true,
+      }),
+    );
+    writeFileSync(join(dir, "nodes.jsonl"), '{"id":"n1"}\n');
+    return dir;
+  }
+
+  const hashOf = () => computeProjHash(proj);
+
+  test("non-zero exit on a re-index keeps the graph and un-sticks building", async () => {
+    const dir = seedPriorGood(hashOf());
+    const failing: IndexRunner = async () => ({ exitCode: 1, timedOut: false, aborted: false });
+
+    const events = await readSSE(await postIndex(makeApp(failing), { path: proj }));
+    expect(events.find((e) => e.event === "error")).toBeDefined();
+
+    // Pre-fix: the whole dir was removed, so this file was gone.
+    expect(existsSync(join(dir, "nodes.jsonl"))).toBe(true);
+    const meta = JSON.parse(readFileSync(join(dir, "meta.json"), "utf8"));
+    expect(meta.building).toBe(false);
+    expect(meta.last_indexed_ts).toBe("2026-08-01T10:00:00.000Z");
+  });
+
+  test("CANCELLING a re-index costs nothing — the map survives", async () => {
+    const dir = seedPriorGood(hashOf());
+    const cancelled: IndexRunner = async () => ({ exitCode: null, timedOut: false, aborted: true });
+
+    const events = await readSSE(await postIndex(makeApp(cancelled), { path: proj }));
+    expect((events.find((e) => e.event === "error")?.data as { message?: string })?.message).toBe(
+      "cancelled",
+    );
+    expect(existsSync(join(dir, "nodes.jsonl"))).toBe(true);
+  });
+
+  test("a COLD build that fails still leaves nothing behind — no stuck entry", async () => {
+    // Negative control: the preserve behaviour must not resurrect the old bug
+    // of a permanent "indexing…" ghost for a repo that never indexed.
+    const hash = hashOf();
+    const dir = join(home, "repo-memory", hash);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "meta.json"),
+      JSON.stringify({ schemaVersion: 1, proj_hash: hash, last_indexed_ts: "", building: true }),
+    );
+    const failing: IndexRunner = async () => ({ exitCode: 1, timedOut: false, aborted: false });
+
+    await readSSE(await postIndex(makeApp(failing), { path: proj }));
+    expect(existsSync(dir)).toBe(false);
+  });
+});
+
+describe("index SSE carries the child's failure detail", () => {
+  const failWithStderr = (stderrTail?: string): IndexRunner => {
+    return async () => ({ exitCode: 1, timedOut: false, aborted: false, stderrTail });
+  };
+
+  test("non-zero exit → error event carries the last stderr line as `detail`", async () => {
+    const raw = 'error: Module not found "/Users/v/ai-agents/siltpoke/cli/index-repo.ts"\n\n';
+    const res = await postIndex(makeApp(failWithStderr(raw)), { path: proj });
+    const events = await readSSE(res);
+    const err = events.find((e) => e.event === "error");
+    expect(err).toBeDefined();
+    const data = err!.data as { message?: string; detail?: string };
+    expect(data.message).toBe("index_failed");
+    // The blank trailing line must not win, and the text must arrive intact.
+    expect(data.detail).toBe('error: Module not found "/Users/v/ai-agents/siltpoke/cli/index-repo.ts"');
+  });
+
+  test("no stderr → no `detail` key invented", async () => {
+    const res = await postIndex(makeApp(failWithStderr(undefined)), { path: proj });
+    const events = await readSSE(res);
+    const data = (events.find((e) => e.event === "error")!.data as { message?: string; detail?: string });
+    expect(data.message).toBe("index_failed");
+    expect(data.detail).toBeUndefined();
+  });
+
+  test("a TIMEOUT gets no detail — we killed it, so its stderr says nothing about the cause", async () => {
+    const timedOut: IndexRunner = async () => ({
+      exitCode: null,
+      timedOut: true,
+      aborted: false,
+      stderrTail: "some noise the child happened to print before we killed it",
+    });
+    const res = await postIndex(makeApp(timedOut), { path: proj });
+    const events = await readSSE(res);
+    const data = (events.find((e) => e.event === "error")!.data as { message?: string; detail?: string });
+    expect(data.message).toBe("timeout");
+    // Positive control: the runner DID supply a stderrTail, so an undefined
+    // detail here is a deliberate suppression, not an empty fixture.
+    expect(data.detail).toBeUndefined();
+  });
+});

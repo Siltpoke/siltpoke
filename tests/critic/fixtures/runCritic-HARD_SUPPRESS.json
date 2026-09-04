@@ -9,6 +9,11 @@
       "classification": "exploration",
       "confidence": 0.3,
       "signal_source": "regex"
+    },
+    "providerMeta": {
+      "name": "claude",
+      "billing": "usd",
+      "genAiSystem": "anthropic"
     }
   },
   "critiqueInput": null

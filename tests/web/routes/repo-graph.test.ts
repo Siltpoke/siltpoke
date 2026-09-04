@@ -62,15 +62,27 @@ describe("GET /repo-graph (SSR shell)", () => {
     for (const key of ["groups", "subdirs", "edges"]) expect(parsed.projection).toHaveProperty(key);
   });
 
-  test("no-graph empty state renders w/ /siltpoke-index hint when fixture has no indexed repo", async () => {
+  test("no-graph empty state points at the repo picker, not a dead command", async () => {
     const { html } = await getRepoGraph();
     expect(html).toContain("No graph indexed");
-    expect(html).toContain("/siltpoke-index");
+    expect(html).toContain("Pick this repo from the selector above");
+    // Asserted absent on purpose: the empty state used to render a
+    // `/siltpoke-index` chip — a command cut in #279, styled to look clickable
+    // while being inert text. This test asserting the chip was PRESENT is what
+    // kept it green for a year after the command stopped existing.
+    expect(html).not.toContain("/siltpoke-index");
   });
 
-  test("?repo=<hash> query param surfaces in baked-in currentProjHash", async () => {
+  test("?repo=<hash> query param surfaces in baked-in currentProjHash when indexed", async () => {
+    seedIndexedRepo("abcdef012345", "2026-06-09T00:00:00.000Z");
     const { html } = await getRepoGraph("?repo=abcdef012345");
     expect(html).toContain("abcdef012345");
+  });
+
+  test("?repo=<hash> not in the indexed registry → stale banner (2026-07-16: replaces silent keep-hash)", async () => {
+    const { status, html } = await getRepoGraph("?repo=abcdef012345");
+    expect(status).not.toBe(302);
+    expect(html).toContain("no longer exists");
   });
 
   // ── picker-default dead-hash fallback ──
@@ -114,11 +126,11 @@ describe("GET /repo-graph (SSR shell)", () => {
     expect(parseInitial(html).currentProjHash).toBe("a1a1a1a1a1a1");
   });
 
-  test("?repo=<dead-hash> with indexed repos present → 302 redirect to clean /repo-graph (no dead hash in URL)", async () => {
+  test("?repo=<dead-hash> with indexed repos present → stale banner, not a 302 redirect (2026-07-16)", async () => {
     seedIndexedRepo("a1a1a1a1a1a1", "2026-06-09T00:00:00.000Z");
     const res = await makeApp().fetch(new Request("http://localhost/repo-graph?repo=deaddeaddead"));
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/repo-graph");
+    expect(res.status).not.toBe(302);
+    expect(await res.text()).toContain("no longer exists");
   });
 
   test("toolbar renders all interactive controls (picker / search / help; no hide-links slider)", async () => {

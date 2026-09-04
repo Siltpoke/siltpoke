@@ -12,7 +12,14 @@
  * extension up.
  */
 import type { PropsWithChildren } from "hono/jsx";
+import { BrandIcons } from "./brand-icons";
 import { FloatingChat } from "./FloatingChat";
+import {
+  isPerfTraceEnabled,
+  PERF_TRACE_BODY_SCRIPT,
+  PERF_TRACE_HEAD_SCRIPT,
+} from "./perf-trace";
+import { THEME_BOOTSTRAP_SCRIPT } from "./theme-bootstrap";
 
 const HTMX_VERSION = "2.0.4";
 const ALPINE_MORPH_VERSION = "2.0.4";
@@ -29,21 +36,62 @@ export interface LayoutProps {
    * Alpine.start().
    */
   preloadIslands?: readonly string[];
+  /**
+   * Daemon secret. Two consumers:
+   *   1. Forwarded to `<FloatingChat secret>` → projected as `data-secret` on
+   *      the panel root, read by floating-chat.ts for `POST /api/chat`.
+   *   2. Set as `hx-headers` on `<body>` so every htmx request issued from
+   *      ANYWHERE under body — including hx-boosted plain `<form>` posts —
+   *      automatically carries `X-Siltpoke-Secret`. This is what lets
+   *      `ActionChip`'s `hx-post="/api/action"` and the repo-memory build
+   *      form's boosted `POST /api/repo-memory/build` reach their
+   *      newly-gated routes without each component threading the secret
+   *      individually (daemon-hardening security audit, finding 2).
+   * Absent → no hx-headers attribute is rendered (unauthenticated gated
+   * POSTs 401 exactly as before hardening — same fail-closed default as
+   * every other `secret ?? ""` caller).
+   */
+  secret?: string;
+  /**
+   * The page's resolved proj_hash (per-request project resolution — see
+   * `src/daemon/project-context.ts`), projected as `data-proj-hash` on the
+   * root `<html>` element. Client islands with a write `fetch` (memory-book,
+   * chat-stream, active-repos) read it via `document.querySelector("[data-proj-hash]")`
+   * and append `?repo=<hash>` so the write targets the same project the page
+   * resolved — the server-side write-guard (`isWriteEligible`) checks that hash
+   * against the SAME resolution. Absent → "" (no query param appended; the
+   * write-guard then falls back to the server-side sticky pin, same as an
+   * omitted `?repo=` on any other route).
+   */
+  resolvedProjHash?: string | null;
 }
 
 export function Layout(props: PropsWithChildren<LayoutProps>) {
   const title = props.title ?? "siltpoke";
   const preloads = props.preloadIslands ?? [];
   return (
-    <html lang="en">
+    <html lang="en" data-proj-hash={props.resolvedProjHash ?? ""}>
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        {/* The dashboard is welded light-mode (tokens.css has no dark override).
-            Declare the scheme so system-dark-following extensions (Dark Reader
-            class) don't auto-invert the page into an unintended dark theme. */}
-        <meta name="color-scheme" content="light" />
+        {/* Both schemes are real now. The ACTIVE one is declared per-block in
+            tokens.css (`color-scheme: light|dark` inside each of the four
+            blocks) so native scrollbars, dropdowns and form controls follow a
+            FORCED theme, not just the system one. This meta is the pre-CSS
+            default. */}
+        <meta name="color-scheme" content="light dark" />
+        {/* ⚡ startup trace — OFF unless SILTPOKE_PERF_TRACE=1. Placed ahead of
+            every external <link>/<script> (and ahead of the theme bootstrap)
+            because its whole job is to stamp t=0 before anything the page
+            fetches or evaluates. Kept after <meta charset> so the charset stays
+            inside the first 1024 bytes. */}
+        {isPerfTraceEnabled() ? (
+          <script dangerouslySetInnerHTML={{ __html: PERF_TRACE_HEAD_SCRIPT }} />
+        ) : null}
         <title>{title}</title>
+        {/* Brand mark — see src/web/_shared/brand-icons.tsx for why this is a
+            component and not two literal <link>s. */}
+        <BrandIcons />
         {/* Google Fonts — Pixelify Sans (display) + JetBrains Mono (labels/code)
             + Geist (body), matching the 记忆之书 design system. tokens.font
             references these families; without this link they fall back to
@@ -64,6 +112,16 @@ export function Layout(props: PropsWithChildren<LayoutProps>) {
             No Preflight is imported (see src/web/tokens/tailwind.css) → existing
             inline-styled screens are untouched. */}
         <link rel="stylesheet" href="/static/tailwind.css" />
+        {/* Pre-paint theme application. Mirrors the sidebar-collapse script
+            below: reading localStorage in <head> before <body> parses means the
+            correct theme is on <html> at first paint, so there is no light
+            flash before hydration. Theme goes FIRST because it governs paint.
+            `system` deliberately sets NO attribute — the media query in
+            tokens.css governs. The else-branch REMOVES the attribute rather
+            than leaving a stale one, which is what makes the multi-tab storage
+            listener (theme-toggle.ts, Task 6) correct when another tab resets
+            to `system`. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP_SCRIPT }} />
         {/* Pre-Alpine sidebar collapse persistence.
             Reading localStorage in <head> before <body> parses lets the
             sidebar render at the correct width on initial paint — no FOUC
@@ -79,6 +137,30 @@ export function Layout(props: PropsWithChildren<LayoutProps>) {
           dangerouslySetInnerHTML={{
             __html:
               "html.sidebar-collapsed-init [data-sidebar]{width:52px!important}html.sidebar-collapsed-init [data-sidebar] [x-show=\"!collapsed\"]{display:none!important}" +
+              // Narrow windows get the same 52px rail, whatever the stored
+              // preference says. MEASURED at a 480px window before this rule:
+              // the sidebar held 221px and `<main>` was left 259px on ALL five
+              // screens (/, /timeline, /memory, /repo-graph, /knowledge), which
+              // is less than half the window spent on navigation. Each screen's
+              // own grid had already collapsed as far as it could; the width
+              // was never theirs to reclaim.
+              //
+              // `!important` and a media query rather than a width the sidebar
+              // island computes: the island binds `width` INLINE
+              // (`x-bind:style`), and an inline declaration outranks any
+              // stylesheet rule — the same collision that made the collapsed
+              // preference above need `!important` in the first place, and the
+              // same one the /knowledge grid hit this week.
+              //
+              // 640px is where the arithmetic turns: 640 - 221 leaves 419px of
+              // `main`, about the narrowest column this corpus still reads at.
+              // Below that the rail buys back 169px.
+              //
+              // The toggle goes with it. Leaving it visible would leave a
+              // button that flips a state nothing can show — a control that
+              // does nothing, which is a shape this project has shipped twice
+              // and does not want a third time.
+              "@media (max-width:640px){[data-sidebar]{width:52px!important}[data-sidebar] [x-show=\"!collapsed\"]{display:none!important}[data-sidebar-collapse]{display:none!important}}" +
               "@keyframes siltpokeFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-18px)}}" +
               ".pet-float{animation:siltpokeFloat 2.6s ease-in-out infinite;will-change:transform}" +
               ".home-center__creature[data-mood=\"sleepy\"] .pet-float{animation:none;transform:translateY(0)}" +
@@ -99,12 +181,12 @@ export function Layout(props: PropsWithChildren<LayoutProps>) {
               "@keyframes bkRise{from{transform:translateY(8px);opacity:.4}to{transform:none;opacity:1}}" +
               // jumpToFact highlight — a brief inset ring flash that self-clears after 1.5 s
               // (the JS removes the class; animation:forwards keeps the end state until then).
-              "@keyframes bkJumpHighlight{0%{box-shadow:inset 0 0 0 2px rgba(90,134,160,.85)}60%{box-shadow:inset 0 0 0 3px rgba(90,134,160,.35)}100%{box-shadow:inset 0 0 0 0 rgba(90,134,160,0)}}" +
+              "@keyframes bkJumpHighlight{0%{box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--color-sky) 85%, transparent)}60%{box-shadow:inset 0 0 0 3px color-mix(in srgb, var(--color-sky) 35%, transparent)}100%{box-shadow:inset 0 0 0 0 color-mix(in srgb, var(--color-sky) 0%, transparent)}}" +
               ".memory-row-highlight{animation:bkJumpHighlight 1.5s ease-out forwards}" +
               ".bk-pulse{animation:bkPulse 1.8s ease-in-out infinite}" +
               ".bk-rise{animation:bkRise .22s ease both}" +
               ".bk-card{transition:box-shadow .15s,transform .15s}" +
-              ".bk-card:hover{box-shadow:0 6px 20px rgba(31,27,22,.12);transform:translateY(-2px)}" +
+              ".bk-card:hover{box-shadow:var(--shadow-lg);transform:translateY(-2px)}" +
               // display lives in a class (not inline) so Alpine x-show's
               // removeProperty('display') restores flex, not the block default.
               ".memory-modal-backdrop{display:flex;align-items:center;justify-content:center}" +
@@ -120,16 +202,16 @@ export function Layout(props: PropsWithChildren<LayoutProps>) {
               // the earlier :has() chat-shift hack was removed 2026-06-23.)
               ".critic-recent__scroll::-webkit-scrollbar{width:8px}" +
               ".critic-recent__scroll::-webkit-scrollbar-track{background:transparent}" +
-              ".critic-recent__scroll::-webkit-scrollbar-thumb{background:#d8cbab;border-radius:4px}" +
-              ".critic-recent__scroll::-webkit-scrollbar-thumb:hover{background:#8a7c64}" +
-              ".critic-recent__scroll{scrollbar-width:thin;scrollbar-color:#d8cbab transparent}" +
+              ".critic-recent__scroll::-webkit-scrollbar-thumb{background:var(--color-edge);border-radius:4px}" +
+              ".critic-recent__scroll::-webkit-scrollbar-thumb:hover{background:var(--color-ink3)}" +
+              ".critic-recent__scroll{scrollbar-width:thin;scrollbar-color:var(--color-edge) transparent}" +
               // fc-md: styles for renderMarkdown output inside assistant bubbles.
               // Scoped to .fc-md so they don't bleed into the rest of the dashboard.
               ".fc-md{font-size:13px;line-height:1.55;word-break:break-words}" +
               ".fc-md p.fc-md-p{margin:0 0 .55em}" +
               ".fc-md p.fc-md-p:last-child{margin-bottom:0}" +
-              ".fc-md code.fc-md-ic{background:rgba(31,27,22,.07);border-radius:3px;padding:.1em .3em;font-family:ui-monospace,monospace;font-size:.92em}" +
-              ".fc-md pre.fc-md-pre{background:rgba(31,27,22,.055);border-radius:6px;padding:.6em .75em;margin:.45em 0;overflow-x:auto;max-width:100%}" +
+              ".fc-md code.fc-md-ic{background:color-mix(in srgb, var(--color-ink) 7%, transparent);border-radius:3px;padding:.1em .3em;font-family:ui-monospace,monospace;font-size:.92em}" +
+              ".fc-md pre.fc-md-pre{background:color-mix(in srgb, var(--color-ink) 6%, transparent);border-radius:6px;padding:.6em .75em;margin:.45em 0;overflow-x:auto;max-width:100%}" +
               ".fc-md pre.fc-md-pre code.fc-md-code{background:none;padding:0;font-family:ui-monospace,monospace;font-size:.88em;white-space:pre;display:block}" +
               ".fc-md h2.fc-md-h,.fc-md h3.fc-md-h,.fc-md h4.fc-md-h{font-weight:600;margin:.6em 0 .25em}" +
               ".fc-md h2.fc-md-h{font-size:1.05em}" +
@@ -163,6 +245,7 @@ export function Layout(props: PropsWithChildren<LayoutProps>) {
         class={props.bodyClass}
         hx-boost="true"
         hx-ext="alpine-morph"
+        hx-headers={props.secret ? JSON.stringify({ "X-Siltpoke-Secret": props.secret }) : undefined}
         style={{
           margin: 0,
           background: "var(--color-cream)",
@@ -171,7 +254,12 @@ export function Layout(props: PropsWithChildren<LayoutProps>) {
         }}
       >
         {props.children}
-        <FloatingChat />
+        <FloatingChat secret={props.secret} />
+        {/* Last element in <body>: `bodyEnd - headStart` is the document's own
+            parse cost. OFF unless SILTPOKE_PERF_TRACE=1. */}
+        {isPerfTraceEnabled() ? (
+          <script dangerouslySetInnerHTML={{ __html: PERF_TRACE_BODY_SCRIPT }} />
+        ) : null}
       </body>
     </html>
   );

@@ -15,7 +15,11 @@ import {
   isBreakerOpen,
   canOuterRetry,
   consumeOuterRetry,
+  canConsumeQuotaCall,
+  consumeQuotaCall,
+  tryConsumeQuotaCall,
   brainUnhealthySignal,
+  QUOTA_CALL_DAILY_CAP,
   type BrainHealth,
 } from "../../src/state/brain-health";
 
@@ -256,6 +260,105 @@ test("outer-retry budget resets on date rollover", () => {
   expect(canOuterRetry(h, nextDay)).toBe(true);
 });
 
+// ── daily quota-call cap (50/day, quota-billed providers, T4/AC8) ──────
+// Keyed per-provider-name (T6): agy (Google Code Assist) and codex (ChatGPT)
+// are DISTINCT quota families and must draw on independent daily caps, not
+// a shared pool.
+
+test("quota-call cap allows 50 per day then refuses (codex)", () => {
+  let h = freshBrainHealth();
+  for (let i = 0; i < 50; i++) {
+    expect(canConsumeQuotaCall(h, "codex", T0)).toBe(true);
+    h = consumeQuotaCall(h, "codex", T0);
+  }
+  expect(canConsumeQuotaCall(h, "codex", T0)).toBe(false);
+});
+
+test("quota-call cap resets on date rollover (codex)", () => {
+  let h = freshBrainHealth();
+  for (let i = 0; i < 50; i++) h = consumeQuotaCall(h, "codex", T0);
+  const nextDay = new Date("2026-06-12T01:00:00.000Z");
+  expect(canConsumeQuotaCall(h, "codex", nextDay)).toBe(true);
+});
+
+test("tryConsumeQuotaCall re-reads fresh and persists the consumed slot", () => {
+  expect(tryConsumeQuotaCall(tmp, "codex", T0)).toBe(true);
+  expect(readBrainHealth(tmp).quota_calls_today.codex).toEqual({
+    date: T0.toISOString().slice(0, 10),
+    count: 1,
+  });
+});
+
+test("tryConsumeQuotaCall refuses once the cap is already exhausted (fresh re-read, not caller's stale snapshot)", () => {
+  writeBrainHealth(tmp, {
+    ...freshBrainHealth(),
+    quota_calls_today: { codex: { date: T0.toISOString().slice(0, 10), count: 50 } },
+  });
+  expect(tryConsumeQuotaCall(tmp, "codex", T0)).toBe(false);
+  // Refusal must not further increment the persisted count.
+  expect(readBrainHealth(tmp).quota_calls_today.codex?.count).toBe(50);
+});
+
+test("corrupt negative/float quota_calls_today[provider].count clamps to a non-negative integer (cap not under-counted)", () => {
+  const corrupt = {
+    ...freshBrainHealth(),
+    quota_calls_today: { codex: { date: "2026-06-11", count: -3.7 } },
+  };
+  writeFileSync(join(tmp, "brain-health.json"), JSON.stringify(corrupt));
+  expect(readBrainHealth(tmp).quota_calls_today.codex?.count).toBe(0);
+});
+
+// ── T6: per-provider independence + old-shape migration ────────────────
+
+test("T6: agy calls do NOT consume codex's cap, and vice-versa — exhausting one leaves the other at full cap", () => {
+  let h = freshBrainHealth();
+  // Exhaust codex's entire daily cap.
+  for (let i = 0; i < QUOTA_CALL_DAILY_CAP; i++) h = consumeQuotaCall(h, "codex", T0);
+  expect(canConsumeQuotaCall(h, "codex", T0)).toBe(false);
+  // agy is untouched — independent pool, still full cap remaining.
+  expect(canConsumeQuotaCall(h, "agy", T0)).toBe(true);
+
+  // Now exhaust agy's cap too — codex must stay exhausted (unaffected by agy).
+  for (let i = 0; i < QUOTA_CALL_DAILY_CAP; i++) h = consumeQuotaCall(h, "agy", T0);
+  expect(canConsumeQuotaCall(h, "agy", T0)).toBe(false);
+  expect(canConsumeQuotaCall(h, "codex", T0)).toBe(false); // still exhausted, not doubly so
+});
+
+test("T6: both agy and codex default to QUOTA_CALL_DAILY_CAP on a fresh record", () => {
+  const h = freshBrainHealth();
+  expect(canConsumeQuotaCall(h, "agy", T0)).toBe(true);
+  expect(canConsumeQuotaCall(h, "codex", T0)).toBe(true);
+  // Draining agy to exactly the cap boundary doesn't touch codex's count.
+  let hh = h;
+  for (let i = 0; i < QUOTA_CALL_DAILY_CAP; i++) hh = consumeQuotaCall(hh, "agy", T0);
+  expect(hh.quota_calls_today.codex).toBeUndefined();
+  expect(hh.quota_calls_today.agy?.count).toBe(QUOTA_CALL_DAILY_CAP);
+});
+
+test("T6: tryConsumeQuotaCall keeps agy and codex pools independent through the file round-trip", () => {
+  for (let i = 0; i < QUOTA_CALL_DAILY_CAP; i++) {
+    expect(tryConsumeQuotaCall(tmp, "codex", T0)).toBe(true);
+  }
+  expect(tryConsumeQuotaCall(tmp, "codex", T0)).toBe(false); // codex exhausted
+  expect(tryConsumeQuotaCall(tmp, "agy", T0)).toBe(true); // agy still fresh
+  const health = readBrainHealth(tmp);
+  expect(health.quota_calls_today.codex?.count).toBe(QUOTA_CALL_DAILY_CAP);
+  expect(health.quota_calls_today.agy?.count).toBe(1);
+});
+
+test("T6: old pre-migration single-scalar quota_calls_today shape ({date,count}) reads tolerantly as an empty per-provider map, never crashes", () => {
+  const legacyShape = {
+    ...freshBrainHealth(),
+    quota_calls_today: { date: "2026-06-11", count: 37 },
+  };
+  writeFileSync(join(tmp, "brain-health.json"), JSON.stringify(legacyShape));
+  const h = readBrainHealth(tmp);
+  expect(h.quota_calls_today).toEqual({});
+  // Both providers read as fresh (full cap available) after the migration.
+  expect(canConsumeQuotaCall(h, "codex", T0)).toBe(true);
+  expect(canConsumeQuotaCall(h, "agy", T0)).toBe(true);
+});
+
 // ── surfacing predicate (card line + dashboard strip) ──────────────
 
 test("one transient failure does NOT surface; two consecutive do", () => {
@@ -277,6 +380,56 @@ test("permanent class surfaces at the FIRST failure", () => {
 test("signal ages out after 24h", () => {
   const h = fail(fail(freshBrainHealth(), "resource"), "resource");
   expect(brainUnhealthySignal(h, plusMin(T0, 25 * 60)).show).toBe(false);
+});
+
+/**
+ * The strip used to read `⚠ brain: resource ×4 — <80 chars of raw stderr>` for
+ * a full 24 hours after the last failure, in the present tense, while the
+ * breaker was open and NOTHING had been attempted since. Observed live: four
+ * failures at 15:34Z, `last_attempt_ts` still 15:34Z an hour later, breaker
+ * open the whole time — and the banner said the brain was failing. "I am not
+ * currently trying" had no rendering, so it rendered as "I am failing".
+ */
+test("while the breaker is open the strip says PAUSED, and how long is left", () => {
+  // A realistic excerpt: what the live record actually held was a JSON tail.
+  const RAW = '"errors":["[ede_diagnostic] result_type=user"]';
+  let h = recordFailure(freshBrainHealth(), { class: "resource", exit_code: 143, stderr_excerpt: RAW, ts: iso(T0) });
+  h = recordFailure(h, { class: "resource", exit_code: 143, stderr_excerpt: RAW, ts: iso(T0) });
+  // resource, 2nd consecutive → 60min window. 20 minutes in, 40 left.
+  const sig = brainUnhealthySignal(h, plusMin(T0, 20));
+  expect(sig.show).toBe(true);
+  expect(sig.line).toContain("paused");
+  expect(sig.line).toContain("40m");
+  // The count is still worth showing; the raw stderr is not — it moves to the
+  // hover detail so the strip stops leading with a JSON fragment.
+  expect(sig.line).toContain("2");
+  expect(sig.line).not.toContain("ede_diagnostic");
+  expect(sig.detail).toContain("ede_diagnostic");
+});
+
+test("once the breaker window has passed the strip stops claiming to be paused", () => {
+  const h = fail(fail(freshBrainHealth(), "resource"), "resource");
+  // 90 minutes in: past the 60min window, still inside the 24h age-out.
+  const sig = brainUnhealthySignal(h, plusMin(T0, 90));
+  expect(sig.show).toBe(true);
+  expect(sig.line).not.toContain("paused");
+  // ...and says when the failures actually were, so a stale strip cannot read
+  // as a live one.
+  expect(sig.line).toContain("1h");
+});
+
+test("a permanent failure is latched, not on a timer — it never shows a countdown", () => {
+  const h = recordFailure(freshBrainHealth(), {
+    class: "permanent", exit_code: 1, stderr_excerpt: "Invalid API key", ts: iso(T0),
+  });
+  const sig = brainUnhealthySignal(h, plusMin(T0, 20));
+  expect(sig.show).toBe(true);
+  expect(sig.line).toContain("permanent");
+  expect(sig.line).not.toMatch(/retrying in/);
+  expect(sig.line).toContain("/siltpoke-wake");
+  // The reason stays IN the line for this class only — it is the action, and
+  // the statusline card renders this string with nowhere to put a tooltip.
+  expect(sig.line).toContain("Invalid API key");
 });
 
 test("signal clears automatically on next success (no user ack)", () => {

@@ -19,11 +19,11 @@
  * Paid: each call here is a real Brain call. Tests inject a fake callBrainFn.
  */
 import type { BrainCallResult, CallBrainOptions } from "../../brain/brain";
-import type { BrainOutput } from "../../brain/schema";
 import { assembleSystemPrompt } from "../../brain/prompt-assembly";
+import type { BrainOutput } from "../../brain/schema";
 import { assembleCallerBlock } from "../../critic/caller-impact/block-assembler";
 import type { CallerResolver } from "../../critic/caller-impact/caller-resolver";
-import { CostCeilingExceeded } from "./cost-gate";
+import { CallCeilingExceeded, CostCeilingExceeded } from "./cost-gate";
 import type { EvalExample } from "./manifest";
 import type { EvalFinding } from "./oracle";
 import type { Arm, RunArm } from "./runner";
@@ -149,10 +149,13 @@ export function makeRealRunArm(deps: RealArmDeps): RunArm {
       });
       return findingsFromOutput(result.output);
     } catch (err) {
-      // A cost-ceiling breach is NOT a transient cell failure — swallowing it as
-      // "no-findings" would silently corrupt every not-yet-run arm into a false
-      // miss. Re-throw so the whole run aborts cleanly (verdict marked invalid).
-      if (err instanceof CostCeilingExceeded) throw err;
+      // A cost/call-ceiling breach is NOT a transient cell failure — swallowing
+      // it as "no-findings" would silently corrupt every not-yet-run arm into a
+      // false miss. Re-throw so the whole run aborts cleanly (verdict marked
+      // invalid). CallCeilingExceeded (track #7 T5, AC12) is the call-count
+      // analog thrown by CallCountTracker when a quota-billed provider's
+      // armBrain breaches --max-calls — same non-swallowable class of error.
+      if (err instanceof CostCeilingExceeded || err instanceof CallCeilingExceeded) throw err;
       armBrainFailures[arm] = (armBrainFailures[arm] ?? 0) + 1;
       process.stderr.write(`[eval] brain failure (${arm}, ${example.id}) → scored as no-findings: ${err instanceof Error ? err.message : String(err)}\n`);
       return [];

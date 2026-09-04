@@ -53,6 +53,38 @@ export const brainOutputV2Schema = z.object({
 
 export type BrainOutputV2 = z.infer<typeof brainOutputV2Schema>;
 
+/**
+ * DELIBERATELY UNCOERCED, unlike `parseBrainOutput` in `schema.ts` — and this is a
+ * decision, not an oversight, so it is written down where the next person will hit it.
+ *
+ * v1 gained `coerceBrainOutputLengths` on 2026-08-31 because a hard cap was discarding
+ * whole reviews: seven planted defects failed 3/3 on `evidence: too_big`, twice, four
+ * weeks apart, and the findings that were lost lived in a field that never overflowed.
+ * This schema declares the same class of caps — `evidence.max(8)`, `web_sources.max(5)`,
+ * `reasoning.max(800)`, `bubble_short.max(200)`, `bubble_long.max(2000)`,
+ * `suggested_fix.max(200)`, `snippet.max(240)`.
+ *
+ * It is not coerced because its only non-test caller is `auditSchemaValidity`
+ * (`src/eval/critic-output/audit.ts:31`), a K1 hard gate whose entire job is to catch
+ * records that do not satisfy the schema. THERE, REJECTION IS THE SIGNAL — coercing
+ * would make that gate report clean on exactly the records it exists to find.
+ *
+ * ⚠️ THE MOMENT THIS PARSES LIVE MODEL OUTPUT, IT NEEDS COERCION. `callBrainFind`
+ * (`src/critic/pipeline/runner.ts`) is already typed to return `BrainOutputV2` and has no
+ * implementation yet; wiring it without coercion reproduces the v1 bug exactly. Note the
+ * trap in the cap values: v2's evidence ceiling is 8 against v1's 5, so it bites LESS
+ * often — which makes it likelier to pass testing and fail on a thorough review in
+ * production, not safer. The fix is a caps table shared with `schema.ts`, applied on the
+ * live path only, leaving the audit gate parsing raw.
+ *
+ * SINCE 2026-09-01 THAT IS TWO PASSES, NOT ONE. `schema.ts` also repairs SHAPE
+ * (`coerceBrainOutputShape`): a malformed evidence item is dropped rather than
+ * rejecting the answer, and a cosmetic field out of range falls back. v2's
+ * `evidenceItemV2Schema` is STRICTER than v1's — `line` is required here and
+ * optional there — so the same class of reply fails it more often, not less.
+ * Whatever wires the live path owes both passes, and the audit gate still owes
+ * neither.
+ */
 export function parseBrainOutputV2(raw: unknown): BrainOutputV2 {
   return brainOutputV2Schema.parse(raw);
 }

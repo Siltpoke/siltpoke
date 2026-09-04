@@ -57,23 +57,34 @@ export function strAttr(attrs: Record<string, string | number | boolean>, key: s
   return typeof v === "string" ? v : "";
 }
 
-/** Per-brain-span cost rows from gen_ai.* OTEL attributes. */
+/** Per-brain-span cost rows from gen_ai.* OTEL attributes.
+ * Track #7 T3 (AC8/AC14): a span whose `gen_ai.system` is present and
+ * non-anthropic (codex/quota-billed) NEVER goes through computeCost — that
+ * table is a claude USD price list, and pricing a quota call would fabricate
+ * a dollar figure. Legacy spans predating this attribute (empty string)
+ * default to anthropic, matching pre-track behavior byte-for-byte. */
 export function buildBrainCosts(spans: Span[]): BrainSpanCost[] {
   return spans
     .filter((s) => s.name.startsWith("siltpoke.brain."))
     .map((s) => {
-      const model = strAttr(s.attributes, "gen_ai.request.model") || "claude-haiku-4-5";
+      const genAiSystem = strAttr(s.attributes, "gen_ai.system") || "anthropic";
+      const isAnthropic = genAiSystem === "anthropic";
+      const model =
+        strAttr(s.attributes, "gen_ai.request.model") ||
+        (isAnthropic ? "claude-haiku-4-5" : "(unknown)");
       const input = numAttr(s.attributes, "gen_ai.usage.input_tokens");
       const output = numAttr(s.attributes, "gen_ai.usage.output_tokens");
       const cached = numAttr(s.attributes, "gen_ai.usage.cache_read_input_tokens");
       const duration_ms =
         s.end_unix_nano > 0 ? (s.end_unix_nano - s.start_unix_nano) / 1_000_000 : 0;
-      const { cost_usd, cache_savings_usd } = computeCost({
-        input_tokens: input,
-        output_tokens: output,
-        cached_input_tokens: cached,
-        model,
-      });
+      const { cost_usd, cache_savings_usd } = isAnthropic
+        ? computeCost({
+            input_tokens: input,
+            output_tokens: output,
+            cached_input_tokens: cached,
+            model,
+          })
+        : { cost_usd: 0, cache_savings_usd: 0 };
       return {
         span_name: s.name,
         model,

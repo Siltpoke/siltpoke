@@ -15,15 +15,17 @@ const FIXTURE_URL = `/repo-graph?repo=${FIXTURE_HASH}`;
 
 test("1. SSR shell loads with title + island root", async ({ page }) => {
   await page.goto("/repo-graph");
-  await expect(page).toHaveTitle(/repo graph/i);
+  // Renamed "Repo Graph" → "Code Map" (user-facing) in #214; route stays /repo-graph.
+  await expect(page).toHaveTitle(/code map/i);
   await expect(page.locator('[x-data="repoGraph"]')).toBeAttached({ timeout: 10_000 });
 });
 
-test("2. Sidebar 'Repo Graph' nav entry visible + linked", async ({ page }) => {
+test("2. Sidebar 'Code Map' nav entry visible + linked", async ({ page }) => {
   await page.goto("/repo-graph");
   const navLink = page.locator('a[href="/repo-graph"]').first();
   await expect(navLink).toBeAttached({ timeout: 10_000 });
-  await expect(navLink).toContainText(/repo graph/i);
+  // Nav label renamed "Repo Graph" → "Code Map" in #214; href unchanged.
+  await expect(navLink).toContainText(/code map/i);
 });
 
 test("3. Bare /repo-graph with unindexed cwd falls back to an indexed repo", async ({ page }) => {
@@ -88,9 +90,13 @@ test("8. [fixture] drill architecture → file level + breadcrumb", async ({ pag
   await page.goto(FIXTURE_URL);
   const alpha = page.locator(".c4-node", { hasText: "alpha" });
   await expect(alpha).toBeVisible({ timeout: 10_000 });
-  // C4 two-click drill: first click selects (opens panel), second drills to files.
-  await alpha.click();
-  await page.waitForTimeout(250);
+  // C4 two-click drill: first click selects + opens the side panel, second drills
+  // to files. Click 1 uses force to skip the entrance-animation stability wait.
+  // Click 2 is a REAL click (no force): select() now re-fits the graph clear of
+  // the just-opened left panel, so the node is no longer covered and a genuine
+  // user click lands on it — this is the regression guard for that fix.
+  await alpha.click({ force: true });
+  await page.waitForTimeout(300);
   await alpha.click();
   // alpha has a.ts + util.ts.
   await expect(page.locator(".node.kind-file")).toHaveCount(2, { timeout: 10_000 });
@@ -117,8 +123,10 @@ test("10. [fixture] explain button shows Generate when no cache", async ({ page 
   await page.goto(FIXTURE_URL);
   const alpha = page.locator(".c4-node", { hasText: "alpha" });
   await expect(alpha).toBeVisible({ timeout: 10_000 });
-  await alpha.click();
-  await page.waitForTimeout(250);
+  // Click 1 (force) selects + opens the panel; click 2 is a real click — the
+  // panel-open re-fit clears the node from under the panel (see test 8).
+  await alpha.click({ force: true });
+  await page.waitForTimeout(300);
   await alpha.click(); // second click drills to file level
   const aFile = page.locator(".node.kind-file", { hasText: "a.ts" });
   await expect(aFile).toBeVisible({ timeout: 10_000 });

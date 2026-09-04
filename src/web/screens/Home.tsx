@@ -6,20 +6,22 @@
  *
  * 2-col grid layout:
  *   LEFT:  HOME header + HomeCenter (dotted-grid panel + creature + chips)
- *   RIGHT: StatsPanel + VitalsPanel + CritiqueInbox
+ *   RIGHT: StatsPanel + VitalsPanel
  *
  * TopBar is no longer mounted here (dropped per brief — brand + pet meta live
  * in sidebar chip and Home content header).
  */
-import { Dashboard } from "../shells/Dashboard";
-import { HomeCenter } from "../primitives/HomeCenter";
-import { StatsPanel } from "../primitives/StatsPanel";
-import { BudgetGauge, SkipHistogram } from "./Critic";
-import { BiasAuditPanel } from "../primitives/BiasAuditPanel";
-import { ModelsPanel } from "../primitives/ModelsPanel";
+
+// SkipHistogram / BiasAuditPanel / ModelsPanel imports dropped 2026-08-06 with the
+// three hidden panels below; restore them together.
 import { Pill } from "../atoms/Pill";
+import { HomeCenter } from "../primitives/HomeCenter";
+import { ResolvedContextBadge, type ResolvedContextBadgeProps } from "../primitives/ResolvedContextBadge";
+import { StatsPanel } from "../primitives/StatsPanel";
 import { CANONICAL_NAV } from "../routes/nav";
+import { Dashboard } from "../shells/Dashboard";
 import { tokens } from "../tokens/tokens";
+import { BudgetGauge } from "./Critic";
 import type { HomeData } from "./Home.data";
 
 export type { HomeData };
@@ -30,9 +32,13 @@ export interface HomeProps {
   view?: "dashboard" | "toy";
   /** Tamagotchi shell color name (only used in toy view). Default "blush". */
   shellName?: string;
+  /** The daemon's per-request project resolution (source/display_name/proj_hash)
+   *  — see `src/daemon/project-context.ts`. Optional so existing callers/tests
+   *  that don't pass it still render (badge is simply omitted). */
+  resolvedProject?: ResolvedContextBadgeProps;
 }
 
-export function Home({ data, view = "dashboard", shellName = "blush" }: HomeProps) {
+export function Home({ data, view = "dashboard", shellName = "blush", resolvedProject }: HomeProps) {
   // Build live nav meta from real data — null entries are omitted (no meta shown).
   const navMetaOverrides: Partial<Record<import("../client/stores/navState").Section, string>> = {};
   if (data.navMeta.memory !== null) navMetaOverrides.memory = data.navMeta.memory;
@@ -54,10 +60,14 @@ export function Home({ data, view = "dashboard", shellName = "blush" }: HomeProp
       {data.brainHealth.show && (
         <div
           id="brain-health-strip"
+          // The raw failure excerpt used to BE the line. It is a JSON tail —
+          // what a debugger wants and what everyone else reads past — so it
+          // sits here now and the line says what state the brain is in.
+          title={data.brainHealth.detail || undefined}
           style={{
             margin: "16px 16px 0",
             padding: "8px 14px",
-            background: `${tokens.color.terra}18`,
+            background: `color-mix(in srgb, ${tokens.color.terra} 9%, transparent)`,
             border: `1px solid ${tokens.color.terra}`,
             borderRadius: 6,
             fontFamily: tokens.font.mono,
@@ -137,13 +147,20 @@ export function Home({ data, view = "dashboard", shellName = "blush" }: HomeProp
               </div>
             </div>
 
-            {/* Right side: status chips — well-fed + quiet-hours flag. */}
-            <div style={{ display: "flex", gap: 6 }}>
+            {/* Right side: status chips — resolved-project badge + well-fed + quiet-hours flag. */}
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              {resolvedProject && (
+                <ResolvedContextBadge
+                  source={resolvedProject.source}
+                  displayName={resolvedProject.displayName}
+                  projHash={resolvedProject.projHash}
+                />
+              )}
               {data.telemetry.gateState.checks.some(
                 (c) => c.name === "quiet hours" && !c.pass,
               ) && (
                 <Pill
-                  bg={`${tokens.color.amber}22`}
+                  bg={`color-mix(in srgb, ${tokens.color.amber} 13%, transparent)`}
                   color={tokens.color.amber}
                   border={tokens.color.amber}
                 >
@@ -152,7 +169,7 @@ export function Home({ data, view = "dashboard", shellName = "blush" }: HomeProp
               )}
               {data.stats.hunger > 4 && (
                 <Pill
-                  bg={`${tokens.color.moss}22`}
+                  bg={`color-mix(in srgb, ${tokens.color.moss} 13%, transparent)`}
                   color={tokens.color.moss}
                   border={tokens.color.moss}
                 >
@@ -171,17 +188,16 @@ export function Home({ data, view = "dashboard", shellName = "blush" }: HomeProp
             }}
             view={view}
             greeting="hi."
-            tagline={data.latestCritique?.text ?? "siltpoke is watching."}
+            tagline="siltpoke is watching."
             toyData={{
               pet: data.pet,
               hp: data.stats.hp,
-              pendingCritiqueCount: data.pendingCritiqueCount,
             }}
             shellName={shellName}
           />
         </div>
 
-        {/* RIGHT column — Stats / Vitals / Critique stacked panels */}
+        {/* RIGHT column — Stats / Vitals stacked panels */}
         <div
           style={{
             display: "flex",
@@ -198,10 +214,15 @@ export function Home({ data, view = "dashboard", shellName = "blush" }: HomeProp
               quiet-hours surfaces as a header pill, budget as BUDGET card —
               the gate panel ended up purely redundant. */}
           <BudgetGauge   telemetry={data.telemetry} />
-          <SkipHistogram telemetry={data.telemetry} />
-          {/* OBSERVABILITY section (per-critique signals live in History detail; only dual-model + bias-audit panels remain on Home) */}
-          <ModelsPanel modelsInfo={data.modelsInfo} />
-          <BiasAuditPanel config={data.biasAuditConfig} delta={data.biasAuditDelta} />
+          {/* HIDDEN 2026-08-06 (the maintainer) — REASON BREAKDOWN (SkipHistogram), MODELS
+              (ModelsPanel) and BIAS AUDIT (BiasAuditPanel). They report on siltpoke's own
+              internals rather than on the user's work, so they carry little information
+              for the person looking at Home. Hide-not-delete, the same shape as
+              a retired page: the components, their props and their tests are untouched, and
+              re-showing them is un-commenting these three lines plus their imports.
+              <SkipHistogram telemetry={data.telemetry} />
+              <ModelsPanel modelsInfo={data.modelsInfo} />
+              <BiasAuditPanel config={data.biasAuditConfig} delta={data.biasAuditDelta} /> */}
         </div>
       </div>
     </Dashboard>

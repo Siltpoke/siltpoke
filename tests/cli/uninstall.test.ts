@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInstall } from "../../src/cli/install";
 import { runUninstall } from "../../src/cli/uninstall";
+import type { AutostartUninstallResult } from "../../src/installer/autostart";
 import type { WizardIO } from "../../src/installer/wizard";
 
 let tmp: string;
@@ -33,6 +34,29 @@ function fakeIO(answers: string[]): WizardIO {
   };
 }
 
+function capturingIO(answers: string[]): { io: WizardIO; output: () => string } {
+  let i = 0;
+  let out = "";
+  return {
+    io: {
+      async readLine() {
+        return answers[i++] ?? "";
+      },
+      write(s: string) {
+        out += s;
+      },
+    },
+    output: () => out,
+  };
+}
+
+// Every runUninstall call in this file injects a stub so tests NEVER touch the
+// real machine's LaunchAgents / systemd user units.
+const stubAutostartCleanup = async (): Promise<AutostartUninstallResult> => ({
+  status: "not-installed",
+  platform: "test",
+});
+
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "siltpoke-uninst-"));
   claudeHome = join(tmp, ".claude");
@@ -50,6 +74,12 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
+// Same guard for the install side (T2's wizard autostart step): without this
+// stub, freshInstall's exhausted fakeIO answers default the autostart question
+// to yes and install a REAL LaunchAgent on the test machine.
+const noopAutostart = async () =>
+  ({ status: "skipped", platform: "test" }) as const;
+
 async function freshInstall(): Promise<void> {
   writeFileSync(
     join(claudeHome, "settings.json"),
@@ -59,7 +89,19 @@ async function freshInstall(): Promise<void> {
     env,
     repoRoot,
     noninteractive: false,
-    io: fakeIO(["yes", "Mochi", "cat", "en"]),
+    // "1" selects Claude Code (index 1) from the interactive agent
+    // multi-select BEFORE the install-confirm/personality prompts. Without
+    // it, the picker probes the REAL machine's PATH for `command -v claude`
+    // (via detectAgents' default exec) and, on a machine that happens not to
+    // have a `claude` binary on PATH (any stock Linux CI runner — unlike a
+    // dev's own Mac, which has it from daily use), the 3 failed match
+    // attempts on the leftover answers below fall back to an EMPTY default
+    // selection: wantsClaude ends up false, and the entire settings.json
+    // install path (backup, statusLine swap, hook registration) silently
+    // no-ops. See tests/cli/install.test.ts for the same "1"-first
+    // convention already used by every other interactive runInstall() call.
+    io: fakeIO(["1", "yes", "Mochi", "cat", "en"]),
+    installAutostartFn: noopAutostart,
   });
 }
 
@@ -68,12 +110,18 @@ test("uninstall: refuses when SILTPOKE_INTERNAL=1", async () => {
     env: { ...env, SILTPOKE_INTERNAL: "1" } as NodeJS.ProcessEnv,
     repoRoot,
     io: fakeIO([]),
+    uninstallAutostartFn: stubAutostartCleanup,
   });
   expect(r.status).toBe("internal_subprocess");
 });
 
 test("uninstall: no settings.json → no_settings", async () => {
-  const r = await runUninstall({ env, repoRoot, io: fakeIO([]) });
+  const r = await runUninstall({
+    env,
+    repoRoot,
+    io: fakeIO([]),
+    uninstallAutostartFn: stubAutostartCleanup,
+  });
   expect(r.status).toBe("no_settings");
 });
 
@@ -87,6 +135,7 @@ test("uninstall: happy path restores settings.json from backup", async () => {
     repoRoot,
     noninteractive: false,
     io: fakeIO(["n"]), // decline purge
+    uninstallAutostartFn: stubAutostartCleanup,
   });
   expect(r.status).toBe("uninstalled");
   expect(r.backup_restored).toBeTruthy();
@@ -104,6 +153,7 @@ test("uninstall: --purge deletes ~/.siltpoke/", async () => {
     repoRoot,
     purge: true,
     io: fakeIO([]),
+    uninstallAutostartFn: stubAutostartCleanup,
   });
   expect(r.siltpoke_home_purged).toBe(true);
   expect(existsSync(join(tmp, ".siltpoke"))).toBe(false);
@@ -123,6 +173,7 @@ test("uninstall: no backup found falls back to inner.txt", async () => {
     repoRoot,
     noninteractive: false,
     io: fakeIO(["n"]),
+    uninstallAutostartFn: stubAutostartCleanup,
   });
   expect(r.inner_fallback_used).toBe(true);
   const after = JSON.parse(readFileSync(join(claudeHome, "settings.json"), "utf8"));
@@ -148,6 +199,7 @@ test("uninstall: broken backup symlink falls through to inner.txt instead of cra
     repoRoot,
     noninteractive: false,
     io: fakeIO(["n"]),
+    uninstallAutostartFn: stubAutostartCleanup,
   });
   expect(r.status).toBe("uninstalled");
   expect(r.inner_fallback_used).toBe(true);
@@ -165,7 +217,12 @@ test("install: refuses to back up settings.json that already points at a differe
     env,
     repoRoot,
     noninteractive: false,
-    io: fakeIO(["yes"]),
+    // "1" selects Claude Code deterministically — see the comment on
+    // freshInstall() above. Without it, on a machine with no `claude`
+    // binary on PATH, wantsClaude ends up false and the collision guard
+    // this test exists to verify never even runs.
+    io: fakeIO(["1", "yes"]),
+    installAutostartFn: noopAutostart,
   });
   expect(r.status).toBe("user_aborted");
   // No backup created
@@ -179,13 +236,73 @@ test("install: refuses to back up settings.json that already points at a differe
 
 test("uninstall: double-uninstall idempotent", async () => {
   await freshInstall();
-  await runUninstall({ env, repoRoot, noninteractive: false, io: fakeIO(["n"]) });
+  await runUninstall({
+    env,
+    repoRoot,
+    noninteractive: false,
+    io: fakeIO(["n"]),
+    uninstallAutostartFn: stubAutostartCleanup,
+  });
   // Now run again — settings.json has no wrapper anymore
   const r = await runUninstall({
     env,
     repoRoot,
     noninteractive: false,
     io: fakeIO(["n"]),
+    uninstallAutostartFn: stubAutostartCleanup,
   });
   expect(r.status).toBe("uninstalled");
+}, INSTALL_TIMEOUT_MS);
+
+test("uninstall: removes daemon autostart and prints one info line (AC10)", async () => {
+  await freshInstall();
+  let calls = 0;
+  const { io, output } = capturingIO(["n"]);
+  const r = await runUninstall({
+    env,
+    repoRoot,
+    noninteractive: false,
+    io,
+    uninstallAutostartFn: async () => {
+      calls++;
+      return { status: "removed", platform: "darwin" };
+    },
+  });
+  expect(r.status).toBe("uninstalled");
+  expect(calls).toBe(1);
+  expect(r.autostart_removed).toBe(true);
+  const autostartLines = output()
+    .split("\n")
+    .filter((l) => l.includes("autostart"));
+  expect(autostartLines).toHaveLength(1);
+}, INSTALL_TIMEOUT_MS);
+
+test("uninstall: silent no-op when no autostart installed (AC10)", async () => {
+  await freshInstall();
+  const { io, output } = capturingIO(["n"]);
+  const r = await runUninstall({
+    env,
+    repoRoot,
+    noninteractive: false,
+    io,
+    uninstallAutostartFn: stubAutostartCleanup,
+  });
+  expect(r.status).toBe("uninstalled");
+  expect(r.autostart_removed).toBe(false);
+  expect(output()).not.toContain("autostart");
+}, INSTALL_TIMEOUT_MS);
+
+test("uninstall: autostart cleanup failure never blocks uninstall (AC10)", async () => {
+  await freshInstall();
+  const r = await runUninstall({
+    env,
+    repoRoot,
+    noninteractive: false,
+    io: fakeIO(["n"]),
+    uninstallAutostartFn: async () => {
+      throw new Error("launchctl exploded");
+    },
+  });
+  expect(r.status).toBe("uninstalled");
+  expect(r.autostart_removed).toBe(false);
 }, INSTALL_TIMEOUT_MS);

@@ -1,0 +1,58 @@
+{
+  "result": {
+    "decision": "NORMAL",
+    "accepted": true,
+    "critique": {
+      "mood": "annoyed",
+      "pose": "arms_crossed",
+      "bubble_short": "Found a type error",
+      "bubble_long": "You have a type mismatch in foo.ts.",
+      "critique_for_claude": "src/foo.ts line 10 has a type error.",
+      "severity": "medium",
+      "confidence": "high",
+      "xp_earned_events": [],
+      "evidence": []
+    },
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "input_tokens": 100,
+      "output_tokens": 50,
+      "total_cost_usd": 0.001
+    },
+    "critiqueId": "c-rejected",
+    "evidenceLabel": "none_verified",
+    "diffCoverage": null,
+    "unverifiedCount": 1,
+    "pipelineRan": true,
+    "rubricTriggers": [],
+    "rubricSuppressedCount": 0,
+    "intentResult": {
+      "classification": "exploration",
+      "confidence": 0.3,
+      "signal_source": "regex"
+    },
+    "providerMeta": {
+      "name": "claude",
+      "billing": "usd",
+      "genAiSystem": "anthropic"
+    },
+    "memoryFunnel": {
+      "rules_in_store": 0,
+      "rules_scope_matched": 0,
+      "rules_selected": 0,
+      "rules_bytes_in_prompt": 0
+    },
+    "promptBytes": {
+      "base": 27,
+      "memory": 0,
+      "recent": 0,
+      "tool_output": 374,
+      "caller_impact": 0,
+      "reverse_deps": 0,
+      "anti_examples": 0,
+      "total": 1346
+    }
+  },
+  "writeCalled": true
+}

@@ -1,5 +1,5 @@
 // memory work (real-time chat capture) — the chat route detects an explicit
-// "记住 X" remember-intent on the user turn, persists it via writeMemory (same
+//  remember-intent on the user turn, persists it via writeMemory (same
 // store the facts route writes to), and injects a [SAVED]/[ALREADY KNOWN]/
 // [CAPTURE INCOMPLETE] marker + an always-on capture-honesty framing into the
 // system prompt so the pet acks truthfully (and never hallucinates a save).
@@ -31,6 +31,16 @@ import { runChatCapture } from "../../src/daemon/routes/chat-capture-runner";
 import type { CandidateFact, ExtractedFact } from "../../src/memory/extract-facts";
 import type { ChatSession, CoreMemory, Fact } from "../../src/memory/memory";
 import { emptyMemory } from "../../src/memory/memory";
+
+const TEST_SECRET = "test-secret";
+
+const ELIGIBLE_PROJECT = async () => ({
+  project_id: null,
+  proj_hash: null,
+  project_root: null,
+  display_name: null,
+  source: "explicit" as const,
+});
 
 let home: string;
 let captured: StreamChatOptions[];
@@ -153,6 +163,7 @@ function mount(opts: MountOpts = {}): Harness {
   const a = new Hono();
   let store = opts.initial ?? emptyMemory();
   mountChatRoutes(a, {
+    resolveProject: ELIGIBLE_PROJECT,
     homeBase: home,
     index: openIndex(home),
     streamFactory: fakeStream,
@@ -181,6 +192,7 @@ function mount(opts: MountOpts = {}): Harness {
     readSession: opts.readSession,
     recapSession: opts.recapSession,
     checkSendGate: opts.checkSendGate,
+    secret: TEST_SECRET,
   });
   return { app: a, writes, extractCalls };
 }
@@ -188,7 +200,7 @@ function mount(opts: MountOpts = {}): Harness {
 async function post(a: Hono, body: unknown): Promise<Response> {
   return a.request("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
     body: JSON.stringify(body),
   });
 }
@@ -1051,7 +1063,10 @@ describe("Lazy per-chat recap", () => {
       recapSession: async () => "聊了 Memory Book 页。",
     });
 
-    const res = await app.request("/api/chat/recap-recent", { method: "POST" });
+    const res = await app.request("/api/chat/recap-recent", {
+      method: "POST",
+      headers: { "X-Siltpoke-Secret": TEST_SECRET },
+    });
     const json = await res.json();
     expect(json.recapped).toEqual([{ id: "s1", summary: "聊了 Memory Book 页。" }]);
 
@@ -1078,7 +1093,10 @@ describe("Lazy per-chat recap", () => {
       },
     });
 
-    const res = await app.request("/api/chat/recap-recent", { method: "POST" });
+    const res = await app.request("/api/chat/recap-recent", {
+      method: "POST",
+      headers: { "X-Siltpoke-Secret": TEST_SECRET },
+    });
     expect((await res.json()).recapped).toEqual([]);
     expect(called).toBe(false);
     expect(writes).toHaveLength(0);
@@ -1097,7 +1115,10 @@ describe("Lazy per-chat recap", () => {
       },
     });
 
-    const res = await app.request("/api/chat/recap-recent", { method: "POST" });
+    const res = await app.request("/api/chat/recap-recent", {
+      method: "POST",
+      headers: { "X-Siltpoke-Secret": TEST_SECRET },
+    });
     expect(await res.json()).toEqual({ recapped: [] });
     expect(called).toBe(false);
     expect(writes).toHaveLength(0);
@@ -1114,7 +1135,7 @@ describe("Lazy per-chat recap", () => {
 
     const res = await app.request("/api/chat/recap-recent", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ ids: ["s1"] }),
     });
     expect((await res.json()).recapped).toEqual([{ id: "s1", summary: "recap of s1" }]);
@@ -1145,7 +1166,7 @@ describe("Lazy per-chat recap", () => {
 
     const res = await app.request("/api/chat/recap-recent", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ ids: [] }),
     });
     expect((await res.json()).recapped).toEqual([]);
@@ -1162,7 +1183,10 @@ describe("Lazy per-chat recap", () => {
       recapSession: async (_m, deps) => `recap of ${deps.sessionId}`,
     });
 
-    const res = await app.request("/api/chat/recap-recent", { method: "POST" });
+    const res = await app.request("/api/chat/recap-recent", {
+      method: "POST",
+      headers: { "X-Siltpoke-Secret": TEST_SECRET },
+    });
     const ids = ((await res.json()).recapped as Array<{ id: string }>)
       .map((r) => r.id)
       .sort();

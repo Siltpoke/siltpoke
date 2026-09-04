@@ -13,7 +13,18 @@
  * histogram → different sig → file re-walked.
  */
 import { createHash } from "node:crypto";
-import type { Tree, Node } from "web-tree-sitter";
+import type { Node, Tree } from "web-tree-sitter";
+
+/**
+ * Version of the `computeAstSignature` algorithm. Bump whenever a change to
+ * `walkStats`/`computeAstSignature` alters the bytes it produces for the SAME
+ * tree (e.g. a different depth metric, a different histogram key set, a
+ * different hash truncation) — old `seen.json`/fingerprint signatures computed
+ * under a prior version are not comparable to new ones. Deliberately kept in
+ * this file (a leaf module with no imports of `store.ts`/`types.ts`) so
+ * `store.ts` can import it for `emptySeen()` without risking an import cycle.
+ */
+export const AST_SIG_VERSION = 1;
 
 interface AstStats {
   maxDepth: number;

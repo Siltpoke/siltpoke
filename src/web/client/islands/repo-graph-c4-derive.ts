@@ -26,6 +26,7 @@ import {
   type C4Model,
   type C4Node,
 } from "./repo-graph-c4-model";
+import { tokens } from "../../tokens/tokens";
 // ── projection shape (mirrors src/repo-graph/project-architecture.ts) ──────────
 interface ProjGroup {
   id: string;
@@ -63,12 +64,21 @@ export interface DerivableProjection {
 const ACCENT_CYCLE: readonly C4Accent[] = ["sky", "terra", "moss", "amber"];
 
 /** Band tint (bg + label color) per accent — copied from the authored BANDS so
- * the derived bands read identically to siltpoke's hand-authored ones. */
+ * the derived bands read identically to siltpoke's hand-authored ones.
+ * `color` is the accent at its established alpha, written directly as
+ * `color-mix(in srgb, X N%, transparent)` — the same technique
+ * repo-graph.ts's own `cssAlpha()` helper implements, duplicated as an
+ * inline expression rather than imported to avoid a circular import
+ * (repo-graph.ts imports FROM this file). `lc` (the band label's own text
+ * color, painted on that ~10%-alpha wash) is `bandLabelInk*` — a Task 10b
+ * batch 2 token pair, since the wash is close enough to `cream` at that
+ * opacity that `lc` is measured directly against `cream`/`paper`, not a
+ * synthesized wash composite (see palette.ts). */
 const BAND_TINT: Record<C4Accent, { color: string; lc: string }> = {
-  sky: { color: "rgba(127,176,200,.10)", lc: "#5f8499" },
-  terra: { color: "rgba(217,107,107,.09)", lc: "#b15555" },
-  moss: { color: "rgba(122,154,94,.11)", lc: "#5f7a48" },
-  amber: { color: "rgba(232,168,92,.10)", lc: "#b07d2e" },
+  sky: { color: `color-mix(in srgb, ${tokens.color.sky} 10%, transparent)`, lc: tokens.color.bandLabelInkSky },
+  terra: { color: `color-mix(in srgb, ${tokens.color.terra} 9%, transparent)`, lc: tokens.color.bandLabelInkTerra },
+  moss: { color: `color-mix(in srgb, ${tokens.color.moss} 11%, transparent)`, lc: tokens.color.bandLabelInkMoss },
+  amber: { color: `color-mix(in srgb, ${tokens.color.amber} 10%, transparent)`, lc: tokens.color.bandLabelInkAmber },
 };
 
 // ── layout constants (mirror authored proportions) ─────────────────────────────

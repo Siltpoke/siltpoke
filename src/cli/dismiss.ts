@@ -22,10 +22,11 @@ import {
 } from "../brain/reflection";
 import { BrainError, type BrainUsage } from "../brain/brain";
 import { appendUsageEvent } from "../state/usage";
+import { siltpokeRoot } from "../installer/paths";
 
 export type DismissSkipReason =
   | "no_reason"
-  | "low_confidence"
+  | "garbage"
   | "duplicate"
   | "validation_failed"
   | "error";
@@ -63,10 +64,6 @@ export interface DismissOptions {
   now?: () => Date;
 }
 
-function siltpokeHome(envHome: string | undefined): string {
-  return join(envHome ?? "", ".siltpoke");
-}
-
 function projectSiltpoke(cwd: string): string {
   return join(cwd, ".siltpoke");
 }
@@ -91,7 +88,7 @@ async function logReflection(
 }
 
 export async function runDismiss(opts: DismissOptions): Promise<DismissResult> {
-  const homeBase = opts.homeBase ?? siltpokeHome(process.env.HOME);
+  const homeBase = opts.homeBase ?? siltpokeRoot();
   const projectBase = opts.projectBase ?? projectSiltpoke(opts.cwd);
   const reflectionFn = opts.reflectionFn ?? defaultCallReflection;
   const now = opts.now ?? (() => new Date());
@@ -152,7 +149,13 @@ export async function runDismiss(opts: DismissOptions): Promise<DismissResult> {
       ran: false,
       skip_reason: "no_reason",
     });
-    appendPreferenceEntry(
+    // Awaited on purpose. This used to be fire-and-forget, and this file is
+    // also a CLI entry whose process.exit(0) fired before the append reached
+    // disk. The archive write above IS awaited, which is why a dismissal landed
+    // in feedback-archive.jsonl and never in preference-log.jsonl — the split
+    // that made the on-disk state look like two rival write paths.
+    // `.catch` keeps the write non-fatal.
+    await appendPreferenceEntry(
       {
         critique_id: opts.critiqueId,
         signal: "dismiss",
@@ -208,29 +211,34 @@ export async function runDismiss(opts: DismissOptions): Promise<DismissResult> {
     result.reflection.ran = true;
     result.reflection.confidence = r.confidence;
 
-    if (r.confidence !== "high") {
-      result.reflection.skip_reason = "low_confidence";
-    } else {
-      const rule: LearnedRule = {
-        id: newRuleId(),
-        rule: r.learned_rule,
-        category: r.rule_category,
-        created_at: now().toISOString(),
-        applied_count: 0,
-        effectiveness: "good",
-        source: `from dismissing critique ${opts.critiqueId}: ${r.reflection}`,
-      };
-      // Rules live in the canonical V3 store (homeBase); V3 scopes per-project.
-      appendOutcome = await appendLearnedRule(homeBase, rule);
-      if (appendOutcome.appended) {
-        result.reflection.rule_appended = true;
-        result.reflection.rule_id = appendOutcome.rule_id;
-        result.reflection.rule_text = r.learned_rule;
-        result.reflection.rule_category = r.rule_category;
-      } else if (appendOutcome.reason === "duplicate") {
-        result.reflection.skip_reason = "duplicate";
-        result.reflection.rule_id = appendOutcome.rule_id;
-      }
+    const rule: LearnedRule = {
+      id: newRuleId(),
+      rule: r.learned_rule,
+      category: r.rule_category,
+      created_at: now().toISOString(),
+      applied_count: 0,
+      effectiveness: "good",
+      // Build-1 auto-writer: confidence is STORED (read-time rank), no longer a
+      // write gate. See an internal design note
+      confidence: r.confidence,
+      source: `from dismissing critique ${opts.critiqueId}: ${r.reflection}`,
+      // Control 5 (2026-07-13) — thread file-type scope so the rule isn't
+      // silently universal-forever.
+      applies_to_file_types: r.applies_to_file_types,
+      origin: "dismissed",
+    };
+    // Rules live in the canonical V3 store (homeBase); V3 scopes per-project.
+    appendOutcome = await appendLearnedRule(homeBase, rule);
+    if (appendOutcome.appended) {
+      result.reflection.rule_appended = true;
+      result.reflection.rule_id = appendOutcome.rule_id;
+      result.reflection.rule_text = r.learned_rule;
+      result.reflection.rule_category = r.rule_category;
+    } else if (appendOutcome.reason === "duplicate") {
+      result.reflection.skip_reason = "duplicate";
+      result.reflection.rule_id = appendOutcome.rule_id;
+    } else if (appendOutcome.reason === "garbage") {
+      result.reflection.skip_reason = "garbage";
     }
   } else {
     result.reflection.skip_reason = "error";
@@ -259,7 +267,13 @@ export async function runDismiss(opts: DismissOptions): Promise<DismissResult> {
     error: reflectionError,
   });
 
-  appendPreferenceEntry(
+  // Awaited on purpose. This used to be fire-and-forget, and this file is
+  // also a CLI entry whose process.exit(0) fired before the append reached
+  // disk. The archive write above IS awaited, which is why a dismissal landed
+  // in feedback-archive.jsonl and never in preference-log.jsonl — the split
+  // that made the on-disk state look like two rival write paths.
+  // `.catch` keeps the write non-fatal.
+  await appendPreferenceEntry(
     {
       critique_id: opts.critiqueId,
       signal: "dismiss",

@@ -7,14 +7,21 @@
  * Pure functions — no IO, no side effects.
  */
 
+import { formatReviewSubjectBlock } from "../critic/tools/review-subject";
 import type {
-  ToolName,
-  ToolResult,
-  TscDiagnostic,
   EslintFinding,
   GitDiffHunk,
   RipgrepMatch,
+  ToolName,
+  ToolResult,
+  TscDiagnostic,
 } from "../critic/tools/types";
+import {
+  type DiffCoverage,
+  describeCoverage,
+  formatCoverageNotice,
+  selectHunksForBudget,
+} from "./hunk-selection";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -23,6 +30,33 @@ import type {
 export type ToolOutputSection = {
   /** Markdown-formatted tool-output block ready to embed in the critic prompt. */
   section: string;
+  /**
+   * `section` with the partial-coverage notice removed — the variant the
+   * evidence-guard must use as its citation corpus.
+   *
+   * The guard's only test is whether a cited snippet appears verbatim in the
+   * corpus (`evidence-guard.ts` `reasonItemFails`). Every other byte of
+   * `section` is tool-derived — diff bodies, diagnostics, matched lines — so
+   * "appears verbatim" means "the tool really said this". The coverage notice
+   * is the one part siltpoke writes itself, in prose, and it is quotable:
+   * `Not shown: 10 generated.` is a valid 10-240 char snippet, so a critique
+   * could cite it against any changed file and be stamped `verified` while
+   * pointing at nothing about the code.
+   *
+   * Keeping the two apart is what stops the fix for one honesty defect from
+   * opening another.
+   */
+  citationSection: string;
+  /**
+   * What the budget cut, as FACTS rather than as prose in the prompt.
+   *
+   * The prompt asks the reviewer to declare partial coverage in `reasoning`,
+   * and nothing verifies that it did (`schema.ts` has `reasoning` optional on
+   * the path that runs). So the honest signal cannot come from the model —
+   * siltpoke counts this itself and the surfaces state it on the review the
+   * user reads. `null` when every hunk fitted.
+   */
+  diffCoverage: DiffCoverage | null;
   /**
    * Raw concatenated stdout from every tool — used by the evidence-guard substring check.
    * NOT normalized, NOT trimmed: verbatim bytes from each tool's raw field.
@@ -36,7 +70,6 @@ export type ToolOutputSection = {
 
 const TSC_BUDGET = 20;
 const ESLINT_BUDGET = 20;
-const GIT_DIFF_HUNK_BUDGET = 20;
 const RIPGREP_BUDGET = 50;
 const RIPGREP_TEXT_MAX = 120;
 
@@ -82,9 +115,55 @@ function formatEslintBlock(parsed: EslintFinding[]): string {
   return lines.join("\n");
 }
 
-function formatGitDiffBlock(parsed: GitDiffHunk[]): string {
-  const capped = parsed.slice(0, GIT_DIFF_HUNK_BUDGET);
-  const omitted = parsed.length - capped.length;
+/**
+ * Render the diff block twice: once as the Brain sees it, and once without the
+ * coverage notice for the evidence-guard's citation corpus. See
+ * `ToolOutputSection.citationSection` for why they must differ.
+ */
+/**
+ * Restrict the raw `git diff` stdout to the files that actually reached the
+ * prompt.
+ *
+ * `evidenceCorpus` carries each tool's UNTRUNCATED stdout so a citation copied
+ * from a body the formatter shortened still matches. For git-diff that meant
+ * the FULL diff — including every hunk the budget cut. The guard's only test is
+ * verbatim presence, so a critique could quote a file the reviewer was never
+ * shown and be stamped `verified`, while the coverage notice in the same prompt
+ * told it not to. Scoping the corpus to the shown files is what makes the
+ * notice's instruction enforceable rather than advisory.
+ *
+ * Scoped per FILE, not per hunk: within a shown file the raw text is exactly
+ * what the untruncated corpus exists for. The residual, stated rather than
+ * implied — an omitted hunk of a file that IS shown remains citable.
+ */
+function scopeDiffRawToFiles(raw: string, shown: ReadonlySet<string>): string {
+  const lines = raw.split("\n");
+  const out: string[] = [];
+  let keeping = false;
+  let sawHeader = false;
+  for (const line of lines) {
+    if (line.startsWith("diff --git ")) {
+      sawHeader = true;
+      // `diff --git a/<path> b/<path>` — read the b-side, which is the name
+      // run-git-diff pairs hunks with.
+      const m = /^diff --git a\/.+ b\/(.+)$/.exec(line);
+      keeping = m !== null && shown.has(m[1]!);
+    }
+    if (keeping) out.push(line);
+  }
+  // A shape this parser does not recognise (no `diff --git` header at all —
+  // stderr text, a `--stat` style output) is passed through untouched rather
+  // than silently emptied: dropping a corpus we failed to parse would turn
+  // legitimate citations into unverified ones.
+  if (!sawHeader) return raw;
+  return out.join("\n");
+}
+
+function formatGitDiffBlock(
+  parsed: GitDiffHunk[],
+  linterFiles: readonly string[],
+): { shown: string; citable: string; shownFiles: Set<string>; coverage: DiffCoverage | null } {
+  const { kept: capped, omitted } = selectHunksForBudget(parsed, { linterFiles });
 
   // Group hunks by file for rendering
   const byFile = new Map<string, GitDiffHunk[]>();
@@ -105,11 +184,19 @@ function formatGitDiffBlock(parsed: GitDiffHunk[]): string {
     }
   }
 
-  if (omitted > 0) {
-    parts.push(`(+${omitted} more hunks omitted)`);
+  const citable = parts.join("\n");
+  let coverage: DiffCoverage | null = null;
+  if (omitted.length > 0) {
+    parts.push(...formatCoverageNotice(capped.length, omitted));
+    coverage = describeCoverage(capped.length, omitted);
   }
 
-  return parts.join("\n");
+  return {
+    shown: parts.join("\n"),
+    citable,
+    shownFiles: new Set(byFile.keys()),
+    coverage,
+  };
 }
 
 function formatRipgrepBlock(parsed: RipgrepMatch[]): string {
@@ -199,8 +286,39 @@ export function buildToolOutputSection(
   }
   headerLines.push("");
 
-  // Build body blocks for ok tools
+  // Files a linter complained about — used to rank git-diff hunks (defect ③).
+  //
+  // Read from `parsed` on the RESULTS rather than by re-parsing the formatted
+  // blocks: same file set either way (both runners already cap `parsed` at 20
+  // via their own sortAndCap, and the format budgets are also 20), but reading
+  // the structured field cannot drift from the rendering.
+  //
+  // In siltpoke's OWN repo this list is usually empty on the eslint side — the
+  // repo has no eslint config, so `runEslint` exits non-zero and the result is
+  // `status: "error"`. The linter key therefore mostly earns its keep in
+  // adopter repos, not here.
+  const linterFiles: string[] = [];
+  const tscResult = results.tsc;
+  if (tscResult !== undefined && !isNonOk(tscResult) && tscResult.tool === "tsc") {
+    for (const d of tscResult.parsed) linterFiles.push(d.file);
+  }
+  const eslintResult = results.eslint;
+  if (eslintResult !== undefined && !isNonOk(eslintResult) && eslintResult.tool === "eslint") {
+    for (const d of eslintResult.parsed) linterFiles.push(d.file);
+  }
+
+  // Build body blocks for ok tools.
   const bodyParts: string[] = [];
+  // Positions in `bodyParts` whose citable variant differs from what the Brain is
+  // shown — each one is a block carrying siltpoke's own prose alongside real tool
+  // output (the partial-coverage notice, the review-subject notice). Recorded as
+  // parts so `citationSection` can be rebuilt from the same pieces, rather than
+  // recovered by string-surgery on the finished section.
+  const citableOverrides: Array<{ index: number; text: string }> = [];
+  // Files whose hunks actually reached the prompt — null while no git-diff
+  // block was rendered, which leaves the raw corpus untouched.
+  let shownDiffFiles: Set<string> | null = null;
+  let diffCoverage: DiffCoverage | null = null;
 
   for (const { name, result } of okResults) {
     if (name === "tsc") {
@@ -226,9 +344,25 @@ export function buildToolOutputSection(
       if (r.parsed.length === 0) {
         bodyParts.push(`### ${TOOL_SHORT_NAMES[name]} — clean (no findings)`);
       } else {
+        const diffBlock = formatGitDiffBlock(r.parsed, linterFiles);
+        shownDiffFiles = diffBlock.shownFiles;
+        diffCoverage = diffBlock.coverage;
         bodyParts.push(TOOL_SECTION_HEADERS[name]);
         bodyParts.push("");
-        bodyParts.push(formatGitDiffBlock(r.parsed));
+        // Multi-commit fallback only: name the one commit whose message the diff
+        // may be judged against. Without it the reviewer sees N commits' hunks and
+        // one undelimited message soup, and has twice filed an accusatory false
+        // positive off the mismatch. It goes into `section` but NOT into
+        // `citationSection`: like the coverage notice, it is siltpoke's own prose,
+        // and the evidence guard must not accept it as something a tool said.
+        if (r.reviewSubject !== undefined) {
+          const subjectBlock = formatReviewSubjectBlock(r.reviewSubject);
+          bodyParts.push(subjectBlock.shown);
+          citableOverrides.push({ index: bodyParts.length - 1, text: subjectBlock.citable });
+          bodyParts.push("");
+        }
+        bodyParts.push(diffBlock.shown);
+        citableOverrides.push({ index: bodyParts.length - 1, text: diffBlock.citable });
       }
     } else if (name === "ripgrep") {
       const r = result as Extract<ToolResult, { tool: "ripgrep" }>;
@@ -245,10 +379,24 @@ export function buildToolOutputSection(
 
   const section = [...headerLines, ...bodyParts].join("\n").trimEnd();
 
+  const citableParts = [...bodyParts];
+  for (const o of citableOverrides) {
+    citableParts[o.index] = o.text;
+  }
+  const citationSection = [...headerLines, ...citableParts].join("\n").trimEnd();
+
   // Build evidence corpus: concatenate RAW stdout from every tool (non-empty raws only),
   // verbatim — no normalization.
   const rawParts: string[] = [];
   for (const name of toolOrder) {
+    if (name === "git-diff" && shownDiffFiles !== null) {
+      const r = results[name];
+      if (r !== undefined && r.raw.length > 0) {
+        const scoped = scopeDiffRawToFiles(r.raw, shownDiffFiles);
+        if (scoped.length > 0) rawParts.push(scoped);
+      }
+      continue;
+    }
     const result = results[name];
     if (result !== undefined && result.raw.length > 0) {
       rawParts.push(result.raw);
@@ -256,7 +404,7 @@ export function buildToolOutputSection(
   }
   const evidenceCorpus = rawParts.join("\n--- corpus separator ---\n");
 
-  return { section, evidenceCorpus };
+  return { section, citationSection, evidenceCorpus, diffCoverage };
 }
 
 // ---------------------------------------------------------------------------

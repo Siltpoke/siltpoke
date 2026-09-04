@@ -14,6 +14,7 @@ import {
   emptyProject,
   readProject,
   writeProject,
+  listActiveProjects,
   type ResolvedProject,
 } from "../../src/memory/project";
 import { projectMemorySchema, } from "../../src/memory/schema-v3";
@@ -202,5 +203,79 @@ describe("readProject + writeProject", () => {
       JSON.stringify({ schemaVersion: 99 }),
     );
     expect(await readProject(home, "bad2")).toBeNull();
+  });
+
+  test("[hardening][regression] readProject loads a legacy memory.json containing a learned_rule over 200 chars intact, without quarantining", async () => {
+    // Same regression as memory.test.ts's readMemory version, for the v3
+    // per-project store: a learned_rule persisted before the write-side
+    // 200-char cap existed (Control 2, 2026-07-13) must not cause the whole
+    // project memory.json to be quarantined on read.
+    const resolved: ResolvedProject = {
+      project_id: "legacy-id",
+      project_root: scratch,
+      display_name: "test",
+      source: "git",
+    };
+    const p = emptyProject(resolved);
+    const legacyRuleText = "z".repeat(250);
+    p.learned_rules.push({
+      id: "lr-legacy",
+      rule: legacyRuleText,
+      category: "null_check",
+      created_at: "2026-01-01T00:00:00Z",
+      applied_count: 1,
+      effectiveness: "good",
+    });
+    const dir = join(home, "projects", "legacy-id");
+    mkdirSync(dir, { recursive: true });
+    // Bypass writeProject's own schema-safe construction — simulate raw
+    // pre-existing data on disk exactly as an upgrading user would have it.
+    writeFileSync(join(dir, "memory.json"), JSON.stringify(p, null, 2));
+
+    const got = await readProject(home, "legacy-id");
+    expect(got).not.toBeNull();
+    expect(got!.learned_rules).toHaveLength(1);
+    expect(got!.learned_rules[0]?.rule).toBe(legacyRuleText);
+    const entries = readdirSync(dir);
+    expect(entries.includes("memory.json")).toBe(true);
+    expect(entries.some((e) => e.includes("corrupt"))).toBe(false);
+  });
+});
+
+describe("listActiveProjects fact_count", () => {
+  test("fact_count reflects the project's stored facts", async () => {
+    const projectId = "aaaaaaaaaaaaaaaa";
+    const resolved: ResolvedProject = {
+      project_id: projectId,
+      project_root: scratch,
+      display_name: "test",
+      source: "git",
+    };
+    const p = emptyProject(resolved);
+    p.facts.push({
+      id: "f1",
+      text: "x",
+      source_session_id: null,
+      confidence: 0.9,
+      status: "active",
+      created_at: "2026-01-01T00:00:00Z",
+      last_seen_at: "2026-01-01T00:00:00Z",
+      supersedes: null,
+      superseded_by: null,
+      pinned: false,
+      recall_count: 0,
+      retired_reason: null,
+      stability: "durable",
+      learned_from: null,
+      last_confirmed_at: null,
+      expires_at: null,
+      save_reason: null,
+      invalid_at: null,
+      events: [],
+    });
+    await writeProject(home, projectId, p);
+    const list = await listActiveProjects(home);
+    const row = list.find((r) => r.project_id === projectId);
+    expect(row?.fact_count).toBe(1);
   });
 });

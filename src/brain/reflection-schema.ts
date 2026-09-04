@@ -4,7 +4,12 @@ import { z } from "zod";
 
 export const reflectionOutputSchema = z.object({
   reflection: z.string().min(1),
-  learned_rule: z.string().min(1),
+  // [hardening] Control 2 (2026-07-13): capped at 200 chars — the system
+  // prompt already tells the model a rule is ONE imperative sentence
+  // (src/brain/reflection.ts:30). A rule far past that length is either a
+  // hallucination or an attempt to smuggle a large instruction block into
+  // the highest-trust position of every future critic system prompt.
+  learned_rule: z.string().min(1).max(200),
   rule_category: z
     .string()
     .min(1)

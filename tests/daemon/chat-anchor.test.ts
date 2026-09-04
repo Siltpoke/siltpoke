@@ -30,6 +30,19 @@ import { readSession } from "../../src/chat/jsonl-store";
 import type { ResolveAnchorResult } from "../../src/chat/anchor-context";
 import type { StreamChatOptions, StreamEvent } from "../../src/daemon/routes/chat-stream";
 
+const TEST_SECRET = "test-secret";
+
+// Task 11 write-eligibility guard on POST /api/chat: this file isn't
+// exercising project resolution — inject a fixed "explicit" resolution so
+// the guard doesn't 409 against this file's real-but-empty tmpdir homeBase.
+const ELIGIBLE_PROJECT = async () => ({
+  project_id: null,
+  proj_hash: null,
+  project_root: null,
+  display_name: null,
+  source: "explicit" as const,
+});
+
 let home: string;
 let captured: StreamChatOptions[];
 
@@ -66,8 +79,10 @@ function app(resolveAnchor?: (a: ChatAnchorRef) => Promise<ResolveAnchorResult>)
   mountChatRoutes(a, {
     homeBase: home,
     index: openIndex(home),
+    resolveProject: ELIGIBLE_PROJECT,
     streamFactory: fakeStream,
     resolveAnchor,
+    secret: TEST_SECRET,
     now: () => new Date("2026-06-22T20:00:00.000Z"),
   });
   return a;
@@ -76,7 +91,7 @@ function app(resolveAnchor?: (a: ChatAnchorRef) => Promise<ResolveAnchorResult>)
 async function post(a: Hono, body: unknown): Promise<Response> {
   return a.request("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
     body: JSON.stringify(body),
   });
 }
@@ -260,9 +275,11 @@ function appWithStale(
   mountChatRoutes(a, {
     homeBase: home,
     index: openIndex(home),
+    resolveProject: ELIGIBLE_PROJECT,
     streamFactory: fakeStream,
     resolveAnchor,
     getGraphStorageDir,
+    secret: TEST_SECRET,
     now: () => new Date("2026-06-22T20:00:00.000Z"),
   });
   return a;
@@ -409,7 +426,7 @@ describe("stale fingerprint pre-flight gate", () => {
     // Pin via descriptor form
     const r1 = await a.request("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({
         message: "pin via descriptor",
         anchor: {
@@ -485,9 +502,11 @@ describe("stale fingerprint pre-flight gate", () => {
     mountChatRoutes(a, {
       homeBase: home,
       index: openIndex(home),
+      resolveProject: ELIGIBLE_PROJECT,
       streamFactory: fakeStream,
       resolveAnchor: async () => RESOLVED_CTX,
       // getGraphStorageDir NOT wired
+      secret: TEST_SECRET,
       now: () => new Date("2026-06-22T20:00:00.000Z"),
     });
     const sid = await pinSession(a);
@@ -622,6 +641,7 @@ function appWithNodeGone(
   mountChatRoutes(a, {
     homeBase: home,
     index: openIndex(home),
+    resolveProject: ELIGIBLE_PROJECT,
     streamFactory: fakeStream,
     resolveAnchor: resolveAnchorFn ?? (async () => RESOLVED_CTX),
     getGraphStorageDir: async (_projHash: string): Promise<string | null> => {
@@ -630,6 +650,7 @@ function appWithNodeGone(
       }
       return storageDirForCheck;
     },
+    secret: TEST_SECRET,
     now: () => new Date("2026-06-22T20:00:00.000Z"),
   });
   return a;
@@ -679,6 +700,7 @@ describe("dead-anchor (node_gone) pre-flight gate", () => {
     mountChatRoutes(a, {
       homeBase: home,
       index: openIndex(home),
+      resolveProject: ELIGIBLE_PROJECT,
       streamFactory: fakeStream,
       resolveAnchor: async () => RESOLVED_CTX,
       getGraphStorageDir: async (_projHash: string): Promise<string | null> => {
@@ -687,6 +709,7 @@ describe("dead-anchor (node_gone) pre-flight gate", () => {
         mkdirSync(emptyDir, { recursive: true });
         return emptyDir;
       },
+      secret: TEST_SECRET,
       now: () => new Date("2026-06-22T20:00:00.000Z"),
     });
     const sid = await pinSession(a);
@@ -709,6 +732,7 @@ describe("dead-anchor (node_gone) pre-flight gate", () => {
     mountChatRoutes(a, {
       homeBase: home,
       index: openIndex(home),
+      resolveProject: ELIGIBLE_PROJECT,
       streamFactory: fakeStream,
       resolveAnchor: async () => {
         resolveCallCount++;
@@ -717,6 +741,7 @@ describe("dead-anchor (node_gone) pre-flight gate", () => {
       getGraphStorageDir: async (_projHash: string): Promise<string | null> => {
         return makeGraphStorage(home, true /* node present */);
       },
+      secret: TEST_SECRET,
       now: () => new Date("2026-06-22T20:00:00.000Z"),
     });
     const sid = await pinSession(a); // resolveCallCount = 1 (pin)
@@ -738,9 +763,11 @@ describe("dead-anchor (node_gone) pre-flight gate", () => {
     mountChatRoutes(a, {
       homeBase: home,
       index: openIndex(home),
+      resolveProject: ELIGIBLE_PROJECT,
       streamFactory: fakeStream,
       resolveAnchor: async () => RESOLVED_CTX,
       // getGraphStorageDir NOT wired
+      secret: TEST_SECRET,
       now: () => new Date("2026-06-22T20:00:00.000Z"),
     });
     // Pin a session using a separate app instance that has resolveAnchor for the pin.
@@ -751,7 +778,7 @@ describe("dead-anchor (node_gone) pre-flight gate", () => {
     // Now send to the app WITHOUT getGraphStorageDir
     const res = await a.request("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ session_id: sid, message: "follow-up" }),
     });
     // getGraphStorageDir absent → no node_gone check → SSE
@@ -768,12 +795,14 @@ describe("dead-anchor (node_gone) pre-flight gate", () => {
     mountChatRoutes(a, {
       homeBase: home,
       index: openIndex(home),
+      resolveProject: ELIGIBLE_PROJECT,
       streamFactory: fakeStream,
       resolveAnchor: async () => RESOLVED_CTX, // only used for pinning
       getGraphStorageDir: async (_projHash: string): Promise<string | null> => {
         // Node is ABSENT + fingerprint is DIFFERENT → node_gone fires first.
         return makeGraphStorage(home, false /* absent */, "sha-foo-DIFFERENT");
       },
+      secret: TEST_SECRET,
       now: () => new Date("2026-06-22T20:00:00.000Z"),
     });
     const sid = await pinSession(a);
@@ -822,12 +851,14 @@ function appWithGate(
   mountChatRoutes(a, {
     homeBase: home,
     index: openIndex(home),
+    resolveProject: ELIGIBLE_PROJECT,
     streamFactory: fakeStream,
     resolveAnchor: async () => RESOLVED_CTX,
     getGraphStorageDir: async (_projHash: string): Promise<string | null> => {
       return makeGraphStorage(home, nodePresent);
     },
     checkSendGate: async () => gateResult,
+    secret: TEST_SECRET,
     now: () => new Date("2026-06-22T20:00:00.000Z"),
   });
   return a;
@@ -884,9 +915,11 @@ describe("budget + quiet-hours send gate", () => {
     mountChatRoutes(a, {
       homeBase: home,
       index: openIndex(home),
+      resolveProject: ELIGIBLE_PROJECT,
       streamFactory: fakeStream,
       resolveAnchor: async () => RESOLVED_CTX,
       // checkSendGate NOT wired
+      secret: TEST_SECRET,
       now: () => new Date("2026-06-22T20:00:00.000Z"),
     });
     const res = await post(a, { message: "hello" });
@@ -925,9 +958,11 @@ describe("budget + quiet-hours send gate", () => {
     mountChatRoutes(a, {
       homeBase: home,
       index: openIndex(home),
+      resolveProject: ELIGIBLE_PROJECT,
       streamFactory: fakeStream,
       resolveAnchor: async () => RESOLVED_CTX,
       checkSendGate: async () => { throw new Error("gate exploded"); },
+      secret: TEST_SECRET,
       now: () => new Date("2026-06-22T20:00:00.000Z"),
     });
     const res = await post(a, { message: "hello" });

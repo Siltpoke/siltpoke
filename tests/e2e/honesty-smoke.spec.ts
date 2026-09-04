@@ -93,8 +93,15 @@ test.describe("Brain-health strip", () => {
 
     const strip = page.locator("#brain-health-strip");
     await expect(strip).toBeVisible({ timeout: 10_000 });
-    await expect(strip).toContainText("⚠ brain: resource ×2");
-    await expect(strip).toContainText(UNHEALTHY_REASON);
+    // The fixture opens a 60-minute resource breaker, so the honest present
+    // tense is "paused", not "failing" — nothing is being attempted.
+    await expect(strip).toContainText("paused after 2 resource failures");
+    await expect(strip).toContainText("retrying in");
+    // The raw excerpt is still REACHABLE, just no longer the headline: it is
+    // the strip's tooltip. Asserting the attribute (rather than dropping the
+    // assertion) is what keeps "moved" from silently becoming "lost".
+    await expect(strip).toHaveAttribute("title", UNHEALTHY_REASON);
+    await expect(strip).not.toContainText(UNHEALTHY_REASON);
   });
 });
 

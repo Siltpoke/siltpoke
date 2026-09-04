@@ -17,11 +17,11 @@
  */
 
 import { z } from "zod";
-import { callBrainRaw } from "../brain/brain";
-import type { EntityRef } from "./entity";
+import type { callBrainRaw } from "../brain/brain";
+import { makeRoleRawBrain } from "../brain/role-brain";
 import { ledgerBrainCall } from "../state/usage";
+import type { EntityRef } from "./entity";
 
-const EXTRACT_MODEL = "claude-haiku-4-5-20251001";
 const EXTRACT_TIMEOUT_MS = 60_000;
 
 // Trimmed single-message version of the summarizer durability framing
@@ -146,7 +146,7 @@ export async function extractDurableFacts(
   candidates?: CandidateFact[],
   inject?: ExtractDurableFactsInject,
 ): Promise<ExtractedFact[]> {
-  const brain = inject?.callBrainRaw ?? callBrainRaw;
+  const brain = inject?.callBrainRaw ?? makeRoleRawBrain(deps.homeBase, "extract");
   const ledger = inject?.ledger ?? ledgerBrainCall;
   // Absent OR empty candidates → exactly today's add-only behavior (rollback
   // path): base prompt, raw-message bundle, old output shape.
@@ -156,18 +156,20 @@ export async function extractDurableFacts(
     const raw = await brain({
       systemPrompt: withCandidates ? EXTRACT_CLASSIFY_SYSTEM_PROMPT : EXTRACT_SYSTEM_PROMPT,
       contextBundle: withCandidates ? assembleContextBundle(message, candidates) : message,
-      model: EXTRACT_MODEL,
       timeoutMs: EXTRACT_TIMEOUT_MS,
     });
 
     // Ledger the real spend the moment the call returns — BEFORE parse — so a
     // malformed or empty result still records the tokens it cost (the whole
     // point of the dedicated `chat_capture` kind). Only reached when a call
-    // actually completed; a throw skips this (no spend to record).
+    // actually completed; a throw skips this (no spend to record). No static
+    // `model` here anymore — the role-routed provider's usage carries its own
+    // real `total_cost_usd` (basis:"real"); when that's unavailable (some
+    // quota-provider auth modes) the ledger honestly records cost:null rather
+    // than mis-deriving cost from a model that may not be Haiku.
     await ledger(deps.homeBase, {
       kind: "chat_capture",
       session_id: deps.sessionId,
-      model: EXTRACT_MODEL,
       usage: raw.usage,
     });
 

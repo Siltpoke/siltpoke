@@ -173,7 +173,9 @@ test("inner result is not JSON throws BrainError", async () => {
 });
 
 test("inner result fails schema validation throws BrainError", async () => {
-  const env = envelopeWithResult(JSON.stringify({ ...valid, mood: "rage" }));
+  // `severity`, not `mood`: an out-of-range cosmetic field is repaired now, so
+  // it no longer reaches the parser as a failure. A judgement field still does.
+  const env = envelopeWithResult(JSON.stringify({ ...valid, severity: "rage" }));
   await expect(
     callBrain({
       systemPrompt: "x",

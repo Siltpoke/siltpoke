@@ -25,6 +25,7 @@
  * Revisit when those primitives convert.
  */
 
+import type { ReviewUnit } from "../../router/review-unit";
 import type { CriticTelemetry } from "../../state/api";
 import { CANONICAL_NAV } from "../routes/nav";
 import { Dashboard } from "../shells/Dashboard";
@@ -32,10 +33,30 @@ import { tokens } from "../tokens/tokens";
 import { DetailPane, EmptyDetail } from "./timeline/detail-pane";
 import { TimelineFilterRow } from "./timeline/filter-row";
 import { fmtCost, fmtTokens, turnKey } from "./timeline/format";
+import { makeProjHashResolver } from "./timeline/proj-hash";
+import { ReviewUnitRow } from "./timeline/review-unit-row";
 import { TimelineRail } from "./timeline/rail";
 
 export interface TimelineScreenProps {
   telemetry: CriticTelemetry;
+  /**
+   * ⏱ Which unit of work closes before a review fires, read from config.json
+   * by the route. REQUIRED, not optional-with-a-default: this control's whole
+   * history is of a setting that rendered fine while reaching nobody, and an
+   * optional prop lets a caller drop it in silence.
+   */
+  reviewUnit: ReviewUnit;
+  /** Daemon secret — forwarded to the review-unit island's own container so
+   * its Save POST to /api/config carries `X-Siltpoke-Secret`. */
+  secret?: string;
+  /**
+   * Forwarded filter/pager querystring (no leading `?`, `key` excluded) so a
+   * lazy dossier placeholder re-requests its DetailPane against the SAME
+   * window. Empty string = no active filters. Optional so existing callers /
+   * tests that construct the screen directly keep working (they render every
+   * pane eager, the pre-lazy behavior).
+   */
+  dossierQuery?: string;
 }
 
 /**
@@ -61,6 +82,23 @@ export function summaryLine(telemetry: CriticTelemetry): string {
  * plus the native-HTML machinery the x-html-injected trace fragment relies
  * on (details/summary span rows + CSS-only radio tabs — no Alpine, no
  * script inside the fragment) and the class-scoped thin scrollbars.
+ *
+ * The filter-row select's chevron is a `background-image: url("data:image/
+ * svg+xml,...")` data URI — a CSS custom property cannot be referenced
+ * inside that string, so the SVG's stroke color is necessarily a literal
+ * PER THEME (the encoded ink token's own hex, not a new hue). Mirrors
+ * tokens.css's own four-block theme structure (a `prefers-color-scheme`
+ * media block + forced `[data-theme]` blocks) rather than inventing a third
+ * mechanism. This is the fix for a real, previously-flagged live defect:
+ * the chevron used to stay light-mode-colored in dark mode (see the CSS
+ * comment further down, dated before this fix).
+ *
+ * NOTE for anyone editing this string: do not spell out either color's hex
+ * digits in a comment INSIDE this template literal — the color-literal
+ * guard (scripts/lint-no-hardcoded-color.ts) scans raw string CONTENT, not
+ * JS/CSS comment semantics, so a hex mentioned in a "CSS comment" here
+ * would still be flagged as a violation (this is not hypothetical — an
+ * earlier draft of this exact fix did that and had to be corrected).
  */
 const TIMELINE_CSS = `
 .tl-row:hover{background:var(--color-cream)}
@@ -79,7 +117,7 @@ const TIMELINE_CSS = `
 .tl-filter-row select{
   font-size:11px!important;font-weight:600!important;
   color:var(--color-ink2)!important;
-  border:1px solid #e2d6bb!important;border-radius:8px!important;
+  border:1px solid var(--color-edge)!important;border-radius:8px!important;
   background-color:var(--color-cream)!important;
   padding:5px 26px 5px 10px!important;
   /* One shared control height — the flat segments measure 28px, so the
@@ -92,7 +130,20 @@ const TIMELINE_CSS = `
   background-position:right 10px center!important;
   background-size:9px 6px!important;
 }
-.tl-filter-row select:hover{border-color:#cbb98e!important;background-color:#f4eedf!important}
+/* Hover: darken the border one step and lift the fill, both derived from
+   tokens so the pair follows the theme. These were two beige literals that
+   stayed beige in dark mode while the rest of the row went dark. */
+.tl-filter-row select:hover{border-color:var(--color-ink3)!important;background-color:var(--color-paper)!important}
+/* Dark-theme chevron — see the file's own doc comment above TIMELINE_CSS
+   for why this SVG data URI must stay a per-theme literal. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .tl-filter-row select{
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23adadad' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")!important;
+  }
+}
+:root[data-theme="dark"] .tl-filter-row select{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23adadad' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")!important;
+}
 
 /* Thin styled scrollbars — scoped to the rail + dossier scroll panes. */
 .tl-scroll{scrollbar-width:thin;scrollbar-color:var(--color-edge) transparent}
@@ -123,9 +174,68 @@ const TIMELINE_CSS = `
 .tl-rtab-raw:focus-visible~.tl-span-tabs .tl-tab-raw{outline:2px solid var(--color-sky);outline-offset:-2px;border-radius:3px}
 `;
 
-export function TimelineScreen({ telemetry }: TimelineScreenProps) {
+/**
+ * Placeholder for a non-pre-selected dossier. Shares the `.tl-detail-pane`
+ * shell + `x-show="selected === key"` toggle with a real DetailPane, so the
+ * rail's select state drives it identically. On the FIRST time this row is
+ * selected, the Alpine `x-effect` fires a one-shot `dossier-load` event that
+ * htmx listens for (`hx-trigger="dossier-load once"`); htmx then morph-swaps
+ * the server-rendered DetailPane in its place. `morph` (alpine-morph ext,
+ * already active for hx-boost) is required — the injected fragment carries
+ * interactive controls (dismiss/ack chips + tab loaders) that `x-html` would
+ * leave un-hydrated. After the swap the element is the real DetailPane (no
+ * hx-* attrs) → never refetches, and re-selecting is an instant x-show flip.
+ */
+/** Swap the spinner for an honest refresh hint when a lazy dossier fetch fails. */
+const DOSSIER_LOAD_FAIL_JS =
+  "this.querySelector('[data-dossier-loading]').textContent = 'couldn’t load this turn — refresh the page to see it'";
+
+function LazyDossier({ paneKey, url }: { paneKey: string; url: string }) {
+  const sel = `selected === ${JSON.stringify(paneKey)}`;
+  return (
+    <div
+      class="tl-detail-pane"
+      data-turn-key={paneKey}
+      data-dossier-lazy=""
+      x-show={sel}
+      x-cloak
+      hx-get={url}
+      hx-trigger="dossier-load once"
+      hx-swap="morph"
+      x-effect={`if (${sel}) $el.dispatchEvent(new Event('dossier-load'))`}
+      // Honest failure: the `once` trigger is consumed regardless of outcome,
+      // and there is no global htmx error UI — so on the rare miss (the row
+      // aged out of even the 200-turn dossier window, or a transient error)
+      // swap the spinner for a refresh hint instead of an infinite "loading…".
+      // The two colons in `hx-on:htmx:<event>` are not writable as a bare JSX
+      // attribute (JSX allows one namespace colon), so spread the htmx error
+      // hooks in as string keys.
+      {...{
+        "hx-on:htmx:response-error": DOSSIER_LOAD_FAIL_JS,
+        "hx-on:htmx:send-error": DOSSIER_LOAD_FAIL_JS,
+      }}
+      style={{ display: "flex", flexDirection: "column", gap: 14 }}
+    >
+      <div
+        data-dossier-loading=""
+        style={{ fontFamily: tokens.font.mono, fontSize: 11, color: tokens.color.ink3, padding: "8px 0" }}
+      >
+        loading…
+      </div>
+    </div>
+  );
+}
+
+export function TimelineScreen({ telemetry, dossierQuery, reviewUnit, secret }: TimelineScreenProps) {
   const now = new Date();
   const firedRows = telemetry.recent.filter((c) => c.status === "fired");
+  // Perf (Task 6 review carry-over): memoize proj_hash resolution by
+  // cwd for the duration of THIS render — rows overwhelmingly share a
+  // handful of cwds, so this collapses up to 200 sync fs walks (one per
+  // row) down to one per DISTINCT cwd. Fresh Map per render (never hoisted
+  // module-level — a stale cache across requests could serve a wrong hash
+  // after `siltpoke relocate` changes a project's root).
+  const resolveProjHash = makeProjHashResolver();
   // Pre-select the first fired row of the CURRENTLY-SORTED rail order
   // (newest under the default sort, oldest under ?sort=oldest) — the top
   // of the visible list is always the pre-opened dossier.
@@ -196,6 +306,10 @@ export function TimelineScreen({ telemetry }: TimelineScreenProps) {
               [status seg][kind ▾][range ▾] … [search][project ▾]. Sort
               lives in the rail header, not here. */}
           <TimelineFilterRow telemetry={telemetry} />
+          {/* ⏱ The setting that decides when this page gets rows at all —
+              placed with the filters because it reads as one more control
+              over what shows up, not as a settings page bolted on. */}
+          <ReviewUnitRow secret={secret ?? ""} reviewUnit={reviewUnit} />
         </div>
 
         {/* Master rail + dossier */}
@@ -223,16 +337,32 @@ export function TimelineScreen({ telemetry }: TimelineScreenProps) {
             {firedRows.length === 0 ? (
               <EmptyDetail hasRows={telemetry.recent.length > 0} />
             ) : (
-              firedRows.map((c) => (
-                <DetailPane
-                  key={turnKey(c)}
-                  c={c}
-                  now={now}
-                  homeBasename={telemetry.homeBasename}
-                  preferenceStats={telemetry.preferenceStats}
-                  initial={turnKey(c) === initialKey}
-                />
-              ))
+              firedRows.map((c) => {
+                const key = turnKey(c);
+                // Lazy mode (real /timeline render): only the pre-selected
+                // dossier ships its full DetailPane; every other row is a
+                // placeholder that morph-loads its DetailPane on first select
+                // (then stays in the DOM → re-select is instant, no refetch).
+                // This is what drops the page from ~1MB (20 eager dossiers) to
+                // ~one dossier. When dossierQuery is undefined the screen was
+                // built directly (tests / non-route callers) → keep the old
+                // eager-all behavior.
+                if (dossierQuery !== undefined && key !== initialKey) {
+                  const url = `/api/timeline/dossier?key=${encodeURIComponent(key)}${dossierQuery ? `&${dossierQuery}` : ""}`;
+                  return <LazyDossier key={key} paneKey={key} url={url} />;
+                }
+                return (
+                  <DetailPane
+                    key={key}
+                    c={c}
+                    now={now}
+                    homeBasename={telemetry.homeBasename}
+                    preferenceStats={telemetry.preferenceStats}
+                    initial={key === initialKey}
+                    projHash={resolveProjHash(c.cwd)}
+                  />
+                );
+              })
             )}
           </div>
         </div>

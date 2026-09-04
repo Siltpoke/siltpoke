@@ -7,8 +7,7 @@
  * Home component (dropped in Wave 1.5b — brand + pet meta live in sidebar chip
  * and Home content header).
  *
- * Real-data wiring: fixture uses null stats / [] vitals / []
- *   critiques / navMeta. MOCK_CRITIQUES only in preview stories.
+ * Real-data wiring: fixture uses null stats / [] vitals / navMeta.
  */
 import { test, expect, describe } from "bun:test";
 import { Home } from "../../../src/web/screens/Home";
@@ -16,8 +15,8 @@ import type { HomeData } from "../../../src/web/screens/Home";
 import { HOME_RENDER_FIXTURE } from "./_home-render-fixture";
 
 // ── Fixture ────────────────────────────────────────────────────────────────────
-// Uses real-data shapes: stats=null, vitals=[], critiques=[], navMeta real.
-// For visual preview stories with MOCK_CRITIQUES / full vitals, see:
+// Uses real-data shapes: stats=null, vitals=[], navMeta real.
+// For visual preview stories with full vitals, see:
 //   src/web/screens/*.preview.tsx
 
 const FIXTURE: HomeData = HOME_RENDER_FIXTURE;
@@ -60,11 +59,18 @@ describe("Home screen Wave 1.5b composition", () => {
     expect(html).toContain("L12");
   });
 
-  test("Sidebar daemon footer is present", () => {
+  test("Sidebar footer carries no daemon status line", () => {
     const html = render();
-    expect(html).toContain("daemon");
-    expect(html).toContain(":9876");
+    // The footer itself stays — it holds the theme toggle.
     expect(html).toContain("sidebar-footer");
+    // What is asserted ABSENT is the old daemon line: a status dot painted the
+    // constant moss green whether or not the daemon answered, next to a port
+    // the address bar already shows. Both were removed 2026-09-03. Asserting
+    // absence rather than deleting the test, because the previous version of
+    // this test asserted `:9876` was PRESENT — which is precisely what let a
+    // hardcoded port live in the shell with the suite green.
+    expect(html).not.toContain("daemon · :");
+    expect(html).not.toContain(":9876");
   });
 
   // Region 2: HomeCenter (replaces Hero)
@@ -197,15 +203,36 @@ describe("Home screen Wave 1.5b composition", () => {
     expect(html).not.toContain("critique-inbox");
   });
 
-  test("Budget + SkipHistogram cards render under StatsPanel (GateCheckList dropped)", () => {
+  test("BUDGET renders under StatsPanel; the three internals panels do not", () => {
+    // REASON BREAKDOWN / MODELS / BIAS AUDIT were hidden 2026-08-06 — they report on
+    // siltpoke's own internals, not on the user's work. Asserted absent rather than just
+    // dropped from the list, so a re-add is a deliberate act and not a silent one.
     const html = render();
     expect(html).not.toContain("GATE DIAGNOSTIC");
     expect(html).toContain("BUDGET");
-    expect(html).toContain("REASON BREAKDOWN");
+    expect(html).not.toContain("REASON BREAKDOWN");
+    expect(html).not.toContain("BIAS AUDIT");
   });
 
-  // Sidebar 4-entry count: PET (1) + WORK (3).
-  test("sidebar has 4 total nav entries (PET 1 + WORK 3)", () => {
+  // Sidebar 7-entry count: PET (1) + WORK (6) — "progress" added 2026-08-14
+  // (progress-page-slice-1 Task 7, the /progress distribution view). Home's
+  // fixture repo never seeds a ROADMAP.md, so this counts on the module-level
+  // `unavailable` set in `src/web/routes/nav.ts` being empty by default (no
+  // test in this file calls `setNavAvailability`) — the entry is visible
+  // unless something deliberately hides it. Previously 6 (PET 1 + WORK 5)
+  // after "knowledge" was added 2026-08-06 (Task 12, the /knowledge wiki
+  // page). Previously 4 (PET 1 + WORK 3) after "Quests" and "Settings" were
+  // both removed the same day with their routes' unmount. Previously 5, and
+  // before that route's unmount. Previously 6; placeholders + help removed
+  // 2026-07-02; "Restate" (re-internalization) nav entry added 064ba33c then
+  // removed (spec §5 — shelved surface stripped, superseded by the AI quiz).
+  //
+  // The raw count stays a count (this test's whole point is being a change
+  // detector for accidental nav additions/removals — same convention
+  // tests/web/routes/nav.test.ts uses for its own flat-entry-count test),
+  // but the new entry specifically is also named below rather than folded
+  // silently into a bumped number.
+  test("sidebar has 4 total nav entries (PET 1 + WORK 3) — Decisions came out 2026-08-17 with its route", () => {
     const html = render();
     const activeMatches = html.match(/aria-current="page"/g) ?? [];
     expect(activeMatches.length).toBe(1);

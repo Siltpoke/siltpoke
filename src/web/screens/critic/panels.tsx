@@ -11,44 +11,64 @@ import { tokens } from "../../tokens/tokens";
 import type { CriticTelemetry } from "../../../state/api";
 import { filterHref, STATUS_COLOR } from "./helpers";
 
+// Shared card chrome for the critic screen's panel row (GateCheckList /
+// BudgetGauge / SkipHistogram all render the same border+padding+column card).
+const panelCardStyle = {
+  border: `1px solid ${tokens.color.edge}`,
+  borderRadius: tokens.radius.md,
+  background: tokens.color.paper,
+  padding: 16,
+  display: "flex",
+  flexDirection: "column",
+  gap: 10,
+} as const;
+
+// Shared "eyebrow" label style for a panel's header title (left side of the
+// header row) — same 3 panels, same uppercase/mono/letter-spaced look.
+const panelEyebrowStyle = {
+  fontFamily: tokens.font.mono,
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+  color: tokens.color.ink3,
+} as const;
+
+// Header row shared by the 3 critic panels: an uppercase eyebrow label on the
+// left, panel-specific content (status pill / stage / count) on the right.
+function PanelHeader({
+  eyebrow,
+  right,
+}: {
+  eyebrow: string;
+  right: import("hono/jsx").Child;
+}) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+      <span style={panelEyebrowStyle}>{eyebrow}</span>
+      {right}
+    </div>
+  );
+}
+
 export function GateCheckList({ telemetry }: { telemetry: CriticTelemetry }) {
   const { gateState } = telemetry;
   return (
-    <div
-      class="critic-gates"
-      style={{
-        border: `1px solid ${tokens.color.edge}`,
-        borderRadius: tokens.radius.md,
-        background: tokens.color.paper,
-        padding: 16,
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-        <span
-          style={{
-            fontFamily: tokens.font.mono,
-            fontSize: 10,
-            letterSpacing: "0.08em",
-            textTransform: "uppercase",
-            color: tokens.color.ink3,
-          }}
-        >
-          GATE DIAGNOSTIC
-        </span>
-        <span
-          style={{
-            fontFamily: tokens.font.body,
-            fontSize: 11,
-            color: gateState.blocking ? tokens.color.terra : tokens.color.moss,
-            fontWeight: 600,
-          }}
-        >
-          {gateState.blocking ? `Blocked at: ${gateState.blocking}` : "All gates open"}
-        </span>
-      </div>
+    <div class="critic-gates" style={panelCardStyle}>
+      <PanelHeader
+        eyebrow="GATE DIAGNOSTIC"
+        right={
+          <span
+            style={{
+              fontFamily: tokens.font.body,
+              fontSize: 11,
+              color: gateState.blocking ? tokens.color.terra : tokens.color.moss,
+              fontWeight: 600,
+            }}
+          >
+            {gateState.blocking ? `Blocked at: ${gateState.blocking}` : "All gates open"}
+          </span>
+        }
+      />
       <div style={{ fontFamily: tokens.font.body, fontSize: 13, color: tokens.color.ink2 }}>
         {gateState.detail}
       </div>
@@ -106,40 +126,15 @@ export function BudgetGauge({ telemetry }: { telemetry: CriticTelemetry }) {
   const rollup = budget.rollup;
 
   return (
-    <div
-      class="critic-budget"
-      style={{
-        border: `1px solid ${tokens.color.edge}`,
-        borderRadius: tokens.radius.md,
-        background: tokens.color.paper,
-        padding: 16,
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-        <span
-          style={{
-            fontFamily: tokens.font.mono,
-            fontSize: 10,
-            letterSpacing: "0.08em",
-            textTransform: "uppercase",
-            color: tokens.color.ink3,
-          }}
-        >
-          BUDGET
-        </span>
-        <span
-          style={{
-            fontFamily: tokens.font.mono,
-            fontSize: 11,
-            color: tokens.color.ink2,
-          }}
-        >
-          today · {budget.stage.toUpperCase()}
-        </span>
-      </div>
+    <div class="critic-budget" style={panelCardStyle}>
+      <PanelHeader
+        eyebrow="BUDGET"
+        right={
+          <span style={{ fontFamily: tokens.font.mono, fontSize: 11, color: tokens.color.ink2 }}>
+            today · {budget.stage.toUpperCase()}
+          </span>
+        }
+      />
 
       {/* Bar w/ soft + hard markers */}
       <div
@@ -229,7 +224,11 @@ function BudgetEditor({ config }: { config: { dailyTokenLimit: number; softWarnA
     `if(v.length>0){const n=Number(v);if(!Number.isFinite(n)){alert(k+' must be a number');return;}body[k]=n;}` +
     `}` +
     `if(Object.keys(body).length===0){alert('no fields changed');return;}` +
-    `fetch('/api/critic/budget',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})` +
+    // Daemon secret — POST /api/critic/budget is secret-gated (finding 2 of
+    // the daemon-hardening security audit). Read from the nearest
+    // [data-secret] element (the FloatingChat panel, present on every page).
+    `const _secret=document.querySelector('[data-secret]')?.getAttribute('data-secret')||'';` +
+    `fetch('/api/critic/budget',{method:'POST',headers:{'content-type':'application/json','X-Siltpoke-Secret':_secret},body:JSON.stringify(body)})` +
     `.then(r=>r.ok?location.reload():alert('save failed'))`;
   return (
     <div x-data="{open:false}" style={{ marginTop: 6, borderTop: `1px solid ${tokens.color.edge}`, paddingTop: 8 }}>
@@ -340,40 +339,15 @@ export function SkipHistogram({ telemetry }: { telemetry: CriticTelemetry }) {
   const max = entries.length > 0 ? Math.max(...entries.map(([, n]) => n)) : 1;
 
   return (
-    <div
-      class="critic-histogram"
-      style={{
-        border: `1px solid ${tokens.color.edge}`,
-        borderRadius: tokens.radius.md,
-        background: tokens.color.paper,
-        padding: 16,
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-        <span
-          style={{
-            fontFamily: tokens.font.mono,
-            fontSize: 10,
-            letterSpacing: "0.08em",
-            textTransform: "uppercase",
-            color: tokens.color.ink3,
-          }}
-        >
-          REASON BREAKDOWN
-        </span>
-        <span
-          style={{
-            fontFamily: tokens.font.mono,
-            fontSize: 10,
-            color: tokens.color.ink3,
-          }}
-        >
-          last {breakdown.total} entries
-        </span>
-      </div>
+    <div class="critic-histogram" style={panelCardStyle}>
+      <PanelHeader
+        eyebrow="REASON BREAKDOWN"
+        right={
+          <span style={{ fontFamily: tokens.font.mono, fontSize: 10, color: tokens.color.ink3 }}>
+            last {breakdown.total} entries
+          </span>
+        }
+      />
       {entries.length === 0 ? (
         <div
           style={{

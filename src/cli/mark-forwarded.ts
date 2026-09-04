@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import {
   findCritiqueByIdOrLatest,
+  readCritiqueId,
   readStatus,
   setStatus,
 } from "../state/critique-status";
@@ -13,6 +14,7 @@ import {
   writeProgression,
 } from "../state/progression";
 import { appendPreferenceEntry } from "../preference-log/writer";
+import { siltpokeRoot } from "../installer/paths";
 
 export const FORWARD_XP_REWARD = 10;
 
@@ -31,8 +33,7 @@ export interface MarkForwardedOptions {
 export async function markForwarded(
   opts: MarkForwardedOptions,
 ): Promise<string> {
-  const homeBase =
-    opts.homeBase ?? join(process.env.HOME ?? "", ".siltpoke");
+  const homeBase = opts.homeBase ?? siltpokeRoot();
   const path = await findCritiqueByIdOrLatest(opts.basePath, opts.idOrLatest);
   if (!path) {
     return `# Siltpoke: review '${opts.idOrLatest}' not found.\n`;
@@ -56,9 +57,26 @@ export async function markForwarded(
   } catch {
     // best-effort snapshot
   }
-  appendPreferenceEntry(
+
+  // `idOrLatest` is an ADDRESS, and "latest" is a sentinel rather than an
+  // identity — `/siltpoke-last` runs `siltpoke-cli mark-forwarded` with no
+  // argument, so the shipped path always passes it. Recording the sentinel
+  // wrote rows that join back to no critique at all (measured on the real
+  // store the day the awaited write started landing: `critique_id: "latest"`).
+  // Fall back to the address only when the file has no id line to read, which
+  // keeps a malformed critique recordable rather than silently unrecorded.
+  const resolvedId = (await readCritiqueId(path)) ?? opts.idOrLatest;
+  // Awaited on purpose. This used to be fire-and-forget, and this file is
+  // also a CLI entry whose process.exit(0) fired before the append reached
+  // disk — so a `forward` never landed in preference-log.jsonl. This is the
+  // one of the three CLI writers with a real shipped caller: /siltpoke-last
+  // runs `siltpoke-cli mark-forwarded` after surfacing a review, so every
+  // forward a user has ever produced was dropped here. (mark-forwarded
+  // writes no feedback-archive entry, so nothing recorded it elsewhere.)
+  // `.catch` keeps the write non-fatal.
+  await appendPreferenceEntry(
     {
-      critique_id: opts.idOrLatest,
+      critique_id: resolvedId,
       signal: "forward",
       reason_text: null,
       critique_snapshot: critiqueSnapshot,

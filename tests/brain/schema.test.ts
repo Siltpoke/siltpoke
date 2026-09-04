@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { parseBrainOutput } from "../../src/brain/schema";
+import { brainOutputSchema, evidenceItemSchema, parseBrainOutput } from "../../src/brain/schema";
 
 const valid = {
   mood: "annoyed",
@@ -18,17 +18,30 @@ test("accepts a fully valid output", () => {
   expect(parsed.xp_earned_events).toEqual([]);
 });
 
-test("rejects unknown mood", () => {
-  expect(() => parseBrainOutput({ ...valid, mood: "rage" })).toThrow();
+// The SCHEMA still rejects both of these; what changed is that `parseBrainOutput`
+// repairs a cosmetic field instead of discarding the review behind it. Asserted on
+// both sides so neither half can drift away unnoticed —
+// `tests/brain/schema-shape-repair.test.ts` carries the reasoning.
+test("the schema rejects an unknown mood — the repairing parser substitutes one", () => {
+  expect(brainOutputSchema.safeParse({ ...valid, mood: "rage" }).success).toBe(false);
+  const parsed = parseBrainOutput({ ...valid, mood: "rage" });
+  expect(parsed.mood).toBe("concerned");
+  expect(parsed.repaired).toContain("mood");
 });
 
-test("rejects empty bubble_short", () => {
-  expect(() => parseBrainOutput({ ...valid, bubble_short: "" })).toThrow();
+test("the schema rejects an empty bubble_short — the repairing parser fills it", () => {
+  expect(brainOutputSchema.safeParse({ ...valid, bubble_short: "" }).success).toBe(false);
+  const parsed = parseBrainOutput({ ...valid, bubble_short: "" });
+  expect(parsed.bubble_short).toBe(valid.bubble_long);
+  expect(parsed.repaired).toContain("bubble_short");
 });
 
-test("rejects bubble_short longer than 200 chars", () => {
-  const long = "x".repeat(201);
-  expect(() => parseBrainOutput({ ...valid, bubble_short: long })).toThrow();
+test("caps bubble_short at 200 chars — by trimming it, not by dropping the answer", () => {
+  // The cap is still enforced; what changed is who pays for the overflow. Rejecting
+  // discarded a whole review over a bubble one character too long.
+  const parsed = parseBrainOutput({ ...valid, bubble_short: "x".repeat(201) });
+  expect(parsed.bubble_short).toHaveLength(200);
+  expect(parsed.truncated?.bubble_short).toBe(1);
 });
 
 test("rejects negative XP amount", () => {
@@ -65,30 +78,35 @@ test("evidence: omitting evidence field produces empty array default", () => {
   expect(parsed.evidence).toEqual([]);
 });
 
-test("evidence: rejects snippet shorter than 10 chars", () => {
-  expect(() =>
-    parseBrainOutput({
-      ...valid,
-      evidence: [{ ...validEvidenceItem, snippet: "short" }],
-    }),
-  ).toThrow();
+test("evidence: a snippet under the 10-char floor fails the item schema, and the item alone is dropped", () => {
+  // The floor is still not coerced — nothing is lengthened to make it fit. What
+  // changed is that the short citation no longer takes the review with it.
+  const item = { ...validEvidenceItem, snippet: "short" };
+  expect(evidenceItemSchema.safeParse(item).success).toBe(false);
+  const parsed = parseBrainOutput({ ...valid, evidence: [item] });
+  expect(parsed.evidence).toEqual([]);
+  expect(parsed.truncated?.evidence_malformed).toBe(1);
+  expect(parsed.critique_for_claude).toBe(valid.critique_for_claude);
 });
 
-test("evidence: rejects snippet longer than 240 chars", () => {
-  const tooLong = "x".repeat(241);
-  expect(() =>
-    parseBrainOutput({
-      ...valid,
-      evidence: [{ ...validEvidenceItem, snippet: tooLong }],
-    }),
-  ).toThrow();
+test("evidence: caps a snippet at 240 chars and keeps the citation", () => {
+  const parsed = parseBrainOutput({
+    ...valid,
+    evidence: [{ ...validEvidenceItem, snippet: "x".repeat(241) }],
+  });
+  expect(parsed.evidence[0]!.snippet).toHaveLength(240);
+  expect(parsed.truncated?.evidence_snippets).toBe(1);
 });
 
-test("evidence: rejects more than 5 items", () => {
+test("evidence: keeps 5 of 6 citations and reports the drop — the findings survive", () => {
+  // This is the assertion the change exists for. Seven planted defects failed 3/3
+  // on this cap, twice four weeks apart, and the findings that were discarded live
+  // in `critique_for_claude` — a field that was never over its own cap.
   const items = Array.from({ length: 6 }, () => validEvidenceItem);
-  expect(() =>
-    parseBrainOutput({ ...valid, evidence: items }),
-  ).toThrow();
+  const parsed = parseBrainOutput({ ...valid, evidence: items });
+  expect(parsed.evidence).toHaveLength(5);
+  expect(parsed.truncated?.evidence).toBe(1);
+  expect(parsed.critique_for_claude).toBe(valid.critique_for_claude);
 });
 
 test("evidence: line field is optional", () => {
@@ -107,29 +125,32 @@ test("evidence: accepts valid line number", () => {
   expect(parsed.evidence[0].line).toBe(42);
 });
 
-test("evidence: rejects line: 0 (must be positive)", () => {
-  expect(() =>
-    parseBrainOutput({
-      ...valid,
-      evidence: [{ ...validEvidenceItem, line: 0 }],
-    }),
-  ).toThrow();
+test("evidence: line: 0 fails the item schema, and the item alone is dropped", () => {
+  const item = { ...validEvidenceItem, line: 0 };
+  expect(evidenceItemSchema.safeParse(item).success).toBe(false);
+  const parsed = parseBrainOutput({ ...valid, evidence: [item] });
+  expect(parsed.evidence).toEqual([]);
+  expect(parsed.truncated?.evidence_malformed).toBe(1);
+  // The findings are what must survive a bad citation.
+  expect(parsed.critique_for_claude).toBe(valid.critique_for_claude);
 });
 
-test("evidence: rejects invalid tool name", () => {
-  expect(() =>
-    parseBrainOutput({
-      ...valid,
-      evidence: [{ ...validEvidenceItem, tool: "pylint" }],
-    }),
-  ).toThrow();
+test("evidence: an unknown tool name fails the item schema, and the item alone is dropped", () => {
+  const item = { ...validEvidenceItem, tool: "pylint" };
+  expect(evidenceItemSchema.safeParse(item).success).toBe(false);
+  const parsed = parseBrainOutput({ ...valid, evidence: [item] });
+  expect(parsed.evidence).toEqual([]);
+  expect(parsed.truncated?.evidence_malformed).toBe(1);
+  // The findings are what must survive a bad citation.
+  expect(parsed.critique_for_claude).toBe(valid.critique_for_claude);
 });
 
-test("evidence: rejects empty file string", () => {
-  expect(() =>
-    parseBrainOutput({
-      ...valid,
-      evidence: [{ ...validEvidenceItem, file: "" }],
-    }),
-  ).toThrow();
+test("evidence: an empty file string fails the item schema, and the item alone is dropped", () => {
+  const item = { ...validEvidenceItem, file: "" };
+  expect(evidenceItemSchema.safeParse(item).success).toBe(false);
+  const parsed = parseBrainOutput({ ...valid, evidence: [item] });
+  expect(parsed.evidence).toEqual([]);
+  expect(parsed.truncated?.evidence_malformed).toBe(1);
+  // The findings are what must survive a bad citation.
+  expect(parsed.critique_for_claude).toBe(valid.critique_for_claude);
 });

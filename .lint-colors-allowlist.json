@@ -1,0 +1,322 @@
+{
+  "entries": [
+    {
+      "path": "src/repo-graph/coverage.ts",
+      "literal": "green",
+      "category": "false-positive",
+      "reason": "Surfaced by adding `src/repo-graph` to ROOTS (final dark-mode branch review, Important 3). Guard false-positive, not a color: this is `tierOf()`'s own COMPUTATION site for `CoverageTier` (\"green\"|\"yellow\"|\"red\", defined in src/repo-graph/types.ts) — a confidence-tier enum returned and later compared/switched on, never assigned to a CSS value position. Same root cause already allowlisted at the two src/web CONSUMERS of this same enum (src/web/client/islands/repo-graph.ts and repo-graph-popovers.ts, Task 10b batch 2) — this is that identical false-positive appearing at the enum's producer instead of its consumers, now that the guard's ROOTS reaches the producer's file too."
+    },
+    {
+      "path": "src/repo-graph/coverage.ts",
+      "literal": "red",
+      "category": "false-positive",
+      "reason": "Surfaced by adding `src/repo-graph` to ROOTS (final dark-mode branch review, Important 3). Guard false-positive, not a color: this is `tierOf()`'s own COMPUTATION site for `CoverageTier` (\"green\"|\"yellow\"|\"red\", defined in src/repo-graph/types.ts) — a confidence-tier enum returned and later compared/switched on, never assigned to a CSS value position. Same root cause already allowlisted at the two src/web CONSUMERS of this same enum (src/web/client/islands/repo-graph.ts and repo-graph-popovers.ts, Task 10b batch 2) — this is that identical false-positive appearing at the enum's producer instead of its consumers, now that the guard's ROOTS reaches the producer's file too."
+    },
+    {
+      "path": "src/repo-graph/coverage.ts",
+      "literal": "yellow",
+      "category": "false-positive",
+      "reason": "Surfaced by adding `src/repo-graph` to ROOTS (final dark-mode branch review, Important 3). Guard false-positive, not a color: this is `tierOf()`'s own COMPUTATION site for `CoverageTier` (\"green\"|\"yellow\"|\"red\", defined in src/repo-graph/types.ts) — a confidence-tier enum returned and later compared/switched on, never assigned to a CSS value position. Same root cause already allowlisted at the two src/web CONSUMERS of this same enum (src/web/client/islands/repo-graph.ts and repo-graph-popovers.ts, Task 10b batch 2) — this is that identical false-positive appearing at the enum's producer instead of its consumers, now that the guard's ROOTS reaches the producer's file too."
+    },
+    {
+      "path": "src/repo-graph/project-architecture.ts",
+      "literal": "#5ec8c0",
+      "category": "known-theme-blind",
+      "reason": "Surfaced by adding `src/repo-graph` to ROOTS (final dark-mode branch review, Important 3). GROUP_ACCENTS' 5th/6th \"overflow\" hues (only reached when a repo has 5+ super-groups) — teal, chosen as a visually-distinct 5th/6th accent, not derived from any brand token. Does NOT match `tokens.color.teal` (#5e9ca3) — a different, more saturated hex, so aliasing it to that token would silently change the rendered color, not a mechanical swap: migrating it is NOT possible without changing the rendered hue. Reaches the page painted directly by the client island's `cssAlpha`/`style=\"background:${accent}\"` sites in `src/web/client/islands/repo-graph.ts` (see that file's own GROUP_ACCENTS docstring) — with no dark counterpart, it stays this same light-toned teal in dark mode too. The other 4 GROUP_ACCENTS entries (terra/moss/sky/amber) WERE byte-identical light-mode copies of brand tokens and are now `tokens.color.*` (see project-architecture.ts's own docstring on GROUP_ACCENTS) — this and the violet entry below are the genuine residue with no token to migrate to: leaving them is a DECISION, not an oversight, and remains a real, open theme-blindness gap for the rare 5-6-group case, not something this fix closes."
+    },
+    {
+      "path": "src/repo-graph/project-architecture.ts",
+      "literal": "#b88ad9",
+      "category": "known-theme-blind",
+      "reason": "Surfaced by adding `src/repo-graph` to ROOTS (final dark-mode branch review, Important 3). GROUP_ACCENTS' 5th/6th \"overflow\" hues (only reached when a repo has 5+ super-groups) — violet, chosen as a visually-distinct 5th/6th accent, not derived from any brand token. Does NOT match `tokens.color.violet` (#9d86c2) — a different, more saturated hex, so aliasing it to that token would silently change the rendered color, not a mechanical swap: migrating it is NOT possible without changing the rendered hue. Reaches the page painted directly by the client island's `cssAlpha`/`style=\"background:${accent}\"` sites in `src/web/client/islands/repo-graph.ts` (see that file's own GROUP_ACCENTS docstring) — with no dark counterpart, it stays this same light-toned violet in dark mode too. The other 4 GROUP_ACCENTS entries (terra/moss/sky/amber) WERE byte-identical light-mode copies of brand tokens and are now `tokens.color.*` (see project-architecture.ts's own docstring on GROUP_ACCENTS) — this and the teal entry above are the genuine residue with no token to migrate to: leaving them is a DECISION, not an oversight, and remains a real, open theme-blindness gap for the rare 5-6-group case, not something this fix closes."
+    },
+    {
+      "path": "src/repo-graph/types.ts",
+      "literal": "green",
+      "category": "false-positive",
+      "reason": "Surfaced by adding `src/repo-graph` to ROOTS (final dark-mode branch review, Important 3). Guard false-positive, not a color: this is the `CoverageTier` type's own DEFINITION site (\"green\"|\"yellow\"|\"red\", a string-literal union), never assigned to a CSS value position — the type declaration itself, not an instance. Same root cause already allowlisted at the two src/web CONSUMERS of this enum and at its computation site in coverage.ts above (Task 10b batch 2 + this fix) — this is that identical false-positive appearing at the enum's own type definition."
+    },
+    {
+      "path": "src/repo-graph/types.ts",
+      "literal": "red",
+      "category": "false-positive",
+      "reason": "Surfaced by adding `src/repo-graph` to ROOTS (final dark-mode branch review, Important 3). Guard false-positive, not a color: this is the `CoverageTier` type's own DEFINITION site (\"green\"|\"yellow\"|\"red\", a string-literal union), never assigned to a CSS value position — the type declaration itself, not an instance. Same root cause already allowlisted at the two src/web CONSUMERS of this enum and at its computation site in coverage.ts above (Task 10b batch 2 + this fix) — this is that identical false-positive appearing at the enum's own type definition."
+    },
+    {
+      "path": "src/repo-graph/types.ts",
+      "literal": "yellow",
+      "category": "false-positive",
+      "reason": "Surfaced by adding `src/repo-graph` to ROOTS (final dark-mode branch review, Important 3). Guard false-positive, not a color: this is the `CoverageTier` type's own DEFINITION site (\"green\"|\"yellow\"|\"red\", a string-literal union), never assigned to a CSS value position — the type declaration itself, not an instance. Same root cause already allowlisted at the two src/web CONSUMERS of this enum and at its computation site in coverage.ts above (Task 10b batch 2 + this fix) — this is that identical false-positive appearing at the enum's own type definition."
+    },
+    {
+      "path": "src/web/atoms/ActionChip.tsx",
+      "literal": "rgba(0,0,0,0.08)",
+      "category": "fixed-decorative-shadow",
+      "reason": "Fixed decorative bevel/highlight simulating physical relief on a button/toy-device skeuomorph — represents a light source's physical shadow/gloss angle, not page ink, so it must NOT ink-derive (the ink-polarity rule: shadows/highlights simulate fixed real-world depth and would incorrectly flip polarity in dark mode if tied to the `ink` token, which itself flips near-black -> near-white). No existing shadowPalette preset matches this bevel's offset-only/inset geometry (sm/md/lg are blurred drop-shadows, not hard-edged bevel lines), and it is reused nowhere else at this exact geometry — minting a bespoke single-consumer token would relocate the literal under a name rather than solve anything. Same theme-invariant treatment already established for the paired white-highlight literal in this same boxShadow."
+    },
+    {
+      "path": "src/web/atoms/ActionChip.tsx",
+      "literal": "rgba(0,0,0,0.10)",
+      "category": "fixed-decorative-shadow",
+      "reason": "Fixed decorative bevel/highlight simulating physical relief on a button/toy-device skeuomorph — represents a light source's physical shadow/gloss angle, not page ink, so it must NOT ink-derive (the ink-polarity rule: shadows/highlights simulate fixed real-world depth and would incorrectly flip polarity in dark mode if tied to the `ink` token, which itself flips near-black -> near-white). No existing shadowPalette preset matches this bevel's offset-only/inset geometry (sm/md/lg are blurred drop-shadows, not hard-edged bevel lines), and it is reused nowhere else at this exact geometry — minting a bespoke single-consumer token would relocate the literal under a name rather than solve anything. Same theme-invariant treatment already established for the paired white-highlight literal in this same boxShadow."
+    },
+    {
+      "path": "src/web/atoms/ActionChip.tsx",
+      "literal": "rgba(0,0,0,0.12)",
+      "category": "fixed-decorative-shadow",
+      "reason": "Fixed decorative bevel/highlight simulating physical relief on a button/toy-device skeuomorph — represents a light source's physical shadow/gloss angle, not page ink, so it must NOT ink-derive (the ink-polarity rule: shadows/highlights simulate fixed real-world depth and would incorrectly flip polarity in dark mode if tied to the `ink` token, which itself flips near-black -> near-white). No existing shadowPalette preset matches this bevel's offset-only/inset geometry (sm/md/lg are blurred drop-shadows, not hard-edged bevel lines), and it is reused nowhere else at this exact geometry — minting a bespoke single-consumer token would relocate the literal under a name rather than solve anything. Same theme-invariant treatment already established for the paired white-highlight literal in this same boxShadow. (Key-cap border, the same physical-embossed-pill metaphor as the button's own inset bevel in this file.)"
+    },
+    {
+      "path": "src/web/atoms/Dot.preview.tsx",
+      "literal": "#e36049",
+      "category": "dev-only-preview",
+      "reason": "Dev-only \"traffic-light trio\" preview story — deliberately NOT equal to `terra` (#d96b6b): a more saturated \"stop-light red\" chosen to sell the traffic-light metaphor at a glance, distinct purpose from the brand terra accent. Decorative, gated out of production the same way as RetroDevice.preview.tsx."
+    },
+    {
+      "path": "src/web/client/islands/repo-graph-popovers.ts",
+      "literal": "green",
+      "category": "false-positive",
+      "reason": "Guard false-positive, not a color: a bare string literal that is a member of CoverageTier (\"green\"|\"yellow\"|\"red\", src/repo-graph/types.ts), a confidence-tier enum compared with === and switched on — never assigned to a CSS value position. isColorValue() flags ANY whole-string literal equal to a CSS3 NAMED keyword with zero context check, so this will re-trigger on any future tier-like string union anywhere in src/web (see the tokens.ts/text-white false-positive entry for the identical root cause). Guard itself intentionally left untouched (Task 10b batch 2 scope)."
+    },
+    {
+      "path": "src/web/client/islands/repo-graph-popovers.ts",
+      "literal": "red",
+      "category": "false-positive",
+      "reason": "Guard false-positive, not a color: a bare string literal that is a member of CoverageTier (\"green\"|\"yellow\"|\"red\", src/repo-graph/types.ts), a confidence-tier enum compared with === and switched on — never assigned to a CSS value position. isColorValue() flags ANY whole-string literal equal to a CSS3 NAMED keyword with zero context check, so this will re-trigger on any future tier-like string union anywhere in src/web (see the tokens.ts/text-white false-positive entry for the identical root cause). Guard itself intentionally left untouched (Task 10b batch 2 scope)."
+    },
+    {
+      "path": "src/web/client/islands/repo-graph-popovers.ts",
+      "literal": "yellow",
+      "category": "false-positive",
+      "reason": "Guard false-positive, not a color: a bare string literal that is a member of CoverageTier (\"green\"|\"yellow\"|\"red\", src/repo-graph/types.ts), a confidence-tier enum compared with === and switched on — never assigned to a CSS value position. isColorValue() flags ANY whole-string literal equal to a CSS3 NAMED keyword with zero context check, so this will re-trigger on any future tier-like string union anywhere in src/web (see the tokens.ts/text-white false-positive entry for the identical root cause). Guard itself intentionally left untouched (Task 10b batch 2 scope)."
+    },
+    {
+      "path": "src/web/client/islands/repo-graph.ts",
+      "literal": "green",
+      "category": "false-positive",
+      "reason": "Guard false-positive, not a color: a bare string literal that is a member of CoverageTier (\"green\"|\"yellow\"|\"red\", src/repo-graph/types.ts), a confidence-tier enum compared with === and switched on — never assigned to a CSS value position. isColorValue() flags ANY whole-string literal equal to a CSS3 NAMED keyword with zero context check, so this will re-trigger on any future tier-like string union anywhere in src/web (see the tokens.ts/text-white false-positive entry for the identical root cause). Guard itself intentionally left untouched (Task 10b batch 2 scope)."
+    },
+    {
+      "path": "src/web/client/islands/repo-graph.ts",
+      "literal": "red",
+      "category": "false-positive",
+      "reason": "Guard false-positive, not a color: a bare string literal that is a member of CoverageTier (\"green\"|\"yellow\"|\"red\", src/repo-graph/types.ts), a confidence-tier enum compared with === and switched on — never assigned to a CSS value position. isColorValue() flags ANY whole-string literal equal to a CSS3 NAMED keyword with zero context check, so this will re-trigger on any future tier-like string union anywhere in src/web (see the tokens.ts/text-white false-positive entry for the identical root cause). Guard itself intentionally left untouched (Task 10b batch 2 scope)."
+    },
+    {
+      "path": "src/web/client/islands/repo-graph.ts",
+      "literal": "yellow",
+      "category": "false-positive",
+      "reason": "Guard false-positive, not a color: a bare string literal that is a member of CoverageTier (\"green\"|\"yellow\"|\"red\", src/repo-graph/types.ts), a confidence-tier enum compared with === and switched on — never assigned to a CSS value position. isColorValue() flags ANY whole-string literal equal to a CSS3 NAMED keyword with zero context check, so this will re-trigger on any future tier-like string union anywhere in src/web (see the tokens.ts/text-white false-positive entry for the identical root cause). Guard itself intentionally left untouched (Task 10b batch 2 scope)."
+    },
+    {
+      "path": "src/web/primitives/SettingsRow.preview.tsx",
+      "literal": "rgba(0,0,0,.25)",
+      "category": "dev-only-preview",
+      "reason": "Dev-only preview harness — the mock Toggle here is a demo fixture, not the real SettingsRow component's own styling; decorative knob shadow on a fixture control, never served in production."
+    },
+    {
+      "path": "src/web/primitives/TamagotchiToy.tsx",
+      "literal": "#3a3530",
+      "category": "user-selectable-skin",
+      "reason": "Toy-skin literal (Family 8, TamagotchiToy.tsx SHELLS array). Fix round 1, Important 3: this reason previously called it 'a genuine user-facing color-picker feature' in the present tense - stale. src/web/primitives/HomeCenter.tsx:8,74 records that the toy view is currently SHELVED (TamagotchiToy is still exported for a future re-enable, but its ViewToggle switcher was removed) - the component is not reachable from any live route today. Kept literal anyway because tokenizing a shell color would make a user's PICKED skin flip with the theme when the view is re-enabled, defeating the point (the same reasoning as the the retired HUD, just for a currently-unreachable surface rather than a live one). This holds even where the hex happens to coincidentally equal an existing brand token (blush=egg, sage=lcd). UNRESOLVED, not closed: `tokens.color.ink2` is painted directly on the fixed `shell.color` (TamagotchiToy.tsx:100 surface, :119 header-strip ink) and measures 1.21-1.65:1 in DARK mode across five of six shells (sage 1.207, sky 1.258, lavender 1.384, blush 1.498, butter 1.650 - all live-computed from palette.ts), with charcoal already sub-floor in LIGHT mode (1.516) the opposite direction. Not Critical (the view is shelved, so nothing renders this today) but a real defect waiting for whoever re-enables the view - do not read this entry as \"the shell family is settled.\""
+    },
+    {
+      "path": "src/web/primitives/TamagotchiToy.tsx",
+      "literal": "#a8c6dc",
+      "category": "user-selectable-skin",
+      "reason": "Toy-skin literal (Family 8, TamagotchiToy.tsx SHELLS array). Fix round 1, Important 3: this reason previously called it 'a genuine user-facing color-picker feature' in the present tense - stale. src/web/primitives/HomeCenter.tsx:8,74 records that the toy view is currently SHELVED (TamagotchiToy is still exported for a future re-enable, but its ViewToggle switcher was removed) - the component is not reachable from any live route today. Kept literal anyway because tokenizing a shell color would make a user's PICKED skin flip with the theme when the view is re-enabled, defeating the point (the same reasoning as the the retired HUD, just for a currently-unreachable surface rather than a live one). This holds even where the hex happens to coincidentally equal an existing brand token (blush=egg, sage=lcd). UNRESOLVED, not closed: `tokens.color.ink2` is painted directly on the fixed `shell.color` (TamagotchiToy.tsx:100 surface, :119 header-strip ink) and measures 1.21-1.65:1 in DARK mode across five of six shells (sage 1.207, sky 1.258, lavender 1.384, blush 1.498, butter 1.650 - all live-computed from palette.ts), with charcoal already sub-floor in LIGHT mode (1.516) the opposite direction. Not Critical (the view is shelved, so nothing renders this today) but a real defect waiting for whoever re-enables the view - do not read this entry as \"the shell family is settled.\" Note: this shell is named \"sky\", colliding with the brand `sky` token's name but NOT its hex (#7fb0c8) - a naming coincidence, not a color defect."
+    },
+    {
+      "path": "src/web/primitives/TamagotchiToy.tsx",
+      "literal": "#b8c2a4",
+      "category": "user-selectable-skin",
+      "reason": "Toy-skin literal (Family 8, TamagotchiToy.tsx SHELLS array). Fix round 1, Important 3: this reason previously called it 'a genuine user-facing color-picker feature' in the present tense - stale. src/web/primitives/HomeCenter.tsx:8,74 records that the toy view is currently SHELVED (TamagotchiToy is still exported for a future re-enable, but its ViewToggle switcher was removed) - the component is not reachable from any live route today. Kept literal anyway because tokenizing a shell color would make a user's PICKED skin flip with the theme when the view is re-enabled, defeating the point (the same reasoning as the the retired HUD, just for a currently-unreachable surface rather than a live one). This holds even where the hex happens to coincidentally equal an existing brand token (blush=egg, sage=lcd). UNRESOLVED, not closed: `tokens.color.ink2` is painted directly on the fixed `shell.color` (TamagotchiToy.tsx:100 surface, :119 header-strip ink) and measures 1.21-1.65:1 in DARK mode across five of six shells (sage 1.207, sky 1.258, lavender 1.384, blush 1.498, butter 1.650 - all live-computed from palette.ts), with charcoal already sub-floor in LIGHT mode (1.516) the opposite direction. Not Critical (the view is shelved, so nothing renders this today) but a real defect waiting for whoever re-enables the view - do not read this entry as \"the shell family is settled.\""
+    },
+    {
+      "path": "src/web/primitives/TamagotchiToy.tsx",
+      "literal": "#d4c5e8",
+      "category": "user-selectable-skin",
+      "reason": "Toy-skin literal (Family 8, TamagotchiToy.tsx SHELLS array). Fix round 1, Important 3: this reason previously called it 'a genuine user-facing color-picker feature' in the present tense - stale. src/web/primitives/HomeCenter.tsx:8,74 records that the toy view is currently SHELVED (TamagotchiToy is still exported for a future re-enable, but its ViewToggle switcher was removed) - the component is not reachable from any live route today. Kept literal anyway because tokenizing a shell color would make a user's PICKED skin flip with the theme when the view is re-enabled, defeating the point (the same reasoning as the the retired HUD, just for a currently-unreachable surface rather than a live one). This holds even where the hex happens to coincidentally equal an existing brand token (blush=egg, sage=lcd). UNRESOLVED, not closed: `tokens.color.ink2` is painted directly on the fixed `shell.color` (TamagotchiToy.tsx:100 surface, :119 header-strip ink) and measures 1.21-1.65:1 in DARK mode across five of six shells (sage 1.207, sky 1.258, lavender 1.384, blush 1.498, butter 1.650 - all live-computed from palette.ts), with charcoal already sub-floor in LIGHT mode (1.516) the opposite direction. Not Critical (the view is shelved, so nothing renders this today) but a real defect waiting for whoever re-enables the view - do not read this entry as \"the shell family is settled.\""
+    },
+    {
+      "path": "src/web/primitives/TamagotchiToy.tsx",
+      "literal": "#f3dc8e",
+      "category": "user-selectable-skin",
+      "reason": "Toy-skin literal (Family 8, TamagotchiToy.tsx SHELLS array). Fix round 1, Important 3: this reason previously called it 'a genuine user-facing color-picker feature' in the present tense - stale. src/web/primitives/HomeCenter.tsx:8,74 records that the toy view is currently SHELVED (TamagotchiToy is still exported for a future re-enable, but its ViewToggle switcher was removed) - the component is not reachable from any live route today. Kept literal anyway because tokenizing a shell color would make a user's PICKED skin flip with the theme when the view is re-enabled, defeating the point (the same reasoning as the the retired HUD, just for a currently-unreachable surface rather than a live one). This holds even where the hex happens to coincidentally equal an existing brand token (blush=egg, sage=lcd). UNRESOLVED, not closed: `tokens.color.ink2` is painted directly on the fixed `shell.color` (TamagotchiToy.tsx:100 surface, :119 header-strip ink) and measures 1.21-1.65:1 in DARK mode across five of six shells (sage 1.207, sky 1.258, lavender 1.384, blush 1.498, butter 1.650 - all live-computed from palette.ts), with charcoal already sub-floor in LIGHT mode (1.516) the opposite direction. Not Critical (the view is shelved, so nothing renders this today) but a real defect waiting for whoever re-enables the view - do not read this entry as \"the shell family is settled.\""
+    },
+    {
+      "path": "src/web/primitives/TamagotchiToy.tsx",
+      "literal": "#f6c8c8",
+      "category": "user-selectable-skin",
+      "reason": "Toy-skin literal (Family 8, TamagotchiToy.tsx SHELLS array). Fix round 1, Important 3: this reason previously called it 'a genuine user-facing color-picker feature' in the present tense - stale. src/web/primitives/HomeCenter.tsx:8,74 records that the toy view is currently SHELVED (TamagotchiToy is still exported for a future re-enable, but its ViewToggle switcher was removed) - the component is not reachable from any live route today. Kept literal anyway because tokenizing a shell color would make a user's PICKED skin flip with the theme when the view is re-enabled, defeating the point (the same reasoning as the the retired HUD, just for a currently-unreachable surface rather than a live one). This holds even where the hex happens to coincidentally equal an existing brand token (blush=egg, sage=lcd). UNRESOLVED, not closed: `tokens.color.ink2` is painted directly on the fixed `shell.color` (TamagotchiToy.tsx:100 surface, :119 header-strip ink) and measures 1.21-1.65:1 in DARK mode across five of six shells (sage 1.207, sky 1.258, lavender 1.384, blush 1.498, butter 1.650 - all live-computed from palette.ts), with charcoal already sub-floor in LIGHT mode (1.516) the opposite direction. Not Critical (the view is shelved, so nothing renders this today) but a real defect waiting for whoever re-enables the view - do not read this entry as \"the shell family is settled.\""
+    },
+    {
+      "path": "src/web/primitives/TamagotchiToy.tsx",
+      "literal": "lavender",
+      "category": "false-positive",
+      "reason": "Guard false-positive, not a color: the SHELLS array's `name: \"lavender\"` string (rendered via `data-shell={shell.name}` / `title={s.name}`), never assigned to a CSS value position — the shell's actual color is the separate `color: \"#d4c5e8\"` field. isColorValue() flags ANY whole-string literal equal to a CSS3 NAMED keyword with zero context check, the same root cause as the tokens.ts/text-white and repo-graph green/red/yellow false-positives (Task 10b batch 2, section 0.1/0.2). Guard itself intentionally left untouched (out of this task's scope)."
+    },
+    {
+      "path": "src/web/primitives/TamagotchiToy.tsx",
+      "literal": "rgba(0,0,0,0.15)",
+      "category": "fixed-decorative-shadow",
+      "reason": "Fixed decorative bevel/highlight simulating physical relief on a button/toy-device skeuomorph — represents a light source's physical shadow/gloss angle, not page ink, so it must NOT ink-derive (the ink-polarity rule: shadows/highlights simulate fixed real-world depth and would incorrectly flip polarity in dark mode if tied to the `ink` token, which itself flips near-black -> near-white). No existing shadowPalette preset matches this bevel's offset-only/inset geometry (sm/md/lg are blurred drop-shadows, not hard-edged bevel lines), and it is reused nowhere else at this exact geometry — minting a bespoke single-consumer token would relocate the literal under a name rather than solve anything. Same theme-invariant treatment already established for the paired white-highlight literal in this same boxShadow."
+    },
+    {
+      "path": "src/web/primitives/TamagotchiToy.tsx",
+      "literal": "rgba(255,255,255,0.4)",
+      "category": "fixed-decorative-shadow",
+      "reason": "Fixed gloss highlight on the shell's plastic surface (Family 8) — represents a physical light reflection, theme-invariant in both directions the same way a shadow stays near-black in both themes (the ink-polarity rule's white-highlight counterpart). Reads as \"shiny\" regardless of the page's theme."
+    },
+    {
+      "path": "src/web/screens/RepoGraph.tsx",
+      "literal": "black",
+      "category": "deliberate-mix-endpoint",
+      "reason": "Surfaced by the Important 2 CSS_COLOR_PROP_DECL widening (final dark-mode branch review) — the allowlist key is (path, literal) with no line, so this one entry covers all `black` occurrences in this file: `.rg-host .arch-gen.stale` at RepoGraph.tsx:202 (×2 — border-color AND color both mix var(--color-amber) toward black) and `.rg-host .btn.primary:hover` at RepoGraph.tsx:543 (mixes var(--ink) 88% toward black). Both are genuine, already-reviewed `color-mix(in srgb, <token> N%, black)` sites (round-1 review specifically audited every color-mix(…, black/white) site in this file for lint-guard evasion; see the file's own inline comments at both line numbers) — the black endpoint is correct precisely BECAUSE each is mixing toward black over a background/fill that stays the lighter operand in both themes (amber solid fill at :202; a hover state whose `--cream` text stays comfortably clear of the 4.5:1 text floor in both themes — recomputed against the live palette: 15.86:1 light / 14.90:1 dark before the mix, 16.40:1 light / 11.37:1 dark after — the darken IMPROVES contrast in light and REGRESSES it in dark, but crosses the floor in neither direction, at :543), not a hardcoded literal standing in for a token."
+    },
+    {
+      "path": "src/web/screens/TimelineScreen.tsx",
+      "literal": "%235a4f3f",
+      "category": "svg-data-uri-encoded",
+      "reason": "URL-encoded ink2 (#5a4f3f, exact token value) inside a background-image: url(\"data:image/svg+xml,...\") select-chevron SVG data URI — a CSS custom property cannot be referenced inside that string, so the color is necessarily a literal PER THEME. This is the LIGHT variant; a matching dark variant (%23adadad = ink2's dark hex) is now emitted in a duplicate rule under a prefers-color-scheme media query + a forced [data-theme=dark] block, mirroring tokens.css's own four-block theme structure — the chevron now actually follows the theme (previously it was a known, comment-flagged live defect: pinned light-only, staying beige in dark mode)."
+    },
+    {
+      "path": "src/web/screens/TimelineScreen.tsx",
+      "literal": "%23adadad",
+      "category": "svg-data-uri-encoded",
+      "reason": "URL-encoded ink2's DARK hex (#adadad, exact token value) — the dark counterpart of the %235a4f3f entry above; see that entry's reason for the full SVG-data-URI mechanism explanation."
+    },
+    {
+      "path": "src/web/screens/critic/filter-bar.tsx",
+      "literal": "#64c8ff",
+      "category": "external-reference-palette",
+      "reason": "Documents an external, non-dashboard palette (the CLI statusline's own pet-bubble severity colors, defined and owned by src/face/wrapper.ts + src/state/critic-event-log.ts, a different surface entirely) — reference data shown to explain that OTHER system, not a color used to paint this page, so it cannot correctly 'follow' the dashboard's theme without becoming inaccurate."
+    },
+    {
+      "path": "src/web/screens/critic/filter-bar.tsx",
+      "literal": "#969696",
+      "category": "external-reference-palette",
+      "reason": "Documents an external, non-dashboard palette (the CLI statusline's own pet-bubble severity colors, defined and owned by src/face/wrapper.ts + src/state/critic-event-log.ts, a different surface entirely) — reference data shown to explain that OTHER system, not a color used to paint this page, so it cannot correctly 'follow' the dashboard's theme without becoming inaccurate."
+    },
+    {
+      "path": "src/web/screens/critic/filter-bar.tsx",
+      "literal": "#dcc864",
+      "category": "external-reference-palette",
+      "reason": "Documents an external, non-dashboard palette (the CLI statusline's own pet-bubble severity colors, defined and owned by src/face/wrapper.ts + src/state/critic-event-log.ts, a different surface entirely) — reference data shown to explain that OTHER system, not a color used to paint this page, so it cannot correctly 'follow' the dashboard's theme without becoming inaccurate."
+    },
+    {
+      "path": "src/web/screens/critic/filter-bar.tsx",
+      "literal": "#ff6464",
+      "category": "external-reference-palette",
+      "reason": "Documents an external, non-dashboard palette (the CLI statusline's own pet-bubble severity colors, defined and owned by src/face/wrapper.ts + src/state/critic-event-log.ts, a different surface entirely) — reference data shown to explain that OTHER system, not a color used to paint this page, so it cannot correctly 'follow' the dashboard's theme without becoming inaccurate."
+    },
+    {
+      "path": "src/web/shells/RetroDevice.preview.tsx",
+      "literal": "#3a322a",
+      "category": "dev-only-preview",
+      "reason": "Dev-only preview-gallery fixture (SHELL_SWATCHES demo array / page chrome), gated out of production by mountPreviewRoutes()'s `SILTPOKE_ENV !== \"production\"` check (verified at src/web/routes/preview.tsx:271-287, not assumed) — no production consumer, no text painted on any of these values, purely illustrative swatch/canvas color for /dev/preview visual QA."
+    },
+    {
+      "path": "src/web/shells/RetroDevice.preview.tsx",
+      "literal": "#8eb89c",
+      "category": "dev-only-preview",
+      "reason": "Dev-only preview-gallery fixture (SHELL_SWATCHES demo array / page chrome), gated out of production by mountPreviewRoutes()'s `SILTPOKE_ENV !== \"production\"` check (verified at src/web/routes/preview.tsx:271-287, not assumed) — no production consumer, no text painted on any of these values, purely illustrative swatch/canvas color for /dev/preview visual QA."
+    },
+    {
+      "path": "src/web/shells/RetroDevice.preview.tsx",
+      "literal": "#9c7fb0",
+      "category": "dev-only-preview",
+      "reason": "Dev-only preview-gallery fixture (SHELL_SWATCHES demo array / page chrome), gated out of production by mountPreviewRoutes()'s `SILTPOKE_ENV !== \"production\"` check (verified at src/web/routes/preview.tsx:271-287, not assumed) — no production consumer, no text painted on any of these values, purely illustrative swatch/canvas color for /dev/preview visual QA."
+    },
+    {
+      "path": "src/web/shells/RetroDevice.preview.tsx",
+      "literal": "#c79a3a",
+      "category": "dev-only-preview",
+      "reason": "Dev-only preview-gallery fixture (SHELL_SWATCHES demo array / page chrome), gated out of production by mountPreviewRoutes()'s `SILTPOKE_ENV !== \"production\"` check (verified at src/web/routes/preview.tsx:271-287, not assumed) — no production consumer, no text painted on any of these values, purely illustrative swatch/canvas color for /dev/preview visual QA."
+    },
+    {
+      "path": "src/web/shells/RetroDevice.preview.tsx",
+      "literal": "#c8dde8",
+      "category": "dev-only-preview",
+      "reason": "Dev-only preview-gallery fixture (SHELL_SWATCHES demo array / page chrome), gated out of production by mountPreviewRoutes()'s `SILTPOKE_ENV !== \"production\"` check (verified at src/web/routes/preview.tsx:271-287, not assumed) — no production consumer, no text painted on any of these values, purely illustrative swatch/canvas color for /dev/preview visual QA."
+    },
+    {
+      "path": "src/web/shells/RetroDevice.preview.tsx",
+      "literal": "#cde8c7",
+      "category": "dev-only-preview",
+      "reason": "Dev-only preview-gallery fixture (SHELL_SWATCHES demo array / page chrome), gated out of production by mountPreviewRoutes()'s `SILTPOKE_ENV !== \"production\"` check (verified at src/web/routes/preview.tsx:271-287, not assumed) — no production consumer, no text painted on any of these values, purely illustrative swatch/canvas color for /dev/preview visual QA."
+    },
+    {
+      "path": "src/web/shells/RetroDevice.preview.tsx",
+      "literal": "#d8c8e0",
+      "category": "dev-only-preview",
+      "reason": "Dev-only preview-gallery fixture (SHELL_SWATCHES demo array / page chrome), gated out of production by mountPreviewRoutes()'s `SILTPOKE_ENV !== \"production\"` check (verified at src/web/routes/preview.tsx:271-287, not assumed) — no production consumer, no text painted on any of these values, purely illustrative swatch/canvas color for /dev/preview visual QA."
+    },
+    {
+      "path": "src/web/shells/RetroDevice.preview.tsx",
+      "literal": "#ddd0b6",
+      "category": "dev-only-preview",
+      "reason": "Dev-only preview-gallery page canvas background (3 story wrappers, 1 literal) — same gating as the shell swatches. Dev-only preview-gallery fixture (SHELL_SWATCHES demo array / page chrome), gated out of production by mountPreviewRoutes()'s `SILTPOKE_ENV !== \"production\"` check (verified at src/web/routes/preview.tsx:271-287, not assumed) — no production consumer, no text painted on any of these values, purely illustrative swatch/canvas color for /dev/preview visual QA."
+    },
+    {
+      "path": "src/web/shells/RetroDevice.preview.tsx",
+      "literal": "#f6dd8a",
+      "category": "dev-only-preview",
+      "reason": "Dev-only preview-gallery fixture (SHELL_SWATCHES demo array / page chrome), gated out of production by mountPreviewRoutes()'s `SILTPOKE_ENV !== \"production\"` check (verified at src/web/routes/preview.tsx:271-287, not assumed) — no production consumer, no text painted on any of these values, purely illustrative swatch/canvas color for /dev/preview visual QA."
+    },
+    {
+      "path": "src/web/shells/RetroDevice.preview.tsx",
+      "literal": "rgba(0,0,0,.06)",
+      "category": "dev-only-preview",
+      "reason": "Dev-only preview-gallery fixture (SHELL_SWATCHES demo array / page chrome), gated out of production by mountPreviewRoutes()'s `SILTPOKE_ENV !== \"production\"` check (verified at src/web/routes/preview.tsx:271-287, not assumed) — no production consumer, no text painted on any of these values, purely illustrative swatch/canvas color for /dev/preview visual QA."
+    },
+    {
+      "path": "src/web/shells/RetroDevice.preview.tsx",
+      "literal": "rgba(0,0,0,.08)",
+      "category": "dev-only-preview",
+      "reason": "Dev-only preview-gallery fixture (SHELL_SWATCHES demo array / page chrome), gated out of production by mountPreviewRoutes()'s `SILTPOKE_ENV !== \"production\"` check (verified at src/web/routes/preview.tsx:271-287, not assumed) — no production consumer, no text painted on any of these values, purely illustrative swatch/canvas color for /dev/preview visual QA."
+    },
+    {
+      "path": "src/web/shells/RetroDevice.preview.tsx",
+      "literal": "rgba(0,0,0,.15)",
+      "category": "dev-only-preview",
+      "reason": "Dev-only preview-gallery fixture (SHELL_SWATCHES demo array / page chrome), gated out of production by mountPreviewRoutes()'s `SILTPOKE_ENV !== \"production\"` check (verified at src/web/routes/preview.tsx:271-287, not assumed) — no production consumer, no text painted on any of these values, purely illustrative swatch/canvas color for /dev/preview visual QA."
+    },
+    {
+      "path": "src/web/shells/RetroDevice.preview.tsx",
+      "literal": "rgba(255,255,255,.55)",
+      "category": "dev-only-preview",
+      "reason": "Dev-only preview-gallery fixture (SHELL_SWATCHES demo array / page chrome), gated out of production by mountPreviewRoutes()'s `SILTPOKE_ENV !== \"production\"` check (verified at src/web/routes/preview.tsx:271-287, not assumed) — no production consumer, no text painted on any of these values, purely illustrative swatch/canvas color for /dev/preview visual QA."
+    },
+    {
+      "path": "src/web/shells/RetroDevice.tsx",
+      "literal": "rgba(0,0,0,.08)",
+      "category": "fixed-decorative-shadow",
+      "reason": "Fixed decorative bevel/highlight simulating physical relief on a button/toy-device skeuomorph — represents a light source's physical shadow/gloss angle, not page ink, so it must NOT ink-derive (the ink-polarity rule: shadows/highlights simulate fixed real-world depth and would incorrectly flip polarity in dark mode if tied to the `ink` token, which itself flips near-black -> near-white). No existing shadowPalette preset matches this bevel's offset-only/inset geometry (sm/md/lg are blurred drop-shadows, not hard-edged bevel lines), and it is reused nowhere else at this exact geometry — minting a bespoke single-consumer token would relocate the literal under a name rather than solve anything. Same theme-invariant treatment already established for the paired white-highlight literal in this same boxShadow."
+    },
+    {
+      "path": "src/web/shells/RetroDevice.tsx",
+      "literal": "rgba(0,0,0,.10)",
+      "category": "fixed-decorative-shadow",
+      "reason": "Fixed decorative bevel/highlight simulating physical relief on a button/toy-device skeuomorph — represents a light source's physical shadow/gloss angle, not page ink, so it must NOT ink-derive (the ink-polarity rule: shadows/highlights simulate fixed real-world depth and would incorrectly flip polarity in dark mode if tied to the `ink` token, which itself flips near-black -> near-white). No existing shadowPalette preset matches this bevel's offset-only/inset geometry (sm/md/lg are blurred drop-shadows, not hard-edged bevel lines), and it is reused nowhere else at this exact geometry — minting a bespoke single-consumer token would relocate the literal under a name rather than solve anything. Same theme-invariant treatment already established for the paired white-highlight literal in this same boxShadow."
+    },
+    {
+      "path": "src/web/shells/RetroDevice.tsx",
+      "literal": "rgba(0,0,0,.22)",
+      "category": "fixed-decorative-shadow",
+      "reason": "Fixed decorative bevel/highlight simulating physical relief on a button/toy-device skeuomorph — represents a light source's physical shadow/gloss angle, not page ink, so it must NOT ink-derive (the ink-polarity rule: shadows/highlights simulate fixed real-world depth and would incorrectly flip polarity in dark mode if tied to the `ink` token, which itself flips near-black -> near-white). No existing shadowPalette preset matches this bevel's offset-only/inset geometry (sm/md/lg are blurred drop-shadows, not hard-edged bevel lines), and it is reused nowhere else at this exact geometry — minting a bespoke single-consumer token would relocate the literal under a name rather than solve anything. Same theme-invariant treatment already established for the paired white-highlight literal in this same boxShadow."
+    },
+    {
+      "path": "src/web/shells/RetroDevice.tsx",
+      "literal": "rgba(255,255,255,.5)",
+      "category": "fixed-decorative-shadow",
+      "reason": "Fixed gloss highlight on the egg-shell's plastic surface (Family 8) — same theme-invariant judgment call as TamagotchiToy.tsx's shell highlight above."
+    },
+    {
+      "path": "src/web/tokens/tokens.ts",
+      "literal": "text-white",
+      "category": "false-positive",
+      "reason": "Not a utility class: this is CSS COMMENT TEXT inside a string that tokensToTailwindTheme() emits into the generated @theme block, explaining which keyword colors survive the palette reset. There is no class attribute here and nothing to theme. Kept as an allowlist entry rather than reworded, because mangling a doc comment to satisfy a scanner is the wrong direction."
+    }
+  ]
+}

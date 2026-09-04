@@ -138,12 +138,20 @@ test(
     const speechPath = launcher.locator("svg path").first();
     await expect(speechPath).toBeAttached();
 
-    // Class audit: a dark filled circle (bg-ink + rounded-full) with a white
-    // icon (text-[#fff]); no leftover emoji-era transparent styling.
+    // Class audit: a dark filled circle (bg-ink + rounded-full) with a
+    // white icon in light mode (text-cream — theme-aware, NOT the frozen
+    // text-[#fff] this assertion originally checked: `ink` flips polarity
+    // between themes, and a literal white icon on `bg-ink` reads at
+    // ~1.06:1 in dark mode, invisible — see the fix's own comment at
+    // src/web/_shared/FloatingChat.tsx:67-74). `cream` is `ink`'s exact
+    // opposite-polarity counterpart, so text-cream on bg-ink stays
+    // high-contrast in BOTH themes; in light mode specifically `cream`
+    // renders near-white, which is what this test's own name describes.
+    // No leftover emoji-era transparent styling.
     const cls = await launcher.getAttribute("class") ?? "";
     expect(cls).toContain("bg-ink");
     expect(cls).toContain("rounded-full");
-    expect(cls).toContain("text-[#fff]");
+    expect(cls).toContain("text-cream");
   },
 );
 

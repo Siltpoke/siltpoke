@@ -12,6 +12,16 @@ import { emptyMemory } from "../../src/memory/memory";
 import type { CoreMemory, Fact } from "../../src/memory/memory";
 import type { StreamChatOptions, StreamEvent } from "../../src/daemon/routes/chat-stream";
 
+const TEST_SECRET = "test-secret";
+
+const ELIGIBLE_PROJECT = async () => ({
+  project_id: null,
+  proj_hash: null,
+  project_root: null,
+  display_name: null,
+  source: "explicit" as const,
+});
+
 let home: string;
 let captured: StreamChatOptions[];
 
@@ -61,10 +71,12 @@ function memWith(facts: Fact[]): CoreMemory {
 function app(readMemory?: () => Promise<CoreMemory | null>): Hono {
   const a = new Hono();
   mountChatRoutes(a, {
+    resolveProject: ELIGIBLE_PROJECT,
     homeBase: home,
     index: openIndex(home),
     streamFactory: fakeStream,
     readMemory,
+    secret: TEST_SECRET,
   });
   return a;
 }
@@ -72,7 +84,7 @@ function app(readMemory?: () => Promise<CoreMemory | null>): Hono {
 async function post(a: Hono, body: unknown): Promise<Response> {
   return a.request("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
     body: JSON.stringify(body),
   });
 }
@@ -138,9 +150,11 @@ describe("chat fact-injection", () => {
     const seen: string[] = [];
     const a = new Hono();
     mountChatRoutes(a, {
+      resolveProject: ELIGIBLE_PROJECT,
       homeBase: home,
       index: openIndex(home),
       streamFactory: fakeStream,
+      secret: TEST_SECRET,
       readMemory: async (hb: string) => {
         seen.push(hb);
         return memWith([fact({ text: "User prefers the color teal" })]);

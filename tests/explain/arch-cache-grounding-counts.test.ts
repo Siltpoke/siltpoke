@@ -27,6 +27,8 @@ import type { ArchModelDoc } from "../../src/explain/arch-model-schema";
 import type { BrainUsage } from "../../src/brain/brain";
 import { runArchGenerate, type ArchGenerateCtx } from "../../src/explain/arch-generate";
 import type { RepoGraph, RepoGraphMeta, SiltpokeGraphNode } from "../../src/repo-graph/types";
+import { listReviewerExternals } from "../../src/brain/registry";
+import { anchoredRepoRoot } from "../_shared/arch-repo-root";
 
 // ── shared fixtures ────────────────────────────────────────────────────────────
 
@@ -79,6 +81,7 @@ function fixtureMeta(root: string): RepoGraphMeta {
     counters: {
       files_walked: 2,
       files_cached: 0,
+      parse_degraded: 0,
       skipped: { tree_sitter_failed: 0, too_large: 0, not_a_source_file: 0, file_cap: 0 },
       nodes: { file: 2, function: 0, class: 0, module: 0, symbol: 0 },
       edges: { imports: 0, calls: 0, contains: 0 },
@@ -162,11 +165,20 @@ describe("readArchModel — grounding counts round-trip", () => {
       baseMeta({ fingerprint: "fpG", graphIndexedTs: "tsG", citedClaims: 29, totalClaims: 37, topologyBlindClaims: 2 }),
       SUBDIRS,
     );
-    const r = await readArchModel(d, "fpG", "tsG");
+    // Anchored root: the registry's evidence file exists here, so the externals
+    // stay in scope and the injection this case measures actually happens.
+    const r = await readArchModel(d, "fpG", "tsG", anchoredRepoRoot());
     expect(r).not.toBeNull();
-    // all 3 counts must be returned.
+    // all 3 counts must be returned. goodDoc() has no ext nodes at all, so
+    // readArchModel's reconcile-on-read pass (added alongside this doc's read
+    // path — see arch-cache.ts readArchModel) additively injects EVERY
+    // registry-declared reviewer external (title+band+desc = 3 claims each,
+    // no edge since goodDoc's nodes carry no `src/brain/` members) — totalClaims
+    // grows by that amount; citedClaims/topologyBlindClaims are untouched by
+    // reconcile (injected claims are inferred, never cited).
+    const injected = listReviewerExternals().length * 3;
     expect(r!.meta.citedClaims).toBe(29);
-    expect(r!.meta.totalClaims).toBe(37);
+    expect(r!.meta.totalClaims).toBe(37 + injected);
     expect(r!.meta.topologyBlindClaims).toBe(2);
   });
 
@@ -188,7 +200,7 @@ describe("readArchModel — grounding counts round-trip", () => {
     // Overwrite the meta file directly to ensure no count keys.
     await writeFile(archMetaPath(d), JSON.stringify(legacyMeta));
 
-    const r = await readArchModel(d, "fpLeg2", "tsLeg2");
+    const r = await readArchModel(d, "fpLeg2", "tsLeg2", null);
     // must not crash, stale:false, counts absent (NEVER 0).
     expect(r).not.toBeNull();
     expect(r!.stale).toBe(false);

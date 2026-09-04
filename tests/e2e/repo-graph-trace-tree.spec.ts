@@ -102,17 +102,41 @@ async function captureTraceEntry(
   page: Page,
   pick: (p: Page) => Promise<void>,
 ): Promise<string | null> {
-  const trace: string[] = [];
-  page.on("request", (r) => {
-    if (r.url().includes("/api/repo-graph/trace")) trace.push(r.url());
-  });
   await page.goto(FIXTURE_URL);
   await openTree(page);
-  await Promise.all([
-    page.waitForResponse((r) => r.url().includes("/api/repo-graph/trace")),
+  // Waited-for and read-from must be the SAME request, and the predicate has to
+  // name the one this test is about.
+  //
+  // The earlier version waited for any `/trace` response, then read the LAST
+  // `/trace` URL a request listener had collected — a different request as soon
+  // as a flow issues more than one, which this one does. Measured order, from a
+  // probe that logged every `/trace` request and response during a tree pick:
+  //
+  //     REQ  entry=function:src/alpha/a.ts:runAlpha
+  //     RESP entry=function:src/alpha/a.ts:runAlpha
+  //     REQ  entry=(absent)
+  //     RESP entry=(absent)
+  //
+  // So the wait resolved on the entry-bearing response, and the read then took
+  // whichever URL was last in the array — the entry-LESS request that follows a
+  // few milliseconds later, whenever it had already been captured. That is the
+  // `Received: null` this test failed with in CI about one run in three while
+  // passing locally every time: which of the two wins is a property of the
+  // machine, not of the code under test.
+  //
+  // That ordering is measured, not reasoned — and the first version of this
+  // comment had it backwards, claiming the entry-less call came first from the
+  // file click. The fix is correct either way, which is precisely how a wrong
+  // explanation ships unnoticed beside working code.
+  const [response] = await Promise.all([
+    page.waitForResponse(
+      (r) =>
+        r.url().includes("/api/repo-graph/trace") &&
+        new URL(r.url()).searchParams.has("entry"),
+    ),
     pick(page),
   ]);
-  return new URL(trace[trace.length - 1]).searchParams.get("entry");
+  return new URL(response.url()).searchParams.get("entry");
 }
 
 test("2. parity — tree-leaf pick and search pick fire the identical /trace entry", async ({

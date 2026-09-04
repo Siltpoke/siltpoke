@@ -28,7 +28,7 @@
  */
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { Hono } from "hono";
 import {
   cascadeStaleSubdir,
@@ -54,15 +54,20 @@ import {
   projectArchitecture,
 } from "../../repo-graph/project-architecture";
 import { resolveRepoGraphLocation } from "../../repo-graph/proj-hash";
+import { resolveRequestProject } from "../project-context";
 import {
   enumerateRepos,
   isValidProjHash,
+  discardFailedBuild,
   removeRepoIndex,
   resolveRepoByHash,
   restorePreservedArchModel,
 } from "../../repo-graph/repo-registry";
 import { validateIndexPath } from "../../repo-graph/index-guard";
+import { readIndexStaleness } from "../../repo-graph/index-health";
+import { stalenessVerdict } from "../../repo-graph/staleness-verdict";
 import { loadIndexConfig, resolveAllowRoots } from "../../config/index-config";
+import { loadRepoGraphConfig } from "../../config/repo-graph-config";
 import { siltpokeRoot } from "../../installer/paths";
 import { resolveArchTimeoutMs, TaskRegistry } from "../task-registry";
 import { appendUsageEvent } from "../../state/usage";
@@ -71,7 +76,7 @@ import { streamSSE } from "hono/streaming";
 import { buildSearchIndex, fuzzyMatch } from "../../repo-graph/search-index";
 import { levenshteinSuggest, resolveTarget } from "../../repo-graph/query";
 import { buildSymbolTable } from "../../repo-graph/symbol-table";
-import { detectEntrypoints } from "../../repo-graph/detect-entrypoints";
+import { detectEntrypointsWithWarnings } from "../../repo-graph/detect-entrypoints";
 import { computeCoverage } from "../../repo-graph/coverage";
 import { tracePath } from "../../repo-graph/trace-path";
 import {
@@ -103,21 +108,123 @@ export interface IndexRunResult {
   exitCode: number | null;
   timedOut: boolean;
   aborted: boolean;
+  /** Tail of the child's stderr, when it wrote any. The reason a failed index
+   * failed — previously discarded (`stderr: "ignore"`), which is why a spawn
+   * that could never work reported nothing anywhere for as long as it shipped. */
+  stderrTail?: string;
 }
 export type IndexRunner = (args: IndexRunArgs) => Promise<IndexRunResult>;
 
-const defaultIndexRunner: IndexRunner = async ({ realPath, home, timeoutMs, onProgress, signal }) => {
+/**
+ * Resolve the indexer child from the directory THIS module is running from.
+ * Same ship-two-ways problem — and same shape — as `resolveOnStopTarget` in
+ * src/hooks/agy-stop.ts, whose comment records that spawning the source path
+ * was a shipped bug there once already. This was the sibling site that never
+ * got the defence:
+ *
+ *   - BUNDLED: the daemon runs as dist/siltpoke-daemon.js, so `import.meta.dir`
+ *     is dist/. The old `join(dir, "../../cli/index-repo.ts")` climbed TWO
+ *     levels above the repo root and produced a path that exists nowhere — bun
+ *     answered `Module not found`, exit 1, and the dashboard reported
+ *     "index_failed" for every repo. dist/siltpoke-index-repo.js is a sibling
+ *     in the same outdir, so the target is a plain filename join: no `..`, no
+ *     repo-root math to get wrong. A plugin cache ships no `src/`, so this MUST
+ *     be the bundle and can never be the TypeScript entry.
+ *   - SOURCE: bun runs src/daemon/routes/repo-graph.tsx directly and
+ *     src/cli/index-repo.ts is two levels up — run straight off disk.
+ *
+ * Exported so the dist/source split is unit-testable without a real filesystem.
+ */
+export function resolveIndexerTarget(hereDir: string): string {
+  if (basename(hereDir) === "dist") {
+    return join(hereDir, "siltpoke-index-repo.js");
+  }
+  return join(hereDir, "../../cli/index-repo.ts");
+}
+
+/** Keep the tail of the child's stderr — enough to name a failure, bounded so a
+ * screaming child can't grow the daemon's heap. */
+const STDERR_TAIL_LIMIT = 4000;
+
+/** Longest `detail` we will put on the wire — one line for a UI, not a log dump. */
+const DETAIL_MAX = 200;
+
+/** Bun signs off every crash with a version banner as the literal last line —
+ * `Bun v1.3.11 (macOS arm64)`. Measured, not assumed. */
+const RUNTIME_BANNER = /^Bun v[\d.]+ \(.+\)$/;
+
+/**
+ * Pick the one stderr line worth showing a human.
+ *
+ * "The last non-blank line" is WRONG, and measurably so. The two failures that
+ * actually occur have different shapes:
+ *
+ *   bun <missing file>   →  error: Module not found "…"        ← last line, fine
+ *   bun <script throws>  →  error: boom from inner
+ *                           …stack frames…
+ *                           (blank)
+ *                           Bun v1.3.11 (macOS arm64)          ← last line, useless
+ *
+ * The second shape is not hypothetical: `index_error` ("The indexer crashed
+ * before it finished") is a terminal this route already emits, so any throw
+ * inside the indexer lands here — and reporting a version banner as the cause
+ * reads like a compatibility complaint about something that isn't the problem.
+ *
+ * So: prefer the first `error:` line, which is where both runtimes put the real
+ * message; fall back to the last non-blank line that isn't the banner.
+ *
+ * Exported for test — the trimming rules are the contract, not an
+ * implementation detail, since this string reaches the dashboard verbatim.
+ */
+export function indexerFailureLine(tail: string | undefined): string | undefined {
+  if (!tail) return undefined;
+  const lines = tail
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !RUNTIME_BANNER.test(l));
+  const picked = lines.find((l) => l.startsWith("error:")) ?? lines[lines.length - 1];
+  if (!picked) return undefined;
+  return picked.length > DETAIL_MAX ? `${picked.slice(0, DETAIL_MAX - 1)}…` : picked;
+}
+
+/**
+ * The real spawn, with the script path as a PARAMETER.
+ *
+ * Split out from `defaultIndexRunner` purely so the spawn is reachable from a
+ * test: with the path hard-wired, nothing in CI could ever execute this
+ * function, and `stderr: "pipe"` could silently revert to `"ignore"` — the very
+ * setting whose absence hid a total failure of dashboard indexing — with a
+ * fully green suite. Tests point `script` at a fixture; production points it at
+ * `resolveIndexerTarget(import.meta.dir)`.
+ *
+ * INVARIANT the concurrent stderr drain relies on: the child must not hand its
+ * own stdout/stderr fds to a grandchild (`stdio: "inherit"`). It doesn't today
+ * — index-repo.ts's only subprocess is `git` via spawnWithTimeout, which opens
+ * its own pipes — but if that ever changes, `await stderrDone` stops resolving
+ * when the child is killed and an index request hangs instead of failing.
+ */
+export async function runIndexerProcess({
+  script,
+  realPath,
+  home,
+  timeoutMs,
+  onProgress,
+  signal,
+}: IndexRunArgs & { script: string }): Promise<IndexRunResult> {
   // Arg-array spawn (no shell → no interpolation). The indexer takes its root
   // from cwd, so cwd = the validated realPath; SILTPOKE_HOME pins the child's
   // storage to the daemon's home. process.execPath = the bun binary. `--progress`
   // makes it emit `{"type":"progress","done","total"}` NDJSON we tail for SSE.
-  const script = join(import.meta.dir, "../../cli/index-repo.ts");
   const env = { ...process.env, ...(home ? { SILTPOKE_HOME: home } : {}) } as Record<string, string>;
   const proc = Bun.spawn([process.execPath, script, "--progress"], {
     cwd: realPath,
     env,
     stdout: "pipe",
-    stderr: "ignore",
+    // NOT "ignore". Discarding stderr is what hid the bug above for as long as
+    // it lived: the child said `Module not found` on every run and nothing —
+    // no log line, no UI text — ever carried it. The tail is surfaced to the
+    // caller so a failed index can say WHY.
+    stderr: "pipe",
     stdin: "ignore",
   });
 
@@ -132,6 +239,27 @@ const defaultIndexRunner: IndexRunner = async ({ realPath, home, timeoutMs, onPr
     proc.kill();
   };
   signal?.addEventListener("abort", onAbort);
+
+  // Drain stderr CONCURRENTLY with stdout. A child that fills the stderr pipe
+  // buffer while we are still blocked reading stdout would deadlock — so this
+  // is started here, not awaited after the stdout loop.
+  let stderrTail = "";
+  const stderrDone = (async () => {
+    try {
+      const reader = (proc.stderr as ReadableStream<Uint8Array>).getReader();
+      const dec = new TextDecoder();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        stderrTail += dec.decode(value, { stream: true });
+        if (stderrTail.length > STDERR_TAIL_LIMIT) {
+          stderrTail = stderrTail.slice(-STDERR_TAIL_LIMIT);
+        }
+      }
+    } catch {
+      /* stream error — whatever we already captured still stands */
+    }
+  })();
 
   // The timer + abort listener must stay live until the process exits (they own
   // the kill); the finally cleans both up no matter how we leave — including if
@@ -166,12 +294,16 @@ const defaultIndexRunner: IndexRunner = async ({ realPath, home, timeoutMs, onPr
       /* stream error — fall through to exit code */
     }
     const exitCode = await proc.exited;
-    return { exitCode, timedOut, aborted };
+    await stderrDone;
+    return { exitCode, timedOut, aborted, stderrTail: stderrTail.trim() || undefined };
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", onAbort);
   }
-};
+}
+
+const defaultIndexRunner: IndexRunner = (args) =>
+  runIndexerProcess({ ...args, script: resolveIndexerTarget(import.meta.dir) });
 
 export interface RepoGraphRouteDeps {
   cwd: string;
@@ -205,7 +337,8 @@ interface ActiveRepo {
 
 /**
  * Resolve the active repo: `?repo=<proj_hash>` if present and known, else the
- * daemon's cwd. Returns null when the requested repo isn't indexed.
+ * daemon's shared per-request resolver, else the daemon's cwd. Returns null
+ * when an explicit `?repo=` isn't indexed.
  */
 async function resolveActiveRepo(
   repo: string | undefined,
@@ -215,6 +348,21 @@ async function resolveActiveRepo(
     const loc = await resolveRepoByHash(repo, { home: deps.home });
     if (!loc || !loc.project_root) return null;
     return { storage_dir: loc.storage_dir, project_root: loc.project_root };
+  }
+  // No explicit repo: prefer the daemon's shared per-request resolver (fixes
+  // the launchd frozen-cwd bug — deps.cwd is "/" in production, so
+  // computeProjHash(cwd) never matches a real repo); fall back to the raw cwd
+  // resolution when the resolver has no pinned/recent project (keeps direct-
+  // cwd callers — the repo-graph test suite seeds a fixture AT deps.cwd and
+  // expects it resolved without a `?repo=` — working unchanged).
+  // Validate the resolver's guess against repo-graph's OWN registry via
+  // resolveRepoByHash directly (this route has no pre-loaded `repos` list to
+  // check against, unlike the SSR mount's `resolveDefaultProjHash` — same
+  // registry, different mechanism; keep both in sync if either changes).
+  const proj = await resolveRequestProject(deps.home ?? siltpokeRoot(), undefined);
+  if (proj.proj_hash) {
+    const loc = await resolveRepoByHash(proj.proj_hash, { home: deps.home });
+    if (loc?.project_root) return { storage_dir: loc.storage_dir, project_root: loc.project_root };
   }
   const loc = resolveRepoGraphLocation(deps.cwd, { home: deps.home });
   return { storage_dir: loc.storage_dir, project_root: loc.project_root };
@@ -336,13 +484,28 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
             },
           });
           // Any non-clean end (cancel / timeout / non-zero exit) may have left
-          // meta.building:true + partial files → delete so no stuck "indexing".
+          // meta.building:true + partial files, so it needs cleaning up — but
+          // via discardFailedBuild, NOT removeRepoIndex. The unconditional
+          // remove that used to be here threw away a prior good index whenever
+          // a RE-index failed, and did the same when the user merely pressed
+          // Cancel. builder.ts already draws that distinction for failures it
+          // catches itself; a killed child never reaches it, so this is where
+          // the same rule has to hold.
           if (res.aborted) {
-            await removeRepoIndex(v.projHash, { home });
+            await discardFailedBuild(v.projHash, { home });
             await stream.writeSSE({ event: "error", data: JSON.stringify({ message: "cancelled" }) });
           } else if (res.timedOut || res.exitCode !== 0) {
-            await removeRepoIndex(v.projHash, { home });
-            await stream.writeSSE({ event: "error", data: JSON.stringify({ message: res.timedOut ? "timeout" : "index_failed" }) });
+            await discardFailedBuild(v.projHash, { home });
+            // `detail` carries the child's own last words. A timeout was killed
+            // by us, so its stderr says nothing useful about the cause — only a
+            // non-zero exit gets one. Without this the UI can only say THAT the
+            // indexer failed, never why, which is precisely how a spawn that
+            // could not work under any circumstance went unnoticed.
+            const detail = !res.timedOut ? indexerFailureLine(res.stderrTail) : undefined;
+            await stream.writeSSE({
+              event: "error",
+              data: JSON.stringify({ message: res.timedOut ? "timeout" : "index_failed", detail }),
+            });
           } else {
             // A prior forget may have stashed this repo's PAID arch-model in
             // `.preserved/` — a successful index is the re-attach point.
@@ -351,7 +514,7 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
             await stream.writeSSE({ event: "done", data: JSON.stringify({ hash: v.projHash }) });
           }
         } catch {
-          await removeRepoIndex(v.projHash, { home }).catch(() => {});
+          await discardFailedBuild(v.projHash, { home }).catch(() => {});
           await stream.writeSSE({ event: "error", data: JSON.stringify({ message: "index_error" }) }).catch(() => {});
         } finally {
           activeIndexHash = null;
@@ -369,9 +532,10 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
 
   // ── POST /api/repo-graph/index/cancel ────────────────────────────────────
   // Abort the in-flight index. The running SSE handler sees the abort → kills
-  // the child → removeRepoIndex → emits an "error: cancelled" event, so a
-  // cancelled build leaves no partial repo. No-op (cancelled:false) if nothing
-  // matching is running.
+  // the child → discardFailedBuild → emits an "error: cancelled" event, so a
+  // cancelled build leaves no partial repo — and, when it was a RE-index,
+  // leaves the previously-good index intact. Cancelling must not cost the user
+  // the map they already had. No-op (cancelled:false) if nothing is running.
   app.post("/api/repo-graph/index/cancel", async (c) => {
     if (!isAuthorized(deps.secret ?? "", c.req.header("X-Siltpoke-Secret"))) {
       return c.json({ success: false, data: null, error: "unauthorized" }, 401);
@@ -433,8 +597,43 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
         };
       }),
     );
-    return c.json({ success: true, data: { repos: summaries }, error: null });
+    // `indexTimeoutMs` rides along so a reattaching client can size its own
+    // give-up budget against the SAME wall-clock cap the daemon enforces on the
+    // indexer. Without it the client has to guess, and a guess that lands under
+    // the real timeout accuses a perfectly healthy long build of having died.
+    const idxCfg = await loadIndexConfig(home ?? siltpokeRoot());
+    return c.json({
+      success: true,
+      data: { repos: summaries, indexTimeoutMs: idxCfg.timeoutMs },
+      error: null,
+    });
   });
+
+  // ── GET /api/repo-graph/staleness ───────────────────────────────────────
+  // How far the persisted index has drifted from what's on disk right now.
+  // Read-only (fingerprint re-hash + verdict math, no mutation) → no secret
+  // gate, matching the other read GETs. `repo` is required here (unlike
+  // resolveActiveRepo's cwd-fallback siblings) — the dashboard's per-repo
+  // staleness badge always knows which repo it's asking about.
+  app.get("/api/repo-graph/staleness", async (c) => {
+    const repo = c.req.query("repo");
+    if (!repo || !isValidProjHash(repo)) {
+      return c.json({ success: false, data: null, error: "bad_repo" }, 400);
+    }
+    const resolved = await resolveRepoByHash(repo, { home: home ?? siltpokeRoot() });
+    if (!resolved || resolved.project_root === null) {
+      return c.json({ success: false, data: null, error: "unknown_repo" }, 400);
+    }
+    const cfg = await loadRepoGraphConfig(home ?? siltpokeRoot());
+    const s = await readIndexStaleness({ cwd: resolved.project_root, home: home ?? siltpokeRoot() });
+    return c.json({ success: true, data: stalenessVerdict(s, cfg.staleness_warn_pct), error: null });
+  });
+
+  // GET /api/repo-graph/seen, POST /api/repo-graph/seen/advance, and
+  // POST /api/repo-graph/seen/mark-all moved to seen.tsx (fast-follow after
+  // slice ③ landed — this file was 2x the 800-LOC hard cap; those 3 handlers
+  // share zero closure state with the rest of this mount). Mounted alongside
+  // this route in src/daemon/server.ts via `mountSeenRoutes`.
 
   // ── GET /api/repo-graph/arch ────────────────────────────────────────────
   app.get("/api/repo-graph/arch", async (c) => {
@@ -746,7 +945,12 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
     const meta = await readMeta(active.storage_dir);
     if (!meta) return c.json({ success: false, error: "graph not found" }, 404);
     const fingerprints = await readFingerprints(active.storage_dir);
-    const cached = await readArchModel(active.storage_dir, computeRepoFingerprint(fingerprints), meta.last_indexed_ts);
+    const cached = await readArchModel(
+      active.storage_dir,
+      computeRepoFingerprint(fingerprints),
+      meta.last_indexed_ts,
+      typeof meta.project_root === "string" ? meta.project_root : null,
+    );
     if (!cached) return c.json({ success: false, error: "no_generated_model" }, 404);
     // Ship the per-member-file function counts with the
     // model so a post-generate in-place render badges correctly (no reload).
@@ -959,19 +1163,28 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
     if (!meta) return c.json({ success: false, error: "graph not found" }, 404);
     const graph = await readGraph(active.storage_dir);
     const queryIndex = await readQueryIndex(active.storage_dir);
-    const entrypoints = detectEntrypoints(graph, queryIndex);
+    const { entrypoints, warnings } = detectEntrypointsWithWarnings(
+      graph,
+      queryIndex,
+      active.project_root ?? undefined,
+    );
     // Compute live: a metric recalibration changed the metric (eligible
     // denominator), so any stored meta.coverage is the stale raw value. The
     // re-resolve is cheap for a local read endpoint.
     const coverage = computeCoverage(graph, queryIndex);
-    return c.json({ success: true, data: { entrypoints, coverage }, error: null });
+    return c.json({ success: true, data: { entrypoints, coverage, warnings }, error: null });
   });
 
   // ── GET /api/repo-graph/trace (trace from any node) ──────────────────────
   // A depth-limited call path from a root. `entry` is either a detected
-  // entrypoint's id (preset, e.g. "cli" | "daemon" | "dash") OR any raw graph
-  // node id (`kind:path:name`) — the latter is how "trace from here" / the
-  // function-search picker root an arbitrary function or method. Default "cli".
+  // entrypoint's id (preset, e.g. "cli" | "daemon" | "dash", OR a generic
+  // bin/script/framework id from detectEntrypointsWithWarnings) OR any raw
+  // graph node id (`kind:path:name`) — the latter is how "trace from here" /
+  // the function-search picker root an arbitrary function or method.
+  // Default: the preset "cli" when one was actually detected, else the
+  // first ranked detected entry, else "cli" as a last resort — so a repo
+  // with no preset cli (a generic, non-siltpoke repo) doesn't 404 on a
+  // bare GET with no `?entry=`.
   app.get("/api/repo-graph/trace", async (c) => {
     const active = await resolveActiveRepo(c.req.query("repo"), deps);
     if (!active) return c.json({ success: false, error: "repo not indexed" }, 404);
@@ -979,9 +1192,15 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
     if (!meta) return c.json({ success: false, error: "graph not found" }, 404);
     const graph = await readGraph(active.storage_dir);
     const queryIndex = await readQueryIndex(active.storage_dir);
-    const entrypoints = detectEntrypoints(graph, queryIndex);
+    const { entrypoints } = detectEntrypointsWithWarnings(
+      graph,
+      queryIndex,
+      active.project_root ?? undefined,
+    );
 
-    const entryParam = c.req.query("entry") ?? "cli";
+    const hasPresetCli = entrypoints.some((e) => e.id === "cli");
+    const entryParam =
+      c.req.query("entry") ?? (hasPresetCli ? "cli" : (entrypoints[0]?.id ?? "cli"));
     const role = entrypoints.find((e) => e.id === entryParam);
     let entryId: string | null = null;
     if (role) entryId = role.nodeId;
@@ -1037,6 +1256,13 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
   // Returns { text, cite, cached }. A Brain failure surfaces the REAL reason
   // and writes NO cache (runExplain only persists on a successful Brain call).
   app.post("/api/repo-graph/trace/purpose", async (c) => {
+    // Secret-gate — unlike the sibling read-only GETs, this POST triggers a
+    // paid Brain call (runExplain) and persists a cache write; a blind
+    // cross-origin CSRF could otherwise spend budget silently. Fail CLOSED —
+    // no configured secret ⇒ reject (isAuthorized("", …) is false).
+    if (!isAuthorized(deps.secret ?? "", c.req.header("X-Siltpoke-Secret"))) {
+      return c.json({ success: false, data: null, error: "unauthorized" }, 401);
+    }
     let body: { node?: string; repo?: string; force?: boolean } = {};
     try {
       body = await c.req.json();
@@ -1178,6 +1404,13 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
 
   // ── POST /api/repo-graph/explain — run + cache, return the modal data ────
   app.post("/api/repo-graph/explain", async (c) => {
+    // Secret-gate — same as the sibling /trace/purpose POST: this triggers a
+    // paid Brain call (runExplain) behind the one-at-a-time task lock; a
+    // blind cross-origin CSRF could otherwise spend budget + hold the lock.
+    // Fail CLOSED — no configured secret ⇒ reject (isAuthorized("", …) is false).
+    if (!isAuthorized(deps.secret ?? "", c.req.header("X-Siltpoke-Secret"))) {
+      return c.json({ success: false, data: null, error: "unauthorized" }, 401);
+    }
     let body: { target?: string; repo?: string; force?: boolean } = {};
     try {
       body = await c.req.json();

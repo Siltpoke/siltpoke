@@ -17,6 +17,8 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { siltpokeRoot } from "../installer/paths";
+import { writeMeta } from "./store";
+import type { RepoGraphMeta } from "./types";
 
 export type RepoStatus = "ready" | "indexing" | "not-indexed";
 
@@ -158,6 +160,71 @@ export async function enumerateRepos(opts: { home?: string } = {}): Promise<Repo
  * removed; false for an invalid hash (refused — never touches anything outside
  * `repo-memory/<hash>/`) or a dir that wasn't there (idempotent).
  */
+/** What `discardFailedBuild` did. */
+export type DiscardOutcome = "removed" | "reverted" | "absent";
+
+/**
+ * Clean up after a build that ended badly, WITHOUT destroying an index the user
+ * already had.
+ *
+ * `builder.ts`'s own `cleanupFailedBuild` already draws this distinction, but
+ * it only runs when the builder catches its own error — a killed child (timeout
+ * or cancel) never reaches it, so the daemon route needs the same rule as a
+ * backstop. That route used to call `removeRepoIndex` unconditionally instead,
+ * which erased the distinction: a failed re-index of a working repo threw away
+ * the working index, and so did pressing Cancel on one. Cancelling is a
+ * deliberate user action and must not cost anything.
+ *
+ * The discriminator is already on disk and needs no bookkeeping from the
+ * caller. `markBuildStart` preserves a prior meta's fields (`{...prior,
+ * building: true}`) and deliberately does not bump `last_indexed_ts` mid-build,
+ * because that field means "last COMPLETED indexing"; a cold build gets a
+ * `last_indexed_ts: ""` stub. So a non-empty `last_indexed_ts` means "a good
+ * index was here before this attempt" — the same test `deriveStatus` above uses
+ * to call a repo `ready`.
+ *
+ * Anything unreadable counts as cold: nothing provably good is in there, and
+ * leaving a stuck `building:true` behind would haunt the picker forever.
+ */
+export async function discardFailedBuild(
+  projHash: string,
+  opts: { home?: string } = {},
+): Promise<DiscardOutcome> {
+  // Same validate-before-join guard as removeRepoIndex — this reads and writes
+  // under a computed path and delegates an `rm -rf` to it.
+  if (!isValidProjHash(projHash)) return "absent";
+  const home = opts.home ?? siltpokeRoot();
+  const storage_dir = join(home, "repo-memory", projHash);
+  if (!existsSync(storage_dir)) return "absent";
+
+  const meta = await readMetaTolerant(join(storage_dir, "meta.json"));
+  const ts = meta?.last_indexed_ts;
+  const hadGoodIndex = typeof ts === "string" && ts.length > 0;
+  if (!hadGoodIndex) {
+    await removeRepoIndex(projHash, { home });
+    return "removed";
+  }
+
+  // Keep the prior index; just un-stick `building` so the picker stops showing
+  // a build that is no longer running.
+  //
+  // Via writeMeta (tmp file + rename), not a plain writeFile: every other
+  // writer of these files is atomic, and a torn meta.json here would read back
+  // as unparseable — making a repo whose graph is perfectly intact show up as
+  // never-indexed. `meta` is the parsed object, so the spread carries every
+  // field through; the cast is only because readMetaTolerant is deliberately
+  // laxer about shape than RepoGraphMeta.
+  //
+  // Best-effort: if the write fails the prior index is still on disk, which is
+  // the outcome that actually matters.
+  try {
+    await writeMeta(storage_dir, { ...(meta as unknown as RepoGraphMeta), building: false });
+  } catch {
+    /* the prior index survives regardless — that is the point */
+  }
+  return "reverted";
+}
+
 export async function removeRepoIndex(
   projHash: string,
   opts: { home?: string; purge?: boolean } = {},

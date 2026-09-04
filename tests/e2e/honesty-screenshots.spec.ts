@@ -53,7 +53,7 @@ test("home with brain-health strip showing", async ({ page }) => {
     await page.goto("/");
     const strip = page.locator("#brain-health-strip");
     await expect(strip).toBeVisible({ timeout: 10_000 });
-    await expect(strip).toContainText("⚠ brain: resource ×2");
+    await expect(strip).toContainText("2 resource failures");
     await page.screenshot({
       path: join(OUT_DIR, "honesty-02-home-brain-health-strip.png"),
       fullPage: true,

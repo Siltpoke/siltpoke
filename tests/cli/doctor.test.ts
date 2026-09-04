@@ -4,14 +4,14 @@
  * Per-check unit tests live in tests/cli/doctor.checks.test.ts (file split
  * to keep each test file under the 400 LOC warn threshold).
  */
-import { test, expect, describe, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
-  runAllChecks,
+  type CheckResult,
   formatChecklist,
   formatJson,
-  type CheckResult,
+  runAllChecks,
 } from "../../src/cli/doctor";
-import { setupDoctorTmp, teardownDoctorTmp, type DoctorTmp } from "./_doctor-fixtures";
+import { type DoctorTmp, setupDoctorTmp, teardownDoctorTmp } from "./_doctor-fixtures";
 
 describe("doctor — orchestration", () => {
   let env: DoctorTmp;
@@ -24,11 +24,19 @@ describe("doctor — orchestration", () => {
     teardownDoctorTmp(env);
   });
 
-  // Count bumped 7 → 8 on 2026-06-11: added the "last Brain
-  // call" health check.
-  test("runAllChecks returns 8 entries (one per check)", () => {
+  // Count bumped 7 → 8 on 2026-06-11 (last-Brain-call health check);
+  // 8 → 9 on 2026-07-07 (track #6 T5: daemon-autostart presence check);
+  // 9 → 10 on 2026-07-07 (track #7 T5: reviewer-provider check);
+  // 10 → 11 on 2026-07-10 (agy track: hooks.json siltpoke-review Stop check);
+  // 11 → 13 on 2026-07-11 (single-brain #10 S1: the single reviewer-provider
+  // row is replaced by three per-role rows — chat/review/extract);
+  // 13 → 14 on 2026-08-11 (knowledge render cache: warn-only row reporting
+  // whether deriveRenderVersion() can enable itself on this installation);
+  // 14 → 15 on 2026-08-13 (registered project roots still exist — the
+  // path-identity audit found nine of ten roots dead with no surface saying so).
+  test("runAllChecks returns 14 entries (one per check)", () => {
     const results = runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome });
-    expect(results).toHaveLength(8);
+    expect(results).toHaveLength(14);
     for (const r of results) {
       expect(typeof r.name).toBe("string");
       expect(typeof r.pass).toBe("boolean");
@@ -37,7 +45,11 @@ describe("doctor — orchestration", () => {
   });
 
   test("runAllChecks check names are stable identifiers in order", () => {
-    const results = runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome });
+    const results = runAllChecks({
+      claudeHome: env.claudeHome,
+      siltpokeHome: env.siltpokeHome,
+      pluginInstall: false,
+    });
     const names = results.map((r) => r.name);
     expect(names[0]).toContain("settings.json");
     expect(names[1]).toContain("Stop hook");
@@ -46,6 +58,37 @@ describe("doctor — orchestration", () => {
     expect(names[4]).toContain("global.json");
     expect(names[5]).toContain("symlinks");
     expect(names[6]).toContain("config.json");
+    expect(names[8]).toContain("autostart");
+    expect(names[9]).toBe("brain role: chat");
+    expect(names[10]).toBe("brain role: review");
+    expect(names[11]).toBe("brain role: extract");
+    expect(names[12]).toContain("hooks.json");
+  });
+
+  // A `/plugin install` creates no symlinks — the host loads commands from the
+  // plugin dir. Before this branch, doctor reported "0/8 broken" and exited 1
+  // on a perfectly healthy plugin install. The symlink row must become a
+  // pass/info row when running as the plugin.
+  test("under a plugin install the symlink check is an info row, never a failure", () => {
+    const asPlugin = runAllChecks({
+      claudeHome: env.claudeHome,
+      siltpokeHome: env.siltpokeHome,
+      pluginInstall: true,
+    });
+    const row = asPlugin[5];
+    expect(row?.name).toBe("slash commands");
+    expect(row?.pass).toBe(true);
+    expect(row?.status).toBe("info");
+
+    // And with pluginInstall:false against a temp home that has no symlinks,
+    // the SAME check fails — proving the branch is what flips the verdict, not
+    // some unrelated environmental accident.
+    const fromSource = runAllChecks({
+      claudeHome: env.claudeHome,
+      siltpokeHome: env.siltpokeHome,
+      pluginInstall: false,
+    });
+    expect(fromSource[5]?.pass).toBe(false);
   });
 });
 

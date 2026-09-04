@@ -279,10 +279,6 @@ describe("getHomeData", () => {
     // stats is always present (non-null), defaults to DEFAULT_STATS
     expect(data.stats).not.toBeNull();
     expect(typeof data.stats.hp).toBe("number");
-    // critiques are empty — no fake data
-    expect(data.critiques).toEqual([]);
-    expect(data.pendingCritiqueCount).toBe(0);
-    expect(data.latestCritique).toBeNull();
   });
 
   test("defaults to slime species for unknown species value", async () => {

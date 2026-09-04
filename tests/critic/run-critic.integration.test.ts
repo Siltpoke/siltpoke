@@ -339,7 +339,7 @@ describe("runCritic integration — NORMAL with stub Brain", () => {
   );
 
   test(
-    "stub runTools with tsc error + Brain returns fabricated evidence → NORMAL rejected",
+    "stub runTools with tsc error + Brain returns fabricated evidence → citation dropped, review kept",
     async () => {
       let writeCalled = false;
 
@@ -410,14 +410,14 @@ describe("runCritic integration — NORMAL with stub Brain", () => {
       );
 
       expect(result.decision).toBe("NORMAL");
-      expect(
-        result.decision === "NORMAL" && !result.accepted,
-      ).toBe(true);
-      if (result.decision === "NORMAL" && !result.accepted) {
-        const reason: string = result.reason;
-        expect(reason).toContain("snippet not in evidence_corpus");
+      if (result.decision === "NORMAL") {
+        expect(result.evidenceLabel).toBe("none_verified");
+        expect(result.unverifiedCount).toBe(1);
+        // The hallucinated citation is gone; the review is not.
+        expect(result.critique.evidence).toEqual([]);
+        expect(result.critique.critique_for_claude).toBe("Fix it");
       }
-      expect(writeCalled).toBe(false);
+      expect(writeCalled).toBe(true);
     },
   );
 });

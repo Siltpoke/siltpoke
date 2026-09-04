@@ -17,6 +17,8 @@
  * asset of the renderer, not model content.
  */
 
+import { tokens } from "../../tokens/tokens";
+
 export type C4Accent = "sky" | "terra" | "moss" | "amber";
 export type C4Kind = "person" | "ext" | "cont";
 
@@ -26,6 +28,11 @@ export interface C4Node {
   title: string;
   /** tech tag shown in [brackets]. */
   tech?: string;
+  /** How an ext node's existence was determined — set by the reconcile pass.
+   * `registry-declared` means the panel shows an "unverified reachability" note. ext only. */
+  provenance?: "llm-callsite" | "registry-declared";
+  /** Provider-registry family key (e.g. "qoder") for a registry-declared ext node. ext only. */
+  externalFamily?: string;
   /** one-line purpose (from CLAUDE.md authored purposes). */
   desc?: string;
   /** layer color — cont only. */
@@ -96,12 +103,23 @@ export interface C4Model {
 }
 
 /** Shared layer-accent palette — renderer UI asset, used by the adapter and
- * the subset deriver (the authored file carries its own copy per schema). */
+ * the subset deriver (the authored file carries its own copy per schema).
+ * Values are `tokens.color.X` (compile-time-checked `var(--color-X)`
+ * references), NOT hand-written `"var(--color-X)"` strings and NOT hardcoded
+ * hex (Task 10b batch 2, controller decision) — a typo'd `tokens.color.foo`
+ * is a compile error; a typo'd string is a silent no-op that renders as an
+ * unset property, this repo's dominant defect shape. These four are exact
+ * matches to the 16 brand tokens, consumed as plain CSS `background`/
+ * `border-color` strings by repo-graph.ts (`c.accent`/`g.accent`/`dotColor`)
+ * — never compared for equality against a specific hex, so the swap is
+ * behaviorally safe. `var(--color-X)` is a page-global custom property (set
+ * at `:root` by tokens.css), so it resolves correctly here regardless of
+ * whether the consuming element sits inside `.rg-host`'s local alias scope. */
 export const GROUP_ACCENT: Record<C4Accent, string> = {
-  sky: "#7fb0c8",
-  terra: "#d96b6b",
-  moss: "#7a9a5e",
-  amber: "#e8a85c",
+  sky: tokens.color.sky,
+  terra: tokens.color.terra,
+  moss: tokens.color.moss,
+  amber: tokens.color.amber,
 };
 
 /** Bands keyed by the accent of the containers that live in them — used by the

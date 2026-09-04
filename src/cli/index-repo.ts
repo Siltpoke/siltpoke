@@ -55,6 +55,13 @@ export function formatHuman(result: IndexBuildResult): string {
         `(${c.skipped.tree_sitter_failed} parse failed, ${c.skipped.too_large} too large, ${c.skipped.not_a_source_file} non-source${capNote})`,
     );
   }
+  // Distinct from `skipped.tree_sitter_failed` above: those files produced no
+  // tree at all, these produced a tree with unparseable spans in it and were
+  // indexed anyway, so whatever lives in those spans is missing from the graph
+  // with no other signal.
+  if (c.parse_degraded > 0) {
+    lines.push(`  ⚠ ${c.parse_degraded} files only partially parsed (indexed, but under-extracted)`);
+  }
   lines.push(`  duration: ${(result.duration_ms / 1000).toFixed(2)}s`);
   lines.push("");
   lines.push(`Graph saved to ${result.storage_dir}/`);

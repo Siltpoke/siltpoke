@@ -3,6 +3,9 @@
 // Public types for the shared runCritic() callsite.
 
 import type { BrainCallResult, BrainUsage, CallBrainOptions } from "../brain/brain";
+import type { DiffCoverage } from "../brain/hunk-selection";
+import type { MemoryFunnel, PromptSectionBytes } from "../brain/prompt-assembly";
+import type { BrainProviderMeta } from "../brain/provider";
 import type { BrainOutput } from "../brain/schema";
 import type { CoreMemory } from "../memory/memory";
 import type { RecentEntry } from "../memory/recent";
@@ -12,6 +15,8 @@ import type { GitBaseline } from "../router/git-snapshot";
 import type { CritiqueInput } from "../state/critique";
 import type { CallerImpactDeps } from "./caller-impact/inject";
 import type { ProjectCapabilities } from "./capabilities";
+import type { ImportersDeps } from "./disk-awareness/importers";
+import type { EvidenceLabel } from "./evidence-guard";
 import type { CapturedIntent, TranscriptTurn } from "./intent/capture";
 import type { RubricTrigger } from "./rubric/types";
 import type { DiffSummary, runDiffSummary } from "./tools/run-diff-summary";
@@ -57,6 +62,15 @@ export type BrainContext = {
    * Populated by runCritic after captureIntent runs.
    */
   capturedIntent?: CapturedIntent;
+  /**
+   * Optional anti-examples block (few-shot retrieval over past dismissed
+   * critiques) — computed once in `buildPromptContext` (src/hooks/handle-stop.ts)
+   * and threaded through here so BOTH tool-augmented phases
+   * (`runNormalPhase` and `runPassiveBubblePhase`) receive it on their own
+   * `assembleSystemPromptWithFunnel` call. Defaults to "" (no fence) when
+   * absent so nothing else breaks. See Task B critical #1 fix.
+   */
+  antiExamplesBlock?: string;
 };
 
 export type RunCriticOpts = {
@@ -66,6 +80,17 @@ export type RunCriticOpts = {
   caps: ProjectCapabilities;
   /** null = non-git session; undefined = caller didn't capture yet. */
   gitBaseline?: GitBaseline | null;
+  /**
+   * The unit of work under review, as `<lastReviewedHead>..HEAD` (spec D2).
+   * Set by the Stop hook's review-unit gate, which is the thing that decided
+   * there was a unit at all — so the boundary is named by the caller rather
+   * than guessed by the diff tool.
+   *
+   * Absent means "no unit named": git-diff falls back to the working tree and,
+   * if that is empty, to the recent-commits blob. That is still the path a
+   * forced review on a clean tree takes.
+   */
+  revisionRange?: string;
   brainContext: BrainContext;
   /**
    * Base path for siltpoke home directory (e.g. ~/.siltpoke).
@@ -124,11 +149,51 @@ export type V2ResultFields = {
   capturedIntent?: CapturedIntent;
 };
 
+/**
+ * Provider truth carried on every branch (track #7 T3, AC7/AC14) — resolved
+ * once at the top of runCritic (independent of tool classification), so it
+ * is known even on HARD_SUPPRESS. `servedModel` is only ever set on branches
+ * where a Brain call actually returned (PASSIVE_BUBBLE / NORMAL).
+ */
+export type ProviderResultFields = {
+  providerMeta?: BrainProviderMeta;
+  servedModel?: string;
+};
+
+/**
+ * Read-half memory funnel (eval design §2.1), carried so the Stop hook can put
+ * it on the telemetry row. Absent — not zero — on any branch that never reached
+ * prompt assembly, because "we never measured" and "we measured zero" are
+ * exactly the two things this funnel exists to tell apart.
+ */
+export type MemoryFunnelFields = {
+  memoryFunnel?: MemoryFunnel;
+  /** Per-section prompt byte counts from the same assembly. Absent exactly
+   *  where `memoryFunnel` is absent — before assembly ran — for the same
+   *  reason: "never measured" and "measured zero" must stay distinguishable. */
+  promptBytes?: PromptSectionBytes;
+};
+
 export type RunCriticResult =
-  | ({ decision: "HARD_SUPPRESS"; reason: string; diffSnapshotId?: string; diffSummary?: DiffSummary; summaryError?: string; timing?: TimingTrace } & V2ResultFields)
-  | ({ decision: "PASSIVE_BUBBLE"; critique: BrainOutput; usage: BrainUsage; critiqueId?: string; diffSnapshotId?: string; diffSummary?: DiffSummary; summaryError?: string; timing?: TimingTrace } & V2ResultFields)
-  | ({ decision: "NORMAL"; accepted: true; critique: BrainOutput; usage: BrainUsage; critiqueId?: string; diffSnapshotId?: string; diffSummary?: DiffSummary; summaryError?: string; timing?: TimingTrace } & V2ResultFields)
-  | ({ decision: "NORMAL"; accepted: false; reason: string; critique: BrainOutput; usage: BrainUsage; diffSnapshotId?: string; diffSummary?: DiffSummary; summaryError?: string; timing?: TimingTrace } & V2ResultFields);
+  | ({ decision: "HARD_SUPPRESS"; reason: string; diffSnapshotId?: string; diffSummary?: DiffSummary; summaryError?: string; timing?: TimingTrace; /** Set when the suppression was caused by the quota-billed-provider daily call cap, or (track #7 T4) by the agy provider's pre-spawn argv-too-large abstain — lets the Stop hook write an honest `skipped: "quota_cap"` / `skipped: "agy_prompt_too_large"` telemetry row instead of a generic HARD_SUPPRESS free-text reason. */ skipCode?: "quota_cap" | "agy_prompt_too_large" } & V2ResultFields & ProviderResultFields & MemoryFunnelFields)
+  /**
+   * PASSIVE_BUBBLE. `evidenceLabel` is the literal `"not_checked"`, never a
+   * wider `EvidenceLabel`: this phase does not call `guardCritique` at all —
+   * the guard's own PASSIVE_BUBBLE branch is reachable only from tests — so
+   * any other value would be a claim nothing made. It is carried rather than
+   * omitted because this is 79% of triggers, and a missing field left every
+   * one of those telemetry rows indistinguishable from a row written before
+   * the field existed.
+   */
+  | ({ decision: "PASSIVE_BUBBLE"; critique: BrainOutput; usage: BrainUsage; critiqueId?: string; evidenceLabel: "not_checked"; diffSnapshotId?: string; diffSummary?: DiffSummary; summaryError?: string; timing?: TimingTrace } & V2ResultFields & ProviderResultFields & MemoryFunnelFields)
+  /**
+   * NORMAL. There is no `accepted: false` counterpart any more: the evidence
+   * check labels citations instead of discarding reviews, so every NORMAL run
+   * that reached the Brain comes out here. `evidenceLabel` carries what the
+   * old rejection used to carry — including `"none_verified"`, the case that
+   * used to be thrown away outright.
+   */
+  | ({ decision: "NORMAL"; accepted: true; critique: BrainOutput; usage: BrainUsage; critiqueId?: string; evidenceLabel: EvidenceLabel; diffCoverage: DiffCoverage | null; unverifiedCount: number; diffSnapshotId?: string; diffSummary?: DiffSummary; summaryError?: string; timing?: TimingTrace } & V2ResultFields & ProviderResultFields & MemoryFunnelFields);
 
 /**
  * Optional dependency-injection seam for unit testing.
@@ -142,4 +207,17 @@ export type RunCriticDeps = {
   runDiffSummaryFn?: typeof runDiffSummary;
   /** Caller-impact seams (resolver + image reader). Stubbed in tests. */
   callerImpact?: CallerImpactDeps;
+  /**
+   * Reverse-deps seams (ripgrep + resolver + listFiles) — critic
+   * disk-awareness slice ①. Stubbed in tests.
+   */
+  reverseDeps?: ImportersDeps;
+  /**
+   * Test seam (track #7 T3) — when `callBrainFn` is injected, real provider
+   * resolution (loadReviewerProvider) is bypassed, so tests that want to
+   * exercise codex-shaped ledger/span fields inject this directly instead
+   * of writing a real `~/.siltpoke/config.json`. Production callers never
+   * set this; runCritic resolves the real provider's meta.
+   */
+  providerMeta?: BrainProviderMeta;
 };

@@ -101,7 +101,7 @@ const SHELL_SWATCHES = [
   { id: "blush", top: tokens.color.egg, bot: tokens.color.egg2 },
   { id: "mint", top: "#cde8c7", bot: "#8eb89c" },
   { id: "sun", top: "#f6dd8a", bot: "#c79a3a" },
-  { id: "sky", top: "#c8dde8", bot: "#7fb0c8" },
+  { id: "sky", top: "#c8dde8", bot: tokens.color.sky },
   { id: "lilac", top: "#d8c8e0", bot: "#9c7fb0" },
   { id: "charcoal", top: "#3a322a", bot: tokens.color.ink },
 ];

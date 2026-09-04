@@ -9,7 +9,7 @@
  *
  * Returns { hit, payload }:
  *   - hit:false               → not a remember-intent (no marker, or a recall question)
- *   - hit:true,  payload:""   → trigger-only ("记住") — caller asks what to remember
+ *   - hit:true,  payload:""   → trigger-only () — caller asks what to remember
  *   - hit:true,  payload:"…"  → fact text (marker + separator stripped, trailing
  *                               sentence punctuation removed)
  */
@@ -27,7 +27,7 @@ const MARKERS: readonly string[] = [
 ].sort((a, b) => b.length - a.length);
 
 // Question particles that flip a marker-prefixed message into a recall question
-// ("remember when we…?" / "记住这个吗") — false-negative is the safe direction.
+// ("remember when we…?" / ) — false-negative is the safe direction.
 const QUESTION_PARTICLE = /[吗嗎?？]$/;
 
 // Separator allowed immediately after the marker: one of ：:，, or whitespace.
@@ -70,16 +70,16 @@ export function detectRememberIntent(message: string): {
 // Decides if a plain chat message *looks like* it states a durable personal
 // fact, so the caller only pays for a Haiku extraction on fact-like turns
 // (security rule: gate the paid call from code). False-negative-safe — a miss
-// just means the user falls back to explicit "记住 X". Pure, no I/O.
+// just means the user falls back to explicit . Pure, no I/O.
 // ---------------------------------------------------------------------------
 
-// Floor: too-short messages ("ok" / "嗯") can't carry a durable fact.
-// Tradeoff (intentional): a 3-char fact like "我爱猫" is rejected here too —
-// false-negative-safe, the user can fall back to explicit "记住 我爱猫".
+// Floor: too-short messages ("ok" / ) can't carry a durable fact.
+// Tradeoff (intentional): a 3-char fact like  is rejected here too —
+// false-negative-safe, the user can fall back to explicit .
 const MIN_FACT_LEN = 4;
 
 // A trailing question particle flips the message into a recall question
-// ("你记得我什么吗?" / "do you like me?") — never a statement of fact.
+// ( / "do you like me?") — never a statement of fact.
 const FACT_QUESTION_PARTICLE = /[?？吗嗎]$/;
 
 // First-person durable markers (zh) — substring match is fine for CJK.
@@ -103,10 +103,10 @@ const ZH_FACT_MARKERS: readonly string[] = [
 ];
 
 // Correction-shaped markers (zh) — a correction can carry the durable fact
-// WITHOUT any first-person marker ("不是猫派，是狗派"). These ONLY open the
+// WITHOUT any first-person marker (). These ONLY open the
 // gate (recall-oriented design); they never
 // classify — the extractor + the runner's layer-2 re-derivation decide what,
-// if anything, gets written. Over-admission (e.g. "不对，13×7=91") is
+// if anything, gets written. Over-admission (e.g. ) is
 // acceptable at this layer: the extractor's durable-first-person contract
 // rejects it downstream. Substring match is fine for CJK.
 const ZH_CORRECTION_MARKERS: readonly string[] = [
@@ -114,21 +114,21 @@ const ZH_CORRECTION_MARKERS: readonly string[] = [
   "其实",
   "搞错了",
   "记错了",
-  // Temporal-update phrasing ("我现在是狗派了") — a temporal adverb between 我
-  // and the verb defeats the contiguous first-person markers ("我现在是" ∌
-  // "我是"). "我现在" is the first-person-anchored form; the verb-anchored
-  // form lives in ZH_TEMPORAL_UPDATE below. A BARE "现在" was rejected in
+  // Temporal-update phrasing () — a temporal adverb between 我
+  // and the verb defeats the contiguous first-person markers ( ∌
+  // ).  is the first-person-anchored form; the verb-anchored
+  // form lives in ZH_TEMPORAL_UPDATE below. A BARE  was rejected in
   // review: it's everywhere in ordinary dev-chat ("现在这段代码
   // 还有 bug") and each gate admission is a paid extraction — the anchor keeps
   // this class without opening the gate on every "now" sentence.
   "我现在",
 ];
 
-// Verb-anchored temporal update ("现在用 pnpm 不用 bun 了", "现在改用 X"):
+// Verb-anchored temporal update (, ):
 // 现在 followed within 2 chars by a durable-state verb. Same gate-only role.
 const ZH_TEMPORAL_UPDATE = /现在.{0,2}(是|用|做|养|住|喝|不)/;
 
-// "不是…是" negation-plus-restatement shape ("我不是猫派，是狗派").
+//  negation-plus-restatement shape ().
 const ZH_NEGATE_RESTATE = /不是[\s\S]+是/;
 
 // Correction-shaped markers (en) — same gate-only role as the zh set.
@@ -176,8 +176,8 @@ function isCommandOrCode(trimmed: string): boolean {
 // Flat scan groups — marker SEMANTICS stay documented on their source arrays
 // above; the gate itself is one substring pass + one regex pass. Correction
 // markers sit AFTER the cheap rejects by construction: a correction-phrased
-// question ("不对吗？") or command/code turn is rejected before any scan, while
-// a plain "不对，…" correction hits no reject (length/question/code checks
+// question () or command/code turn is rejected before any scan, while
+// a plain  correction hits no reject (length/question/code checks
 // don't key on it). ZH_NEGATE_RESTATE rides the lowercased pass — CJK is
 // case-invariant, so testing it against `lower` is equivalent.
 const SUBSTRING_MARKERS: readonly string[] = [...ZH_FACT_MARKERS, ...ZH_CORRECTION_MARKERS];

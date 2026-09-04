@@ -1,0 +1,7 @@
+{
+  "name": "mytool",
+  "version": "1.0.0",
+  "bin": {
+    "mytool": "src/cli.ts"
+  }
+}

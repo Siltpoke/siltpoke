@@ -107,7 +107,7 @@ export function FilterBar({ telemetry, basePath, trailing }: {
   basePath?: string;
   trailing?: import("hono/jsx").Child;
 }) {
-  const { projects, activeProject, activeStatus, activeKind, activeRange, activeSort, activeQuery, homeBasename } = telemetry;
+  const { projects, activeProject, activeStatus, activeKind, activeRange, activeSort, activeQuery, activeFamily, homeBasename } = telemetry;
   const active = {
     project: activeProject,
     status: activeStatus,
@@ -115,6 +115,7 @@ export function FilterBar({ telemetry, basePath, trailing }: {
     range: activeRange,
     sort: activeSort,
     query: activeQuery,
+    family: activeFamily ?? null,
   };
   const href = (patch: Partial<FilterState>) => filterHref(active, patch, basePath);
 
@@ -195,6 +196,7 @@ export function ProjectSelect({
   activeRange,
   activeSort,
   activeQuery = null,
+  activeFamily = null,
   homeBasename,
   basePath,
 }: {
@@ -205,6 +207,8 @@ export function ProjectSelect({
   activeRange: TimeRange;
   activeSort: SortOrder;
   activeQuery?: string | null;
+  /** Builder-family filter (Brain select v2) — kept when switching project. */
+  activeFamily?: string | null;
   homeBasename: string | null;
   /** Omitted → legacy "/critic" target (redirects to /history). */
   basePath?: string;
@@ -215,6 +219,7 @@ export function ProjectSelect({
   if (activeRange !== "all") baseParams.set("range", activeRange);
   if (activeSort !== "newest") baseParams.set("sort", activeSort);
   if (activeQuery) baseParams.set("q", activeQuery);
+  if (activeFamily) baseParams.set("family", activeFamily);
   // On change: rebuild url with chosen project + keep other filters.
   const handler =
     `const v=event.target.value;const u=new URL(${JSON.stringify(basePath ?? "/critic")},location.origin);` +

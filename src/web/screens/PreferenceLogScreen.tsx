@@ -11,12 +11,52 @@ import { CANONICAL_NAV } from "../routes/nav";
 import { tokens } from "../tokens/tokens";
 import type { PreferenceLogEntry } from "../../preference-log/types";
 
-const SIGNAL_COLORS: Record<string, string> = {
-  ack: tokens.color.moss,
-  dismiss: tokens.color.terra,
-  forward: tokens.color.sky,
-  feedback: tokens.color.amber,
+/**
+ * Each signal's fill AND its dedicated text-on-fill token, kept in ONE
+ * table (not two parallel maps) for the same reason `signalChipColors`
+ * below derives foreground from background instead of two independent
+ * expressions — see that function's docstring.
+ */
+const SIGNAL_CHIP: Record<string, { background: string; color: string }> = {
+  ack: { background: tokens.color.moss, color: tokens.color.onMoss },
+  dismiss: { background: tokens.color.terra, color: tokens.color.onTerra },
+  forward: { background: tokens.color.sky, color: tokens.color.onSky },
+  feedback: { background: tokens.color.amber, color: tokens.color.onAmber },
 };
+
+/**
+ * Chip background + foreground for one signal, derived TOGETHER.
+ *
+ * They used to be two independent expressions: the background fell back to
+ * `paper` for an unknown signal, while the foreground ternary's else-arm still
+ * returned `onAccent`. That pairing is `#151515` on `#1e1e1e` in dark — a
+ * contrast of 1.06, i.e. invisible — and it is reachable: `signal` is typed as
+ * a closed union but `src/preference-log/reader.ts` builds entries with an
+ * unchecked `JSON.parse(line) as PreferenceLogEntry` over on-disk JSONL, so
+ * any string in the file lands here. Deriving the foreground FROM the resolved
+ * background makes the pair impossible to get wrong, including for whatever
+ * fifth signal gets added later.
+ *
+ * FIXED (Task 10, decided item 2): `ink` on the three light accents scored
+ * 1.66 (moss) / 1.83 (sky) / 1.56 (amber) in DARK against the 4.5:1 text
+ * floor — the Task 7 review finding (its own quoted figures, 1.66/1.85/1.57,
+ * were rounded slightly differently; recomputed here from the live palette,
+ * matching RubricList.tsx's docstring for the same three accents). `dismiss`
+ * (terra) used `onAccent` instead, which happened to clear dark (7.01:1) but
+ * silently failed LIGHT (3.35:1, white-on-terra) — the same "white in light,
+ * where these fills are also light" trap `onAccent` isn't safe for as a
+ * drop-in. All four now use their dedicated per-accent `onX` token
+ * (SIGNAL_CHIP above), each gated >=4.5:1 against its own accent, in both
+ * themes, by tests/web/tokens/palette.test.ts "per-accent ink tokens".
+ */
+function signalChipColors(signal: string): { background: string; color: string } {
+  const chip = SIGNAL_CHIP[signal];
+  if (chip === undefined) {
+    // Unknown signal: a plain surface chip, so the ordinary body color applies.
+    return { background: tokens.color.paper, color: tokens.color.ink };
+  }
+  return chip;
+}
 
 function relativeTs(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -81,10 +121,7 @@ export function PreferenceLogScreen({ entries, counts }: PreferenceLogScreenProp
               style={{
                 padding: "4px 12px",
                 borderRadius: tokens.radius.pill,
-                background: SIGNAL_COLORS[signal] ?? tokens.color.paper,
-                color: signal === "ack" || signal === "forward" || signal === "feedback"
-                  ? tokens.color.ink
-                  : "#fff",
+                ...signalChipColors(signal),
                 fontFamily: tokens.font.mono,
                 fontSize: 11,
                 fontWeight: 600,
@@ -157,10 +194,7 @@ export function PreferenceLogScreen({ entries, counts }: PreferenceLogScreenProp
                     display: "inline-block",
                     padding: "1px 8px",
                     borderRadius: tokens.radius.pill,
-                    background: SIGNAL_COLORS[entry.signal] ?? tokens.color.paper,
-                    color: entry.signal === "ack" || entry.signal === "forward" || entry.signal === "feedback"
-                      ? tokens.color.ink
-                      : "#fff",
+                    ...signalChipColors(entry.signal),
                     fontFamily: tokens.font.mono,
                     fontSize: 10,
                     fontWeight: 600,

@@ -4,6 +4,7 @@ import type { Hono } from "hono";
 import { type AnchorTarget, cheapNodeExists, type ResolveAnchorResult } from "../../chat/anchor-context";
 import { deleteAnchorContext, readAnchorContext, writeAnchorContext } from "../../chat/anchor-store";
 import { composeBaseSystemPrompt } from "../../chat/compose-base-context";
+import type { ResolveCritiqueResult } from "../../chat/critique-context";
 import {
   type ChatIndex,
   insertMessage,
@@ -26,21 +27,35 @@ import {
   reanchorChatSession,
   upsertChatSession,
 } from "../../chat/sessions";
+import { loadRepoGraphConfig } from "../../config/repo-graph-config";
 import type { Embedder } from "../../few-shot/embedder";
+import type { DaemonProject } from "../../memory/active-project";
 import { activeEpisodes } from "../../memory/episode";
 import { buildEpisodeRecallBlock, selectRecallEpisodes } from "../../memory/episode-recall";
 import { type ExtractedFact, extractDurableFacts } from "../../memory/extract-facts";
-import type { ChatAnchor, CoreMemory } from "../../memory/memory";
-import { newId } from "../../memory/memory";
+import type { ChatAnchor, CoreMemory, ProjectScope } from "../../memory/memory";
+import { GLOBAL_ONLY, NODE_ANCHOR_DEFAULTS, newId } from "../../memory/memory";
 import { buildUserContextBlock, readActiveFacts } from "../../memory/recall";
+import { type QuizSessionState, type QuizTurnPlan, quizFallbackVerbalization } from "../../quiz/index";
+import { readIndexStaleness } from "../../repo-graph/index-health";
+import type { ModuleGraph } from "../../repo-graph/module-graph";
+import { type StalenessVerdict, stalenessVerdict } from "../../repo-graph/staleness-verdict";
 import { readFingerprints } from "../../repo-graph/store";
-import { ledgerBrainCall } from "../../state/usage";
+import { ledgerBrainCall as ledgerBrainCallReal } from "../../state/usage";
+import { isAuthorized } from "../auth";
 import {
   buildCaptureMarker,
   CAPTURE_HONESTY,
   type ChatCaptureResult,
   runChatCapture,
 } from "./chat-capture-runner";
+import {
+  QUIZ_COMPLETE_LINE,
+  type QuizBlockedSignal,
+  type QuizUnavailableSignal,
+  runQuizTurn,
+} from "./chat-quiz";
+import { generateValidatedVerbalization } from "./chat-quiz-emit";
 import {
   buildTranscript,
   formatSseEvent,
@@ -57,6 +72,14 @@ export interface ChatRouteDeps {
   homeBase: string;
   index: ChatIndex;
   /**
+   * Daemon secret — gates POST /api/chat and POST /api/chat/recap-recent
+   * (both spend real API money / write memory on a blind cross-origin POST
+   * otherwise; see the daemon-hardening security audit). Absent → the route
+   * fails CLOSED (401), mirroring `mountFsRoutes`/`mountFactsRoutes`. Tests
+   * that don't exercise auth pass a fixed secret + the header.
+   */
+  secret?: string;
+  /**
    * Test seam — when set, the route delegates streaming to this factory
    * instead of spawning `claude -p`. Receives the transcript & model.
    */
@@ -71,6 +94,16 @@ export interface ChatRouteDeps {
    */
   resolveAnchor?: (anchor: ChatAnchorRef) => Promise<ResolveAnchorResult>;
   /**
+   * Resolve a fired critique the user is viewing (in the Timeline)
+   * into Brain-ready critique context. Bound in server.ts to
+   * resolveCritiqueContext (telemetry + memory). Absent → critique anchoring
+   * disabled (test compat / graceful degrade).
+   */
+  resolveCritiqueAnchor?: (ref: {
+    proj_hash: string;
+    critique_id: string;
+  }) => Promise<ResolveCritiqueResult>;
+  /**
    * Resolve a proj_hash to its graph storage directory. Used by both the
    * stale-fingerprint pre-flight check (reads fingerprints.json cheaply) and
    * the node_gone existence check (reads graph.json + findTargetNode,
@@ -79,12 +112,47 @@ export interface ChatRouteDeps {
    */
   getGraphStorageDir?: (projHash: string) => Promise<string | null>;
   /**
+   * Quiz mode (Task 4) — resolve a proj_hash to its module graph
+   * (readGraph → deriveModuleGraph). Absent, or the project isn't indexed →
+   * null, which the quiz branch surfaces as a `quiz_unavailable` blocked
+   * signal rather than silently falling through to free-text chat (an
+   * ungrounded quiz would be worse than an honest "can't quiz yet" — same
+   * discipline as the critique_gone signal). Bound in server.ts.
+   */
+  loadModuleGraph?: (projHash: string) => Promise<ModuleGraph | null>;
+  /**
+   * Quiz mode (Task 4) — read/write the per-session quiz sidecar
+   * (`chats/<id>.quiz.json`). Defaults, in production, to
+   * `src/quiz/session.ts`'s `readQuizState`/`writeQuizState` bound to
+   * `homeBase` (server.ts). A continuation turn is detected by `read`
+   * returning non-null even when the request carries no `quiz` opener
+   * field. Absent → quiz mode never activates (test compat / graceful
+   * degrade — the route behaves exactly as before).
+   */
+  quizStore?: {
+    read: (sessionId: string) => Promise<QuizSessionState | null>;
+    write: (sessionId: string, s: QuizSessionState) => Promise<void>;
+  };
+  /**
    * Read the user-fact store so active facts can
    * be injected into the chat system prompt (so the pet "knows" the user). Mirrors
    * the /memory page's read path (resolveProjectRoot(daemon cwd) → the same store
    * the page shows). Absent → no facts injected (test compat / graceful degrade).
+   *
+   * `projectCwd` (T3): the send path threads the per-request scope — an anchored
+   * send passes the anchor repo's cwd (resolved via `resolveProjectRootByHash`),
+   * an un-anchored send passes `GLOBAL_ONLY`. Omitted (recap / context-preview)
+   * → `process.cwd()`, so chat_sessions stay on the daemon-cwd slice consistent
+   * with `src/chat/sessions.ts` (out of T3 scope).
    */
-  readMemory?: (homeBase: string) => Promise<CoreMemory | null>;
+  readMemory?: (homeBase: string, projectCwd?: ProjectScope) => Promise<CoreMemory | null>;
+  /**
+   * Resolve an anchor's `proj_hash` → its project_root path (T3). Bound in
+   * `server.ts` to `resolveRepoByHash(...).project_root`. Lets the send path
+   * scope memory reads/writes to the anchored repo instead of the daemon's cwd.
+   * Absent (tests / un-anchored) → the send falls back to `GLOBAL_ONLY`.
+   */
+  resolveProjectRootByHash?: (projHash: string) => Promise<string | null>;
   /**
    * Episode recall — inject synthesized episode narratives into the
    * chat system prompt (rollback seam, siltpoke's optional-field idiom, NOT an
@@ -105,15 +173,18 @@ export interface ChatRouteDeps {
   ) => Promise<PageContext | null>;
   /**
    * memory work (real-time chat capture) — persist a fact when the user
-   * tells the pet "记住 X" in chat. Mirrors the optional `readMemory` signature
+   * tells the pet  in chat. Mirrors the optional `readMemory` signature
    * (same store the facts route writes to). Absent → capture disabled: no fact
    * is written AND the capture-honesty framing is NOT injected (back-compat —
    * a mount with neither readMemory nor writeMemory behaves exactly as before).
+   *
+   * `projectCwd` (T3): threaded per-request identically to `readMemory` so a
+   * capture write lands in the SAME store the recall read used.
    */
-  writeMemory?: (homeBase: string, memory: CoreMemory) => Promise<void>;
+  writeMemory?: (homeBase: string, memory: CoreMemory, projectCwd?: ProjectScope) => Promise<void>;
   /**
    * Conversational auto-capture (memory work) — distill durable user-facts
-   * from a plain chat message (no explicit "记住" marker) via one ledgered Haiku
+   * from a plain chat message (no explicit  marker) via one ledgered Haiku
    * call. Injected so route tests stub it deterministically without spawning the
    * `claude` CLI; production defaults to the real `extractDurableFacts`. Only
    * called on the `!intent.hit` path AND after `looksLikeFactStatement` passes
@@ -163,6 +234,35 @@ export interface ChatRouteDeps {
     messages: { role: string; content: string }[],
     deps: RecapDeps,
   ) => Promise<string>;
+  /**
+   * UNUSED (Task 16). Task 11 gated `POST /api/chat` behind this dep's
+   * resolved project's INTENTIONALITY (isWriteEligible) — but nothing in the
+   * chat route's actual write path reads that resolution as a write target:
+   * the JSONL message append is homeBase-relative (not project-scoped at
+   * all), `chat_sessions` writes go via the daemon's own cwd (unrelated to
+   * this dep — see `src/chat/sessions.ts`), and the fact-capture write's
+   * store (`memScope`, below) is derived from the chat's own explicit
+   * `anchor`/`critique_anchor` (a deliberate user action, never a recency
+   * guess) or `GLOBAL_ONLY`. So the guard 409'd every chat send on a fresh
+   * install (`source: "none"`) — blocking the pet from responding AT ALL —
+   * while protecting no write it didn't already independently scope
+   * correctly. Removed. The field stays declared (rather than deleted) so
+   * the pre-existing test files that mount `mountChatRoutes` with a
+   * `resolveProject` stub (Task 11) keep type-checking without a mechanical
+   * touch of every one of them — it is simply never read anymore.
+   */
+  resolveProject?: (
+    home: string,
+    explicitProjHash: string | undefined,
+  ) => Promise<DaemonProject>;
+  /**
+   * Test/injection seam for the honest usage ledger (`ledgerBrainCall`,
+   * src/state/usage.ts). Defaults to the real import — production callers
+   * leave this unset. Lets tests assert the ledger fired (or, for a quiz
+   * wrap-up/dedupe turn that made NO real Brain call, assert it did NOT
+   * fire) without touching the real usage-events.jsonl file.
+   */
+  ledgerBrainCall?: typeof ledgerBrainCallReal;
 }
 
 /**
@@ -214,6 +314,22 @@ export interface NodeGoneSignal {
 }
 
 /**
+ * The `critique_anchor` sent for a NEW session could not be resolved
+ * (no telemetry row carries that critique_id — expired/rotated/bad id).
+ * DELIBERATE deviation from a silent free-text fall-through: answering "why
+ * did you flag this?" without the critique loaded would be a confident,
+ * ungrounded answer — worse than an error. TERMINAL for this send: the
+ * message is NOT appended and nothing streams (mirrors NodeGoneSignal /
+ * INV2's "return JSON, don't append, don't stream" discipline). A later task
+ * wires the UI to surface this.
+ */
+export interface CritiqueGoneSignal {
+  blocked: "critique_gone";
+  /** The critique_id that could not be resolved. */
+  critique_id: string;
+}
+
+/**
  * A node the client is viewing, scoped to the repo it belongs to. The target is
  * EITHER a canonical `node_id` (trace view) OR a `{name, path, node_type?}`
  * descriptor (symbol-drill view, whose render id isn't canonical — the backend
@@ -228,6 +344,12 @@ interface ChatRequestBody {
   /** The node the user is viewing; pins a NEW conversation to it. */
   anchor?: ChatAnchorRef;
   /**
+   * The CRITIQUE the user is viewing in the Timeline; pins a NEW
+   * conversation to it (mutually exclusive with `anchor` in practice — the
+   * Timeline sends this, the graph sends `anchor`). Validated string fields.
+   */
+  critique_anchor?: { proj_hash: string; critique_id: string };
+  /**
    * Page-context chat — the PAGE the user is on (location.pathname), sent
    * per-message so an un-anchored chat can be grounded in it. Validated
    * (string, ≤128 chars, `^/[a-zA-Z0-9/_-]*$`); malformed → treated as no
@@ -241,6 +363,15 @@ interface ChatRequestBody {
    * Absent: pre-flight stale check runs normally (may block with a signal).
    */
   anchor_decision?: "freeze" | "continue";
+  /**
+   * Quiz mode opener (Task 4) — present only on the FIRST turn of a quiz
+   * conversation; the Code Map's scope picker sends this. `scope_module_id`
+   * bounds the quiz to a module subtree, or `null` for the whole repo.
+   * Absent on every continuation turn (mirrors `anchor`'s pin-once
+   * discipline) — continuation is instead detected via `quizStore.read`
+   * returning a non-null sidecar for this session.
+   */
+  quiz?: { proj_hash: string; scope_module_id: string | null };
 }
 
 interface SearchRequestBody {
@@ -365,6 +496,61 @@ async function reduceStreamEvents(
   return { assistantText, assistantId, assistantModel, usage, sawUsage, sawStop, failure };
 }
 
+/**
+ * Quiz mode (Task 6) — wraps an already-validated verbalization (the
+ * `text` returned by `generateValidatedVerbalization`) as a synthetic
+ * `StreamEvent` sequence so a buffered verdict turn flows through the
+ * SAME `reduceStreamEvents` → persistence/ledger pipeline as a real
+ * streamed reply, instead of a bespoke second code path. The client only
+ * ever sees this one content_block_delta — the raw (possibly caving)
+ * Brain tokens `generateValidatedVerbalization` drained internally never
+ * reach the wire.
+ *
+ * `usage` MUST be the REAL usage `generateValidatedVerbalization` summed
+ * across its 1-2 actual Brain calls (fix, review round 1) — this stream's
+ * own `message_start`/`content_block_delta`/`message_stop` are synthetic,
+ * but the turn they represent made a real, billable Brain call, and
+ * `reduceStreamEvents`/`ledgerBrainCall` read usage straight off this
+ * `message_stop` event. A hardcoded 0/0 here would silently under-report
+ * spend for every buffered verdict turn — a cost-honesty violation.
+ */
+/**
+ * Quiz mode (Task 7) — usage for a synthetic reply that made NO real Brain
+ * call: both the deterministic wrap-up text (`buildWrapup`, score-free by
+ * construction — see src/quiz/wrapup.ts) and the fixed dedupe complete-line
+ * are engine/route-composed strings, never a `claude -p` completion. Cost
+ * stays honestly zero (mirrors `reduceStreamEvents`/`ledgerBrainCall`'s
+ * presence-gated usage discipline elsewhere in this file — this is a
+ * present-but-zero usage object, not a fabricated non-zero one).
+ */
+const ZERO_QUIZ_USAGE: StreamUsage = { input_tokens: 0, output_tokens: 0 };
+
+/**
+ * Quiz verdict/abstain turns can chain up to 2 sequential `claude -p` Brain
+ * calls (`generateValidatedVerbalization`'s validate + fallback-retry path,
+ * chat-quiz-emit.ts) inside ONE HTTP turn — on a loaded user machine that can
+ * exceed `DEFAULT_TIMEOUT_MS` (60s, chat-stream.ts) well before either call is
+ * actually stuck, surfacing as a false "backend timeout" instead of a real
+ * failure. 150s gives headroom for 2 real calls + retry latency on a loaded
+ * machine without masking a genuinely hung process. Applied ONLY to quiz
+ * Brain-call sites below — normal (non-quiz) chat keeps the 60s default.
+ */
+const QUIZ_TURN_TIMEOUT_MS = 150_000;
+
+async function* singleTextStream(
+  text: string,
+  model: string,
+  usage: StreamUsage,
+): AsyncGenerator<StreamEvent, void, void> {
+  yield { type: "message_start", message_id: "", model };
+  yield { type: "content_block_delta", text };
+  yield {
+    type: "message_stop",
+    usage,
+    full_text: text,
+  };
+}
+
 /** Runtime guard: a well-formed anchor = string proj_hash + a valid target
  * (string node_id, OR string name + string path). Keeps non-string/object
  * values from reaching resolveAnchor + downstream path joins. */
@@ -374,6 +560,28 @@ function isValidAnchorRef(a: unknown): a is ChatAnchorRef {
   if (typeof o.proj_hash !== "string") return false;
   if (typeof o.node_id === "string") return true;
   return typeof o.name === "string" && typeof o.path === "string";
+}
+
+/** Runtime guard: a well-formed critique anchor = string proj_hash + string
+ * critique_id. Keeps non-string values off the resolve + path-join paths. */
+function isValidCritiqueAnchor(
+  a: unknown,
+): a is { proj_hash: string; critique_id: string } {
+  if (typeof a !== "object" || a === null) return false;
+  const o = a as Record<string, unknown>;
+  return typeof o.proj_hash === "string" && typeof o.critique_id === "string";
+}
+
+/** Runtime guard: a well-formed quiz opener = string proj_hash + a
+ * string-or-null scope_module_id. Keeps non-string/object values off the
+ * gateScope + loadModuleGraph call sites. */
+function isValidQuizOpener(
+  q: unknown,
+): q is { proj_hash: string; scope_module_id: string | null } {
+  if (typeof q !== "object" || q === null) return false;
+  const o = q as Record<string, unknown>;
+  if (typeof o.proj_hash !== "string") return false;
+  return o.scope_module_id === null || typeof o.scope_module_id === "string";
 }
 
 export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
@@ -386,13 +594,28 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
   const recapFn = deps.recapSession ?? recapSession;
 
   app.post("/api/chat", async (c) => {
+    // Secret-gated — this is a paid Brain call + memory/facts write; without
+    // this, a cross-origin page could fire a CORS-"simple" POST (blind CSRF)
+    // that spends API budget even though the browser blocks it reading the
+    // response. See the daemon-hardening security audit, finding 2.
+    if (!isAuthorized(deps.secret ?? "", c.req.header("X-Siltpoke-Secret"))) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
     let body: ChatRequestBody;
     try {
       body = (await c.req.json()) as ChatRequestBody;
     } catch {
       return c.json({ error: "invalid_json" }, 400);
     }
-    if (!body.message || typeof body.message !== "string") {
+    // Quiz opener (Task 4): validated BEFORE the message check below — an
+    // opener turn legitimately carries an EMPTY message (the assistant asks
+    // the first question; the user hasn't answered anything yet), so the
+    // message check is relaxed only when a well-formed `quiz` field is
+    // present.
+    if (body.quiz !== undefined && !isValidQuizOpener(body.quiz)) {
+      return c.json({ error: "invalid_quiz" }, 400);
+    }
+    if (typeof body.message !== "string" || (!body.message && !body.quiz)) {
       return c.json({ error: "missing_message" }, 400);
     }
     // Validate session_id BEFORE it touches the filesystem — it's a path
@@ -411,6 +634,21 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     if (body.anchor !== undefined && !isValidAnchorRef(body.anchor)) {
       return c.json({ error: "invalid_anchor" }, 400);
     }
+    // Same discipline for the critique anchor: string proj_hash +
+    // string critique_id only.
+    if (body.critique_anchor !== undefined && !isValidCritiqueAnchor(body.critique_anchor)) {
+      return c.json({ error: "invalid_critique_anchor" }, 400);
+    }
+    // Fix 5 — `anchor` and `critique_anchor` are mutually exclusive BY
+    // CONSTRUCTION on the wire (the client sends at most one — see
+    // ChatAnchorRef doc + floating-chat.ts's send()); a request carrying
+    // BOTH is unreachable from the UI, but the pin branch below is an
+    // `if`/`else if` that would silently prefer the critique and drop the
+    // node anchor with no signal. Reject explicitly rather than resolve an
+    // ambiguous request.
+    if (body.anchor !== undefined && body.critique_anchor !== undefined) {
+      return c.json({ error: "conflicting_anchor" }, 400);
+    }
     // Page-context chat: parsePageId validates + normalizes body.page (see
     // src/chat/page-context.ts); malformed → "" (no page, never blocks).
     const pageId = parsePageId(body.page);
@@ -423,7 +661,62 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     // and remember the metadata for the session record. Unresolved (no graph /
     // dead node) just skips pinning here — the pre-flight gate surfaces those states to the UI.
     let pinnedAnchorMeta: ChatAnchor | null = null;
-    if (isNewSession && body.anchor && deps.resolveAnchor) {
+    // Repo-graph query tracker (R10) — set at EVERY site below that invokes
+    // `deps.resolveAnchor` (the only calls that actually query repo-graph on
+    // this route), REGARDLESS of whether the resolve later returns any
+    // context. Read once, after the whole pre-flight/anchor section, to
+    // compute the staleness verdict (R14 — one computation per request). A
+    // critique anchor never sets this: `resolveCritiqueAnchor` queries a
+    // different (non-repo-graph) store.
+    let repoGraphQueriedProjHash: string | undefined;
+    if (isNewSession && body.critique_anchor) {
+      // Critique anchor. Keyed on `body.critique_anchor` ALONE (not
+      // also on `deps.resolveCritiqueAnchor` being bound): an unbound dep
+      // must NOT silently fall through to free-text chat. If it did, a user
+      // clicking a review and asking "why did you flag this?" would get a
+      // confident, completely UNGROUNDED answer — the exact dishonest
+      // behavior the critique_gone signal exists to prevent, just reached
+      // via an unwired dep instead of an unresolvable id.
+      if (!deps.resolveCritiqueAnchor) {
+        const signal: CritiqueGoneSignal = {
+          blocked: "critique_gone",
+          critique_id: body.critique_anchor.critique_id,
+        };
+        return c.json(signal, 200);
+      }
+      // Resolve the critique into an AnchorContext bundle, freeze it to the
+      // SAME sidecar the node anchor uses, and record critique-variant
+      // metadata (kind:"critique") so the node-only gates below are skipped.
+      const resolved = await deps.resolveCritiqueAnchor(body.critique_anchor);
+      if (resolved.kind === "resolved") {
+        await writeAnchorContext(deps.homeBase, sessionId, resolved.context);
+        pinnedAnchorMeta = {
+          node_id: resolved.context.nodeId,
+          critique_id: body.critique_anchor.critique_id,
+          kind: "critique",
+          proj_hash: body.critique_anchor.proj_hash,
+          node_name: resolved.context.nodeName,
+          node_type: resolved.context.nodeType,
+          fingerprint: null,
+          pinned_at: now().toISOString(),
+        };
+      } else {
+        // CONTROLLER DEVIATION from a silent free-text fall-through: an
+        // unresolved critique on a NEW session returns an honest blocked
+        // signal — the user message is NOT appended and nothing streams
+        // (mirrors node_gone's INV2 discipline). A confident, ungrounded
+        // reply to "why did you flag this?" would be dishonest.
+        const signal: CritiqueGoneSignal = {
+          blocked: "critique_gone",
+          critique_id: resolved.critique_id,
+        };
+        return c.json(signal, 200);
+      }
+    } else if (isNewSession && body.anchor && deps.resolveAnchor) {
+      // R10 — record the query BEFORE resolving: a zero-anchor/failed
+      // resolve below must not un-set this (the staleness warning matters
+      // MOST exactly when the index is too stale/corrupt to resolve anything).
+      repoGraphQueriedProjHash = body.anchor.proj_hash;
       const resolved = await deps.resolveAnchor(body.anchor);
       if (resolved.kind === "resolved") {
         await writeAnchorContext(deps.homeBase, sessionId, resolved.context);
@@ -434,6 +727,7 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
           node_type: resolved.context.nodeType,
           fingerprint: resolved.context.fingerprint,
           pinned_at: now().toISOString(),
+          ...NODE_ANCHOR_DEFAULTS,
         };
       }
     }
@@ -475,7 +769,11 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     if (anchorCtx !== null && !isNewSession && deps.getGraphStorageDir) {
       cachedSessions = await listChatSessions(deps.homeBase);
       const sessionAnchor = cachedSessions.find((s) => s.id === sessionId)?.anchor;
-      if (sessionAnchor) {
+      // Critique anchors have no graph node; skip the existence
+      // check entirely (a critique_id is never a graph node id →
+      // cheapNodeExists would false-positive "not_found" and wrongly block
+      // every follow-up turn of a critique conversation).
+      if (sessionAnchor && sessionAnchor.kind !== "critique") {
         const storageDir = await deps.getGraphStorageDir(sessionAnchor.proj_hash);
         if (storageDir) {
           // The AnchorTarget uses node_id form (stored at pin time by upsertChatSession
@@ -519,7 +817,15 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
           const sessions = cachedSessions ?? await listChatSessions(deps.homeBase);
           const sessionAnchor = sessions.find((s) => s.id === sessionId)?.anchor;
 
-          if (sessionAnchor?.proj_hash) {
+          // Explicit `kind` guard (symmetric with the "continue"
+          // branch below): today `pinnedFingerprint !== null` already
+          // excludes critique anchors (resolveCritiqueContext hardcodes
+          // fingerprint:null), but that's an implementation detail of the
+          // resolver, not a type-level guarantee at this call site — a
+          // future/injected resolver that ever set a non-null fingerprint
+          // would otherwise compare a critique's `cwd` path against
+          // fingerprints.json as if it were a tracked source file.
+          if (sessionAnchor?.proj_hash && sessionAnchor.kind !== "critique") {
             const storageDir = await deps.getGraphStorageDir(sessionAnchor.proj_hash);
             if (storageDir) {
               // Cheap read: fingerprints.json only (no graph, no sources, no AST).
@@ -554,12 +860,20 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
           // Reuse cached sessions if available.
           const sessions = cachedSessions ?? await listChatSessions(deps.homeBase);
           const sessionAnchor = sessions.find((s) => s.id === sessionId)?.anchor;
-          if (sessionAnchor) {
+          // Defensive: critique anchors always carry fingerprint:null
+          // so the "no decision" branch above already skips them, but an
+          // errant anchor_decision:"continue" on a critique session must not
+          // re-resolve the critique's id as if it were a graph node_id.
+          if (sessionAnchor && sessionAnchor.kind !== "critique") {
             // Reconstruct a ChatAnchorRef from the stored session anchor.
             const anchorRef: ChatAnchorRef = {
               proj_hash: sessionAnchor.proj_hash,
               node_id: sessionAnchor.node_id,
             };
+            // R10 — same discipline as the new-session site: record the
+            // query before resolving so a failed re-resolve below still
+            // surfaces staleness.
+            repoGraphQueriedProjHash = sessionAnchor.proj_hash;
             const resolved = await deps.resolveAnchor(anchorRef);
             if (resolved.kind === "resolved") {
               // Overwrite the sidecar with fresh context (explicit re-derive).
@@ -572,6 +886,7 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
                 node_type: resolved.context.nodeType,
                 fingerprint: resolved.context.fingerprint,
                 pinned_at: now().toISOString(),
+                ...NODE_ANCHOR_DEFAULTS,
               };
               // Update the session record so the new fingerprint is persisted.
               await reanchorChatSession(deps.homeBase, sessionId, updatedAnchor);
@@ -590,6 +905,90 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     }
     // ── end pre-flight gate (stale fingerprint) ───────────────────────────────────────────────
 
+    // ── index-staleness verdict (R10/R14) ─────────────────────────────────
+    // Computed ONCE per request (a request-scoped `const`, never a
+    // module-global) whenever repo-graph was actually queried this request
+    // (repoGraphQueriedProjHash was set at one of the two `resolveAnchor`
+    // call sites above). Deliberately NOT gated on `resolved.kind ===
+    // "resolved"` / anchors.length: a heavily-stale or corrupt index that
+    // resolves to ZERO anchors is exactly when this warning matters most —
+    // gating on "anchor resolved successfully" would silently drop it (the
+    // zero-anchor blindspot, R10). Un-anchored sends, critique-anchored
+    // sends, and mounts without `resolveProjectRootByHash` (test compat)
+    // never set repoGraphQueriedProjHash / never resolve a project_root, so
+    // `staleness` stays undefined and nothing extra is surfaced — this path
+    // is unaffected. Fail-open: any read error here is additive-context-only
+    // and must never block or fail the chat send.
+    let staleness: StalenessVerdict | undefined;
+    if (repoGraphQueriedProjHash && deps.resolveProjectRootByHash) {
+      try {
+        const projectRoot = await deps.resolveProjectRootByHash(repoGraphQueriedProjHash);
+        if (projectRoot) {
+          const rgCfg = await loadRepoGraphConfig(deps.homeBase);
+          staleness = stalenessVerdict(
+            await readIndexStaleness({ cwd: projectRoot, home: deps.homeBase }),
+            rgCfg.staleness_warn_pct,
+          );
+        }
+      } catch {
+        // Fail-open — see comment above.
+      }
+    }
+    // ── end index-staleness verdict ───────────────────────────────────────
+
+    // ── Quiz mode (Task 4/6) ────────────────────────────────────────────
+    // Active when this turn carries the opener's `body.quiz` field, OR
+    // (continuation) a quiz sidecar already exists for this session
+    // (`quizStore.read` non-null). A blocked gate/missing-index returns a
+    // terminal JSON signal HERE — before the user message is appended, the
+    // FTS index is touched, or anything else is persisted (INV2, Task 6):
+    // mirrors the node_gone/stale/critique_gone pre-flight signals above,
+    // which all return before append too. Task 4 originally ran this check
+    // AFTER the append (right before system-prompt assembly); moved up here
+    // for Task 6 so a continuation turn whose module graph can't load
+    // (`quiz_unavailable`) doesn't silently persist the user's message /
+    // index it / feed it to chat capture before bailing out.
+    let quizPromptOverride: string | undefined;
+    let quizPlan: QuizTurnPlan | undefined;
+    // Task 7 — set only on the dedupe path (a continuation whose loaded
+    // state already had `wrappedUp === true` on entry). `quizPlan` stays
+    // undefined for this turn on purpose: no engine call ran, so there is
+    // nothing to persist and the existing `quizPlan && deps.quizStore`
+    // write-gate below naturally skips the write (state does NOT advance).
+    let quizComplete = false;
+    if (deps.loadModuleGraph && (body.quiz || deps.quizStore)) {
+      const existingQuizState = body.quiz
+        ? null
+        : deps.quizStore
+          ? await deps.quizStore.read(sessionId)
+          : null;
+      if (body.quiz || existingQuizState) {
+        const quizResult = await runQuizTurn(
+          {
+            userMessage: body.message,
+            opener: body.quiz ?? null,
+            existingState: existingQuizState,
+          },
+          {
+            homeBase: deps.homeBase,
+            loadModuleGraph: deps.loadModuleGraph,
+            resolveProjectRootByHash: deps.resolveProjectRootByHash,
+          },
+        );
+        if (quizResult.kind === "blocked") {
+          const signal: QuizBlockedSignal | QuizUnavailableSignal = quizResult.signal;
+          return c.json(signal, 200);
+        }
+        if (quizResult.kind === "complete") {
+          quizComplete = true;
+        } else {
+          quizPromptOverride = quizResult.quizPrompt;
+          quizPlan = quizResult.plan;
+        }
+      }
+    }
+    // ── end quiz mode ────────────────────────────────────────────────────
+
     const userMessage: ChatMessage = chatMessageSchema.parse({
       id: newId("m"),
       session_id: sessionId,
@@ -597,12 +996,22 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
       content: body.message,
       ts: now().toISOString(),
     });
-    await appendMessage(deps.homeBase, sessionId, userMessage);
-    insertMessage(deps.index, userMessage);
+    // Quiz opener (Task 4): the opener's `message` is a protocol trigger, not
+    // real user content — it's always "" (the assistant asks the first
+    // question; the user hasn't answered anything yet). Persisting an empty
+    // user turn would put a phantom blank bubble in both the JSONL
+    // transcript and the FTS index forever, so it's skipped for exactly this
+    // case. A continuation turn (no `body.quiz`, non-empty message) persists
+    // normally, same as every other chat send.
+    const isEmptyQuizOpener = body.quiz !== undefined && body.message === "";
+    if (!isEmptyQuizOpener) {
+      await appendMessage(deps.homeBase, sessionId, userMessage);
+      insertMessage(deps.index, userMessage);
+    }
 
     // ── Real-time chat capture (memory work) ─────────────────────────────
     //
-    // Capture (explicit "记住 X" OR a conversational fact statement) is detected +
+    // Capture (explicit  OR a conversational fact statement) is detected +
     // persisted in runChatCapture BEFORE composing the system prompt, so this very
     // turn can truthfully acknowledge the save via the injected marker. Routing is
     // deterministic (no LLM — security rule); the write is best-effort and must
@@ -611,6 +1020,69 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     // Only attempted when BOTH readMemory + writeMemory are wired (production:
     // server.ts wires both). When capture is disabled the runner is skipped —
     // no marker, no honesty framing — so back-compat mounts behave as before.
+    // Per-request memory scope (T3): resolve ONCE and reuse for recall read +
+    // capture read/write so they hit the SAME store. An anchored send targets
+    // the anchor repo's project slice (via resolveProjectRootByHash); an
+    // un-anchored send has no project → GLOBAL_ONLY (the cwd-independent global
+    // store — never the daemon's `/` slice under launchd). Facts are global
+    // post-T1/T2, so GLOBAL_ONLY surfaces the user's real facts either way.
+    // Fix 6 — a critique send never carries `body.anchor` (it carries
+    // `body.critique_anchor`), so this used to fall back to GLOBAL_ONLY for
+    // every critique-anchored turn even though the anchor BUNDLE above (the
+    // frozen sidecar) was resolved against the critique's OWN project. That
+    // split the turn's fact/episode recall from the bundle's memory read —
+    // two different stores for the same conversation. `anchor` and
+    // `critique_anchor` are mutually exclusive by construction (Fix 5
+    // rejects a request carrying both above), so reading whichever is
+    // present derives the SAME project scope for both halves.
+    //
+    // IMPORTANT 5 — that only holds on TURN 1: the client pins the anchor
+    // ONLY on the first send (see floating-chat.ts's "pin-once" discipline —
+    // `critique_anchor`/`anchor` are omitted from every follow-up body).
+    // Deriving `projHash` from the request body alone therefore silently
+    // fell back to GLOBAL_ONLY from turn 2 onward, even though the frozen
+    // sidecar bundle stayed scoped to the anchor's project — two different
+    // stores for the SAME conversation. Fix: prefer the STORED session
+    // anchor (both node and critique anchors carry `proj_hash` — see
+    // chatAnchorSchema in src/memory/memory.ts) over the request body. This
+    // also closes the identical pre-existing hole on the node-anchor path
+    // (it had the same body-only fallback) — desirable, not a regression.
+    //
+    // Guarded by `anchorCtx !== null`: the sidecar (read unconditionally at
+    // the top of the handler, well before this point) is only ever written
+    // for a PINNED session (writeAnchorContext, node or critique anchor) — an
+    // un-anchored session never has one, so `anchorCtx` stays null and any
+    // session record for it never carries an `anchor` either. Without this
+    // guard, a plain unanchored free-text chat paid for a full
+    // `listChatSessions` disk read on EVERY turn (`cachedSessions` is always
+    // null on that path — its own populating block above requires
+    // `anchorCtx !== null` too) only to compute `undefined`, since there is
+    // no stored anchor to find. An anchored session's `anchorCtx` is already
+    // non-null here, so this narrows the read without touching the turn-2+
+    // scope fix above.
+    let storedProjHash: string | undefined;
+    if (!isNewSession && anchorCtx !== null) {
+      const sessions = cachedSessions ?? (await listChatSessions(deps.homeBase));
+      storedProjHash = sessions.find((s) => s.id === sessionId)?.anchor?.proj_hash;
+    }
+    const projHash =
+      storedProjHash ??
+      pinnedAnchorMeta?.proj_hash ??
+      body.anchor?.proj_hash ??
+      body.critique_anchor?.proj_hash;
+    let memScope: ProjectScope = GLOBAL_ONLY;
+    if (projHash && deps.resolveProjectRootByHash) {
+      // Defensive: resolveRepoByHash is throw-free by construction today, but a
+      // future refactor must not turn a bad hash into a failed send — always
+      // fall back to GLOBAL_ONLY (the spec contingency) rather than throwing.
+      try {
+        const root = await deps.resolveProjectRootByHash(projHash);
+        if (root) memScope = root;
+      } catch {
+        memScope = GLOBAL_ONLY;
+      }
+    }
+
     const captureEnabled = Boolean(deps.readMemory && deps.writeMemory);
     const cap: ChatCaptureResult = captureEnabled
       ? await runChatCapture(body.message, {
@@ -618,6 +1090,7 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
           readMemory: deps.readMemory!,
           // biome-ignore lint/style/noNonNullAssertion: captureEnabled guards both.
           writeMemory: deps.writeMemory!,
+          projectCwd: memScope,
           extractFacts,
           homeBase: deps.homeBase,
           sessionId,
@@ -627,7 +1100,12 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     // ── end real-time chat capture ───────────────────────────────────────────
 
     const history = await readSession(deps.homeBase, sessionId);
-    const historyMinusLatest = history.slice(0, -1);
+    // `.slice(0, -1)` drops the just-appended user turn readSession reads
+    // back (buildTranscript appends `userMessage.content` itself, avoiding
+    // duplication). The quiz-opener skip above means there IS no
+    // just-appended row to drop for that one case — slicing anyway would
+    // wrongly discard the real last historical turn.
+    const historyMinusLatest = isEmptyQuizOpener ? history : history.slice(0, -1);
     const transcript = buildTranscript(historyMinusLatest, userMessage.content);
 
     // Inject the frozen anchor context (if this conversation is pinned) as the
@@ -640,7 +1118,11 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     // Precedence: node > page > none, extracted into composeBaseSystemPrompt
     // (src/chat/compose-base-context.ts) — see that module for the fail-open
     // try/catch (page assembly is additive context only, never blocks the reply).
+    // Quiz mode (Task 4/6): `quizPromptOverride`/`quizPlan` were computed
+    // earlier — see the "Quiz mode" block right after the index-staleness
+    // verdict, above (moved there for Task 6's INV2 fix).
     const baseSystemPrompt = await composeBaseSystemPrompt({
+      quizPrompt: quizPromptOverride,
       anchorCtx,
       pageId,
       homeBase: deps.homeBase,
@@ -699,7 +1181,9 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     let episodeBlock = "";
     if (deps.readMemory) {
       try {
-        const mem = await deps.readMemory(deps.homeBase);
+        // T3: same per-request scope as capture — anchored → repo slice,
+        // un-anchored → GLOBAL_ONLY (global facts, no `/` project leak).
+        const mem = await deps.readMemory(deps.homeBase, memScope);
         if (mem) {
           factsBlock = buildUserContextBlock(readActiveFacts(mem));
           if (episodeRecallEnabled) {
@@ -747,12 +1231,7 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     const onReqAbort = () => turnAbort.abort();
     if (reqSignal.aborted) turnAbort.abort();
     else reqSignal.addEventListener("abort", onReqAbort, { once: true });
-    const stream = streamFactory({
-      transcript,
-      model: body.model,
-      systemPrompt,
-      signal: turnAbort.signal,
-    });
+    const replyModel = body.model ?? "claude-sonnet-4-6";
 
     const sseStream = new ReadableStream<Uint8Array>({
       async start(controller) {
@@ -763,8 +1242,98 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
         emit({
           type: "message_start",
           message_id: "",
-          model: body.model ?? "claude-sonnet-4-6",
+          model: replyModel,
         });
+
+        // Quiz mode (Task 6) — a verdict turn (`plan.buffered === true`,
+        // i.e. `plan.priorVerdict !== null`) is NEVER streamed raw: the
+        // Brain's own prose is a known anti-sycophancy risk (it may cave/
+        // praise a wrong answer). Instead run it through the validate →
+        // retry → deterministic-fallback backstop
+        // (`generateValidatedVerbalization`, chat-quiz-emit.ts) to
+        // completion FIRST, then feed the validated result through the
+        // exact same reduceStreamEvents pipeline as a normal reply (via
+        // `singleTextStream`) — the client only ever receives the
+        // validated text as a single content_block_delta. A non-buffered
+        // turn (opener / plain question / free-text chat) keeps the
+        // existing raw streaming path unchanged.
+        //
+        // `quizNoBrainCall` (fix, post-review polish) — true for the two
+        // synthetic-text branches below (dedupe complete-line, wrap-up
+        // text) that make NO real Brain call: `singleTextStream` still
+        // emits a `message_stop` event (so `reduceStreamEvents` reduces a
+        // normal terminal state), which sets `red.sawUsage = true` even
+        // though the usage object is the ZERO_QUIZ_USAGE placeholder —
+        // `sawUsage` is presence-of-message_stop, not presence-of-a-
+        // real-call. Left ungated, the ledger call below fires a phantom
+        // $0 `ledgerBrainCall` row for a turn `ledgerBrainCall`'s own
+        // doc-invariant (src/state/usage.ts) says must be a real, charged
+        // call. Computed here (not re-derived at the ledger site) so it
+        // reads as one fact next to the branch that makes it true.
+        const quizNoBrainCall = quizComplete || quizPlan?.phase === "wrapup";
+        let stream: AsyncGenerator<StreamEvent, void, void>;
+        if (quizComplete) {
+          // Task 7 dedupe — a continuation on an already-`wrappedUp` session.
+          // No Brain call, no re-run of buildWrapup: just the fixed,
+          // score-free closing line (never a second wrap-up).
+          stream = singleTextStream(QUIZ_COMPLETE_LINE, replyModel, ZERO_QUIZ_USAGE);
+        } else if (quizPlan?.phase === "wrapup") {
+          // Task 7 — the turn that CROSSES into wrap-up. `wrapText` is
+          // deterministic and score-free (buildWrapup, src/quiz/wrapup.ts)
+          // and is NOT a buffered verdict turn (no priorVerdict) — it never
+          // goes through `generateValidatedVerbalization`; emit it directly
+          // via the same synthetic single-event stream as a buffered turn,
+          // so persistence/ledger below stay on one pipeline.
+          // `wrapText` is always set when phase === "wrapup" (engine
+          // invariant — see prepareQuizTurn's wrapup branch in
+          // src/quiz/orchestrate.ts); the `?? ""` is defensive TS narrowing
+          // only, never expected to fire.
+          stream = singleTextStream(quizPlan.wrapText ?? "", replyModel, ZERO_QUIZ_USAGE);
+        } else if (quizPlan?.buffered && quizPlan.priorVerdict) {
+          const validated = await generateValidatedVerbalization({
+            streamFactory,
+            baseOpts: {
+              transcript,
+              systemPrompt: quizPlan.systemPrompt,
+              // `replyModel` (not raw `body.model`) — the emitted
+              // message_start/ledger below both report `replyModel`, so the
+              // Brain call actually made must run on the SAME resolved
+              // model, not silently diverge when body.model is undefined
+              // (fix, review round 1).
+              model: replyModel,
+              signal: turnAbort.signal,
+              // Buffered verdict turn — up to 2 sequential Brain calls
+              // inside this one await; see QUIZ_TURN_TIMEOUT_MS comment.
+              timeoutMs: QUIZ_TURN_TIMEOUT_MS,
+            },
+            verdict: quizPlan.priorVerdict.verdict,
+            fallback: quizFallbackVerbalization(quizPlan.priorVerdict),
+          });
+          stream = singleTextStream(validated.text, replyModel, validated.usage);
+        } else {
+          stream = streamFactory({
+            transcript,
+            model: body.model,
+            systemPrompt,
+            signal: turnAbort.signal,
+            // Shared with normal (non-quiz) chat — only widen the timeout
+            // for a quiz turn (opener/question); normal chat keeps the 60s
+            // default (chat-stream.ts DEFAULT_TIMEOUT_MS). See
+            // QUIZ_TURN_TIMEOUT_MS comment above.
+            timeoutMs: quizPlan ? QUIZ_TURN_TIMEOUT_MS : undefined,
+          });
+        }
+        // Index-staleness — a distinct SSE event (not a `StreamEvent`
+        // variant: that type is scoped to the `claude -p` wire translation
+        // in chat-stream.ts, orthogonal to this route's own repo-graph
+        // query). Emitted immediately after message_start, once, only when
+        // repo-graph was actually queried this request (`staleness` is
+        // computed above — see the R10/R14 comment at the pre-flight gate).
+        if (staleness) {
+          controller.enqueue(
+            enc.encode(`event: staleness\ndata: ${JSON.stringify(staleness)}\n\n`),
+          );
+        }
 
         const red = await reduceStreamEvents(
           stream,
@@ -805,6 +1374,14 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
           } catch {
             // client disconnected — persistence below still runs
           }
+        }
+
+        // Quiz mode (Task 6) — persist the turn's advanced state AFTER the
+        // turn actually completed (not before — see chat-quiz.ts's file
+        // header): an aborted/failed turn must not silently advance the
+        // quiz overlay/target for a reply the user never actually received.
+        if (quizPlan && deps.quizStore && !cancelled && failure === null) {
+          await deps.quizStore.write(sessionId, quizPlan.nextState);
         }
 
         // Persistence branches — cancelled beats failed beats success: an
@@ -855,8 +1432,17 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
         // cost is derived from the model via computeCost. Gated on usage
         // PRESENCE: a killed/failed call with no usage ledgers nothing; usage
         // that arrived before a kill IS ledgered (it was paid for).
-        if (red.sawUsage) {
-          await ledgerBrainCall(deps.homeBase, {
+        //
+        // `!quizNoBrainCall` (fix, post-review polish) — the dedupe
+        // complete-line and the wrap-up text both set `red.sawUsage = true`
+        // via their synthetic `message_stop` (see `quizNoBrainCall`'s
+        // comment above), but made no real Brain call and must not ledger a
+        // phantom $0 row. A buffered verdict turn (real Brain calls inside
+        // `generateValidatedVerbalization`) and a normal question turn are
+        // NOT `quizNoBrainCall` and keep ledgering exactly as before.
+        if (red.sawUsage && !quizNoBrainCall) {
+          const ledger = deps.ledgerBrainCall ?? ledgerBrainCallReal;
+          await ledger(deps.homeBase, {
             kind: "chat",
             session_id: sessionId,
             model: red.assistantModel,
@@ -933,6 +1519,11 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
    * Absent readMemory/writeMemory, or no eligible targets → `{recapped: []}`.
    */
   app.post("/api/chat/recap-recent", async (c) => {
+    // Secret-gated — same blind-CSRF exposure as /api/chat (paid Haiku
+    // recap loop + a memory write). See finding 2.
+    if (!isAuthorized(deps.secret ?? "", c.req.header("X-Siltpoke-Secret"))) {
+      return c.json({ recapped: [] }, 401);
+    }
     if (deps.checkSendGate) {
       let gateSignal: BudgetSignal | QuietHoursSignal | null = null;
       try {
@@ -1090,6 +1681,7 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
       node_type: resolved.context.nodeType,
       fingerprint: resolved.context.fingerprint,
       pinned_at: now().toISOString(),
+      ...NODE_ANCHOR_DEFAULTS,
     };
 
     // Check session existence BEFORE writing the sidecar — write-then-check

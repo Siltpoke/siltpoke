@@ -17,7 +17,7 @@ import { tokens } from "../../tokens/tokens";
 import { prettifyProject } from "../critic/filter-bar";
 import { type FilterState, filterHref, formatTimeAgo, STATUS_COLOR } from "../critic/helpers";
 import { groupRecursionGuards } from "../critic/recent-table";
-import { fmtCost, fmtTokens, rowTokens, turnKey } from "./format";
+import { builderFamily, familyColor, fmtCost, fmtTokens, reviewerFamily, rowTokens, turnKey } from "./format";
 
 const KIND_COLOR: Record<string, string> = {
   critical: tokens.color.terra,
@@ -122,6 +122,40 @@ function RailRowTopLine({ c, now, homeBasename, tagColor }: {
       >
         {prettifyProject(c.project, homeBasename)}
       </span>
+      {fired && (
+        <span
+          style={{
+            fontFamily: tokens.font.mono,
+            fontSize: 8.5,
+            color: familyColor(builderFamily(c)),
+            border: `1px solid ${familyColor(builderFamily(c))}`,
+            borderRadius: 3,
+            padding: "0 3px",
+            flexShrink: 0,
+            whiteSpace: "nowrap",
+          }}
+          title={`built by ${builderFamily(c)}`}
+        >
+          {builderFamily(c)}
+        </span>
+      )}
+      {fired && reviewerFamily(c) !== builderFamily(c) && (
+        <span
+          style={{
+            fontFamily: tokens.font.mono,
+            fontSize: 8.5,
+            color: familyColor(reviewerFamily(c)),
+            border: `1px solid ${familyColor(reviewerFamily(c))}`,
+            borderRadius: 3,
+            padding: "0 3px",
+            flexShrink: 0,
+            whiteSpace: "nowrap",
+          }}
+          title={`reviewed by ${reviewerFamily(c)}`}
+        >
+          ⇄ {reviewerFamily(c)}
+        </span>
+      )}
       <span
         style={{
           marginLeft: "auto",
@@ -288,6 +322,7 @@ export function TimelineRail({ telemetry, now }: { telemetry: CriticTelemetry; n
     range: telemetry.activeRange,
     sort: telemetry.activeSort,
     query: telemetry.activeQuery,
+    family: telemetry.activeFamily ?? null,
   };
   const sortHref = filterHref(
     active,

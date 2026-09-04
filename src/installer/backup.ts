@@ -25,6 +25,7 @@ function backupFilename(now: Date): string {
 export async function backupSettings(
   claudeHome: string,
   now: Date = new Date(),
+  platform: NodeJS.Platform = process.platform,
 ): Promise<BackupResult> {
   const src = join(claudeHome, "settings.json");
   if (!existsSync(src)) {
@@ -36,12 +37,16 @@ export async function backupSettings(
   await copyFile(src, destPath);
 
   const symlinkPath = join(claudeHome, SYMLINK_NAME);
-  try {
-    await unlink(symlinkPath);
-  } catch {
-    // missing symlink is fine
+  // Windows symlink() requires elevation → EPERM. Skip the convenience pointer;
+  // findLatestBackup() falls back to scanning the timestamped backups.
+  if (platform !== "win32") {
+    try {
+      await unlink(symlinkPath);
+    } catch {
+      // missing symlink is fine
+    }
+    await symlink(filename, symlinkPath);
   }
-  await symlink(filename, symlinkPath);
 
   return { path: destPath, symlink: symlinkPath };
 }

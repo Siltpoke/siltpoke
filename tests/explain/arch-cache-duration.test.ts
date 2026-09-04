@@ -81,6 +81,7 @@ function fixtureMeta(root: string): RepoGraphMeta {
     counters: {
       files_walked: 2,
       files_cached: 0,
+      parse_degraded: 0,
       skipped: { tree_sitter_failed: 0, too_large: 0, not_a_source_file: 0, file_cap: 0 },
       nodes: { file: 2, function: 0, class: 0, module: 0, symbol: 0 },
       edges: { imports: 0, calls: 0, contains: 0 },
@@ -151,7 +152,7 @@ describe("readArchModel — durationMs round-trip", () => {
   it("returns durationMs from a cache written with that field", async () => {
     const d = await tmpDir();
     writeArchModel(d, goodDoc(), baseMeta({ fingerprint: "fpX", graphIndexedTs: "tsX", durationMs: 88_000 }), SUBDIRS);
-    const r = await readArchModel(d, "fpX", "tsX");
+    const r = await readArchModel(d, "fpX", "tsX", null);
     expect(r).not.toBeNull();
     // meta.durationMs must be 88000.
     expect(r!.meta.durationMs).toBe(88_000);
@@ -175,7 +176,7 @@ describe("readArchModel — durationMs round-trip", () => {
     // Overwrite the meta file directly to ensure no durationMs key.
     await writeFile(archMetaPath(d), JSON.stringify(legacyMeta));
 
-    const r = await readArchModel(d, "fpLeg", "tsLeg");
+    const r = await readArchModel(d, "fpLeg", "tsLeg", null);
     // must not crash, stale:false, durationMs absent.
     expect(r).not.toBeNull();
     expect(r!.stale).toBe(false);

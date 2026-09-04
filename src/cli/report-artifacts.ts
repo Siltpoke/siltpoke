@@ -260,11 +260,22 @@ export function renderConfigPanel(
     ["robot", "robot"],
     ["bunny", "bunny"],
   ];
-  const triggerModes: Array<[string, string]> = [
-    ["always", "always"],
-    ["gates", "gates"],
-    ["on_demand", "on_demand"],
-    ["hybrid", "hybrid"],
+  // ⚠️ THIS CONTROL IS ON A RETIRED PAGE AND NO USER CAN REACH IT.
+  // `buildReport` has no caller anywhere in `src/` (only tests), and
+  // `src/daemon/server.ts` says "its legacy GET /dashboard report page is
+  // retired". The LIVE review-unit control is
+  // `src/web/screens/timeline/review-unit-row.tsx`, served at /timeline.
+  // Editing the unit set here changes nothing a user sees, but it WILL red
+  // the four `report.golden` fixtures — which is the only reason this note
+  // exists, so nobody spends an afternoon on it. Removing this panel is a
+  // separate decision about the retired page as a whole.
+  //
+  // Two units, not four modes (spec D8 / AC12). The old `triggerMode` values
+  // are not offered — they all mean "commit" now, and offering a dead value as
+  // a choice is how a control keeps promising something it cannot do.
+  const reviewUnits: Array<[string, string]> = [
+    ["commit", "commit"],
+    ["pr", "pr"],
   ];
 
   const langOpts = languages
@@ -279,14 +290,16 @@ export function renderConfigPanel(
         `<option value="${esc(v)}"${c.species === v ? " selected" : ""}>${esc(l)}</option>`,
     )
     .join("");
-  const trigger =
-    typeof (c as Record<string, unknown>).triggerMode === "string"
-      ? ((c as Record<string, unknown>).triggerMode as string)
-      : "gates";
-  const triggerOpts = triggerModes
+  // AC10 — a config still carrying any of the four old `triggerMode` values
+  // renders as `commit` and does not error. The old key is NOT read as a
+  // fallback here on purpose: mapping it in the UI would show a value this
+  // control cannot write back, and AC11 says the old key is never rewritten.
+  const reviewUnit =
+    (c as Record<string, unknown>).reviewUnit === "pr" ? "pr" : "commit";
+  const reviewUnitOpts = reviewUnits
     .map(
       ([v, l]) =>
-        `<option value="${esc(v)}"${trigger === v ? " selected" : ""}>${esc(l)}</option>`,
+        `<option value="${esc(v)}"${reviewUnit === v ? " selected" : ""}>${esc(l)}</option>`,
     )
     .join("");
 
@@ -324,8 +337,8 @@ export function renderConfigPanel(
       <select id="cfg-language" data-config-key="language" data-config-type="string">${langOpts}</select>
     </div>
     <div class="cfg-row">
-      <label for="cfg-trigger" class="cfg-label">${esc(t.config_trigger)}</label>
-      <select id="cfg-trigger" data-config-key="triggerMode" data-config-type="string">${triggerOpts}</select>
+      <label for="cfg-review-unit" class="cfg-label">${esc(t.config_review_unit)}</label>
+      <select id="cfg-review-unit" data-config-key="reviewUnit" data-config-type="string">${reviewUnitOpts}</select>
     </div>
     <div class="cfg-divider"></div>
     ${dialRows}

@@ -1,5 +1,6 @@
 /**
- * Unit tests for each of the 7 individual doctor checks in src/cli/doctor.ts.
+ * Unit tests for doctor checks 1-7 in src/cli/doctor.ts (brain + autostart +
+ * daemon rows are covered in doctor-daemon-check.test.ts / doctor.test.ts).
  *
  * Orchestration + formatter tests live in tests/cli/doctor.test.ts.
  */
@@ -36,6 +37,8 @@ describe("doctor — check 1: settings.json valid", () => {
     const r = settingsCheck();
     expect(r.pass).toBe(false);
     expect(r.detail).toContain("does not exist");
+    // Plugin-era remediation — no `bun src/cli/install.ts` in a plugin cache.
+    expect(r.detail).toContain("/siltpoke-setup");
   });
 
   test("fails when settings.json is corrupt JSON", () => {
@@ -74,7 +77,30 @@ describe("doctor — check 2: Stop hook registered", () => {
     return runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome })[1]!;
   }
 
-  test("passes when Stop matcher has both http and command entries", () => {
+  // Post-track-#6 canonical shape: curl fast path (type:"command") + on-stop
+  // command — settings-mutator.ts registerStopHookPair no longer writes http.
+  const CURL_FAST_PATH =
+    'curl --silent --max-time 5 -X POST -H "X-Siltpoke-Secret: s3cret" -H "Content-Type: application/json" --data-binary @- http://127.0.0.1:9876/hooks/stop >/dev/null 2>&1 || true';
+
+  test("passes clean on the new shape (curl fast path + on-stop command)", () => {
+    writeSettings({
+      hooks: {
+        Stop: [{
+          matcher: "",
+          hooks: [
+            { type: "command", command: CURL_FAST_PATH },
+            { type: "command", command: "bun /path/to/src/hooks/on-stop.ts" },
+          ],
+        }],
+      },
+    });
+    const r = hookCheck();
+    expect(r.pass).toBe(true);
+    expect(r.status).not.toBe("info");
+    expect(r.detail).toBeNull();
+  });
+
+  test("passes with migration note on the legacy shape (http + on-stop command)", () => {
     writeSettings({
       hooks: {
         Stop: [{
@@ -86,7 +112,12 @@ describe("doctor — check 2: Stop hook registered", () => {
         }],
       },
     });
-    expect(hookCheck().pass).toBe(true);
+    const r = hookCheck();
+    expect(r.pass).toBe(true);
+    expect(r.status).toBe("info");
+    expect(r.detail).toBe(
+      "legacy http Stop hook shape detected — run `/siltpoke-setup` to migrate to the silent curl fast path",
+    );
   });
 
   test("fails when hooks.Stop is missing", () => {
@@ -96,23 +127,32 @@ describe("doctor — check 2: Stop hook registered", () => {
     expect(r.detail).toContain("hooks.Stop");
   });
 
+  test("fails when matcher has only the curl fast path (no on-stop fallback)", () => {
+    writeSettings({
+      hooks: { Stop: [{ matcher: "", hooks: [{ type: "command", command: CURL_FAST_PATH }] }] },
+    });
+    const r = hookCheck();
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("curl fast path");
+  });
+
   test("fails when matcher has only http entry (no command fallback)", () => {
     writeSettings({
       hooks: { Stop: [{ matcher: "", hooks: [{ type: "http", url: "http://127.0.0.1:9876/hooks/stop" }] }] },
     });
     const r = hookCheck();
     expect(r.pass).toBe(false);
-    expect(r.detail).toContain("both an http entry");
+    expect(r.detail).toContain("Run `/siltpoke-setup`");
   });
 
-  test("fails when matcher has only command entry (no http)", () => {
+  test("fails when matcher has only on-stop command entry (no fast path)", () => {
     writeSettings({
       hooks: { Stop: [{ matcher: "", hooks: [{ type: "command", command: "bun /path/on-stop.ts" }] }] },
     });
     expect(hookCheck().pass).toBe(false);
   });
 
-  test("fails when http url doesn't point at /hooks/stop", () => {
+  test("fails when neither curl command nor http url points at /hooks/stop", () => {
     writeSettings({
       hooks: {
         Stop: [{
@@ -125,6 +165,89 @@ describe("doctor — check 2: Stop hook registered", () => {
       },
     });
     expect(hookCheck().pass).toBe(false);
+  });
+
+  // ── plugin-owned Stop hook (task 6c) ─────────────────────────────────────
+  //
+  // Plugin era: hooks/hooks.json (copied to
+  // ${CLAUDE_PLUGIN_ROOT}/hooks/hooks.json on install) owns the Stop hook,
+  // not settings.json. A healthy plugin install has an EMPTY settings.json
+  // hooks.Stop[] — that must PASS, not be treated as the false alarm it was
+  // before this fix.
+
+  function pluginHookCheck(pluginHooksJsonPath: string): CheckResult {
+    return runAllChecks({
+      claudeHome: env.claudeHome,
+      siltpokeHome: env.siltpokeHome,
+      pluginInstall: true,
+      pluginHooksJsonPath,
+    })[1]!;
+  }
+
+  test("plugin install + plugin hooks.json declares Stop + settings.json Stop empty → passes (false-alarm fix)", () => {
+    writeSettings({ hooks: { Stop: [] } });
+    const pluginHooksPath = join(env.tmp, "plugin-hooks.json");
+    writeFileSync(
+      pluginHooksPath,
+      JSON.stringify({
+        hooks: {
+          Stop: [{ hooks: [{ type: "command", command: 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/stop.sh"' }] }],
+        },
+      }),
+    );
+    const r = pluginHookCheck(pluginHooksPath);
+    expect(r.pass).toBe(true);
+    expect(r.status).toBe("info");
+    expect(r.detail).toContain("plugin-owned");
+  });
+
+  test("plugin install + plugin hooks.json missing + settings.json also empty → fails (genuinely broken)", () => {
+    writeSettings({ hooks: { Stop: [] } });
+    const pluginHooksPath = join(env.tmp, "does-not-exist", "hooks.json");
+    const r = pluginHookCheck(pluginHooksPath);
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("hooks.Stop");
+  });
+
+  test("plugin install + plugin hooks.json has no Stop entry + settings.json also empty → fails", () => {
+    writeSettings({ hooks: { Stop: [] } });
+    const pluginHooksPath = join(env.tmp, "plugin-hooks-no-stop.json");
+    writeFileSync(pluginHooksPath, JSON.stringify({ hooks: { SessionStart: [{ hooks: [] }] } }));
+    const r = pluginHookCheck(pluginHooksPath);
+    expect(r.pass).toBe(false);
+  });
+
+  test("plugin install + plugin hooks.json declares Stop, even when settings.json is entirely empty object", () => {
+    writeSettings({});
+    const pluginHooksPath = join(env.tmp, "plugin-hooks-2.json");
+    writeFileSync(
+      pluginHooksPath,
+      JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "sh stop.sh" }] }] } }),
+    );
+    const r = pluginHookCheck(pluginHooksPath);
+    expect(r.pass).toBe(true);
+  });
+
+  test("non-plugin install is unaffected by an (irrelevant) pluginHooksJsonPath override", () => {
+    writeSettings({
+      hooks: {
+        Stop: [{
+          matcher: "",
+          hooks: [
+            { type: "command", command: CURL_FAST_PATH },
+            { type: "command", command: "bun /path/to/src/hooks/on-stop.ts" },
+          ],
+        }],
+      },
+    });
+    const r = runAllChecks({
+      claudeHome: env.claudeHome,
+      siltpokeHome: env.siltpokeHome,
+      pluginInstall: false,
+      pluginHooksJsonPath: join(env.tmp, "does-not-exist", "hooks.json"),
+    })[1]!;
+    expect(r.pass).toBe(true);
+    expect(r.status).not.toBe("info");
   });
 });
 
@@ -276,6 +399,8 @@ describe("doctor — check 6: slash command symlinks", () => {
     const r = symlinksCheck();
     expect(r.pass).toBe(false);
     expect(r.detail).toContain("missing");
+    // No `/siltpoke-setup` equivalent re-links command files — plugin reinstall does.
+    expect(r.detail).toContain("Reinstall: /plugin install siltpoke");
   });
 
   test("fails when one entry is a regular file (not a symlink)", () => {
@@ -296,6 +421,35 @@ describe("doctor — check 6: slash command symlinks", () => {
     const r = symlinksCheck();
     expect(r.pass).toBe(false);
     expect(r.detail).toContain("points to");
+  });
+
+  test("on win32: passes when files are copied (regular files, not symlinks)", () => {
+    // Windows installs COPY command files (no symlink permission)
+    for (const name of ["alpha.md", "beta.md", "gamma.md"]) {
+      writeFileSync(join(env.claudeHome, "commands", name), "x");
+    }
+    const r = runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome, repoRoot: fakeRepo, platform: "win32" })[5]!;
+    expect(r.pass).toBe(true);
+    expect(r.name).toContain("3/3");
+    expect(r.name).toContain("files");
+  });
+
+  test("on win32: fails when a command file is missing", () => {
+    writeFileSync(join(env.claudeHome, "commands", "alpha.md"), "x");
+    writeFileSync(join(env.claudeHome, "commands", "beta.md"), "x");
+    // gamma.md is missing
+    const r = runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome, repoRoot: fakeRepo, platform: "win32" })[5]!;
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("missing");
+  });
+
+  test("on win32: fails when an entry is not a regular file (e.g. directory)", () => {
+    writeFileSync(join(env.claudeHome, "commands", "alpha.md"), "x");
+    mkdirSync(join(env.claudeHome, "commands", "beta.md"));
+    writeFileSync(join(env.claudeHome, "commands", "gamma.md"), "x");
+    const r = runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome, repoRoot: fakeRepo, platform: "win32" })[5]!;
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("not a regular file");
   });
 });
 
@@ -333,5 +487,77 @@ describe("doctor — check 7: config.json valid", () => {
     const r = configCheck();
     expect(r.pass).toBe(false);
     expect(r.detail).toContain("name");
+  });
+});
+
+// ── check 11: agy hooks.json siltpoke-review Stop registered ───────────────
+
+describe("doctor — check 11: agy hooks.json siltpoke-review Stop registered", () => {
+  let env: DoctorTmp;
+  beforeEach(() => { env = setupDoctorTmp("c11-"); });
+  afterEach(() => { teardownDoctorTmp(env); });
+
+  function agyCheck(hooksPath: string): CheckResult {
+    // Index bumped 10 → 12 on 2026-07-11 (single-brain #10 S1): the single
+    // reviewer-provider row at index 9 was replaced by three per-role rows
+    // (indices 9-11), shifting this trailing row from 10 to 12.
+    return runAllChecks({
+      claudeHome: env.claudeHome,
+      siltpokeHome: env.siltpokeHome,
+      agyHooksJsonPath: hooksPath,
+    })[12]!;
+  }
+
+  test("absent hooks.json is healthy info (agy not wired) — not a failure", () => {
+    const hooksPath = join(env.tmp, "does-not-exist", "hooks.json");
+    const r = agyCheck(hooksPath);
+    expect(r.pass).toBe(true);
+    expect(r.status).toBe("info");
+    expect(r.detail).toContain("not wired");
+    // Honest plugin-era wording — /siltpoke-setup does NOT wire agy hooks
+    // (only the from-source installer does), so this must not claim it does.
+    expect(r.detail).not.toContain("bun run setup");
+    expect(r.detail).not.toContain("bun src/");
+  });
+
+  test("passes when siltpoke-review.Stop contains an agy-stop.ts command entry", () => {
+    const hooksPath = join(env.tmp, "hooks.json");
+    writeFileSync(
+      hooksPath,
+      JSON.stringify({
+        "siltpoke-review": {
+          Stop: [{ type: "command", command: "bun /repo/src/hooks/agy-stop.ts", timeout: 30 }],
+        },
+      }),
+    );
+    const r = agyCheck(hooksPath);
+    expect(r.pass).toBe(true);
+    expect(r.detail).toBeNull();
+  });
+
+  test("fails when siltpoke-review key is missing", () => {
+    const hooksPath = join(env.tmp, "hooks.json");
+    writeFileSync(hooksPath, JSON.stringify({ "some-other-tool": { PreToolUse: [] } }));
+    const r = agyCheck(hooksPath);
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("siltpoke-review");
+    // /siltpoke-setup does not wire agy hooks — must not claim it does.
+    expect(r.detail).not.toContain("bun src/cli/install.ts");
+  });
+
+  test("fails when siltpoke-review.Stop has no agy-stop.ts command entry", () => {
+    const hooksPath = join(env.tmp, "hooks.json");
+    writeFileSync(hooksPath, JSON.stringify({ "siltpoke-review": { Stop: [{ type: "command", command: "echo hi" }] } }));
+    const r = agyCheck(hooksPath);
+    expect(r.pass).toBe(false);
+    expect(r.detail).not.toContain("bun src/cli/install.ts");
+  });
+
+  test("fails when hooks.json is corrupt JSON", () => {
+    const hooksPath = join(env.tmp, "hooks.json");
+    writeFileSync(hooksPath, "{ not json");
+    const r = agyCheck(hooksPath);
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("not valid JSON");
   });
 });

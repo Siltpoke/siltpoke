@@ -375,9 +375,11 @@ describe("Review smoke: empty diff bail", () => {
 // Scenario 4: Guard reject — fabricated snippet → exit 2
 // ---------------------------------------------------------------------------
 
-describe("Review smoke: guard reject", () => {
+describe("Review smoke: unverified evidence", () => {
+  // Was "guard reject → exit 2". The rejection is gone: a fabricated citation
+  // is dropped and the review is printed with an "unconfirmed" mark above it.
   test.if(gitReachable)(
-    "Brain returns fabricated snippet not in tool raw output → exit 2",
+    "Brain returns fabricated snippet not in tool raw output → marked unconfirmed, exit 0",
     async () => {
       await initGitRepo(cwd, true);
 
@@ -414,14 +416,16 @@ describe("Review smoke: guard reject", () => {
         },
       });
 
-      expect(result.exitCode).toBe(2);
+      expect(result.exitCode).toBe(0);
+      expect(lines.some((l) => l.includes("unconfirmed"))).toBe(true);
+      // The review survives the bad citation — the half that changed.
+      expect(lines.some((l) => l.includes("Fix the hallucinated issue"))).toBe(true);
+      // The fabricated snippet does not — the half that did not.
       expect(
-        lines.some(
-          (l) =>
-            l.includes("evidence guard rejected") ||
-            l.includes("guard rejected"),
+        lines.some((l) =>
+          l.includes("this is a completely fabricated snippet not from any tool output!!"),
         ),
-      ).toBe(true);
+      ).toBe(false);
     },
   );
 });

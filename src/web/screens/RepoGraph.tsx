@@ -102,25 +102,47 @@ export function RepoGraph(props: RepoGraphScreenProps) {
       <style
         dangerouslySetInnerHTML={{
           __html: `
-            /* warm token palette — copied verbatim from the prototype :root.
-               Defined on .rg-host AND on the document-level fixed overlays
-               (#rg-ex-overlay / #rg-edge-tip), which sit OUTSIDE
-               .rg-host — without this the modal/tooltip resolve var(--cream) to
-               nothing and render transparent. NOT on :root, to avoid colliding
-               with the dashboard's own tokens.css names. */
+            /* warm token palette — the prototype's :root custom properties, now
+               ALIASED to the dashboard's own tokens.css custom properties
+               instead of holding literal hex (Task 9). The property NAMES
+               (--cream, --ink3, --resolved, …) are unchanged on purpose:
+               repo-graph.ts's SVG code (setAttribute / .style.stroke =
+               "var(--ink3)" etc.) and the CSS below both reference these
+               names, so every consumer picks up dark-mode for free with no
+               further change (see repo-graph.ts:764's own comment, which
+               anticipates exactly this). Still scoped to .rg-host (not :root)
+               to avoid colliding with the dashboard's own token names, and
+               still duplicated onto #rg-ex-overlay / #rg-edge-tip — those two
+               sit OUTSIDE .rg-host (document-level fixed overlays) and would
+               resolve var(--cream) etc. to nothing without it.
+               --resolved/--unresolved/--unresolvable are RepoGraph's own
+               "trace confidence" semantic palette (Task 9's graphPalette,
+               distinct from the 16 brand tokens — node/edge kinds have no
+               brand-token equivalent to alias to). */
             .rg-host, #rg-ex-overlay, #rg-edge-tip {
-              --cream:#faf6ec; --paper:#f4eedf; --paperD:#e8dec7; --edge:#d8cbab;
-              --ink:#1f1b16; --ink2:#5a4f3f; --ink3:#8a7c64;
-              --terra:#d96b6b; --amber:#e8a85c; --moss:#7a9a5e; --sky:#7fb0c8;
+              --cream:var(--color-cream); --paper:var(--color-paper); --paperD:var(--color-paperD); --edge:var(--color-edge);
+              --ink:var(--color-ink); --ink2:var(--color-ink2); --ink3:var(--color-ink3);
+              --terra:var(--color-terra); --amber:var(--color-amber); --moss:var(--color-moss); --sky:var(--color-sky);
+              --onAccent:var(--color-onAccent);
               --display:"Pixelify Sans",system-ui,sans-serif;
               --mono:"JetBrains Mono",ui-monospace,monospace;
               --body:"Geist",system-ui,sans-serif;
               --radius:10px; --radius-sm:6px;
-              --shadow-sm:0 1px 3px rgba(31,27,22,.08);
-              --shadow-md:0 2px 6px rgba(31,27,22,.10);
-              --shadow-lg:0 12px 34px rgba(31,27,22,.18);
-              /* Trace confidence palette (ph-trace.css :root). */
-              --resolved:#c9871f; --unresolved:#c0531a; --unresolvable:#9b2d1f;
+              /* --shadow-sm/md/lg: deliberately NOT redefined here (Task 10b
+                 batch 2 fix round 1). This block used to alias them to
+                 "color-mix(in srgb, var(--color-ink) N%, transparent)" — the
+                 exact ink-derived-shadow bug batch 1 fixed in
+                 FloatingChat.tsx, still live here: dark.ink is near-white, so
+                 every shadow in this subtree rendered as a white halo in dark
+                 mode. --shadow-sm/md/lg are already real, theme-correct
+                 global names (tokens.css's own themeVars() emits them at
+                 :root), unlike --cream/--paper/etc. above (which have no
+                 global equivalent under those short names) — so simply NOT
+                 shadowing them here lets every var(--shadow-lg) call site
+                 below inherit the correct global value directly, with no
+                 local declaration needed. */
+              /* Trace confidence palette — RepoGraph's own graphPalette (Task 9). */
+              --resolved:var(--graph-resolved); --unresolved:var(--graph-unresolved); --unresolvable:var(--graph-unresolvable);
             }
             .rg-host {
               display:flex; flex-direction:column; height:100%; min-height:0;
@@ -144,38 +166,91 @@ export function RepoGraph(props: RepoGraphScreenProps) {
                pagehead child, preceded by .pagehead-divider + margin. Buffer at
                typical width: noevi + src-chip + divider ≈ 300px. */
             .rg-host .arch-gen{display:inline-flex;align-items:center;gap:8px;font-family:var(--body);font-size:12.5px;font-weight:500;border-radius:var(--radius-sm);padding:6px 12px;border:1px solid var(--ink);background:var(--ink);color:var(--cream);cursor:pointer;white-space:nowrap}
-            /* Divider hairline + gap before the paid button */
-            .rg-host .pagehead-divider{width:1px;height:18px;background:var(--edge);flex-shrink:0;margin-left:10px}
+            /* Divider hairline + gap before the paid button. pointer-events:none —
+               this is a decorative aria-hidden hairline; it must never intercept
+               clicks on neighboring controls (e.g. the Auto/Generated toggle). */
+            .rg-host .pagehead-divider{width:1px;height:18px;background:var(--edge);flex-shrink:0;margin-left:10px;pointer-events:none}
             /* explicit display overrides the UA [hidden] rule → restore it */
             .rg-host .arch-gen[hidden],.rg-host .arch-chip[hidden]{display:none}
             .rg-host .arch-gen[disabled]{opacity:.7;cursor:default}
-            .rg-host .arch-gen.stale{background:var(--amber);border-color:#b07d2e;color:#3a2c12}
+            /* .arch-gen.stale ONLY: text/border on the brand 'amber' FILL (this
+               rule's own background IS var(--amber), solid). NOT
+               var(--color-onAccent) — white-on-amber measures 2.06:1
+               (pre-existing documented gap, deferred 2026-08-01, out of
+               scope for this track). The prototype's original literal (hex
+               3a2c12, dark brown) worked around it with dark text;
+               color-mix(amber, black) reproduces that AND follows the active
+               theme's amber (8.83:1 light / 9.48:1 dark — recomputed round 2
+               against the live palette, non-premultiplied sRGB channel mix
+               then WCAG contrastRatio; both comfortably clear even the 4.5:1
+               text floor). This mix-toward-
+               black is correct ONLY because amber is the background here —
+               it does NOT generalize to .rg-btn-accent below, whose
+               background is transparent (see that rule's own comment; a
+               review round-1 CRITICAL finding caught the two being
+               conflated). */
+            .rg-host .arch-gen.stale{background:var(--amber);border-color:color-mix(in srgb, var(--amber) 75%, black);color:color-mix(in srgb, var(--amber) 12%, black)}
             /* Button weight tiers.
                .rg-btn-accent: outlined + accent amber, used when cache is stale.
                .rg-btn-ghost:  text-weight + muted ink2 (≥4.5:1 on --paper), used when cache is fresh.
                Both inherit .arch-gen geometry (gap/padding/font) — applied as
                MODIFIER classes alongside .arch-gen, not standalone replacements.
                Full hit area preserved on ghost (no padding reduction). */
-            .rg-host .arch-gen.rg-btn-accent{background:transparent;border-color:var(--amber);color:#3a2c12}
-            .rg-host .arch-gen.rg-btn-accent:hover{background:rgba(232,168,92,.12)}
+            /* .rg-btn-accent's background is transparent — the text sits on
+               .pagehead's var(--cream), which INVERTS between themes (light
+               and dark canvas are opposite polarity), unlike .stale's solid
+               amber fill above. mix(amber, black) was copy-adjusted from
+               .stale without re-deriving for a transparent background — a
+               review round-1 CRITICAL finding: it measured 1.01:1 in dark
+               (near-black text on the near-black dark canvas) while reading
+               fine in light (16.86:1) only by accident. Fixed by mixing
+               toward var(--color-ink) instead of the literal black — ink
+               itself already inverts correctly with the canvas (proven by
+               the existing "ink/ink2 on paper" body-floor tests), so the mix
+               inherits that: 12.62:1 light / ~14.14-14.18:1 dark (recomputed
+               round 2 against the live palette — non-premultiplied sRGB
+               channel mix, then WCAG contrastRatio; the dark spread is
+               whether the intermediate mixed channel is rounded to an 8-bit
+               integer, 14.18, before computing luminance, or kept as a float,
+               14.14 — both clear 4.5:1 with room either way). */
+            .rg-host .arch-gen.rg-btn-accent{background:transparent;border-color:var(--amber);color:color-mix(in srgb, var(--amber) 12%, var(--ink))}
+            .rg-host .arch-gen.rg-btn-accent:hover{background:color-mix(in srgb, var(--amber) 12%, transparent)}
             /* Ghost tier now reads visibly as a BUTTON (1px edge border +
                faint paper tint at rest). Still lighter than accent (outlined amber)
                and default (filled ink). --ink2 text maintains ≥4.5:1 on --paper. */
             .rg-host .arch-gen.rg-btn-ghost{background:var(--paper);border-color:var(--edge);color:var(--ink2)}
             .rg-host .arch-gen.rg-btn-ghost:hover{background:var(--paperD);border-color:var(--ink3)}
             .rg-host .arch-gen .cost{font-family:var(--mono);font-size:11px;opacity:.82}
-            .rg-host .arch-gen .spin{width:12px;height:12px;border:2px solid rgba(250,246,236,.4);border-top-color:var(--cream);border-radius:50%;display:inline-block;animation:rgspin .9s linear infinite}
+            .rg-host .arch-gen .spin{width:12px;height:12px;border:2px solid color-mix(in srgb, var(--cream) 40%, transparent);border-top-color:var(--cream);border-radius:50%;display:inline-block;animation:rgspin .9s linear infinite}
             /* Source chip (Authored | Generated). Pill of two segments, same
                visual family as .arch-chip; part of the $0 cluster
-               (chip/grounded%/route) that sits LEFT of the divider+genBtn. */
-            .rg-host .src-chip{display:inline-flex;align-items:stretch;font-family:var(--mono);font-size:11px;background:var(--cream);border:1px solid var(--edge);border-radius:999px;overflow:hidden}
+               (chip/grounded%/route) that sits LEFT of the divider+genBtn.
+               flex-shrink:0 — same "review fixup" as .idx-stat below. This
+               chip sets overflow:hidden (to clip the pill's rounded corners),
+               and per the flexbox spec an item's automatic min-width resolves
+               to 0 (not content-based) whenever overflow isn't visible — so
+               WITHOUT flex-shrink:0 this was the one pagehead child the
+               browser was free to squeeze below its own text width once the
+               quiz controls widened the row, silently clipping the
+               Auto/Generated buttons while their JS-reported bounding rects
+               stayed full-size. Playwright then hit-tested the clip point and
+               found the ancestor (.src-chip / .pagehead) instead of the
+               button — "intercepts pointer events", CI-only because Linux's
+               fallback-font metrics render this row measurably wider than
+               macOS's. Pin it so it can never shrink below content; nothing
+               downstream of it (arch-gen etc.) needs the space back — the
+               row already has flex-shrink:0 protected members (idx-stat,
+               repo-pick-wrap, the quiz select/button) that no browser was
+               ever shrinking past content anyway; only the ph-spacer
+               (flex-basis:0) absorbs a tight row now. */
+            .rg-host .src-chip{display:inline-flex;align-items:stretch;font-family:var(--mono);font-size:11px;background:var(--cream);border:1px solid var(--edge);border-radius:999px;overflow:hidden;flex-shrink:0}
             .rg-host .src-chip[hidden]{display:none}
             .rg-host .src-chip .src-seg{font-family:inherit;font-size:inherit;border:0;background:transparent;color:var(--ink3);padding:3px 11px;cursor:pointer;white-space:nowrap}
             .rg-host .src-chip .src-seg + .src-seg{border-left:1px solid var(--edge)}
             .rg-host .src-chip .src-seg.active{background:var(--ink);color:var(--cream);cursor:default}
             .rg-host .src-chip .src-seg.off{opacity:.45;cursor:default;pointer-events:none}
             .rg-host .src-chip .src-stale{color:var(--amber);font-weight:600}
-            .rg-host .src-chip .src-seg.active .src-stale{color:#f4d9a8}
+            .rg-host .src-chip .src-seg.active .src-stale{color:color-mix(in srgb, var(--amber) 45%, var(--cream))}
             .rg-host .arch-chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;background:var(--cream);border:1px solid var(--edge);border-radius:999px;padding:3px 10px;cursor:pointer}
             .rg-host .arch-chip:hover{background:var(--paperD)}
             .rg-host .arch-chip:focus-visible{outline:2px solid var(--resolved);outline-offset:1px}
@@ -243,9 +318,21 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .repo-row .rforget:hover{background:var(--paper);border-color:var(--edge);color:var(--ink)}
             .rg-host .repo-row .rforget.rforget-off{cursor:not-allowed;opacity:.3}
             .rg-host .repo-row:hover .rforget.rforget-off{opacity:.3}
-            .rg-host .repo-row.confirm{gap:8px;background:#fbf1da;flex-wrap:wrap}
+            .rg-host .repo-row.confirm{gap:8px;background:color-mix(in srgb, var(--resolved) 8%, var(--cream));flex-wrap:wrap}
             .rg-host .repo-row.confirm .rconfirm{flex:1;min-width:0;font-family:var(--body);font-size:12px;color:var(--ink)}
-            .rg-host .repo-row.confirm .rc-yes{flex-shrink:0;font-family:var(--body);font-size:11.5px;color:#fff;background:var(--bad,#9b2d1f);border:none;border-radius:6px;padding:5px 11px;cursor:pointer}
+            /* var(--onAccent) measured only 4.09:1 here in dark mode against
+               unresolvable's ORIGINAL dark lift — under the 4.5:1 text floor
+               on this destructive-confirm button (round-1 review finding;
+               11.5px label text, not WCAG "large text"). A bespoke light/dark
+               white/black token was built to fix it directly, then removed:
+               raising graphPalette.dark.unresolvable's lift (Important 2,
+               palette.ts — independently required because this same color is
+               also small body text at several OTHER sites) moved onAccent's
+               own dark value to 5.00:1 against the new unresolvable, clearing
+               the floor as a side effect (onAccent's light value was already
+               7.53:1). See "onAccent on unresolvable clears the 4.5:1 text
+               floor" in palette.test.ts. */
+            .rg-host .repo-row.confirm .rc-yes{flex-shrink:0;font-family:var(--body);font-size:11.5px;color:var(--onAccent);background:var(--unresolvable);border:none;border-radius:6px;padding:5px 11px;cursor:pointer}
             .rg-host .repo-row.confirm .rc-no{flex-shrink:0;font-family:var(--body);font-size:11.5px;color:var(--ink2);background:transparent;border:1px solid var(--edge);border-radius:6px;padding:5px 11px;cursor:pointer}
 
             /* "+ Index a repo" affordance + path input */
@@ -255,10 +342,10 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .rm-add-plus{font-weight:700;color:var(--moss);margin-right:4px}
             .rg-host .rm-add-form{padding:4px 9px 6px;display:flex;flex-wrap:wrap;gap:6px}
             .rg-host .rm-add-inp{flex:1;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:11.5px;color:var(--ink);background:var(--paper);border:1px solid var(--edge);border-radius:6px;padding:6px 8px;outline:none}
-            .rg-host .rm-add-inp:focus{border-color:#c9871f}
-            .rg-host .rm-add-go{flex-shrink:0;font-family:var(--body);font-size:12px;color:#fff;background:var(--moss);border:none;border-radius:6px;padding:6px 12px;cursor:pointer}
+            .rg-host .rm-add-inp:focus{border-color:var(--resolved)}
+            .rg-host .rm-add-go{flex-shrink:0;font-family:var(--body);font-size:12px;color:var(--onAccent);background:var(--moss);border:none;border-radius:6px;padding:6px 12px;cursor:pointer}
             .rg-host .rm-add-go:hover{filter:brightness(1.05)}
-            .rg-host .rm-add-err{flex-basis:100%;font-family:var(--body);font-size:11px;color:var(--bad,#9b2d1f);min-height:0}
+            .rg-host .rm-add-err{flex-basis:100%;font-family:var(--body);font-size:11px;color:var(--unresolvable);min-height:0}
             /* Folder browser panel */
             .rg-host .rm-add-panel{padding:4px 8px 8px}
             .rg-host .fb-bar{display:flex;align-items:center;gap:6px;padding:2px 0 6px}
@@ -267,7 +354,7 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .fb-up:not(:disabled):hover{border-color:var(--ink3);color:var(--ink)}
             .rg-host .fb-crumb{flex:1;min-width:0;font-family:var(--mono);font-size:11px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
             .rg-host .fb-filter{width:100%;box-sizing:border-box;font-family:var(--mono);font-size:11px;color:var(--ink);background:var(--paper);border:1px solid var(--edge);border-radius:6px;padding:4px 8px;outline:none;margin-bottom:4px}
-            .rg-host .fb-filter:focus{border-color:#c9871f}
+            .rg-host .fb-filter:focus{border-color:var(--resolved)}
             .rg-host .fb-list{max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:1px}
             .rg-host .fb-entry{display:flex;align-items:center;gap:7px;width:100%;text-align:left;padding:5px 7px;border:1px solid transparent;border-radius:6px;background:transparent;cursor:pointer;font-family:var(--body);font-size:12px;color:var(--ink)}
             .rg-host .fb-entry:hover{background:var(--paper)}
@@ -281,10 +368,11 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .fb-alt{align-self:flex-start;color:var(--ink3)}
             .rg-host .fb-textwrap{display:flex;gap:6px}
             .rg-host .rg-idx-prog{font-family:var(--mono);font-size:13px;color:var(--ink2)}
+            .rg-host .rg-idx-detail{font-family:var(--mono);font-size:11px;color:var(--ink3);margin:0;max-width:520px;line-height:1.5;word-break:break-word}
             .rg-host .rg-idx-cancel{margin-top:12px;font-family:var(--body);font-size:12px;color:var(--ink2);background:transparent;border:1px solid var(--edge);border-radius:7px;padding:6px 14px;cursor:pointer}
             .rg-host .rg-idx-cancel:hover{background:var(--paper);border-color:var(--ink3);color:var(--ink)}
 
-            .rg-host .banner{background:#fff8e1;border-bottom:1px solid #f5d27a;padding:8px 20px;font-size:12px;color:var(--ink);flex-shrink:0;display:flex;align-items:center}
+            .rg-host .banner{background:color-mix(in srgb, var(--resolved) 5%, var(--cream));border-bottom:1px solid color-mix(in srgb, var(--resolved) 55%, var(--cream));padding:8px 20px;font-size:12px;color:var(--ink);flex-shrink:0;display:flex;align-items:center}
 
             /* toolbar */
             .rg-host .toolbar{display:flex;align-items:center;gap:12px;padding:9px 20px;border-bottom:1px solid var(--edge);background:var(--paper);flex-shrink:0;position:relative}
@@ -296,7 +384,7 @@ export function RepoGraph(props: RepoGraphScreenProps) {
 
             .rg-host .search{position:relative;width:268px;flex-shrink:0}
             .rg-host .search input{width:100%;font-family:var(--mono);font-size:12px;padding:7px 10px 7px 28px;border:1px solid var(--edge);border-radius:7px;background:var(--cream);color:var(--ink);outline:none}
-            .rg-host .search input:focus{border-color:var(--ink3);box-shadow:0 0 0 3px rgba(127,176,200,.18)}
+            .rg-host .search input:focus{border-color:var(--ink3);box-shadow:0 0 0 3px color-mix(in srgb, var(--sky) 18%, transparent)}
             .rg-host .search .si{position:absolute;left:8px;top:50%;transform:translateY(-50%);color:var(--ink3);pointer-events:none}
             .rg-host .results{position:absolute;top:38px;left:0;right:0;background:var(--cream);border:1px solid var(--edge);border-radius:8px;box-shadow:var(--shadow-lg);max-height:300px;overflow-y:auto;z-index:40;display:none}
             .rg-host .results.open{display:block}
@@ -319,11 +407,11 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .help-pop .hrow code{font-family:var(--mono);font-size:11px;background:var(--paper);border:1px solid var(--edge);border-radius:4px;padding:0 4px}
             .rg-host .help-pop .hic{flex-shrink:0;width:24px;display:inline-flex;align-items:center;justify-content:center;padding-top:2px}
             #rg-edge-tip{position:fixed;z-index:90;background:var(--ink);color:var(--cream);font-family:var(--mono);font-size:11px;padding:7px 11px;border-radius:8px;box-shadow:var(--shadow-lg);pointer-events:none;opacity:0;transition:opacity .12s;max-width:300px;line-height:1.45}
-            #rg-edge-tip b{color:#f3d9a8;font-weight:600}
+            #rg-edge-tip b{color:color-mix(in srgb, var(--amber) 45%, var(--cream));font-weight:600}
 
             /* stage / canvas */
             .rg-host .stage{flex:1;position:relative;overflow:hidden;background:
-              radial-gradient(circle at 1px 1px, rgba(138,124,100,.16) 1px, transparent 0) 0 0/22px 22px,
+              radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--ink3) 16%, transparent) 1px, transparent 0) 0 0/22px 22px,
               var(--cream)}
             .rg-host .viewport{position:absolute;inset:0;cursor:grab}
             .rg-host .viewport.panning{cursor:grabbing}
@@ -333,7 +421,7 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .ehit{pointer-events:stroke;stroke:transparent;fill:none;cursor:pointer}
 
             /* group container */
-            .rg-host .gbox{position:absolute;border:1px solid var(--edge);border-radius:14px;background:rgba(244,238,223,.5)}
+            .rg-host .gbox{position:absolute;border:1px solid var(--edge);border-radius:14px;background:color-mix(in srgb, var(--paper) 50%, transparent)}
             .rg-host .gbox .ghead{display:flex;align-items:center;gap:8px;padding:8px 14px;font-family:var(--mono);font-size:11px;letter-spacing:.04em;color:var(--ink2);text-transform:uppercase;font-weight:600;white-space:nowrap}
             .rg-host .gbox .gdot{width:8px;height:8px;border-radius:3px;flex-shrink:0}
             .rg-host .gbox .gcount{margin-left:auto;font-size:10px;color:var(--ink3);font-weight:500;text-transform:none}
@@ -341,7 +429,7 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .gbox .sym-empty{padding:22px 16px;text-align:center;font-family:var(--mono);font-size:12px;color:var(--ink3)}
             .rg-host .rg-empty-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);max-width:80%;padding:18px 22px;text-align:center;font-family:var(--mono);font-size:13px;color:var(--ink3);pointer-events:none}
             /* leaf-state banner: sits ~66% down the viewport so the entry node above stays visible */
-            .rg-host .rg-leaf-note{position:absolute;top:66%;left:50%;transform:translate(-50%,-50%);max-width:72%;padding:10px 18px;text-align:center;font-family:var(--mono);font-size:12px;color:#7a4a13;background:#fdf6e7;border:1px solid #e7c98c;border-radius:8px;pointer-events:none}
+            .rg-host .rg-leaf-note{position:absolute;top:66%;left:50%;transform:translate(-50%,-50%);max-width:72%;padding:10px 18px;text-align:center;font-family:var(--mono);font-size:12px;color:color-mix(in srgb, var(--resolved) 55%, var(--ink));background:color-mix(in srgb, var(--resolved) 3%, var(--cream));border:1px solid color-mix(in srgb, var(--resolved) 45%, var(--cream));border-radius:8px;pointer-events:none}
 
             /* subdir node */
             .rg-host .node{position:absolute;background:var(--cream);border:1px solid var(--edge);border-radius:9px;padding:10px 12px;cursor:pointer;transition:box-shadow .12s,border-color .12s,transform .12s,opacity .14s;box-shadow:var(--shadow-md);display:flex;flex-direction:column;gap:5px;overflow:hidden}
@@ -392,7 +480,7 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .zoomctl button+button{border-left:1px solid var(--edge)}
 
             /* side panel */
-            .rg-host .panel{position:absolute;top:0;left:-360px;bottom:0;width:320px;background:var(--cream);border-right:1px solid var(--edge);box-shadow:8px 0 24px rgba(31,27,22,.10);z-index:30;display:flex;flex-direction:column;transition:left .25s ease}
+            .rg-host .panel{position:absolute;top:0;left:-360px;bottom:0;width:320px;background:var(--cream);border-right:1px solid var(--edge);box-shadow:8px 0 24px color-mix(in srgb, var(--ink) 10%, transparent);z-index:30;display:flex;flex-direction:column;transition:left .25s ease}
             .rg-host .panel.open{left:0}
             .rg-host .p-head{padding:16px 18px 12px;border-bottom:1px solid var(--edge)}
             .rg-host .p-eyebrow{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:8px}
@@ -436,9 +524,19 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:10px;border-radius:8px;font-family:var(--body);font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--edge);background:var(--paper);color:var(--ink);text-decoration:none}
             .rg-host .btn:hover{background:var(--paperD)}
             .rg-host .btn.primary{background:var(--ink);color:var(--cream);border-color:var(--ink)}
-            .rg-host .btn.primary:hover{background:#2c261e}
-            .rg-host .btn.ph-trace{background:#fbf1da;color:#7a4e0a;border-color:#e7c98c;margin-top:8px}
-            .rg-host .btn.ph-trace:hover{background:#f5e4b8;border-color:#c9871f}
+            /* Legitimate use of the black keyword (round-1 review audited all
+               color-mix(…, black/white) sites for lint-guard evasion): this is
+               a genuine 88%-darken of --ink, a background-only hover state
+               with no independent contrast claim of its own. Recomputed
+               against the live palette: --cream on --ink is 15.86:1 light /
+               14.90:1 dark before the mix, 16.40:1 light / 11.37:1 dark after
+               — the darken IMPROVES contrast in light and REGRESSES it in
+               dark, but stays comfortably clear of the 4.5:1 text floor in
+               both. Not an identity mix (unlike the deleted 0%-mix at
+               .rc-yes above). */
+            .rg-host .btn.primary:hover{background:color-mix(in srgb, var(--ink) 88%, black)}
+            .rg-host .btn.ph-trace{background:color-mix(in srgb, var(--resolved) 8%, var(--cream));color:color-mix(in srgb, var(--resolved) 55%, var(--ink));border-color:color-mix(in srgb, var(--resolved) 45%, var(--cream));margin-top:8px}
+            .rg-host .btn.ph-trace:hover{background:color-mix(in srgb, var(--resolved) 20%, var(--cream));border-color:var(--resolved)}
             .rg-host .btn.ph-trace .ph-trace-icon{color:var(--resolved);font-family:var(--mono);font-weight:700}
             .rg-host .ph-trace-na{margin-top:8px;font-size:12px;color:var(--ink3);cursor:default;line-height:1.4}
             .rg-host .ph-trace-na .ph-trace-icon{color:var(--ink3);font-family:var(--mono);font-weight:700}
@@ -456,7 +554,7 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .nbadge.expl{color:var(--moss);border-color:var(--moss)}
 
             /* explain modal */
-            #rg-ex-overlay{position:fixed;inset:0;background:rgba(31,27,22,.34);z-index:80;display:none;align-items:center;justify-content:center;padding:40px}
+            #rg-ex-overlay{position:fixed;inset:0;background:color-mix(in srgb, var(--ink) 34%, transparent);z-index:80;display:none;align-items:center;justify-content:center;padding:40px}
             #rg-ex-overlay.open{display:flex}
             #rg-ex-overlay .exmodal{width:660px;max-width:92vw;max-height:86vh;overflow:hidden;background:var(--cream);border:1px solid var(--edge);border-radius:14px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column}
             #rg-ex-overlay .ex-head{padding:18px 22px 16px;border-bottom:1px solid var(--edge);background:var(--paper)}
@@ -498,7 +596,7 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .ph-pwrap{position:relative}
             /* .ph-pwrap-right retired: the trace ph-bar
                right-push is now the shared .ph-spacer (flex:1), same pattern as the pagehead. */
-            .rg-host .ph-pick{display:flex;align-items:center;gap:7px;font-family:var(--body);font-size:12.5px;color:var(--ink);background:#fbf1da;border:1px solid #e7c98c;border-radius:8px;padding:6px 11px;cursor:pointer;white-space:nowrap}
+            .rg-host .ph-pick{display:flex;align-items:center;gap:7px;font-family:var(--body);font-size:12.5px;color:var(--ink);background:color-mix(in srgb, var(--resolved) 8%, var(--cream));border:1px solid color-mix(in srgb, var(--resolved) 45%, var(--cream));border-radius:8px;padding:6px 11px;cursor:pointer;white-space:nowrap}
             .rg-host .ph-pick .pi{color:var(--resolved);font-weight:700;font-family:var(--mono)}
             .rg-host .ph-pick .pl{color:var(--ink2);font-family:var(--mono);font-size:11px}
             .rg-host .ph-pick .cv{color:var(--ink3);font-size:10px}
@@ -508,17 +606,17 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .ph-mh{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);padding:7px 8px 6px}
             .rg-host .ph-ep{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:8px 9px;border:1px solid transparent;border-radius:8px;background:transparent;cursor:pointer;font-family:var(--body);color:var(--ink);margin-bottom:2px}
             .rg-host .ph-ep:hover{background:var(--paper)}
-            .rg-host .ph-ep.sel{background:#fbf1da;border-color:#e7c98c}
+            .rg-host .ph-ep.sel{background:color-mix(in srgb, var(--resolved) 8%, var(--cream));border-color:color-mix(in srgb, var(--resolved) 45%, var(--cream))}
             .rg-host .ph-ep .ep-dot{width:8px;height:8px;border-radius:50%;background:var(--moss);flex:none}
             .rg-host .ph-ep.sel .ep-dot{background:var(--resolved)}
             .rg-host .ph-ep .ep-m{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
             .rg-host .ph-ep .ep-m b{font-size:12.5px;font-weight:600}
             .rg-host .ph-ep .ep-meta{font-family:var(--mono);font-size:10px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-            .rg-host .ph-ep .ep-on{font-family:var(--mono);font-size:9px;color:var(--resolved);border:1px solid #e7c98c;border-radius:4px;padding:1px 5px;flex:none}
+            .rg-host .ph-ep .ep-on{font-family:var(--mono);font-size:9px;color:var(--resolved);border:1px solid color-mix(in srgb, var(--resolved) 45%, var(--cream));border-radius:4px;padding:1px 5px;flex:none}
             .rg-host .ph-traced-h{margin-top:4px;border-top:1px dashed var(--edge);padding-top:7px}
             .rg-host .ph-traced-row{display:flex;align-items:center;gap:2px}
             .rg-host .ph-traced-row .ph-ep{flex:1;margin-bottom:0}
-            .rg-host .ph-traced-row.sel .ph-ep{background:#fbf1da;border-color:#e7c98c}
+            .rg-host .ph-traced-row.sel .ph-ep{background:color-mix(in srgb, var(--resolved) 8%, var(--cream));border-color:color-mix(in srgb, var(--resolved) 45%, var(--cream))}
             .rg-host .ph-traced-row.sel .ep-dot{background:var(--resolved)}
             .rg-host .ph-ferase{flex:none;width:22px;height:22px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--ink3);font-size:15px;line-height:1;cursor:pointer;margin-right:2px}
             .rg-host .ph-ferase:hover{background:var(--paper);border-color:var(--edge);color:var(--ink)}
@@ -527,7 +625,7 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .ph-fn-sub{margin-top:0;border-top:none}
             .rg-host .ph-fn-search{padding:4px 6px 2px}
             .rg-host .ph-fn-inp{width:100%;box-sizing:border-box;font-family:var(--body);font-size:12px;color:var(--ink);background:var(--paper);border:1px solid var(--edge);border-radius:7px;padding:5px 9px;outline:none}
-            .rg-host .ph-fn-inp:focus{border-color:#c9871f}
+            .rg-host .ph-fn-inp:focus{border-color:var(--resolved)}
             .rg-host .ph-fn-res{max-height:160px;overflow-y:auto;padding:2px 4px 0}
             .rg-host .ph-fn-res.open{display:block}
             /* search results reuse .ph-ep (preset-row) layout; only the
@@ -551,13 +649,13 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .ph-fns.zero{color:var(--ink3);opacity:.7}
 
             /* dashed ochre "call path" container */
-            .rg-host .gbox.ph-trace-box{border-style:dashed;background:rgba(201,135,31,.05)}
+            .rg-host .gbox.ph-trace-box{border-style:dashed;background:color-mix(in srgb, var(--resolved) 5%, transparent)}
 
             /* trace nodes (reuse .node) */
             .rg-host .node.kind-trace{border-left:3px solid var(--resolved)}
             .rg-host .node.kind-trace .nname{font-size:12.5px}
             /* .nname is flex:1 → flag + badges sit at the right of .ntop (gap:7px) */
-            .rg-host .node.kind-trace .ph-flag{font-family:var(--mono);font-size:9px;font-weight:700;color:#fff;background:var(--resolved);border-radius:5px;padding:2px 6px;flex:none}
+            .rg-host .node.kind-trace .ph-flag{font-family:var(--mono);font-size:9px;font-weight:700;color:var(--onAccent);background:var(--resolved);border-radius:5px;padding:2px 6px;flex:none}
             .rg-host .node.kind-trace .ph-bdg{font-size:11px;flex:none;line-height:1}
             .rg-host .node.kind-trace .ph-bdg.warn{color:var(--unresolved)}
             .rg-host .node.kind-trace.ph-off{border-left-color:var(--ink3);box-shadow:var(--shadow-sm)}
@@ -565,11 +663,11 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .node.kind-trace.ph-more{align-items:center;justify-content:center;border-style:dashed;cursor:pointer}
             .rg-host .node.kind-trace.ph-more .nname{color:var(--ink3);font-family:var(--mono);font-size:11px}
             .rg-host .node.kind-trace.ph-more:hover{border-color:var(--ink3);background:var(--paper)}
-            .rg-host .node.kind-trace.ph-unres{border:2px dotted var(--unresolvable);border-left-width:2px;background:#fbf1ee}
+            .rg-host .node.kind-trace.ph-unres{border:2px dotted var(--unresolvable);border-left-width:2px;background:color-mix(in srgb, var(--unresolvable) 8%, var(--cream))}
             .rg-host .node.kind-trace.ph-unres .nname{color:var(--unresolvable)}
-            .rg-host .node.kind-trace.ph-branch{border:1px dashed var(--resolved);border-left:3px dashed var(--resolved);background:#fdf6e7;padding:8px 12px;justify-content:center}
+            .rg-host .node.kind-trace.ph-branch{border:1px dashed var(--resolved);border-left:3px dashed var(--resolved);background:color-mix(in srgb, var(--resolved) 3%, var(--cream));padding:8px 12px;justify-content:center}
             .rg-host .node.kind-trace.ph-branch .nname{font-size:11.5px;color:var(--ink)}
-            .rg-host .node.kind-trace .ph-brtag{font-family:var(--mono);font-size:8.5px;font-weight:700;color:var(--resolved);background:#fbf1da;border:1px solid #e7c98c;border-radius:4px;padding:1px 5px;flex:none;margin-left:auto}
+            .rg-host .node.kind-trace .ph-brtag{font-family:var(--mono);font-size:8.5px;font-weight:700;color:var(--resolved);background:color-mix(in srgb, var(--resolved) 8%, var(--cream));border:1px solid color-mix(in srgb, var(--resolved) 45%, var(--cream));border-radius:4px;padding:1px 5px;flex:none;margin-left:auto}
 
             /* trace edges (reuse .elink) — the 4 confidence classes */
             .rg-host .elink.ph-resolved{stroke:var(--resolved)}
@@ -581,25 +679,25 @@ export function RepoGraph(props: RepoGraphScreenProps) {
 
             /* ── trace node card in the shipped .panel (ph-trace.css) ── */
             .rg-host .ph-class{display:inline-block;font-family:var(--mono);font-size:9.5px;font-weight:600;margin-top:9px;padding:2px 8px;border-radius:5px;letter-spacing:.04em}
-            .rg-host .ph-class.entry,.rg-host .ph-class.resolved{color:var(--resolved);background:#fbf1da;border:1px solid #e7c98c}
-            .rg-host .ph-class.unresolvable{color:var(--unresolvable);background:#fbeae6;border:1px solid #e7b3a6}
+            .rg-host .ph-class.entry,.rg-host .ph-class.resolved{color:var(--resolved);background:color-mix(in srgb, var(--resolved) 8%, var(--cream));border:1px solid color-mix(in srgb, var(--resolved) 45%, var(--cream))}
+            .rg-host .ph-class.unresolvable{color:var(--unresolvable);background:color-mix(in srgb, var(--unresolvable) 8%, var(--cream));border:1px solid color-mix(in srgb, var(--unresolvable) 45%, var(--cream))}
             .rg-host .ph-f{margin-bottom:14px}
             .rg-host .ph-lbl{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:5px}
             .rg-host .ph-val{background:var(--paper);border:1px solid var(--edge);border-radius:7px;padding:8px 10px;font-size:12.5px;color:var(--ink);word-break:break-word;line-height:1.5}
             .rg-host .ph-val.mono{font-family:var(--mono);font-size:11.5px}
             .rg-host .ph-val.empty{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--ink2);flex-wrap:wrap}
-            .rg-host .ph-val.gen{border-color:#cdb98c;background:#fdf6e7}
+            .rg-host .ph-val.gen{border-color:color-mix(in srgb, var(--resolved) 45%, var(--cream));background:color-mix(in srgb, var(--resolved) 3%, var(--cream))}
             .rg-host .ph-val.loading{display:flex;align-items:center;gap:9px}
             .rg-host .ph-spark{color:var(--resolved)}
             .rg-host .ph-cite{font-family:var(--mono);font-size:10px;color:var(--ink2);margin-top:7px;padding-top:7px;border-top:1px dashed var(--edge)}
             .rg-host .ph-cite a{color:var(--resolved);text-decoration:underline;cursor:pointer}
             .rg-host .ph-hint{font-size:10.5px;color:var(--ink2);margin-top:6px;line-height:1.45}
-            .rg-host .ph-genbtn{font-family:var(--mono);font-size:11px;border:1px solid var(--moss);background:transparent;color:#43632b;padding:4px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;font-weight:600}
-            .rg-host .ph-genbtn:hover{background:var(--moss);color:#fff}
+            .rg-host .ph-genbtn{font-family:var(--mono);font-size:11px;border:1px solid var(--moss);background:transparent;color:color-mix(in srgb, var(--moss) 55%, var(--ink));padding:4px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;font-weight:600}
+            .rg-host .ph-genbtn:hover{background:var(--moss);color:var(--onAccent)}
             .rg-host .ph-spin{width:13px;height:13px;border:2px solid var(--edge);border-top-color:var(--resolved);border-radius:50%;display:inline-block;animation:rgspin .7s linear infinite;flex:none}
-            .rg-host .ph-err{background:#fbeae6;border:1px solid #e7b3a6;border-radius:7px;padding:9px 11px}
+            .rg-host .ph-err{background:color-mix(in srgb, var(--unresolvable) 8%, var(--cream));border:1px solid color-mix(in srgb, var(--unresolvable) 45%, var(--cream));border-radius:7px;padding:9px 11px}
             .rg-host .ph-err b{color:var(--unresolvable);font-size:12px}
-            .rg-host .ph-err .ph-er{font-family:var(--mono);font-size:10.5px;color:#7a3a2a;margin:5px 0 8px;line-height:1.5}
+            .rg-host .ph-err .ph-er{font-family:var(--mono);font-size:10.5px;color:color-mix(in srgb, var(--unresolvable) 55%, var(--ink));margin:5px 0 8px;line-height:1.5}
             .rg-host .ph-offnote{background:var(--paper);border:1px solid var(--edge);border-left:3px solid var(--ink3);border-radius:7px;padding:9px 11px;font-size:11.5px;color:var(--ink2);line-height:1.5;margin-bottom:13px}
             .rg-host .ph-offnote b{color:var(--ink)}
             .rg-host .ph-offnote code{font-family:var(--mono);font-size:10.5px;background:var(--cream);border:1px solid var(--edge);border-radius:4px;padding:0 4px}
@@ -610,13 +708,13 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .ph-covinfo:hover{background:var(--paperD)}
             .rg-host .ph-covinfo .cv{color:var(--ink3);font-size:10px}
             .rg-host .ph-covinfo b{color:var(--ink);font-weight:700}
-            .rg-host .ph-covinfo.ok{border-color:#bcd3a0}.rg-host .ph-covinfo.warn{border-color:#e7c98c}.rg-host .ph-covinfo.bad{border-color:#e7b3a6}
+            .rg-host .ph-covinfo.ok{border-color:color-mix(in srgb, var(--moss) 45%, var(--cream))}.rg-host .ph-covinfo.warn{border-color:color-mix(in srgb, var(--resolved) 45%, var(--cream))}.rg-host .ph-covinfo.bad{border-color:color-mix(in srgb, var(--unresolvable) 45%, var(--cream))}
             .rg-host .ph-covinfo .cb-dot{width:8px;height:8px;border-radius:50%;background:var(--moss);flex:none}
             .rg-host .ph-covinfo.warn .cb-dot{background:var(--amber)}
             .rg-host .ph-covinfo.bad .cb-dot{background:var(--terra)}
-            .rg-host .ph-covinfo .cb-go{font-size:9px;color:#43632b;background:#e4ecda;border:1px solid #bcd3a0;border-radius:4px;padding:1px 6px;letter-spacing:.02em;white-space:nowrap}
-            .rg-host .ph-covinfo.warn .cb-go{color:#7a4a13;background:#f7e6cc;border-color:#e7c98c}
-            .rg-host .ph-covinfo.bad .cb-go{color:#7a3a2a;background:#fbe9e4;border-color:#e7b3a6}
+            .rg-host .ph-covinfo .cb-go{font-size:9px;color:color-mix(in srgb, var(--moss) 55%, var(--ink));background:color-mix(in srgb, var(--moss) 8%, var(--cream));border:1px solid color-mix(in srgb, var(--moss) 45%, var(--cream));border-radius:4px;padding:1px 6px;letter-spacing:.02em;white-space:nowrap}
+            .rg-host .ph-covinfo.warn .cb-go{color:color-mix(in srgb, var(--resolved) 55%, var(--ink));background:color-mix(in srgb, var(--resolved) 8%, var(--cream));border-color:color-mix(in srgb, var(--resolved) 45%, var(--cream))}
+            .rg-host .ph-covinfo.bad .cb-go{color:color-mix(in srgb, var(--unresolvable) 55%, var(--ink));background:color-mix(in srgb, var(--unresolvable) 8%, var(--cream));border-color:color-mix(in srgb, var(--unresolvable) 45%, var(--cream))}
             /* .ph-cpop + .cv-* + .cw-ic + .cv-foot CSS DELETED:
                old hand-built popup retired; confidence popover now uses anchor-popover
                primitive (src/web/client/islands/anchor-popover.ts). Styles injected
@@ -636,21 +734,21 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .lg-row b{color:var(--ink)}
             .rg-host .lg-sw{flex:none;width:30px;height:18px;border-radius:5px;margin-top:1px}
             .rg-host .lg-sw.white{background:var(--cream);border:1px solid var(--edge)}
-            .rg-host .lg-sw.red{background:#fbf1ee;border:2px dotted var(--unresolvable)}
+            .rg-host .lg-sw.red{background:color-mix(in srgb, var(--unresolvable) 8%, var(--cream));border:2px dotted var(--unresolvable)}
             .rg-host .lg-sw.dim{background:var(--cream);border:1px solid var(--edge);opacity:.3}
-            .rg-host .lg-bdg{flex:none;font-family:var(--mono);font-size:10px;color:var(--resolved);background:#fbf1da;border:1px solid #e7c98c;border-radius:5px;padding:2px 7px;min-width:30px;text-align:center}
+            .rg-host .lg-bdg{flex:none;font-family:var(--mono);font-size:10px;color:var(--resolved);background:color-mix(in srgb, var(--resolved) 8%, var(--cream));border:1px solid color-mix(in srgb, var(--resolved) 45%, var(--cream));border-radius:5px;padding:2px 7px;min-width:30px;text-align:center}
 
             /* red-tier fallback note over the stage */
-            .rg-host #rg-ph-fallback{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:none;align-items:flex-start;gap:11px;background:#fbe9e4;border:1px solid #e7b3a6;border-radius:13px;box-shadow:var(--shadow-lg);padding:16px 18px;max-width:380px;z-index:24}
+            .rg-host #rg-ph-fallback{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:none;align-items:flex-start;gap:11px;background:color-mix(in srgb, var(--unresolvable) 8%, var(--cream));border:1px solid color-mix(in srgb, var(--unresolvable) 45%, var(--cream));border-radius:13px;box-shadow:var(--shadow-lg);padding:16px 18px;max-width:380px;z-index:24}
             .rg-host #rg-ph-fallback .fb-ic{font-size:20px;flex:none;line-height:1.2}
             .rg-host #rg-ph-fallback b{color:var(--unresolvable);font-size:13px}
-            .rg-host #rg-ph-fallback p{margin:6px 0 0;font-size:11.5px;color:#7a3a2a;line-height:1.55}
+            .rg-host #rg-ph-fallback p{margin:6px 0 0;font-size:11.5px;color:color-mix(in srgb, var(--unresolvable) 55%, var(--ink));line-height:1.55}
             .rg-host .stage.ph-fallback .world{filter:saturate(.6) blur(.4px);opacity:.5}
 
             /* ── shared/warn card chips + ▲▼ stepper (ph-trace.css) ── */
             .rg-host .ph-chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;border-radius:999px;padding:4px 10px;margin:0 6px 8px 0}
-            .rg-host .ph-chip.shared{color:#5b573f;border:1px solid var(--ink3)}
-            .rg-host .ph-warn{background:#fbf1e0;border:1px solid #e7c98c;color:#7a4a13;border-radius:8px;padding:9px 11px;font-size:11.5px;line-height:1.5;margin-top:6px}
+            .rg-host .ph-chip.shared{color:var(--ink2);border:1px solid var(--ink3)}
+            .rg-host .ph-warn{background:color-mix(in srgb, var(--resolved) 8%, var(--cream));border:1px solid color-mix(in srgb, var(--resolved) 45%, var(--cream));color:color-mix(in srgb, var(--resolved) 55%, var(--ink));border-radius:8px;padding:9px 11px;font-size:11.5px;line-height:1.5;margin-top:6px}
             .rg-host .p-eyebrow-r{margin-left:auto;display:inline-flex;align-items:center;gap:8px}
             .rg-host .ph-step{display:inline-flex;border:1px solid var(--edge);border-radius:7px;overflow:hidden;background:var(--cream)}
             .rg-host .ph-stb{font-family:var(--mono);font-size:10px;color:var(--ink2);background:transparent;border:none;padding:3px 9px;cursor:pointer}
@@ -702,7 +800,7 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .c4-node .c4-ncount{margin-top:4px;font-family:var(--mono);font-size:9.5px;color:var(--ink3);letter-spacing:.02em}
             .rg-host .c4-node.person{background:var(--ink);border-color:var(--ink);border-radius:12px 12px 10px 10px}
             .rg-host .c4-node.person .c4-ntitle{color:var(--cream)}
-            .rg-host .c4-node.person .c4-ndesc{color:#cabd9f}
+            .rg-host .c4-node.person .c4-ndesc{color:color-mix(in srgb, var(--cream) 70%, var(--ink))}
             .rg-host .c4-node.ext{background:var(--paperD);border-style:dashed;border-color:var(--ink3)}
             .rg-host .c4-node.accent-terra{border-left:4px solid var(--terra)}
             .rg-host .c4-node.accent-amber{border-left:4px solid var(--amber)}
@@ -710,8 +808,9 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .c4-node.accent-sky{border-left:4px solid var(--sky)}
             /* cap long verbs with an ellipsis (full text on hover title + in
                the side panel Talks-to) so a chip can't sprawl across the canvas. */
-            .rg-host .c4-elab{position:absolute;z-index:4;font-family:var(--mono);font-size:9.5px;color:var(--ink2);background:var(--cream);border:1px solid var(--edge);border-radius:5px;padding:2px 6px;transform:translate(-50%,-50%);white-space:nowrap;max-width:150px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 2px rgba(31,27,22,.06);text-align:center;opacity:0;transition:opacity .14s;pointer-events:none}
+            .rg-host .c4-elab{position:absolute;z-index:4;font-family:var(--mono);font-size:9.5px;color:var(--ink2);background:var(--cream);border:1px solid var(--edge);border-radius:5px;padding:2px 6px;transform:translate(-50%,-50%);white-space:nowrap;max-width:150px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 2px color-mix(in srgb, var(--ink) 6%, transparent);text-align:center;opacity:0;transition:opacity .14s;pointer-events:none}
             .rg-host .c4-elab.show{opacity:1}
+
 
             [x-cloak]{display:none !important}
           `,
@@ -773,7 +872,7 @@ export function RepoGraph(props: RepoGraphScreenProps) {
           <div
             class="banner"
             id="rg-daemon-stale"
-            style="background:#fbe9e7;border-bottom-color:var(--terra);color:var(--terra)"
+            style="background:color-mix(in srgb, var(--terra) 8%, var(--cream));border-bottom-color:var(--terra);color:var(--terra)"
           >
             {stalenessBanner}
           </div>
@@ -840,8 +939,13 @@ export function RepoGraph(props: RepoGraphScreenProps) {
           {hasGraph ? null : (
             <div class="repo-empty show">
               <h3>No graph indexed for this repo</h3>
-              <p>Run the indexer inside the project root and reload the page.</p>
-              <div class="re-cmd">/siltpoke-index</div>
+              {/* Was a `/siltpoke-index` command chip. That command has not
+                  existed since #279 cut the command surface from 37 to 8, and
+                  indexing has never needed one from here anyway: the repo
+                  picker in this page's header POSTs /api/repo-graph/index. The
+                  chip both named a dead command and looked clickable while
+                  being inert text. */}
+              <p>Pick this repo from the selector above to index it.</p>
             </div>
           )}
           <div class="zoomctl">

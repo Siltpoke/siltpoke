@@ -1,0 +1,21 @@
+```json
+{
+  "mood": "concerned",
+  "pose": "arms_crossed",
+  "bubble_short": "Token at exact expiry is now *valid*. One char flip in auth code — intentional? Worth a double-take.",
+  "bubble_long": "The old guard (`<=`) rejected a token the instant its `expiresAt` matched `now`. The new guard (`<`) lets that exact-match token through. If `expiresAt` means \"token dies at this timestamp\", the old code was correct and this change introduces a small acceptance window for expired tokens. If it means \"token lives *through* this timestamp\", the new code is correct. Either reading is plausible — which makes this the kind of one-character boundary flip that really wants either a clarifying comment or a test pinning the `expiresAt === now` case.",
+  "critique_for_claude": "src/auth/token.ts:38: boundary condition change alters validity of a token whose `expiresAt` equals `now`. Previously `token.expiresAt <= now` → `return false` (expired); now `token.expiresAt < now` → falls through to `return true` (valid). A token at exactly its expiration timestamp is now accepted. Two things to verify: (1) What is the intended semantic of `expiresAt`? If it is the moment the token ceases to be valid (common JWT/OAuth convention), the `<=` check was correct and this change widens the acceptance window. (2) Check the test suite for a case covering `token.expiresAt === now` — if none exists, this boundary is unverified and the behavior change is invisible to CI.",
+  "severity": "medium",
+  "confidence": "high",
+  "reasoning": "severity=medium: single-character boundary change in auth token validation at src/auth/token.ts:38. Flipping <= to < means a token at exactly its expiry timestamp now passes validation instead of being rejected. This is security-adjacent; off-by-one bugs here can allow use of expired credentials. Confidence=high — diff is unambiguous. critique_for_claude is non-empty because there is a concrete file:line finding with a verifiable semantic question and a missing test edge case.",
+  "evidence": [
+    {
+      "tool": "git-diff",
+      "file": "src/auth/token.ts",
+      "line": 38,
+      "snippet": "-  if (token.expiresAt <= now) {"
+    }
+  ],
+  "xp_earned_events": []
+}
+```

@@ -2,9 +2,9 @@
 // Copyright (c) 2026 Jiaqi Duan
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { siltpokeRoot } from "../installer/paths";
 
-const BASE = join(homedir(), ".siltpoke");
+const BASE = siltpokeRoot();
 const PID_PATHS = [join(BASE, "siltpoked.pid"), join(BASE, "report.pid")];
 
 export interface StopResult {

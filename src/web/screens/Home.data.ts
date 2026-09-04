@@ -10,14 +10,14 @@
 import { readFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { readMemory, type Fact } from "../../memory/memory";
+import { readMemory, GLOBAL_ONLY, type Fact, type ProjectScope } from "../../memory/memory";
 import { readProgression, xpPanelData, type DailyActions } from "../../state/api";
 import { readVitalsSeries } from "../../state/api";
 import { readCriticTelemetry, type CriticTelemetry } from "../../state/api";
 import { computeBiasAuditDelta, type BiasAuditDelta } from "../../critic/bias-audit/delta-computer";
+import { siltpokeRoot } from "../../installer/paths";
 import { homedir } from "node:os";
 import type { Species, Mood } from "../creature/parts";
-import type { Critique } from "../primitives/CritiqueInbox";
 import type { VitalsData, VitalsValues } from "../primitives/VitalsPanel";
 import { relativeAgo } from "../primitives/CompactFactoidRow";
 import type { RubricSummary } from "../primitives/RubricActivityPanel";
@@ -29,9 +29,6 @@ import {
   brainUnhealthySignal,
   type UnhealthySignal,
 } from "../../state/brain-health";
-// MOCK_CRITIQUES is intentionally NOT imported here — production path uses
-// real data (empty when no telemetry). Import from mocks/critiques.ts in
-// preview stories / test fixtures only.
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -56,11 +53,6 @@ export interface HomeData {
   xpAwardedSeries: number[];
   /** 10 most recent facts (any status). */
   facts: Fact[];
-  /** Up to 10 most recent critiques. Empty array when no telemetry/critique store. */
-  critiques: Critique[];
-  pendingCritiqueCount: number;
-  /** Latest critique for the chat bubble. null when no critiques. */
-  latestCritique: Critique | null;
   topbarBadges: {
     /** True if last feed action is approximated within 6h — see wellFedFromActions(). */
     wellFed: boolean;
@@ -107,7 +99,11 @@ export interface HomeData {
    */
   biasAuditConfig: { enabled: boolean };
   /** 7-day Haiku vs Ollama disagreement delta. */
-  biasAuditDelta: BiasAuditDelta;
+  /** Absent while the BIAS AUDIT panel is hidden (2026-08-06) — its delta is the one
+   *  input that costs real disk work, so it is not computed. Absent, never a fabricated
+   *  zero: a 0-sample delta renders as a confident "0% disagreement" that was never
+   *  measured. Restore the computeBiasAuditDelta call together with the panel. */
+  biasAuditDelta?: BiasAuditDelta;
   /** Rubric FP calibration summary — null when calibration file not found. */
   rubricSummary: RubricSummary | null;
   /** Few-shot index stats — null when index not found. */
@@ -129,6 +125,8 @@ export interface HomeDeps {
   basePath: string;
   /** Injectable for deterministic tests. Defaults to `new Date()`. */
   now?: Date;
+  /** Project scope for memory reads, resolved by the route. Defaults to GLOBAL_ONLY when absent (no cwd guessing). */
+  memoryScope?: ProjectScope;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -369,9 +367,12 @@ export async function getHomeData(deps: HomeDeps): Promise<HomeData> {
   const now = deps.now ?? new Date();
   const { basePath } = deps;
 
+  const base = siltpokeRoot();
+  const fewShotIndexPath = join(base, "few-shot-index.json");
+  const repoMemoryIndexPath = join(base, "repo-memory", "index.json");
+  // Raw home dir (NOT the .siltpoke root) — readCriticTelemetry only wants
+  // its basename for display, unrelated to .siltpoke path resolution.
   const home = homedir();
-  const fewShotIndexPath = join(home, ".siltpoke", "few-shot-index.json");
-  const repoMemoryIndexPath = join(home, ".siltpoke", "repo-memory", "index.json");
   // Calibration file is repo-relative — resolve from basePath into docs/.
   const calibrationPath = join(basePath, "docs", "RUBRIC-CALIBRATION.md");
 
@@ -388,12 +389,16 @@ export async function getHomeData(deps: HomeDeps): Promise<HomeData> {
     repoMemoryStats,
     brainHealthState,
   ] = await Promise.all([
-    readMemory(basePath),
+    readMemory(basePath, deps.memoryScope ?? GLOBAL_ONLY),
     readProgression(basePath),
     loadConfigWithMtime(basePath),
     readVitalsSeries(basePath, 7, now),
     readCriticTelemetry(basePath, now, { limit: 200, homeDir: home }),
-    computeBiasAuditDelta({ now }),
+    // BIAS AUDIT is hidden on Home (2026-08-06), and this is the one piece of its data
+    // that costs real work: computeBiasAuditDelta stats a directory and reads up to seven
+    // JSONL files per request. The panel's other inputs are in-memory derivations of an
+    // already-loaded config, so they stay. Restore this call together with the panel.
+    Promise.resolve(undefined),
     loadRubricSummary(calibrationPath),
     loadFewShotStats(fewShotIndexPath, basePath),
     loadRepoMemoryStats(repoMemoryIndexPath),
@@ -474,15 +479,6 @@ export async function getHomeData(deps: HomeDeps): Promise<HomeData> {
     // bond: numeric display from real stats (1-decimal cap)
     bond:   fmt(progression.stats.bond),
   };
-
-  // ── Critiques: empty — no real critique store yet.
-  // MOCK_CRITIQUES is not imported here (production path must be real).
-  // CritiqueInbox renders "no critiques yet" empty state.
-  // A future pass wires a real critique source (telemetry reader or critique JSONL).
-
-  const critiques: Critique[] = [];
-  const pendingCritiqueCount = 0;
-  const latestCritique: Critique | null = null;
 
   // ── Vitals (legacy shape — kept for vitals.actions backward compat) ───────
   //
@@ -625,9 +621,6 @@ export async function getHomeData(deps: HomeDeps): Promise<HomeData> {
     xp: xpData,
     xpAwardedSeries: vitalsSeries.xp_awarded,
     facts,
-    critiques,
-    pendingCritiqueCount,
-    latestCritique,
     topbarBadges,
     meta,
     together,

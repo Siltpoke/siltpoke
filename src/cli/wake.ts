@@ -3,6 +3,7 @@
 import { mkdir, writeFile, readFile, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { siltpokeRoot } from "../installer/paths";
 
 export interface WakeFile {
   schemaVersion: 1;
@@ -23,16 +24,12 @@ export interface WakeResult {
 const FILENAME = "wake.json";
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
 
-function siltpokeHome(envHome: string | undefined): string {
-  return join(envHome ?? "", ".siltpoke");
-}
-
 function wakePath(homeBase: string): string {
   return join(homeBase, FILENAME);
 }
 
 export async function runWake(opts: WakeOptions = {}): Promise<WakeResult> {
-  const homeBase = opts.homeBase ?? siltpokeHome(process.env.HOME);
+  const homeBase = opts.homeBase ?? siltpokeRoot();
   const ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
   const now = opts.now ?? (() => new Date());
   const expires_at_ms = now().getTime() + ttlMs;

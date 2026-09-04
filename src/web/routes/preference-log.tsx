@@ -9,7 +9,12 @@ import { Layout } from "../_shared/layout";
 import { PreferenceLogScreen } from "../screens/PreferenceLogScreen";
 import { readPreferenceLog, countBySignal } from "../../preference-log/reader";
 
-export function mountPreferenceLogRoutes(app: Hono): void {
+export interface PreferenceLogRouteDeps {
+  /** Daemon secret — forwarded to `<Layout secret>` (FloatingChat + htmx). */
+  secret?: string;
+}
+
+export function mountPreferenceLogRoutes(app: Hono, deps: PreferenceLogRouteDeps = {}): void {
   app.get("/preference-log", async (c) => {
     const [rawEntries, counts] = await Promise.all([
       readPreferenceLog({ limit: 50 }),
@@ -18,7 +23,7 @@ export function mountPreferenceLogRoutes(app: Hono): void {
     // Most-recent first
     const entries = [...rawEntries].reverse();
     return c.html(
-      <Layout title="preference log · siltpoke">
+      <Layout title="preference log · siltpoke" secret={deps.secret}>
         <PreferenceLogScreen entries={entries} counts={counts} />
       </Layout>,
     );

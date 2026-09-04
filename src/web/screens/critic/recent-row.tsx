@@ -8,7 +8,7 @@
  */
 import { tokens } from "../../tokens/tokens";
 import type { CriticCall, CriticTelemetry } from "../../../state/api";
-import { BlockA, BlockC, BlockD, BlockE, redactPath } from "../../primitives/CritiqueAuditBlocks";
+import { BlockA, BlockC, BlockD, BlockE, EvidenceMark, PartialDiffMark, redactPath } from "../../primitives/CritiqueAuditBlocks";
 import { STATUS_COLOR, formatTimeAgo } from "./helpers";
 import { prettifyProject } from "./filter-bar";
 import { DiffSummaryView, DiffView } from "./diff";
@@ -227,6 +227,14 @@ export function RecentRow({ c, now, homeBasename, preferenceStats }: {
 
           {/* (bubble_short shown in the row above — no need to duplicate here) */}
 
+          {/* How much of this review was checked. /history renders the same
+              review text as /timeline, so it needs the same caveat — a sibling
+              surface that dropped the mark would show an entirely-unverified
+              review as pixel-identical to a fully-grounded one. Found by an
+              independent reviewer; the first draft marked /timeline only. */}
+          <EvidenceMark label={c.evidence_label} unverifiedCount={c.evidence_unverified} />
+          <PartialDiffMark shown={c.diff_shown} total={c.diff_total} />
+
           {/* Bubble long — Brain's freeform narrative. Shown above the 6 blocks. */}
           {c.bubble_long && (
             <Section title="narrative · bubble_long">
@@ -250,12 +258,12 @@ export function RecentRow({ c, now, homeBasename, preferenceStats }: {
           <BlockA v2={c.v2} c={c} />
 
           {/* C — RUBRIC CHECKLIST */}
-          <BlockC v2={c.v2} cwd={c.cwd} />
+          <BlockC v2={c.v2} cwd={c.cwd} absence={c.audit_absence} />
 
-          {/* D — SIGNALS APPLIED */}
-          <BlockD v2={c.v2} preferenceStats={preferenceStats} critiqueId={c.critique_id} />
+          {/* D — WHAT ELSE I KNEW */}
+          <BlockD v2={c.v2} preferenceStats={preferenceStats} critiqueId={c.critique_id} absence={c.audit_absence} />
 
-          {/* E — VERDICT CHAIN */}
+          {/* E — HOW I DECIDED */}
           <BlockE v2={c.v2} c={c} />
 
           {/* F — COST: removed from /history — view cost + timing in /traces */}

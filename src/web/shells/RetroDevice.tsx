@@ -16,7 +16,12 @@ function ToyButton({
   label,
   size = 36,
   color = tokens.color.terra,
-  ink = "#fff",
+  // Default matches the default `color` (terra) — `onAccent` is white in
+  // light mode, where terra's fill is light too (measured 3.35:1 against the
+  // 4.5:1 text floor these ~15-18px bold labels don't clear the WCAG large-
+  // text exemption for; that needs >=18.66px bold, not >=14px). See
+  // src/web/tokens/palette.ts's per-accent `onX` tokens.
+  ink = tokens.color.onTerra,
 }: ToyButtonProps) {
   return (
     <div
@@ -29,6 +34,10 @@ function ToyButton({
         fontFamily: tokens.font.display,
         fontWeight: 700,
         fontSize: Math.round(size * 0.42),
+        // Both parts are offset-only bevel lines (no blur), simulating a
+        // fixed physical button relief — no matching shadowPalette
+        // geometry, not ink-derived (shadows must stay near-black in both
+        // themes per the ink-polarity rule). Stays literal.
         boxShadow:
           "inset 0 -3px 0 rgba(0,0,0,.22), 0 3px 0 rgba(0,0,0,.08)",
         display: "inline-flex",
@@ -92,8 +101,16 @@ export function RetroDevice(props: RetroDeviceProps) {
           inset: 0,
           background: `radial-gradient(120% 120% at 50% 30%, ${tokens.color.egg} 60%, ${tokens.color.egg2} 100%)`,
           borderRadius: "46% 46% 44% 44% / 56% 56% 40% 40%",
+          // Outer drop shadow -> tokens.shadow.lg (the egg-shell's own
+          // "sitting on the page" shadow, role-matched to the most
+          // prominent shadow in this file, same as TamagotchiToy.tsx's
+          // shell). NOT ink-derived (the ink-polarity rule). The two insets
+          // (a dark lowlight, a white highlight) are fixed physical-bevel
+          // lines with no matching shadowPalette geometry — stay literal;
+          // the white highlight is the same theme-invariant gloss judgment
+          // call as TamagotchiToy.tsx's shell highlight.
           boxShadow:
-            "inset 0 -10px 0 rgba(0,0,0,.10), inset 0 8px 0 rgba(255,255,255,.5), 0 12px 28px rgba(0,0,0,.15)",
+            `inset 0 -10px 0 rgba(0,0,0,.10), inset 0 8px 0 rgba(255,255,255,.5), ${tokens.shadow.lg}`,
         }}
       />
 
@@ -175,7 +192,7 @@ export function RetroDevice(props: RetroDeviceProps) {
           label="B"
           size={42}
           color={tokens.color.amber}
-          ink={tokens.color.ink}
+          ink={tokens.color.onAmber}
         />
         <ToyButton label="C" size={36} color={tokens.color.terra} />
       </div>

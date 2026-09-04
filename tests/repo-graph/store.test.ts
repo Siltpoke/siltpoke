@@ -122,6 +122,7 @@ describe("meta store — round-trip", () => {
       counters: {
         files_walked: 49,
         files_cached: 293,
+        parse_degraded: 0,
         nodes: { file: 340, function: 612, class: 421, module: 18, symbol: 443 },
         edges: { imports: 891, calls: 2103, contains: 783 },
         skipped: { tree_sitter_failed: 3, too_large: 1, not_a_source_file: 0, file_cap: 0 },

@@ -22,7 +22,6 @@ export interface TamagotchiToyPet {
 export interface TamagotchiToyData {
   pet: TamagotchiToyPet;
   hp: number;            // 0-10
-  pendingCritiqueCount: number;
 }
 
 export interface TamagotchiToyProps {
@@ -64,7 +63,6 @@ export function TamagotchiToy(props: TamagotchiToyProps) {
   const shell = resolveShell(shellName);
   const now = clockHHMM();
   const hpDisplay = hpMeter(data.hp);
-  const showCritique = data.pendingCritiqueCount > 0;
 
   return (
     <div
@@ -107,7 +105,17 @@ export function TamagotchiToy(props: TamagotchiToyProps) {
           flexDirection: "column",
           alignItems: "center",
           gap: 16,
-          boxShadow: "0 8px 24px rgba(31,27,22,0.18), inset 0 1px 0 rgba(255,255,255,0.4)",
+          // Outer drop shadow uses tokens.shadow.lg (exact "0 8px 24px"
+          // geometry match, alpha .14 vs the original .18 — matched by
+          // role/geometry, same precedent as Task 10b batch 1's FloatingChat
+          // shadow migration). NOT ink-derived: a box-shadow simulates fixed
+          // physical depth and must stay near-black in both themes (the
+          // ink-polarity rule — ink itself flips to near-white in dark
+          // mode, which would turn this into a halo). The inset white
+          // highlight stays a literal — a fixed gloss reflection off the
+          // shell's plastic, theme-invariant in both directions (same
+          // judgment call as RetroDevice.tsx's egg-shell highlight).
+          boxShadow: `${tokens.shadow.lg}, inset 0 1px 0 rgba(255,255,255,0.4)`,
         }}
       >
         {/* Header strip */}
@@ -144,7 +152,7 @@ export function TamagotchiToy(props: TamagotchiToyProps) {
             position: "relative",
           }}
         >
-          {/* Top row: hp + level + spend + fix-it pill */}
+          {/* Top row: hp + level + spend */}
           <div
             class="tamagotchi-toy__lcd-top"
             style={{
@@ -161,22 +169,6 @@ export function TamagotchiToy(props: TamagotchiToyProps) {
             </span>
             <span>L{data.pet.level}</span>
             <span>$0.42</span>
-            {showCritique && (
-              <span
-                class="tamagotchi-toy__fix-it"
-                style={{
-                  background: tokens.color.cream,
-                  color: tokens.color.terra,
-                  border: `1px solid ${tokens.color.terra}`,
-                  borderRadius: tokens.radius.sm,
-                  padding: "1px 5px",
-                  fontSize: 9,
-                  fontFamily: tokens.font.mono,
-                }}
-              >
-                fix it!
-              </span>
-            )}
           </div>
 
           {/* Creature face center */}
@@ -258,7 +250,15 @@ export function TamagotchiToy(props: TamagotchiToyProps) {
                   fontSize: 14,
                   fontWeight: 700,
                   cursor: "pointer",
-                  boxShadow: "0 2px 4px rgba(31,27,22,0.25), inset 0 -2px 0 rgba(0,0,0,0.15)",
+                  // Outer drop shadow -> tokens.shadow.md (fix round 1:
+                  // `md`'s "0 2px 6px …0.10" is closer than `sm`'s
+                  // "0 1px 2px …0.06" on both offset and alpha to the
+                  // original "0 2px 4px …0.25" — `sm` visibly flattened
+                  // this in light mode). Not ink-derived per the
+                  // shadow-depth rule above. The inset bevel (offset-only,
+                  // no blur) has no matching shadowPalette geometry and is
+                  // a fixed physical bevel, not page ink — stays literal.
+                  boxShadow: `${tokens.shadow.md}, inset 0 -2px 0 rgba(0,0,0,0.15)`,
                 }}
               >
                 {b.letter}

@@ -39,7 +39,11 @@ export function RowActions({ call }: { call: CriticCall }) {
     `const cid=${cid};` +
     `const ta=cid?document.querySelector('[data-feedback-textarea="'+cid+'"]'):null;` +
     `const fbText=ta?ta.value:'';` +
-    `const tasks=[fetch('/api/critic/action',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...${payload},action:'${action}'})})];` +
+    // Daemon secret — POST /api/critic/action is secret-gated (finding 2 of
+    // the daemon-hardening security audit). Read from the nearest
+    // [data-secret] element (the FloatingChat panel, present on every page).
+    `const _secret=document.querySelector('[data-secret]')?.getAttribute('data-secret')||'';` +
+    `const tasks=[fetch('/api/critic/action',{method:'POST',headers:{'content-type':'application/json','X-Siltpoke-Secret':_secret},body:JSON.stringify({...${payload},action:'${action}'})})];` +
     `if(cid && ta && (${JSON.stringify(action)}==='ack'||${JSON.stringify(action)}==='dismiss'))` +
     `tasks.push(fetch('/api/critique/'+cid+'/feedback',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:fbText,action:${JSON.stringify(action)}})}));` +
     `Promise.all(tasks).then(rs=>{for(const r of rs)if(!r.ok)throw new Error('save failed');location.reload()})` +

@@ -14,5 +14,5 @@
     "jsxImportSource": "hono/jsx"
   },
   "include": ["src/**/*", "tests/**/*"],
-  "exclude": ["tests/fixtures/alias-repos/**/*"]
+  "exclude": ["tests/fixtures/alias-repos/**/*", "tests/fixtures/entrypoints/**/*"]
 }

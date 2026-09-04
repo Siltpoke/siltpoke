@@ -39,10 +39,29 @@ export interface RubricListProps {
   calibration: Record<string, number>;
 }
 
-function tierBadgeStyle(tier: number): string {
-  if (tier === 1) return `background:${tokens.color.moss};color:#fff`;
-  if (tier === 2) return `background:${tokens.color.amber};color:${tokens.color.ink}`;
-  return `background:${tokens.color.sky};color:${tokens.color.ink}`;
+/**
+ * Tier badge fill + foreground.
+ *
+ * Returns a style OBJECT, not a CSS string. It used to return a string that
+ * both call sites passed as a `cssText` key inside `style={{ … }}` — and Hono
+ * JSX silently drops an unrecognised key from a style object, so the badges
+ * have never actually rendered a background or a color. (The
+ * `element.style.cssText = …` calls in src/web/client/islands/action-result.ts
+ * are real DOM assignments and do work; this was that idiom copied into a
+ * place where it is inert.) Verified against the rendered output: the `T1`
+ * span carried no `background` at all before this change.
+ *
+ * Text color per tier uses the dedicated `onMoss`/`onAmber`/`onSky` tokens
+ * (Task 10, decided item 2), not `onAccent` (white in light, where these
+ * fills are also light — measured 2.06:1 amber / 3.18:1 moss / 2.35:1 sky)
+ * and not `ink` (near-white in dark, measured 1.56:1 amber / 1.66:1 moss /
+ * 1.83:1 sky on these same fills — the Task 7 finding this fixes). Gated by
+ * tests/web/tokens/palette.test.ts "per-accent ink tokens".
+ */
+function tierBadgeStyle(tier: number): { background: string; color: string } {
+  if (tier === 1) return { background: tokens.color.moss, color: tokens.color.onMoss };
+  if (tier === 2) return { background: tokens.color.amber, color: tokens.color.onAmber };
+  return { background: tokens.color.sky, color: tokens.color.onSky };
 }
 
 export function RubricList({ rules, calibration }: RubricListProps) {
@@ -114,7 +133,7 @@ export function RubricList({ rules, calibration }: RubricListProps) {
                   fontSize: 10,
                   fontWeight: 700,
                   marginRight: 6,
-                  cssText: tierBadgeStyle(tier),
+                  ...tierBadgeStyle(tier),
                 }}
               >
                 T{tier}
@@ -175,7 +194,7 @@ export function RubricList({ rules, calibration }: RubricListProps) {
                         borderRadius: tokens.radius.sm,
                         fontSize: 10,
                         fontWeight: 700,
-                        cssText: tierBadgeStyle(rule.tier),
+                        ...tierBadgeStyle(rule.tier),
                       }}
                     >
                       T{rule.tier}

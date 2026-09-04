@@ -54,7 +54,7 @@ function callerToken(file: string, line: number, stale: boolean): string {
 
 /** One-line freshness stamp appended when the graph index is stale. */
 const STALE_STAMP =
-  "(graph index is stale — line numbers omitted; re-run /siltpoke-index)";
+  "(graph index is stale — line numbers omitted; re-index this repo from Code Map)";
 
 /**
  * Decide whether a block is warranted. `modified` requires a

@@ -15,6 +15,35 @@ import {
   type SideRow,
 } from "./parse";
 
+/**
+ * "N more dropped to the cap" note, rendered under the list it applies to.
+ *
+ * The count comes from `summary.truncated`, never from an entry inside the list —
+ * a marker entry would make `risks.length` (and this component's own
+ * `enumeratedCount`) wrong. See `diffSummarySchema.truncated`.
+ *
+ * This is the surface half of that decision. A truncation count that nothing
+ * renders is the failure mode recorded across five tool families in
+ * an internal design note — GitHub Code Scanning
+ * ignoring SARIF's `result.kind`, nyc's `--all` broken for three years, a reporter
+ * showing correctly-tagged skipped tests as passed.
+ */
+function TruncatedNote({ dropped, noun }: { dropped: number | undefined; noun: string }) {
+  if (dropped === undefined || dropped <= 0) return null;
+  return (
+    <div
+      style={{
+        fontFamily: tokens.font.mono,
+        fontSize: 10,
+        color: tokens.color.ink3,
+        marginTop: 4,
+      }}
+    >
+      + {dropped} more {noun} the summariser returned, dropped to fit — see the diff below
+    </div>
+  );
+}
+
 export function DiffSummaryView({ summary }: { summary: NonNullable<CriticCall["diff_summary"]> }) {
   const enumeratedCount = summary.files_with_purpose.length;
   const mismatch = summary.file_count > 0 && enumeratedCount !== summary.file_count;
@@ -54,6 +83,7 @@ export function DiffSummaryView({ summary }: { summary: NonNullable<CriticCall["
           <ul style={{ margin: 0, paddingLeft: 18, fontFamily: tokens.font.body, fontSize: 12, color: tokens.color.ink, lineHeight: 1.6 }}>
             {summary.key_changes.map((k, i) => <li key={i}>{k}</li>)}
           </ul>
+          <TruncatedNote dropped={summary.truncated?.key_changes} noun="changes" />
         </div>
       )}
       {summary.risks.length > 0 && (
@@ -64,6 +94,7 @@ export function DiffSummaryView({ summary }: { summary: NonNullable<CriticCall["
           <ul style={{ margin: 0, paddingLeft: 18, fontFamily: tokens.font.body, fontSize: 12, color: tokens.color.ink, lineHeight: 1.6 }}>
             {summary.risks.map((r, i) => <li key={i}>{r}</li>)}
           </ul>
+          <TruncatedNote dropped={summary.truncated?.risks} noun="risks" />
         </div>
       )}
       {summary.files_with_purpose.length > 0 && (
@@ -164,10 +195,18 @@ export function DiffView({ text }: { text: string }) {
   );
 }
 
+// del/add/empty are alpha-composited via `color-mix(…, transparent)` — the
+// exact reproduction technique Task 10b batch 1 established for every
+// `rgba(x,y,z,α)` site — reading `diffDelBg`/`diffAddBg`/`diffEmptyBg`
+// (Task 10b batch 2), NOT `tokens.color.terra`/`moss` directly: a per-
+// channel best-fit check found del is CLOSE to terra (+/-3..7) but add is
+// visibly off from moss (+14..18 on two channels) — hand-tuned diff colors,
+// not a clean accent derivation (see palette.ts). `sideFg()` below paints
+// the real `tokens.color.terra`/`moss`/`ink` (unchanged) directly on top.
 const SIDE_BG: Record<SideRow["kind"], string> = {
-  del: "rgba(214, 100, 100, 0.18)",
-  add: "rgba(140, 168, 100, 0.20)",
-  empty: "rgba(120, 120, 120, 0.06)",
+  del: `color-mix(in srgb, ${tokens.color.diffDelBg} 18%, transparent)`,
+  add: `color-mix(in srgb, ${tokens.color.diffAddBg} 20%, transparent)`,
+  empty: `color-mix(in srgb, ${tokens.color.diffEmptyBg} 6%, transparent)`,
   ctx: "transparent",
 };
 

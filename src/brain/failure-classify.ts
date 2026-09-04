@@ -48,6 +48,9 @@ const PERMANENT_MARKERS: readonly RegExp[] = [
   /authentication[_ ]error/i,
   /unknown (option|argument|flag)/i,
   /credit balance is too low/i,
+  // codex auth phrasing (track #7 T2, AC10) — ChatGPT-account login state.
+  // Net-new alternatives only; /not logged in/i already covered above.
+  /login required|codex login/i,
 ];
 
 /**
@@ -66,6 +69,9 @@ const THROTTLE_MARKERS: readonly RegExp[] = [
   /overloaded(_error)?/i,
   /too many requests/i,
   /\b429\b/,
+  // codex quota phrasing (track #7 T2, AC10) — ChatGPT-plan quota, not $.
+  // Net-new alternatives only; rate-limit already covered above.
+  /usage limit|quota exceeded/i,
 ];
 
 /** Resource: machine-level pressure. Observed: EAGAIN posix_spawn, exits 137/143. */

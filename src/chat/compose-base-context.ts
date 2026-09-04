@@ -17,6 +17,11 @@ import { assemblePageContext, type PageContext } from "./page-context";
 
 export interface ComposeBaseContextInput {
   /**
+   * Quiz mode prompt (highest precedence). When present, it IS the base system
+   * prompt, overriding anchor and page context entirely.
+   */
+  quizPrompt?: string;
+  /**
    * The frozen anchor context (if this conversation is pinned to a node).
    * Only the two fields actually used here are required — callers may pass
    * the full `AnchorContext` (structural typing).
@@ -37,13 +42,16 @@ export interface ComposeBaseContextInput {
 }
 
 /**
- * Precedence: node > page > none. Node context wins whenever `anchorCtx` is
+ * Precedence: quiz > node > page > none. Quiz mode wins when `quizPrompt` is set,
+ * overriding all other context. Node context wins whenever `anchorCtx` is
  * present (a pinned conversation always discusses the node, not the page).
  * Page assembly is wrapped in try/catch — it is additive context only and
  * must never block the reply.
  */
 export async function composeBaseSystemPrompt(input: ComposeBaseContextInput): Promise<string> {
-  const { anchorCtx, pageId, homeBase, readMemory, assemblePage } = input;
+  const { quizPrompt, anchorCtx, pageId, homeBase, readMemory, assemblePage } = input;
+
+  if (quizPrompt) return quizPrompt;
 
   if (anchorCtx) {
     return `${anchorCtx.systemPrompt}\n\n--- Context for the node being discussed ---\n${anchorCtx.contextBundle}`;

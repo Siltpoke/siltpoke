@@ -26,13 +26,41 @@ import {
   parseErrorEvent,
 } from "../lib/chat-error-copy";
 import { parseSseChunk } from "../lib/sse-parse";
+import type { StalenessVerdict } from "../../../repo-graph/staleness-verdict";
+
+/**
+ * Render a non-fresh {@link StalenessVerdict} into the fixed notice copy the
+ * chat transcript shows (headline + the three split counts). `fresh` never
+ * reaches here — callers gate on `level !== "fresh"` first. Exported for
+ * direct unit-testing.
+ */
+export function stalenessNoticeText(v: StalenessVerdict): string {
+  return `${v.headline} (${v.counts.content_changed} changed · ${v.counts.deleted_still_indexed} deleted · ${v.counts.unindexed_files} unindexed)`;
+}
+
+/**
+ * The page's resolved proj_hash as a `?repo=` query suffix, read from the
+ * `[data-proj-hash]` attribute Layout.tsx sets on the root `<html>` element
+ * (per-request project resolution — see src/daemon/project-context.ts). The
+ * chat send fetch below appends this so the server-side write-guard resolves
+ * the SAME project the page did. "" when unresolved → no query param (the
+ * server falls back to its own sticky-pin resolution).
+ */
+function writeRepoQuery(): string {
+  const projHash =
+    (typeof document !== "undefined"
+      ? document.querySelector("[data-proj-hash]")?.getAttribute("data-proj-hash")
+      : null) ?? "";
+  return projHash ? `?repo=${projHash}` : "";
+}
 
 export interface ChatMessage {
   role: "user" | "assistant";
-  /** For failed/cancelled entries this is the FIXED display copy, never "". */
+  /** For failed/cancelled/notice entries this is the FIXED display copy, never "". */
   text: string;
-  /** absent = normal turn; "failed" → error card; "cancelled" → quiet marker */
-  status?: "failed" | "cancelled";
+  /** absent = normal turn; "failed" → error card; "cancelled" → quiet marker;
+   *  "notice" → quiet info marker (e.g. index-staleness warning) */
+  status?: "failed" | "cancelled" | "notice";
   /** classified reason (absent on route-catch failures — copy falls back) */
   error_reason?: string;
 }
@@ -102,9 +130,19 @@ export function makeChatStreamData(
       this.abortController = new AbortController();
 
       try {
-        const res = await fetchFn("/api/chat", {
+        // Daemon secret — read from the nearest [data-secret] ancestor at
+        // call time (same idiom as active-repos.ts / a retired island). The
+        // FloatingChat panel (rendered on every page via Layout) always
+        // carries one, so this resolves even though /chat's own screen root
+        // has no data-secret of its own. Required since POST /api/chat is
+        // secret-gated (daemon-hardening security audit, finding 2).
+        const secret =
+          (typeof document !== "undefined"
+            ? document.querySelector("[data-secret]")?.getAttribute("data-secret")
+            : null) ?? "";
+        const res = await fetchFn(`/api/chat${writeRepoQuery()}`, {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", "X-Siltpoke-Secret": secret },
           body: JSON.stringify({
             session_id: this.sessionId,
             message: userText,
@@ -152,6 +190,25 @@ export function makeChatStreamData(
               // The raw server error string is never rendered — only the
               // classified reason maps (via fixed copy) to what the user sees.
               failure = parseErrorEvent(ev.data);
+            } else if (ev.name === "staleness") {
+              // Index-staleness verdict (see src/daemon/routes/chat.ts —
+              // emitted once, right after message_start). `fresh` renders
+              // nothing; anything else lands as a quiet in-transcript notice
+              // (same `messages` array other event kinds append to) so the
+              // dashboard chat user actually sees the drift the server
+              // computed — previously parsed then silently dropped here.
+              try {
+                const verdict = JSON.parse(ev.data) as StalenessVerdict;
+                if (verdict.level !== "fresh") {
+                  this.messages = [
+                    ...this.messages,
+                    { role: "assistant", text: stalenessNoticeText(verdict), status: "notice" },
+                  ];
+                }
+              } catch {
+                // Malformed staleness payload — non-fatal, mirrors
+                // content_block_delta's tolerance of partial/bad JSON.
+              }
             }
           }
         }

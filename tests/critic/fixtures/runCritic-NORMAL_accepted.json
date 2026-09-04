@@ -28,6 +28,9 @@
       "total_cost_usd": 0.001
     },
     "critiqueId": "c-normal",
+    "evidenceLabel": "verified",
+    "diffCoverage": null,
+    "unverifiedCount": 0,
     "pipelineRan": true,
     "rubricTriggers": [],
     "rubricSuppressedCount": 0,
@@ -35,6 +38,27 @@
       "classification": "exploration",
       "confidence": 0.3,
       "signal_source": "regex"
+    },
+    "providerMeta": {
+      "name": "claude",
+      "billing": "usd",
+      "genAiSystem": "anthropic"
+    },
+    "memoryFunnel": {
+      "rules_in_store": 0,
+      "rules_scope_matched": 0,
+      "rules_selected": 0,
+      "rules_bytes_in_prompt": 0
+    },
+    "promptBytes": {
+      "base": 27,
+      "memory": 0,
+      "recent": 0,
+      "tool_output": 374,
+      "caller_impact": 0,
+      "reverse_deps": 0,
+      "anti_examples": 0,
+      "total": 1346
     }
   },
   "critiqueInput": {
@@ -57,6 +81,18 @@
       ]
     },
     "session_id": "sess-golden",
-    "cwd": "/fixture/proj-a"
+    "cwd": "/fixture/proj-a",
+    "evidence_verdict": {
+      "label": "verified",
+      "verified": [
+        {
+          "tool": "tsc",
+          "file": "src/foo.ts",
+          "line": 10,
+          "snippet": "let x: string = badValue;"
+        }
+      ],
+      "unverified": []
+    }
   }
 }

@@ -3,7 +3,7 @@
  * All routes are read-only + unauthenticated (P0 fix); Bearer headers ignored.
  */
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -29,6 +29,8 @@ import {
 } from "../../src/repo-graph/types";
 import { writeArchModel, type ArchModelMeta } from "../../src/explain/arch-cache";
 import type { ArchModelDoc } from "../../src/explain/arch-model-schema";
+import { listReviewerExternals } from "../../src/brain/registry";
+import { writeRegistryAnchor } from "../_shared/arch-repo-root";
 
 let cwd: string;
 let home: string;
@@ -315,10 +317,33 @@ describe("architecture-view generate", () => {
     const body = (await res.json()) as {
       data: { citedClaims?: number; totalClaims?: number; topologyBlindClaims?: number; groundedPct: number };
     };
-    // all 3 grounding counts present in response.
+    // All 3 grounding counts present in the response, and — because the fixture
+    // repo is a bare tmp dir with no `src/brain/registry.ts` — the reviewer
+    // externals are OUT of scope for it, so nothing is injected and the counts
+    // come back exactly as they were written. The injecting case is the sibling
+    // test below, which gives the fixture that anchor.
     expect(body.data.citedClaims).toBe(29);
     expect(body.data.totalClaims).toBe(37);
     expect(body.data.topologyBlindClaims).toBe(2);
+  });
+
+  test("GET /arch/model — a repo that DOES carry the registry anchor still gets the reviewer externals injected", async () => {
+    await seedGraph(archGraph());
+    seedCachedModel({ citedClaims: 29, totalClaims: 37, topologyBlindClaims: 2 });
+    // Give the fixture repo the file the injected nodes cite. This is the whole
+    // scope rule at route level: same cache, same request, different repo.
+    writeRegistryAnchor(cwd);
+    const app = makeApp();
+    const res = await app.fetch(new Request("http://localhost/api/repo-graph/arch/model"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { citedClaims?: number; totalClaims?: number } };
+    // ARCH_DOC has no ext nodes, so every registry-declared reviewer external is
+    // injected (3 claims each: title+band+desc; no edge, since ARCH_DOC's nodes
+    // carry no `src/brain/` members). citedClaims is untouched — injected claims
+    // are inferred, never cited.
+    const injected = listReviewerExternals().length * 3;
+    expect(body.data.citedClaims).toBe(29);
+    expect(body.data.totalClaims).toBe(37 + injected);
   });
 
   test("GET /arch/model — legacy meta WITHOUT counts → fields absent in response, never 0 (honesty rule)", async () => {
@@ -752,7 +777,7 @@ describe("POST /api/repo-graph/explain (M5 generate)", () => {
     const res = await app.fetch(
       new Request("http://localhost/api/repo-graph/explain", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "X-Siltpoke-Secret": SECRET },
         body: JSON.stringify({ target: "src/x.ts" }),
       }),
     );
@@ -771,11 +796,86 @@ describe("POST /api/repo-graph/explain (M5 generate)", () => {
     const res = await app.fetch(
       new Request("http://localhost/api/repo-graph/explain", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "X-Siltpoke-Secret": SECRET },
         body: JSON.stringify({}),
       }),
     );
     expect(res.status).toBe(400);
+  });
+
+  // daemon-hardening security audit, finding 3 (residual gap) — a blind
+  // cross-origin POST could otherwise trigger a paid Brain call + hold the
+  // one-at-a-time task lock for free.
+  test("without the secret → 401, no Brain call, no task registered", async () => {
+    const queryIndex = emptyQueryIndex();
+    queryIndex.path_to_node_ids["src/x.ts"] = ["file:src/x.ts:", "function:src/x.ts:foo"];
+    queryIndex.name_to_node_ids["foo"] = ["function:src/x.ts:foo"];
+    await seedGraph(
+      makeGraphWith([
+        { id: "file:src/x.ts:", type: "file", name: "x.ts", path: "src/x.ts" },
+        { id: "function:src/x.ts:foo", type: "function", name: "foo", path: "src/x.ts", lineRange: [5, 9] },
+      ]),
+      { queryIndex },
+    );
+    let brainCalled = false;
+    const app = new Hono();
+    mountRepoGraphRoutes(app, {
+      cwd,
+      home,
+      secret: SECRET,
+      explainSourceProvider: async () => "a\nb\nc\nd\nfunction foo() {}\n",
+      explainBrainProvider: async () => {
+        brainCalled = true;
+        return {
+          markdown: "should never run",
+          usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 1, output_tokens: 1, total_cost_usd: 0.001 },
+        };
+      },
+    });
+    const res = await app.fetch(
+      new Request("http://localhost/api/repo-graph/explain", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ target: "src/x.ts" }),
+      }),
+    );
+    expect(res.status).toBe(401);
+    expect(brainCalled).toBe(false);
+    expect(existsSync(join(home, "tasks.json"))).toBe(false);
+  });
+
+  test("with the correct secret → 202 {taskId}", async () => {
+    const queryIndex = emptyQueryIndex();
+    queryIndex.path_to_node_ids["src/x.ts"] = ["file:src/x.ts:", "function:src/x.ts:foo"];
+    queryIndex.name_to_node_ids["foo"] = ["function:src/x.ts:foo"];
+    await seedGraph(
+      makeGraphWith([
+        { id: "file:src/x.ts:", type: "file", name: "x.ts", path: "src/x.ts" },
+        { id: "function:src/x.ts:foo", type: "function", name: "foo", path: "src/x.ts", lineRange: [5, 9] },
+      ]),
+      { queryIndex },
+    );
+    const app = new Hono();
+    mountRepoGraphRoutes(app, {
+      cwd,
+      home,
+      secret: SECRET,
+      explainSourceProvider: async () => "a\nb\nc\nd\nfunction foo() {}\n",
+      explainBrainProvider: async () => ({
+        markdown: "foo is the entry point. See [src/x.ts:5] for details.",
+        usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 1, output_tokens: 1, total_cost_usd: 0.001 },
+      }),
+    });
+    const res = await app.fetch(
+      new Request("http://localhost/api/repo-graph/explain", {
+        method: "POST",
+        headers: { "content-type": "application/json", "X-Siltpoke-Secret": SECRET },
+        body: JSON.stringify({ target: "src/x.ts" }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { taskId: string; status: string };
+    expect(body.taskId).toBeTruthy();
   });
 });
 

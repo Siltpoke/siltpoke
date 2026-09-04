@@ -248,6 +248,8 @@ export interface ActiveProject {
   chat_count: number;
   /** Newest chat's summary; falls back to long_term_summary; "" when neither exists. */
   latest_summary: string;
+  /** Count of stored facts in this project slice. Free in-loop; drives the resolver liveness filter. */
+  fact_count: number;
 }
 
 /**
@@ -288,6 +290,7 @@ export async function listActiveProjects(home: string): Promise<ActiveProject[]>
       last_active_at,
       chat_count: project.chat_sessions.length,
       latest_summary,
+      fact_count: project.facts.length,
     });
   }
   // Descending by ISO timestamp via plain string comparison (locale-proof for

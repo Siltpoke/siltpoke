@@ -79,8 +79,13 @@ async function stubRecall(
 }
 
 // ── test 1: chip shows when recall returns matches ────────────────────────────
+// PARKED: the recall surface is gated off in production
+// (RECALL_SURFACE_ENABLED = false, src/chat/recall.ts) so the chip DOM is never
+// rendered. The 4 tests that assert the chip is present/interactive are skipped
+// until the flag is turned back on; test 2 (chip ABSENT) stays live since a
+// parked feature trivially satisfies it.
 
-test(
+test.skip(
   "chip visible with correct summaries when recall returns matches",
   async ({ page }) => {
     const SESSION_ID = "recall-test-session-001";
@@ -134,7 +139,7 @@ test(
 
 // ── test 3: clicking a chip entry opens that conversation ─────────────────────
 
-test(
+test.skip(
   "clicking a chip entry switches to that conversation",
   async ({ page }) => {
     const ACTIVE_ID = "recall-click-active-003";
@@ -200,7 +205,7 @@ test(
 
 // ── test 4: dismiss button hides the chip ────────────────────────────────────
 
-test(
+test.skip(
   "dismiss button hides the recall chip",
   async ({ page }) => {
     const SESSION_ID = "recall-dismiss-session-004";
@@ -233,7 +238,7 @@ test(
 
 // ── test 5: escape-hatch icon triggers recall with draft text ─────────────────
 
-test(
+test.skip(
   "escape-hatch 🔗 icon re-runs recall with composer draft",
   async ({ page }) => {
     // NOTE: session ID must NOT contain "draft" or "query" to avoid false-positive

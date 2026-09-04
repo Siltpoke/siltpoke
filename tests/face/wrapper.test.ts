@@ -1,9 +1,9 @@
-import { test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { test, expect, beforeEach, afterEach, describe } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFileSync, existsSync as fsExists } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runWrapper } from "../../src/face/wrapper.ts";
+import { parseAgentFlag, runWrapper } from "../../src/face/wrapper.ts";
 import { getSpecies } from "../../src/face/species.ts";
 
 let tempBase: string;
@@ -445,4 +445,96 @@ test("inner command is a nonexistent program: returns empty and logs error", asy
   expect(fsExists(logPath)).toBe(true);
   const logContents = readFileSync(logPath, "utf8");
   expect(logContents).toContain("exited with code");
+});
+
+describe("runWrapper --agent option", () => {
+  test("agent set + inner.txt present: inner-chaining is skipped entirely, face renders standalone", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "siltpoke-wrapper-agent-"));
+    try {
+      writeFileSync(join(tmp, "inner.txt"), "echo SHOULD-NOT-RUN-FOR-AGY");
+      writeFileSync(join(tmp, "config.json"), JSON.stringify({ name: "Pip", species: "slime" }));
+      const out = await runWrapper({ basePath: tmp, agent: "antigravity", termWidth: 80 });
+      // Inner.txt must not leak into a non-Claude host render...
+      expect(out).not.toContain("SHOULD-NOT-RUN-FOR-AGY");
+      // ...AND the face must actually render standalone (name row from
+      // config.json), not collapse to an empty string. Guards against a
+      // future regression where the options.agent branch returns "".
+      expect(out).toContain("Pip");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("agent unset + inner.txt present: inner command still runs (unchanged Claude-wrap behavior)", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "siltpoke-wrapper-agent-"));
+    try {
+      writeFileSync(join(tmp, "inner.txt"), "echo INNER-RAN");
+      writeFileSync(join(tmp, "config.json"), JSON.stringify({ name: "Pip", species: "slime" }));
+      const out = await runWrapper({ basePath: tmp, termWidth: 80 });
+      expect(out).toContain("INNER-RAN");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+test("tasklist: appends 📋 segment when cwd has .claude/tasklist.md", async () => {
+  writeFileSync(join(tempBase, "inner.txt"), "echo 'x'");
+  const cwd = mkdtempSync(join(tmpdir(), "siltpoke-cwd-"));
+  try {
+    mkdirSync(join(cwd, ".claude"), { recursive: true });
+    writeFileSync(
+      join(cwd, ".claude", "tasklist.md"),
+      "- [x] a\n- [x] b\n- [/] ship it",
+    );
+    const result = await runWrapper({ basePath: tempBase, cwd, termWidth: 200 });
+    expect(result).toContain("📋 2/3 ▶ ship it");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("tasklist: no segment when the file is absent", async () => {
+  writeFileSync(join(tempBase, "inner.txt"), "echo 'x'");
+  const cwd = mkdtempSync(join(tmpdir(), "siltpoke-cwd-"));
+  try {
+    const result = await runWrapper({ basePath: tempBase, cwd, termWidth: 200 });
+    expect(result).not.toContain("📋");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("tasklist: no cwd → no segment, no crash", async () => {
+  writeFileSync(join(tempBase, "inner.txt"), "echo 'x'");
+  const result = await runWrapper({ basePath: tempBase, termWidth: 200 });
+  expect(result).not.toContain("📋");
+});
+
+test("tasklist: shows in minimal mode with no bubble (past the early return)", async () => {
+  writeFileSync(join(tempBase, "inner.txt"), "echo 'x'");
+  writeFileSync(join(tempBase, "config.json"), JSON.stringify({ minimalMode: true }));
+  const cwd = mkdtempSync(join(tmpdir(), "siltpoke-cwd-"));
+  try {
+    mkdirSync(join(cwd, ".claude"), { recursive: true });
+    writeFileSync(join(cwd, ".claude", "tasklist.md"), "- [x] a\n- [/] go");
+    const result = await runWrapper({ basePath: tempBase, cwd, termWidth: 200 });
+    expect(result).toContain("📋 1/2 ▶ go");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+describe("parseAgentFlag (CLI entry helper)", () => {
+  test("extracts the value following --agent", () => {
+    expect(parseAgentFlag(["bun", "wrapper.ts", "--agent", "antigravity"])).toBe("antigravity");
+  });
+
+  test("returns undefined when --agent is absent", () => {
+    expect(parseAgentFlag(["bun", "wrapper.ts"])).toBeUndefined();
+  });
+
+  test("returns undefined when --agent has no following value", () => {
+    expect(parseAgentFlag(["bun", "wrapper.ts", "--agent"])).toBeUndefined();
+  });
 });

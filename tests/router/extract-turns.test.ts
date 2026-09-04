@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { extractTranscriptTurns } from "../../src/router/extract-turns";
+import { extractTurnsFromEvents } from "../../src/router/context";
 
 let tmp: string;
 
@@ -140,4 +141,43 @@ describe("extractTranscriptTurns", () => {
     expect(turns[1]?.text).toContain("[tool Bash]");
   });
 
+});
+
+describe("extractTurnsFromEvents", () => {
+  test("groups a multi-edit assistant reply under one user prompt (one turn, deduped files)", () => {
+    const events = [
+      { type: "user", message: { role: "user", content: "add rate limiting" }, timestamp: "t0" },
+      { type: "assistant", timestamp: "t1", message: { role: "assistant", content: [
+        { type: "tool_use", name: "Edit", input: { file_path: "src/login.ts" } },
+        { type: "tool_use", name: "Write", input: { file_path: "src/login.ts" } },
+      ] } },
+    ];
+    const turns = extractTurnsFromEvents(events as never);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({ index: 0, userAsk: "add rate limiting", editedFiles: ["src/login.ts"] });
+  });
+
+  test("a tool_result user event does NOT start a new turn or wipe the ask", () => {
+    const events = [
+      { type: "user", message: { role: "user", content: "fix the bug" }, timestamp: "t0" },
+      { type: "assistant", timestamp: "t1", message: { role: "assistant", content: [{ type: "tool_use", name: "Edit", input: { file_path: "src/a.ts" } }] } },
+      // tool_result comes back as a user-role event whose content is a tool_result block (no text):
+      { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "x", content: "ok" }] }, timestamp: "t2" },
+      { type: "assistant", timestamp: "t3", message: { role: "assistant", content: [{ type: "tool_use", name: "Edit", input: { file_path: "src/a.ts" } }] } },
+    ];
+    const turns = extractTurnsFromEvents(events as never);
+    expect(turns).toHaveLength(1);                       // still ONE turn, not two
+    expect(turns[0]?.userAsk).toBe("fix the bug");       // ask not wiped to ""
+  });
+
+  test("two distinct prompts editing the same file ⇒ two turns", () => {
+    const events = [
+      { type: "user", message: { role: "user", content: "security fix" }, timestamp: "t0" },
+      { type: "assistant", timestamp: "t1", message: { role: "assistant", content: [{ type: "tool_use", name: "Edit", input: { file_path: "src/a.ts" } }] } },
+      { type: "user", message: { role: "user", content: "format imports" }, timestamp: "t2" },
+      { type: "assistant", timestamp: "t3", message: { role: "assistant", content: [{ type: "tool_use", name: "Edit", input: { file_path: "src/a.ts" } }] } },
+    ];
+    const turns = extractTurnsFromEvents(events as never);
+    expect(turns.map((t) => t.userAsk)).toEqual(["security fix", "format imports"]);
+  });
 });

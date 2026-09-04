@@ -206,13 +206,13 @@ describe("writeArchModel + readArchModel", () => {
 
   it("miss → null when no file", async () => {
     const d = await dir();
-    expect(await readArchModel(d, "fp1", "ts1")).toBeNull();
+    expect(await readArchModel(d, "fp1", "ts1", null)).toBeNull();
   });
 
   it("fresh → stale:false when fingerprint + graph-ts match", async () => {
     const d = await dir();
     writeArchModel(d, goodDoc(), meta({ fingerprint: "fpX", graphIndexedTs: "tsX" }), SUBDIRS);
-    const r = await readArchModel(d, "fpX", "tsX");
+    const r = await readArchModel(d, "fpX", "tsX", null);
     expect(r).not.toBeNull();
     expect(r!.stale).toBe(false);
   });
@@ -220,7 +220,7 @@ describe("writeArchModel + readArchModel", () => {
   it("stale → stale:true on a fingerprint mismatch", async () => {
     const d = await dir();
     writeArchModel(d, goodDoc(), meta({ fingerprint: "old", graphIndexedTs: "tsX" }), SUBDIRS);
-    const r = await readArchModel(d, "new", "tsX");
+    const r = await readArchModel(d, "new", "tsX", null);
     expect(r!.stale).toBe(true);
   });
 
@@ -228,6 +228,6 @@ describe("writeArchModel + readArchModel", () => {
     const d = await dir();
     writeArchModel(d, goodDoc(), meta(), SUBDIRS);
     await writeFile(archModelPath(d), "{ not valid json");
-    expect(await readArchModel(d, "fp1", "ts1")).toBeNull();
+    expect(await readArchModel(d, "fp1", "ts1", null)).toBeNull();
   });
 });

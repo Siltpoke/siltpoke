@@ -8,8 +8,9 @@
  * file-length warn threshold.
  */
 
+import type { EvidenceLabel } from "../critic/evidence-guard";
+import type { AuditAbsenceKind } from "./audit-absence";
 import type { PreferenceStats } from "../preference-log/stats";
-import type { TriggerConfig } from "../router/trigger-modes";
 import type { BudgetConfig, BudgetDecision } from "./budget-config";
 import type { QuietHoursConfig } from "./quiet-hours";
 import type { DailyRollup } from "./usage";
@@ -87,6 +88,81 @@ export interface CriticCall {
   evidence: CriticEvidence[];
   /** Critic gating decision: NORMAL / PASSIVE_BUBBLE / HARD_SUPPRESS (string from telemetry — high/medium/low in current code). */
   gating_decision: string | null;
+  /**
+   * WHY this row has no audit trail, derived in code from the row's own
+   * `m112_accepted` / `m112_reason` / `m112_guard_reason`.
+   *
+   * Exists because the timeline used to render one fixed "this review pre-dates
+   * pipeline wire OR ran on legacy path" for every absence — including reviews
+   * that had run minutes earlier — while the accurate reason sat unread on the
+   * same row. See `src/state/audit-absence.ts` and
+   * an internal design note §2.4.
+   */
+  audit_absence: AuditAbsenceKind;
+  /**
+   * How much of this review's evidence the check could confirm, from
+   * `m112_evidence_label`. `null` on every row written before 2026-08-19 and on
+   * every row that never reached the check (skips, HARD_SUPPRESS, passive
+   * bubbles) — "nobody recorded an answer" and "the answer was `verified`" are
+   * different facts and must not collapse.
+   *
+   * Deliberately NOT folded into `audit_absence`. That union answers "why is
+   * the audit trail missing" and is rendered inside empty audit blocks; a value
+   * meaning "shown, but two quotes were dropped" would be printed there as the
+   * explanation for a rubric checklist with no results. Separate question, separate
+   * field, separate component (`EvidenceMark`).
+   */
+  evidence_label: EvidenceLabel | null;
+  /**
+   * How many cited items the evidence check dropped as unverifiable on this
+   * review. 0 on every row that predates the check labelling instead of
+   * deleting (before 2026-08-19 such a review was discarded, so there was no
+   * row to put a count on) and on every review whose citations all checked out.
+   *
+   * `evidence` above holds only the items that DID check out, so the pair
+   * reads as "n shown, m dropped" — which is the whole point of carrying the
+   * count separately rather than inferring it from an array length.
+   */
+  evidence_unverified: number;
+  /**
+   * How much of the changed diff this review was actually shown, as
+   * `shown / total` hunks. `null` on every row where the whole diff fitted the
+   * budget, and on every row written before 2026-08-20.
+   *
+   * Counted by siltpoke, NOT declared by the reviewer. The prompt does ask the
+   * reviewer to state its coverage in `reasoning`, and nothing verifies that
+   * it did — `schema.ts` has `reasoning` optional on the path that runs. A
+   * property the surfaces must be able to state cannot rest on the model
+   * having complied.
+   */
+  diff_shown: number | null;
+  diff_total: number | null;
+  /**
+   * The user's own words on the turn this review looked at, and the agent's
+   * opening reply — the two fields Block A calls "what I read".
+   *
+   * On the ROW since 2026-08-19. Before that they were written only into the
+   * v2 sidecar, which exists only when a critique is filed: 19 of the 400 most
+   * recent fired reviews on a measured store, 4.8% (snapshot
+   * `scripts/probes/critic-audit-coverage-probe-output-2026-08-19T19Z.txt` §4).
+   * So Block A said "not captured" on the other 95.3%, and — unlike the changed
+   * files, which `diff_summary` carries on 93.4% of those rows — there was no
+   * other place to read them from. Rows older than the change stay null; that
+   * text was never written down.
+   *
+   * `user_raw_query` is capped at 2000 chars on the row (`handle-stop.ts`),
+   * `agent_reply` at 1200 by `captureIntent` itself.
+   */
+  user_raw_query: string | null;
+  /**
+   * True when `user_raw_query` hit the row cap. Its own field rather than an
+   * ellipsis inside the text: the page labels that text *verbatim*, so a
+   * "… (truncated)" tail would be words the user never typed — the same reason
+   * `diff_summary.truncated` is kept outside the arrays it describes.
+   */
+  user_raw_query_truncated: boolean;
+  /** Opening paragraph of the agent's reply. See `user_raw_query`. */
+  agent_reply: string | null;
   /** turns_included from Stop hook context. */
   turns_included: number | null;
   duration_ms: number | null;
@@ -97,6 +173,24 @@ export interface CriticCall {
     cache_read: number;
     cache_create: number;
   } | null;
+  /**
+   * Cross-family provider truth (track #7 T3, AC7). Every historical row
+   * (and every row this track doesn't touch, e.g. plain skips) reads as the
+   * defaults below — no migration rewrite.
+   */
+  provider: string;
+  billing: "usd" | "quota";
+  /** Served model string. null when not recorded (historical rows, skips). */
+  model: string | null;
+  /**
+   * Builder family (Slice B, T4) — WHICH CLI host built the code this run,
+   * from `SILTPOKE_HOST` via brain-config's authorFamily. Persisted first-class
+   * and independent of `provider` (the reviewer): if the user overrides the
+   * reviewer to a different family, the timeline/swiftbar tag still shows the
+   * builder. Historical rows (and rows written before this field) default to
+   * "claude", same no-migration posture as `provider`.
+   */
+  authorFamily: string;
   /**
    * Filename (basename) of the git-diff snapshot captured at fire-time.
    * Resolves to {homeBase}/critic-snapshots/{diff_snapshot_id}. null
@@ -117,6 +211,21 @@ export interface CriticCall {
     files_with_purpose: Array<{ path: string; purpose: string }>;
     /** "haiku" (LLM) or "heuristic" (TS fallback when Haiku failed). */
     source: "haiku" | "heuristic";
+    /**
+     * Per-array count of entries dropped to that array's schema cap. Absent when
+     * nothing was dropped, and absent on every record written before the field
+     * existed.
+     *
+     * Kept OUT of the arrays deliberately — see `diffSummarySchema.truncated` in
+     * `src/critic/tools/run-diff-summary.ts`. A marker entry inside `risks` makes
+     * `risks.length` a lie, and this dashboard is one of the readers that would
+     * have been lied to.
+     */
+    truncated?: {
+      key_changes?: number;
+      risks?: number;
+      files_with_purpose?: number;
+    };
   } | null;
   /**
    * Error message from the Haiku diff summary call when the fallback
@@ -160,6 +269,12 @@ export interface CriticCall {
    * the critique pre-dates the v2 pipeline or no matching file is found.
    */
   v2: V2SidecarData | null;
+  /**
+   * Menu-bar-pet T1 — git branch (`git rev-parse --abbrev-ref HEAD` in the
+   * session cwd) captured at review time. null for non-git dirs, detached
+   * HEAD, and all historical rows (pre-dates this field).
+   */
+  branch: string | null;
 }
 
 export interface SkipBreakdown {
@@ -214,8 +329,15 @@ export interface CriticTelemetry {
     config: BudgetConfig;
     rollup: DailyRollup | null;
   };
-  /** Trigger + quiet-hours config snapshots. */
-  triggerConfig: TriggerConfig;
+  /**
+   * Quiet-hours config snapshot.
+   *
+   * `triggerConfig` used to sit beside this and was removed in S5 with
+   * `trigger-modes.ts`. It had no reader anywhere in `src/web/` or
+   * `src/daemon/` — the three test fixtures that set it were passing
+   * `{ mode: "diff" }`, which was never a valid `TriggerMode`, and nothing ever
+   * noticed.
+   */
   quietConfig: QuietHoursConfig;
   /** Top-down "why is critic silent?" gate diagnostic. */
   gateState: CriticGateState;
@@ -227,6 +349,9 @@ export interface CriticTelemetry {
   activeStatus: StatusFilter | null;
   /** Active speech-kind filter — null means all. */
   activeKind: SpeechKind | null;
+  /** Active builder-family filter (Brain select v2) — null/absent means all.
+   * Applied at the /timeline route (post-read), not in readCriticTelemetry. */
+  activeFamily?: string | null;
   /** Active time-range filter. "all" when not narrowed. */
   activeRange: TimeRange;
   /** Active sort order. */
@@ -296,6 +421,8 @@ export interface ReadTelemetryOpts {
   range?: TimeRange;
   /** Case-insensitive substring across bubble_short/long/critique. */
   query?: string | null;
+  /** Builder-family filter (Brain select v2) — null/undefined = all families. */
+  family?: string | null;
   /** Sort order for `recent`. Default "newest" (existing behavior). */
   sort?: SortOrder;
   /** How many entries to load from brain-calls.jsonl (tail). Default 200. */

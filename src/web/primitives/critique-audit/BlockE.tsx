@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Jiaqi Duan
 /** @jsxImportSource hono/jsx */
 /**
- * Block E — VERDICT CHAIN
+ * Block E — HOW I DECIDED
  *
  * Shows the critic's reasoning → severity → category → final critique_for_claude.
  * Detects auto-promoted critiques (rubric-generated) and hides duplicate text.
@@ -12,7 +12,7 @@
 import { tokens } from "../../tokens/tokens";
 import type { V2SidecarData } from "../../../state/api";
 import type { CriticCall } from "../../../state/api";
-import { AuditSection, PlaceholderNote } from "./shared";
+import { AuditSection, PlaceholderNote, SubLabel, subLabelStyle } from "./shared";
 
 export interface BlockEProps {
   v2: V2SidecarData | null;
@@ -47,7 +47,7 @@ function SeverityBadge({ severity }: { severity: string }) {
         fontSize: 9,
         fontWeight: 700,
         color,
-        background: `${color}22`,
+        background: `color-mix(in srgb, ${color} 13%, transparent)`,
         border: `1px solid ${color}`,
         borderRadius: tokens.radius.sm,
         padding: "1px 6px",
@@ -83,7 +83,7 @@ function AutoPromotedBadge() {
         fontSize: 9,
         fontWeight: 600,
         color: tokens.color.amber,
-        background: `${tokens.color.amber}18`,
+        background: `color-mix(in srgb, ${tokens.color.amber} 9%, transparent)`,
         border: `1px solid ${tokens.color.amber}`,
         borderRadius: tokens.radius.sm,
         padding: "1px 6px",
@@ -104,7 +104,7 @@ function CategoryBadge({ category }: { category: string }) {
         fontFamily: tokens.font.mono,
         fontSize: 9,
         color,
-        background: `${color}18`,
+        background: `color-mix(in srgb, ${color} 9%, transparent)`,
         border: `1px solid ${color}`,
         borderRadius: tokens.radius.sm,
         padding: "1px 6px",
@@ -122,7 +122,7 @@ function IntentBadge({ v2 }: { v2: V2SidecarData }) {
         fontFamily: tokens.font.mono,
         fontSize: 9,
         color: tokens.color.sky,
-        background: `${tokens.color.sky}18`,
+        background: `color-mix(in srgb, ${tokens.color.sky} 9%, transparent)`,
         border: `1px solid ${tokens.color.sky}`,
         borderRadius: tokens.radius.sm,
         padding: "1px 6px",
@@ -139,17 +139,7 @@ function IntentBadge({ v2 }: { v2: V2SidecarData }) {
 function ReasoningBlock({ reasoning }: { reasoning: string }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <span
-        style={{
-          fontFamily: tokens.font.mono,
-          fontSize: 9,
-          color: tokens.color.ink3,
-          textTransform: "uppercase",
-          letterSpacing: "0.06em",
-        }}
-      >
-        reasoning
-      </span>
+      <SubLabel>reasoning</SubLabel>
       <div
         style={{
           fontFamily: tokens.font.body,
@@ -170,15 +160,7 @@ function ReasoningBlock({ reasoning }: { reasoning: string }) {
 function CritiqueForClaudeBlock({ text }: { text: string }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <span
-        style={{
-          fontFamily: tokens.font.mono,
-          fontSize: 9,
-          color: tokens.color.terra,
-          textTransform: "uppercase",
-          letterSpacing: "0.06em",
-        }}
-      >
+      <span style={{ ...subLabelStyle, color: tokens.color.terra }}>
         review for claude (final ask)
       </span>
       <div
@@ -206,7 +188,7 @@ export function BlockE({ v2, c }: BlockEProps) {
   const autoPromoted = isAutoPromotedCritique(critiqueText);
 
   return (
-    <AuditSection id="E" label="E · VERDICT CHAIN">
+    <AuditSection id="E" label="E · HOW I DECIDED">
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         {severity && <SeverityBadge severity={severity} />}
         {autoPromoted && <AutoPromotedBadge />}

@@ -37,7 +37,6 @@ const EMPTY_TELEMETRY: CriticTelemetry = {
     },
     rollup: null,
   },
-  triggerConfig: { mode: "diff" },
   quietConfig: { startMinutes: null, endMinutes: null },
   gateState: {
     blocking: null,

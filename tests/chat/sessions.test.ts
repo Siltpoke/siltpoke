@@ -10,7 +10,7 @@ import {
   chatTitle,
   placeholderSummary,
 } from "../../src/chat/sessions";
-import { readMemory, writeMemory, emptyMemory } from "../../src/memory/memory";
+import { emptyMemory, NODE_ANCHOR_DEFAULTS, readMemory, writeMemory } from "../../src/memory/memory";
 
 let home: string;
 
@@ -119,11 +119,11 @@ test("listChatSessions returns newest-first with derived labels", async () => {
   const testHome = mkdtempSync(join(tmpdir(), "silt-hist-"));
   await upsertChatSession(testHome, "s-old", new Date("2026-06-23T10:00:00Z"), 2, {
     node_id: "n1", proj_hash: "p", node_name: "router.ts", node_type: "file",
-    fingerprint: null, pinned_at: "2026-06-23T10:00:00Z",
+    fingerprint: null, pinned_at: "2026-06-23T10:00:00Z", ...NODE_ANCHOR_DEFAULTS,
   });
   await upsertChatSession(testHome, "s-new", new Date("2026-06-23T11:00:00Z"), 4, {
     node_id: "n2", proj_hash: "p", node_name: "runEval", node_type: "function",
-    fingerprint: null, pinned_at: "2026-06-23T11:00:00Z",
+    fingerprint: null, pinned_at: "2026-06-23T11:00:00Z", ...NODE_ANCHOR_DEFAULTS,
   });
   const list = await listChatSessions(testHome);
   expect(list.map((s) => s.id)).toEqual(["s-new", "s-old"]);
@@ -132,6 +132,17 @@ test("listChatSessions returns newest-first with derived labels", async () => {
   // started_at is surfaced for the history-list created-time label + client sort.
   expect(list[0].started_at).toBe("2026-06-23T11:00:00.000Z");
   expect(list[1].started_at).toBe("2026-06-23T10:00:00.000Z");
+  rmSync(testHome, { recursive: true, force: true });
+});
+
+test("listChatSessions gives a critique anchor an honest 'review' badge, not 'fn' (Fix 3 sidecar)", async () => {
+  const testHome = mkdtempSync(join(tmpdir(), "silt-hist-"));
+  await upsertChatSession(testHome, "s-critique", new Date("2026-07-12T00:00:00Z"), 2, {
+    node_id: "c-1a2b", proj_hash: "p", node_name: "critique c-1a2b", node_type: "critique",
+    fingerprint: null, pinned_at: "2026-07-12T00:00:00Z", kind: "critique", critique_id: "c-1a2b",
+  });
+  const list = await listChatSessions(testHome);
+  expect(list[0]).toMatchObject({ label: "critique c-1a2b", badge: "review" });
   rmSync(testHome, { recursive: true, force: true });
 });
 
@@ -171,7 +182,7 @@ test("upsertChatSession stores summary on creation, preserves it on update", asy
 test("listChatSessions title falls back to node label when summary empty", async () => {
   await upsertChatSession(home, "s-nofb", new Date(), 2, {
     node_id: "n", proj_hash: "p", node_name: "router.ts", node_type: "file",
-    fingerprint: null, pinned_at: "2026-06-23T10:00:00Z",
+    fingerprint: null, pinned_at: "2026-06-23T10:00:00Z", ...NODE_ANCHOR_DEFAULTS,
   }); // no summary arg → ""
   const list = await listChatSessions(home);
   expect(list[0].title).toBe("router.ts");

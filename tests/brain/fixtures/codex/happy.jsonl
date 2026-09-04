@@ -1,0 +1,5 @@
+{"type":"_fixture_provenance","note":"captured from codex v0.142.5 live probes 2026-07-07 (scratchpad codex-brain-probe/run3.jsonl) — event envelope + turn.completed.usage numbers are verbatim from the live probe; the agent_message text was swapped from run3's toy payload ({\"ok\":true,\"n\":3}, kept unmodified in schema-violating.jsonl) to a valid BrainOutput object so this fixture exercises the real parseBrainOutput schema gate. This line itself is an unrecognized event type — doubles as the 'unknown event types ignored' tolerance case."}
+{"type":"thread.started","thread_id":"019f3ec6-198f-7ea3-823a-f9e3274f5673"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\"mood\":\"happy\",\"pose\":\"base\",\"bubble_short\":\"looks good\",\"bubble_long\":\"\",\"critique_for_claude\":\"\",\"severity\":\"info\",\"confidence\":\"high\",\"xp_earned_events\":[]}"}}
+{"type":"turn.completed","usage":{"input_tokens":15006,"cached_input_tokens":4992,"output_tokens":13,"reasoning_output_tokens":0}}

@@ -1,24 +1,42 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * Doctor daemon-staleness check.
+ * Doctor daemon checks (staleness / alive / autostart).
  *
- * Fetches GET /api/daemon-health from the running daemon and maps the
- * reported state to a doctor row:
+ * Staleness: fetches GET /api/daemon-health from the running daemon and maps
+ * the reported state to a doctor row:
  *   - "current" → ✓ "daemon up-to-date (<shortSha>)"
  *   - "behind"  → ⚠ "daemon N commits behind — restart"
  *   - "unknown" → neutral "daemon build version unknown (not a git checkout)"
  *   - daemon down / fetch fails → neutral "skipped (daemon down)"
  *
- * Warn-only by design: every reachable state reports pass=true so the
- * staleness signal never fails the doctor exit code — the ⚠ is purely visual.
- * The existing daemon-down check owns the "down" failure; here we only skip.
+ * Alive (track #6 T5, AC11; opt-in semantics added for the daemon-opt-in
+ * slice): probes GET /api/ping with a short timeout — up → ✓. Down branches
+ * on `daemon.enabled` (config.json, default false — see src/config/
+ * daemon-config.ts): disabled is the expected default state → ◦ info "daemon:
+ * off (opt-in — open /siltpoke-dashboard to enable)", never a failure.
+ * Enabled-but-unreachable is a genuine fault (the user opted in and it's not
+ * there) → ✗ fail.
+ *
+ * Autostart (track #6 T5, AC11): checks for the platform's boot artifact
+ * (launchd plist on darwin, systemd user unit on linux) — installed → ✓;
+ * absent → ◦ info with the setup hint; other platforms → ◦ skip note.
+ *
+ * Off/absent states are info-only by design (a stopped daemon is normal now
+ * that it is opt-in) — those report pass=true and ⚠/◦ are purely visual. The
+ * ONE genuine failure is enabled-but-unreachable (above): the user opted in
+ * and the daemon isn't there → pass=false → fails the doctor exit code.
  *
  * Split from doctor.ts to keep that file under the 400-LOC ratchet, mirroring
- * doctor-brain-check.ts. The state→row mapping is a pure function
+ * doctor-brain-check.ts. The staleness state→row mapping is a pure function
  * (mapDaemonHealthToCheck) so all 4 cases are unit-testable without a live
- * daemon; the async fetch wrapper is thin and injectable.
+ * daemon; the async fetch wrappers are thin and injectable.
  */
+import { existsSync } from "node:fs";
+import { loadDaemonConfig } from "../config/daemon-config";
+import { defaultPlistPath } from "../installer/launchd";
+import { siltpokeRoot } from "../installer/paths";
+import { defaultUnitPath } from "../installer/systemd";
 import type { CheckResult, DoctorOptions } from "./doctor";
 
 const DEFAULT_DAEMON_HEALTH_URL = "http://127.0.0.1:9876/api/daemon-health";
@@ -126,4 +144,88 @@ export async function checkDaemonStaleness(opts: DoctorOptions = {}): Promise<Ch
     health = null;
   }
   return mapDaemonHealthToCheck(health);
+}
+
+// ---------------------------------------------------------------------------
+// Daemon-alive check (track #6 T5, AC11).
+// ---------------------------------------------------------------------------
+
+const DEFAULT_DAEMON_PING_URL = "http://127.0.0.1:9876/api/ping";
+const ALIVE_CHECK_NAME = "daemon alive (/api/ping)";
+const PING_TIMEOUT_MS = 500;
+
+const DAEMON_OFF_DETAIL = "daemon: off (opt-in — open /siltpoke-dashboard to enable)";
+const DAEMON_ENABLED_UNREACHABLE_DETAIL =
+  "daemon.enabled is true but /api/ping is unreachable — try /siltpoke-restart-daemon";
+
+/**
+ * Probe /api/ping with a short timeout. Up → ✓ pass. Down defers to
+ * `daemon.enabled` (default false — the daemon is opt-in, see
+ * src/config/daemon-config.ts): disabled is the normal, expected state → ◦
+ * info row, never a failure. Enabled (the user opened `/siltpoke-dashboard`)
+ * but unreachable is a genuine fault → ✗ fail, since the respawn gate should
+ * be keeping it alive. `fetchFn` and `loadDaemonConfigFn` are injectable for
+ * tests (no live daemon / real config.json needed).
+ */
+export async function checkDaemonAlive(opts: DoctorOptions = {}): Promise<CheckResult> {
+  const url = opts.daemonPingUrl ?? DEFAULT_DAEMON_PING_URL;
+  const doFetch = opts.fetchFn ?? fetch;
+  try {
+    const res = await doFetch(url, { signal: AbortSignal.timeout(PING_TIMEOUT_MS) });
+    if (res.ok) {
+      return { name: ALIVE_CHECK_NAME, pass: true, status: "pass", detail: null };
+    }
+  } catch {
+    // Connection refused / timeout → offline; fall through to the enabled check.
+  }
+  const home = opts.siltpokeHome ?? siltpokeRoot();
+  const loadCfg = opts.loadDaemonConfigFn ?? loadDaemonConfig;
+  const { enabled } = await loadCfg(home);
+  if (!enabled) {
+    return { name: ALIVE_CHECK_NAME, pass: true, status: "info", detail: DAEMON_OFF_DETAIL };
+  }
+  return { name: ALIVE_CHECK_NAME, pass: false, detail: DAEMON_ENABLED_UNREACHABLE_DETAIL };
+}
+
+// ---------------------------------------------------------------------------
+// Autostart-presence check (track #6 T5, AC11).
+// ---------------------------------------------------------------------------
+
+const AUTOSTART_CHECK_NAME = "daemon autostart configured";
+
+/**
+ * Info-only check for the platform's boot artifact (launchd plist / systemd
+ * user unit). NEVER fails the run: absent → ◦ info with the setup hint;
+ * unsupported platform → ◦ skip note. `platform` / `autostartPath` are
+ * injectable for tests.
+ */
+export function checkAutostart(opts: DoctorOptions = {}): CheckResult {
+  const platform = opts.platform ?? process.platform;
+  let artifactPath: string;
+  if (platform === "darwin") {
+    artifactPath = opts.autostartPath ?? defaultPlistPath();
+  } else if (platform === "linux") {
+    artifactPath = opts.autostartPath ?? defaultUnitPath();
+  } else {
+    return {
+      name: AUTOSTART_CHECK_NAME,
+      pass: true,
+      status: "info",
+      detail: `skipped (autostart unsupported on ${platform})`,
+    };
+  }
+  if (existsSync(artifactPath)) {
+    return {
+      name: AUTOSTART_CHECK_NAME,
+      pass: true,
+      status: "pass",
+      detail: `installed (${artifactPath})`,
+    };
+  }
+  return {
+    name: AUTOSTART_CHECK_NAME,
+    pass: true,
+    status: "info",
+    detail: "not installed — run `/siltpoke-setup`",
+  };
 }

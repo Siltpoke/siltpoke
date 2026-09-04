@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
-import { join } from "node:path";
+import { siltpokeRoot } from "../installer/paths";
 import { loadDailyRollup } from "../state/usage";
 import {
   loadBudgetConfig,
@@ -11,10 +11,8 @@ import {
   loadQuietHoursConfig,
   isQuietHour,
 } from "../state/quiet-hours";
-import {
-  loadTriggerConfig,
-  type TriggerMode,
-} from "../router/trigger-modes";
+import { loadReviewUnit } from "../config/review-unit-config";
+import type { ReviewUnit } from "../router/review-unit";
 import { getTodayTelemetry, type CriticCounters } from "../state/critic-counters";
 import { readMemory } from "../memory/memory";
 import { chatSessionStats } from "../chat/sessions";
@@ -34,7 +32,14 @@ export interface StatsResult {
   total_cost_usd: number;
   brain_calls: number;
   reflections: number;
-  trigger_mode: TriggerMode;
+  /**
+   * Which unit of work closes before a review is considered.
+   *
+   * Replaces `trigger_mode`, which named an axis that stopped deciding
+   * anything in S3 and was deleted in S5. A field kept reporting a setting
+   * nothing reads is a status line that lies quietly.
+   */
+  review_unit: ReviewUnit;
   quiet_active: boolean;
   budget_stage: BudgetStage;
   daily_token_limit: number;
@@ -50,17 +55,13 @@ export interface StatsResult {
   chat_last_activity: string | null;
 }
 
-function siltpokeHome(envHome: string | undefined): string {
-  return join(envHome ?? "", ".siltpoke");
-}
-
 export async function runStats(opts: StatsOptions = {}): Promise<StatsResult> {
-  const homeBase = opts.homeBase ?? siltpokeHome(process.env.HOME);
+  const homeBase = opts.homeBase ?? siltpokeRoot();
   const now = (opts.now ?? (() => new Date()))();
 
   const budgetConfig = await loadBudgetConfig(homeBase);
   const quietConfig = await loadQuietHoursConfig(homeBase);
-  const triggerConfig = await loadTriggerConfig(homeBase);
+  const reviewUnit = await loadReviewUnit(homeBase);
 
   const rollup = await loadDailyRollup(homeBase, now, budgetConfig.resetAtMinutes);
   const budget = evaluateBudget(rollup, budgetConfig);
@@ -103,7 +104,7 @@ export async function runStats(opts: StatsOptions = {}): Promise<StatsResult> {
     total_cost_usd: rollup.total_cost_usd,
     brain_calls: rollup.brain_calls,
     reflections: rollup.reflections,
-    trigger_mode: triggerConfig.mode,
+    review_unit: reviewUnit,
     quiet_active: isQuietHour(now, quietConfig),
     budget_stage: budget.stage,
     daily_token_limit: budgetConfig.dailyTokenLimit,
@@ -160,10 +161,16 @@ export function formatCriticTelemetrySection(tel: CriticCounters | undefined): s
   const abstentionPct = abstentionRate.toFixed(1);
   lines.push(`abstention rate: ${abstentionPct}% (${tel.abstentionCount} / ${tel.totalCritiqueRuns})`);
 
-  const guardRejectCount = tel.normalRejectedCount;
-  const normalAcceptedCount = tel.normalAttemptCount - guardRejectCount;
+  // "attempted", NOT "accepted". `normalAttemptCount` is incremented at
+  // classification time, before the Brain call, so it also counts runs that
+  // classified NORMAL and then died in the Brain call — a third of fired
+  // reviews on the measured store. The evidence check no longer discards
+  // reviews, so nothing is subtracted here any more; that alone does NOT make
+  // the number an accepted count, and printing it as one would put a new false
+  // number where this branch just removed an old one.
+  const unverifiedCount = tel.normalUnverifiedCount;
   lines.push(
-    `gate decisions: ${normalAcceptedCount} NORMAL accepted, ${tel.passiveBubbleCount} PASSIVE_BUBBLE, ${tel.hardSuppressCount} HARD_SUPPRESS, ${guardRejectCount} guard-reject`,
+    `gate decisions: ${tel.normalAttemptCount} NORMAL attempted, ${tel.passiveBubbleCount} PASSIVE_BUBBLE, ${tel.hardSuppressCount} HARD_SUPPRESS (${unverifiedCount} of the NORMAL runs carried an unverified citation; a NORMAL run whose Brain call failed is counted as attempted and is not tracked separately)`,
   );
 
   // Tool status table
@@ -180,12 +187,12 @@ export function formatCriticTelemetrySection(tel: CriticCounters | undefined): s
     );
   }
 
-  // Top guard reject reasons (sorted by count desc, max 5)
-  const rejectEntries = Object.entries(tel.guardRejectReasons).sort(
+  // Top unverified-citation reasons (sorted by count desc, max 5)
+  const rejectEntries = Object.entries(tel.unverifiedEvidenceReasons).sort(
     ([, a], [, b]) => b - a,
   );
   if (rejectEntries.length > 0) {
-    lines.push("top guard rejects:");
+    lines.push("top unverified citations:");
     for (const [reason, count] of rejectEntries.slice(0, 5)) {
       lines.push(`  - "${reason}" (${count})`);
     }

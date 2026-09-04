@@ -36,6 +36,7 @@ import {
   writeProject,
 } from "../memory/project";
 import { markerSchema } from "../memory/schema-v3";
+import { siltpokeRoot } from "../installer/paths";
 
 function hashId(input: string): string {
   return createHash("sha256").update(input).digest("hex").slice(0, 16);
@@ -50,17 +51,11 @@ export interface RelocateOptions {
   now?: () => Date;
 }
 
-const HOME_DEFAULT = ".siltpoke";
-
-function siltpokeHome(): string {
-  return join(process.env.HOME ?? "", HOME_DEFAULT);
-}
-
 export async function runRelocate(opts: RelocateOptions): Promise<number> {
   const out = opts.out ?? ((s) => process.stdout.write(s));
   const err = opts.err ?? ((s) => process.stderr.write(s));
   const cwd = opts.cwd ?? process.cwd();
-  const homeBase = opts.homeBase ?? siltpokeHome();
+  const homeBase = opts.homeBase ?? siltpokeRoot();
   const now = (opts.now ?? (() => new Date()))();
 
   let fromOldPath: string | null = null;

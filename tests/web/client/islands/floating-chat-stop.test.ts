@@ -170,3 +170,22 @@ describe("SSR markup: composer send button swaps to a stop affordance", () => {
     expect(html).toMatch(/:disabled="streaming \|\| desyncCta/);
   });
 });
+
+describe("SSR markup: critique_gone terminal CTA has its own copy (MINOR 7 / prior wave's FIX 4)", () => {
+  const html = String(FloatingChat());
+
+  test("renders the critique-specific headline, gated by its OWN x-show (split from the node_gone headline)", () => {
+    expect(html).toContain("I can&#39;t load that review any more");
+    expect(html).toContain(`x-show="terminalCta?.reason === &#39;critique_gone&#39;"`);
+  });
+
+  test("the node_gone headline is gated by the COMPLEMENTARY x-show (never shown together)", () => {
+    expect(html).toContain(`x-show="terminalCta?.reason !== &#39;critique_gone&#39;"`);
+    expect(html).toContain("was renamed or removed");
+  });
+
+  test("critique_gone gets its own follow-up line, distinct from the node-anchor 'current version of this code' copy", () => {
+    expect(html).toContain("Start a new chat if you&#39;d like to ask about something else.");
+    expect(html).toContain("Start a new chat to continue exploring the current version of this code.");
+  });
+});

@@ -139,7 +139,7 @@ export function renderTodayPanel(
     <div class="stat"><div class="stat-v">${card.reflections_today}</div><div class="stat-k">${esc(t.reflections)}</div></div>
     <div class="stat"><div class="stat-v">$${card.cost_today_usd.toFixed(4)}</div><div class="stat-k">${esc(t.spent)}</div></div>
     <div class="stat"><div class="stat-v">${budgetPct}%</div><div class="stat-k">${esc(t.budget)}</div></div>
-    <div class="stat"><div class="stat-v">${esc(card.trigger_mode)}</div><div class="stat-k">${esc(t.mode)}</div></div>
+    <div class="stat"><div class="stat-v">${esc(card.review_unit)}</div><div class="stat-k">${esc(t.unit)}</div></div>
     <div class="stat"><div class="stat-v">${stats.quiet_active ? esc(t.quiet_on) : esc(t.quiet_off)}</div><div class="stat-k">${esc(t.quiet_hours)}</div></div>
   </div>`;
   return panelWrap(t.today, body, true);

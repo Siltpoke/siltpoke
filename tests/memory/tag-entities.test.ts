@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { tagUntaggedEntities } from "../../src/memory/tag-entities";
-import { emptyMemory } from "../../src/memory/memory";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { callBrainRaw as callBrainRawType } from "../../src/brain/brain";
+import { emptyMemory } from "../../src/memory/memory";
+import { tagUntaggedEntities } from "../../src/memory/tag-entities";
 
 function memWith(facts: any[]) {
   return { ...emptyMemory(), facts };
@@ -46,5 +49,55 @@ describe("tagUntaggedEntities", () => {
       ledger: noopLedger,
     });
     expect(out.facts[0]!.entities).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Default seam is role-routed (single-brain S2, task 6) — tagUntaggedEntities
+// no longer defaults `deps.callBrainRaw` to the imported `callBrainRaw`
+// (always claude, model pinned via the deleted TAG_MODEL constant); it
+// defaults to `makeRoleRawBrain(deps.homeBase, "extract")`. Same rationale as
+// extract-facts.test.ts's twin block: mocking the shared `role-brain` module
+// was verified to leak across test files with no working restore (bun
+// `mock.module` limitation), so this exercises the REAL chain end-to-end via
+// a `config.json` selecting "qoder" for the extract role + a throwaway
+// `qodercli` executable on PATH.
+// ---------------------------------------------------------------------------
+
+describe("tagUntaggedEntities default seam (role-routed)", () => {
+  test("no deps.callBrainRaw + homeBase config selecting qoder → real qoder path is exercised", async () => {
+    const home = mkdtempSync(join(tmpdir(), "tag-entities-role-home-"));
+    const bin = mkdtempSync(join(tmpdir(), "tag-entities-role-bin-"));
+    const originalPath = process.env.PATH;
+    try {
+      writeFileSync(
+        join(home, "config.json"),
+        JSON.stringify({ brain: { roles: { extract: { provider: "qoder" } } } }),
+      );
+      const fakeBin = join(bin, "qodercli");
+      writeFileSync(
+        fakeBin,
+        [
+          "#!/usr/bin/env bun",
+          'const inner = JSON.stringify({ tags: [{ id: "f1", entities: [{ name: "cats", type: "thing" }] }] });',
+          'const envelope = { type: "result", subtype: "success", is_error: false, result: inner, total_cost_usd: 0, usage: { input_tokens: 5, output_tokens: 3 } };',
+          "process.stdout.write(JSON.stringify(envelope));",
+          "",
+        ].join("\n"),
+      );
+      chmodSync(fakeBin, 0o755);
+      process.env.PATH = `${bin}:${originalPath ?? ""}`;
+
+      const out = await tagUntaggedEntities(memWith([{ ...base }]), {
+        homeBase: home,
+        ledger: noopLedger,
+      });
+
+      expect(out.facts[0]!.entities).toEqual([{ name: "cats", type: "thing" }]);
+    } finally {
+      process.env.PATH = originalPath;
+      rmSync(home, { recursive: true, force: true });
+      rmSync(bin, { recursive: true, force: true });
+    }
   });
 });

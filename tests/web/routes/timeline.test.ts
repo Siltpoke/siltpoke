@@ -75,8 +75,80 @@ describe("GET /timeline — shell", () => {
   });
 });
 
+describe("GET /api/timeline/dossier — lazy dossier fragment", () => {
+  test("returns ONE DetailPane fragment for the given turnKey (no page chrome)", async () => {
+    await writeFixture(homeBase, [
+      { ts: "2026-07-01T10:00:00Z", session: "s1", status: "fired", bubble_short: "older turn" },
+      { ts: "2026-07-01T11:00:00Z", session: "s2", status: "fired", bubble_short: "newest turn" },
+    ]);
+    const key = "2026-07-01T10:00:00Z|s1";
+    const res = await buildApp().request(`/api/timeline/dossier?key=${encodeURIComponent(key)}`);
+    expect(res.status).toBe(200);
+    const frag = await res.text();
+    // The requested pane rendered as a standalone fragment…
+    expect(frag).toContain(`data-turn-key="${key}"`);
+    expect(frag).toContain("tl-detail-pane");
+    // …with NO full-page chrome (it's morphed into the placeholder).
+    expect(frag).not.toContain(">Timeline</h1>");
+    expect(frag).not.toContain("<html");
+    // Injected already-selected → must be visible, never x-cloak'd.
+    const pane = frag.match(/<div class="tl-detail-pane"[^>]*>/)?.[0] ?? "";
+    expect(pane).not.toContain("x-cloak");
+  });
+
+  test("unknown key → 404 honest note (never 500)", async () => {
+    await writeFixture(homeBase, [
+      { ts: "2026-07-01T10:00:00Z", session: "s1", status: "fired" },
+    ]);
+    const res = await buildApp().request(
+      `/api/timeline/dossier?key=${encodeURIComponent("2020-01-01T00:00:00Z|ghost")}`,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  test("missing key param → 400", async () => {
+    const res = await buildApp().request("/api/timeline/dossier");
+    expect(res.status).toBe(400);
+  });
+
+  test("resolves a row BEYOND the page's 20-turn view (window is deliberately wider, anti-race)", async () => {
+    // The page renders the newest 20 turns; the dossier route must use a WIDER
+    // window so a row that scrolled past 20 (or was pushed down by a new
+    // arrival after page render) still resolves — otherwise a visible row's
+    // placeholder would 404 and hang. 25 fired turns; request the OLDEST (well
+    // outside the top-20). A 20-cap would 404 here; the 200 window finds it.
+    const many: FixtureCall[] = Array.from({ length: 25 }, (_, i) => ({
+      ts: `2026-07-01T${String(i).padStart(2, "0")}:00:00Z`,
+      session: `s${i}`,
+      status: "fired" as const,
+      bubble_short: `turn ${i}`,
+    }));
+    await writeFixture(homeBase, many);
+    const oldestKey = "2026-07-01T00:00:00Z|s0";
+    const res = await buildApp().request(
+      `/api/timeline/dossier?key=${encodeURIComponent(oldestKey)}`,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain(`data-turn-key="${oldestKey}"`);
+  });
+
+  test("filter params are honored so the row resolves under the active window", async () => {
+    // A row only reachable under status=all must still resolve when the
+    // placeholder forwards the active filters.
+    await writeFixture(homeBase, [
+      { ts: "2026-07-01T10:00:00Z", session: "s1", status: "fired", bubble_short: "hit" },
+    ]);
+    const key = "2026-07-01T10:00:00Z|s1";
+    const res = await buildApp().request(
+      `/api/timeline/dossier?key=${encodeURIComponent(key)}&status=all`,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain(`data-turn-key="${key}"`);
+  });
+});
+
 describe("master/detail row select without reload", () => {
-  test("newest fired turn is pre-selected; its pane is visible (no x-cloak), older panes are cloaked", async () => {
+  test("only the pre-selected dossier is eager; others are lazy morph placeholders (visible/cloak parity preserved)", async () => {
     await writeFixture(homeBase, [
       { ts: "2026-07-01T10:00:00Z", session: "s1", status: "fired", bubble_short: "older turn" },
       { ts: "2026-07-01T11:00:00Z", session: "s2", status: "fired", bubble_short: "newest turn" },
@@ -89,16 +161,32 @@ describe("master/detail row select without reload", () => {
     // Alpine root state pre-selects the newest fired row.
     expect(html).toContain(`selected: ${JSON.stringify(newestKey).replace(/"/g, "&quot;")}`);
 
-    // Both detail panes are server-embedded (row click = state swap, no fetch).
+    // Both panes share the `.tl-detail-pane` shell + x-show/x-cloak contract
+    // so the rail's select state drives them identically.
     const paneRe = (key: string) =>
       new RegExp(`<div class="tl-detail-pane" data-turn-key="${key.replace("|", "\\|")}"([^>]*)>`);
     const newestPane = html.match(paneRe(newestKey))?.[0] ?? "";
     const olderPane = html.match(paneRe(olderKey))?.[0] ?? "";
     expect(newestPane).not.toBe("");
     expect(olderPane).not.toBe("");
-    // Initially-selected pane is visible pre-hydration; others are cloaked.
+    // Pre-selected pane is visible pre-hydration; others are cloaked.
     expect(newestPane).not.toContain("x-cloak");
     expect(olderPane).toContain("x-cloak");
+
+    // NEW (lazy): the pre-selected pane is a full eager DetailPane — no
+    // hx-get, not a lazy placeholder. Every OTHER pane is a placeholder that
+    // hx-gets its DetailPane on first select (this is the ~1MB→~1-dossier win).
+    expect(newestPane).not.toContain("hx-get");
+    expect(newestPane).not.toContain("data-dossier-lazy");
+    expect(olderPane).toContain("data-dossier-lazy");
+    expect(olderPane).toContain('hx-get="/api/timeline/dossier?key=');
+    expect(olderPane).toContain('hx-trigger="dossier-load once"');
+    expect(olderPane).toContain('hx-swap="morph"');
+    // The older pane ships NONE of its heavy body eagerly (no rubric rows) —
+    // only the loading stub until it is selected.
+    const olderBlock =
+      html.slice(html.indexOf(olderPane)).match(/<div class="tl-detail-pane"[\s\S]*?loading…[\s\S]*?<\/div>\s*<\/div>/)?.[0] ?? "";
+    expect(olderBlock).not.toContain("rubric-row");
   });
 
   test("rail rows carry the Alpine select handler for fired rows only", async () => {
@@ -306,10 +394,16 @@ describe("design fixup (3rd smoke) — filter-row visual parity + errors facet",
     expect(html).not.toContain("critic-filter-chip");
     expect(seg).toContain("border:none");
     // Active item (default status=fired) = solid ink block, cream text.
+    // Both are token var() indirections: background = tokens.color.ink,
+    // text = tokens.color.cream (Task 8 migrated filter-row.tsx's local
+    // SEG_ACTIVE_TEXT literal to the token — the token's light value is the
+    // nearest one, not byte-identical to the literal it replaced, so expect a
+    // negligible shift in light mode; the point is that it now follows dark
+    // mode instead of freezing at the light hex).
     const fired = seg.match(/<a[^>]*data-key="fired"[^>]*>/)?.[0] ?? "";
     expect(fired).toContain('data-active="true"');
-    expect(fired).toContain("#1f1b16");
-    expect(fired).toContain("#f7f2e4");
+    expect(fired).toContain("var(--color-ink)");
+    expect(fired).toContain("var(--color-cream)");
     // Inactive item = transparent, muted — no ink block.
     const skipped = seg.match(/<a[^>]*data-key="skipped"[^>]*>/)?.[0] ?? "";
     expect(skipped).toContain('data-active="false"');

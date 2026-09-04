@@ -44,6 +44,8 @@ describe("detectEntrypoints", () => {
       file: "handle-stop.ts",
       line: 90,
       nodeId: "function:src/hooks/handle-stop.ts:handleStopHook",
+      source: "preset",
+      confidence: "inferred",
     });
     expect(byId.get("daemon")?.fn).toBe("startDaemon");
     expect(byId.get("daemon")?.module).toBe("daemon");

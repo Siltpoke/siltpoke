@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { readStatus } from "../state/critique-status";
 import { readMemory, type Fact } from "../memory/memory";
+import { siltpokeRoot } from "../installer/paths";
 
 interface HistoryEntry {
   timestamp: string;
@@ -132,7 +133,7 @@ if (import.meta.main) {
   const facts = args.includes("--facts");
   // Critiques are per-project; facts come from ~/.siltpoke/ (global home).
   const basePath = facts
-    ? join(process.env.HOME ?? "", ".siltpoke")
+    ? siltpokeRoot()
     : join(process.cwd(), ".siltpoke");
   const out = await listInbox({ basePath, facts });
   process.stdout.write(out);

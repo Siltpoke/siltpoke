@@ -1,0 +1,8 @@
+{
+  "name": "opaque-scripts",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "next dev",
+    "dev": "concurrently 'a' 'b'"
+  }
+}

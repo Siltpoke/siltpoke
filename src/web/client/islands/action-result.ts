@@ -20,6 +20,7 @@
  */
 import { setPet } from "../stores/petState";
 import type { Pet } from "../stores/petState";
+import { tokens } from "../../tokens/tokens";
 
 type StatKey = "hp" | "hunger" | "energy" | "mood" | "bond";
 
@@ -51,9 +52,13 @@ const STAT_LABEL: Record<StatKey, string> = {
   hp: "hp", hunger: "hunger", energy: "energy", mood: "mood", bond: "bond",
 };
 
+// STAT_COLOR / ACTION_COLOR share ONE hue per role (vitality/hunger/energy/
+// bond) — `tokens.color.statXInk` property access, not a hand-written
+// `var(--color-X)` string (a typo here is a compile error, not a silent
+// no-op).
 const STAT_COLOR: Record<StatKey, string> = {
-  hp: "#c75c5c", hunger: "#d97a3a", energy: "#7aa757",
-  mood: "#c75c5c", bond: "#5a96c8",
+  hp: tokens.color.statVitalityInk, hunger: tokens.color.statHungerInk, energy: tokens.color.statEnergyInk,
+  mood: tokens.color.statVitalityInk, bond: tokens.color.statBondInk,
 };
 
 /**
@@ -70,8 +75,8 @@ const ACTION_GLYPHS: Record<string, readonly string[]> = {
 };
 
 const ACTION_COLOR: Record<string, string> = {
-  feed: "#d97a3a", pet: "#c75c5c", play: "#7aa757",
-  clean: "#5a96c8", sleep: "#1f1b16", tease: "#c75c5c",
+  feed: tokens.color.statHungerInk, pet: tokens.color.statVitalityInk, play: tokens.color.statEnergyInk,
+  clean: tokens.color.statBondInk, sleep: tokens.color.ink, tease: tokens.color.statVitalityInk,
 };
 
 function isMood(v: string): v is Pet["mood"] {
@@ -106,7 +111,7 @@ function scatterGlyphs(action: string): void {
   const host = document.querySelector(".home-center__creature") as HTMLElement | null;
   if (!host) return;
   const glyphs = ACTION_GLYPHS[action];
-  const color = ACTION_COLOR[action] ?? "#1f1b16";
+  const color = ACTION_COLOR[action] ?? tokens.color.ink;
   if (!glyphs) return;
 
   for (let i = 0; i < glyphs.length; i++) {
@@ -156,7 +161,7 @@ function showBanner(payload: ActionResultPayload): void {
   const capped = payload.capped === true;
   const grumpy = payload.grumpy === true;
   const deltas = (payload.stat_delta ?? {}) as Partial<Record<StatKey, number>>;
-  const color = ACTION_COLOR[action] ?? "#1f1b16";
+  const color = ACTION_COLOR[action] ?? tokens.color.ink;
 
   const banner = document.createElement("div");
   banner.className = "action-banner";
@@ -167,16 +172,16 @@ function showBanner(payload: ActionResultPayload): void {
     "left:50%",
     "transform:translate(-50%,-8px)",
     "padding:6px 12px",
-    "background:#faf6ec",
+    `background:${tokens.color.cream}`,
     `border:1px solid ${color}`,
     "border-radius:10px",
-    "box-shadow:0 4px 12px rgba(31,27,22,0.10)",
+    `box-shadow:${tokens.shadow.md}`,
     "display:flex",
     "gap:8px",
     "align-items:center",
     "font-family:'JetBrains Mono', ui-monospace, monospace",
     "font-size:12px",
-    "color:#1f1b16",
+    `color:${tokens.color.ink}`,
     "z-index:6",
     "opacity:0",
     "animation:siltpokeBanner 2400ms ease-out forwards",
@@ -199,15 +204,15 @@ function showBanner(payload: ActionResultPayload): void {
     chips.push(`<span style="color:${c};font-weight:600">${sign}${v} ${STAT_LABEL[k]}</span>`);
   }
   if (awarded > 0) {
-    chips.push(`<span style="color:#c75c5c;font-weight:700">+${awarded} XP</span>`);
+    chips.push(`<span style="color:${tokens.color.statVitalityInk};font-weight:700">+${awarded} XP</span>`);
   }
   if (capped && awarded === 0) {
-    chips.push(`<span style="color:#8a7c64">XP capped today</span>`);
+    chips.push(`<span style="color:${tokens.color.ink3}">XP capped today</span>`);
   } else if (capped) {
-    chips.push(`<span style="color:#8a7c64">XP cap reached</span>`);
+    chips.push(`<span style="color:${tokens.color.ink3}">XP cap reached</span>`);
   }
   if (grumpy && awarded === 1) {
-    chips.push(`<span style="color:#8a7c64">grumpy</span>`);
+    chips.push(`<span style="color:${tokens.color.ink3}">grumpy</span>`);
   }
   const chipBox = document.createElement("span");
   chipBox.style.cssText = "display:flex;gap:8px";

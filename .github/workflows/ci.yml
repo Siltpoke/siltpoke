@@ -3,22 +3,72 @@ name: ci
 # ──────────────────────────────────────────────────────────────────────────────
 # CI gate: lint + typecheck + unit tests + eval:fast
 #
-# Dormant (workflow_dispatch only) — auto-trigger on PR is disabled. The
-# workflow file stays in-repo as the canonical CI spec; restoring auto-CI is
-# a small edit to the `on:` block below.
+# LIVE since 2026-07-12. Previously dormant (workflow_dispatch only) during the
+# GitHub Actions billing pause.
 #
-# **To restore auto-CI:**
-#   1. Replace `on: workflow_dispatch:` below with:
-#        on:
-#          pull_request:
-#          workflow_dispatch:
-#   2. Commit + push. Auto-runs resume immediately on the next PR.
+# Why it was turned back on: while dormant, `main` went red and STAYED red,
+# unnoticed, for weeks — 5 failing unit tests (a an entry-count assertion never
+# re-baselined after two board syncs; 4 report goldens never regenerated after
+# a MANUAL.md change) plus 2 failing e2e specs. Every one would have been caught
+# the day it landed. "Verify locally before merging" did not hold in practice.
 #
-# Until then, verification is run locally — see test.yml for the steps.
+# COST NOTE — this repo is PRIVATE, so Actions minutes are BILLED:
+#   - `concurrency` below cancels superseded runs, so a force-push does not
+#     stack billable runs.
+#   - unit tests + tsc live HERE ONLY. test.yml runs e2e and deliberately does
+#     NOT repeat them — enabling both as-written would double-bill the same work.
+#
+# To make dormant again: replace the `on:` block with `on: workflow_dispatch:`
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Inert-doc skip (cost control, 2026-08-03) ────────────────────────────────
+# A one-line markdown change used to burn FOUR runs: ci + e2e on the PR, then
+# both again on the push to main. The paths below are prose-only for everything
+# THIS workflow runs.
+#
+# ⚠️ CORRECTED 2026-08-14 — the original note read "prose-only, verified not
+# assumed: nothing under tests/, scripts/ or src/ reads any of them at runtime
+# (grepped readFileSync / Bun.file / readdir / Glob against each path, 0 hits)".
+# That verification was real but its METHOD had a blind spot, and the blind spot
+# was load-bearing: `tests/knowledge/track-answer-sets.test.ts` reaches these
+# paths through `git ls-files -- docs`, which is none of the four spellings that
+# were grepped, so it returned 0 hits while genuinely depending on them. Measured
+# on the day of the correction: 701 of 755 tracked docs (92.8%) sit under the
+# `documents scanned` 755 -> 756 and turned that test red. Adding or deleting a
+# doc under ANY path below makes the committed track snapshot stale.
+#
+# That gate now runs in `.github/workflows/doc-corpus.yml`, which carries no
+# paths-ignore for exactly this reason. The denylist here stays: what it skips is
+# the ~3.5-minute suite, not the corpus check.
+#
+# The lesson generalises past this one file: a "nothing reads it" audit is only
+# as wide as the access spellings it searched for. Before adding a path below,
+# ask what reads the docs TREE (git plumbing, directory walks, corpus renders),
+# not only what opens a file by name.
+#
+# ⚠️ THIS IS A DENYLIST ON PURPOSE. Anything not listed still runs CI, so a doc
+# added later keeps its protection by default. Do NOT "simplify" this to
+# `docs/**` or `**.md` — four documents are LOAD-BEARING and a blanket ignore
+# would skip CI exactly when they break it:
+#   · RESUME.md        — tests/resume/live-docs.test.ts + facts.test.ts read the LIVE file
+#   · docs/MANUAL.md   — src/cli/report-artifacts.ts:35 embeds it; the report.golden
+#                        fixtures assert its content
+# and unaudited means it keeps CI.
+#
+# paths-ignore skips only when EVERY changed file matches, so a PR touching a
+# journal entry AND code still runs the full suite.
 # ──────────────────────────────────────────────────────────────────────────────
 
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
+
+# Cancel an in-flight run when the same ref is pushed again (cost control).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   ci:
@@ -30,13 +80,37 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          # Pinned, NOT `latest`: the check:dist gate byte-compares the committed
+          # dist/ bundles against a fresh `bun build`, and bun's bundler output is
+          # not reproducible across versions (empty-block minification differs).
+          # This must match the bun version dist/ was built with; bump both together.
+          bun-version: 1.3.11
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # BLOCKING. The plugin ships dist/ committed to git — `/plugin install` only
+      # copies files, it never runs a build — so a stale bundle is the one way a
+      # plugin user could silently end up running old code. This rebuilds dist/
+      # and fails if the committed tree doesn't match (see scripts/build-dist.ts).
+      - name: Bundle is fresh (dist/ matches src/)
+        run: bun run check:dist
+
+      # INFORMATIONAL, deliberately — and this is why the CI was never switched on.
+      #
+      # `bun run lint` exits 1 today on ~353 PRE-EXISTING diagnostics
+      # (noConsole 262 · useTemplate 131 · noUnusedImports 50 · noNonNullAssertion …),
+      # spread across src/, tests/ and scripts/. This step was BLOCKING in the
+      # original (dormant) version of this file, which means switching the workflow
+      # on as-written would have painted CI red on its very first run.
+      #
+      # A CI that is red on day one teaches everyone to ignore CI — strictly worse
+      # than no CI. So it starts informational and GREEN, and the debt gets
+      # ratcheted down in its own track; flip this to blocking the moment
+      # `bun run lint` exits 0.
       - name: Lint (Biome)
         run: bun run lint
+        continue-on-error: true  # ~353 pre-existing; see note above. Ratchet, then flip.
 
       - name: File-length cap (primary north-star)
         run: bun run lint:files
@@ -46,19 +120,63 @@ jobs:
         run: bun run lint:func
         continue-on-error: true  # informational for now; will flip to blocking
 
+      # BLOCKING from day one (dark-mode track, 2026-08-01) — unlike its
+      # lint:files/lint:func siblings above, this one opens at zero
+      # un-allowlisted violations by construction: every color literal
+      # present in src/web when the track opened was captured into
+      # .lint-colors-allowlist.json as the burn-down baseline (see that
+      # file + scripts/lint-no-hardcoded-color.ts). A NEW literal has
+      # nowhere to hide, so there is no "ratchet down first" phase needed.
+      - name: Hardcoded-color guard (src/web)
+        run: bun run lint:colors
+      # BLOCKING as of 2026-07-12. jscpd was un-runnable for a long
+      # time (iCloud had corrupted node_modules), and duplication had drifted to
+      # 2.95% against the 2% threshold. R3 brought it to 1.88% — which leaves only
+      # ~120 lines of headroom, so this has to fail loudly the moment it regresses
+      # rather than go quietly informational again.
       - name: Duplication audit
         run: bun run audit:dup
-        continue-on-error: true  # informational for now; will flip to blocking
 
       - name: Circular-dep audit
         run: bun run audit:cycles
         continue-on-error: true  # informational for now; will flip to blocking
-
       - name: TypeScript type check
         run: bunx tsc --noEmit
 
-      - name: Unit tests
-        run: bun test
+      # ubuntu-latest does not preinstall ripgrep. Without it, the disk-awareness
+      # production-path fixtures (tests/critic/disk-awareness/importers.test.ts,
+      # tests/critic/rubric/tier1/test-gap-disk*.test.ts,
+      # tests/critic/caller-impact/caller-resolver-graph.test.ts) silently
+      # `it.skipIf(!rgAvailable)` — a guard nobody proves fires. Install it so
+      # they actually run.
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
 
+      # Keep the output. The e2e job already uploads its report and traces on
+      # failure (test.yml); the unit suite had no equivalent, so a failure that
+      # did not reproduce left nothing to read. That is not hypothetical — on
+      # 2026-08-14 a single `1 fail` was observed locally, the log was lost to a
+      # re-run, and 15 full-suite plus 35 targeted runs never reproduced it.
+      # Three hypotheses were tested and falsified; the one thing that would
+      # have ended it in minutes was the failure's own name.
+      #
+      # `tee` NOT bare: a pipeline exits with the LAST command's status, so
+      # `bun test | tee` would report tee's 0 and turn a red suite green.
+      # pipefail is required and is not on by default in Actions' bash.
+      - name: Unit tests
+        id: unit
+        run: |
+          set -o pipefail
+          bun test 2>&1 | tee unit-test.log
+
+      # Only when the unit step itself failed — `outcome` is "skipped" if an
+      # earlier step broke first, so this never uploads an empty or absent file.
+      - name: Upload unit test log on failure
+        if: always() && steps.unit.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-log
+          path: unit-test.log
+          retention-days: 7
       - name: Eval harness (fast / no API cost)
         run: bun run eval:fast

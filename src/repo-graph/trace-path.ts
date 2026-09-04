@@ -21,7 +21,7 @@
  * honesty bar forbids guessing them.
  */
 import { makeNameBasedResolver, type CallKlass, type CallResolver } from "./call-resolver";
-import type { QueryIndex, RepoGraph, SiltpokeGraphNode } from "./types";
+import type { QueryIndex, RepoGraph, SiltpokeGraphNode, SiltpokeNodeType } from "./types";
 
 export interface TraceIO {
   input: string;
@@ -41,6 +41,12 @@ export interface TraceNode {
   path: string;
   line: number;
   signature: string;
+  /**
+   * Graph node type ("file" | "function" | "class" | "module" | "symbol").
+   * Optional: the synthetic unresolved-tail node (`unres:*`) has no real
+   * graph node behind it, so it correctly leaves this undefined.
+   */
+  type?: SiltpokeNodeType;
   role?: "entry";
   shared?: boolean;
   warn?: boolean;
@@ -252,6 +258,7 @@ export function tracePath(
       path: g.path,
       line: g.lineRange[0],
       signature: g.signature ?? "",
+      type: g.type,
       io: parseIO(g.signature),
       purpose: purposeOf(g),
       ...(isShared(id) ? { shared: true } : {}),

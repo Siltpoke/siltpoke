@@ -53,6 +53,16 @@ import { Chat } from "../../src/web/screens/Chat";
 
 // ═══════════════════════════════ shared harness ══════════════════════════════
 
+const TEST_SECRET = "test-secret";
+
+const ELIGIBLE_PROJECT = async () => ({
+  project_id: null,
+  proj_hash: null,
+  project_root: null,
+  display_name: null,
+  source: "explicit" as const,
+});
+
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length > 0) cleanups.pop()?.();
@@ -74,7 +84,7 @@ function mountApp(
   streamFactory: (opts: StreamChatOptions) => AsyncGenerator<StreamEvent, void, void>,
 ): Hono {
   const app = new Hono();
-  mountChatRoutes(app, { homeBase: home, index: idx, streamFactory });
+  mountChatRoutes(app, { homeBase: home, resolveProject: ELIGIBLE_PROJECT, index: idx, streamFactory, secret: TEST_SECRET });
   return app;
 }
 
@@ -85,7 +95,7 @@ async function post(
 ): Promise<{ res: Response; sid: string }> {
   const res = await app.request("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
     body: JSON.stringify(body),
     ...(signal ? { signal } : {}),
   });
@@ -421,7 +431,24 @@ describe("server — cancelled turn persisted honestly, never re-fed", () => {
     expect(turn.status).toBeUndefined(); // ok turn — a finished answer is never discarded
     expect(turn.content).toBe("a complete paid answer");
     expect(turn.tokens).toEqual({ input: 11, output: 22 });
-    const ledger = ledgerOnDisk(home);
+    // Wait for the LEDGER, not just the row. `waitForRows` settles
+    // `chats/<sid>.jsonl`; the ledger is written after it, further down the
+    // same stream callback (`src/daemon/routes/chat.ts:1444`), so reading it
+    // straight off `waitForRows` assumes the two land together. They do not —
+    // the gap is narrow, not absent. A probe on the sibling test in
+    // `chat-stream-hardening-cancel.acceptance.test.ts` read the ledger at the
+    // instant the rows settled: `1` on 18/18 unloaded runs, `0` on 5 of 18 with
+    // the CPU saturated. That is this failure (2026-08-24 CI,
+    // `Expected length: 1 / Received length: 0`), and it is the same shape in
+    // both files because both hold the stream open and cancel after
+    // `message_stop`.
+    const ledger = await waitFor(
+      () => {
+        const rows = ledgerOnDisk(home);
+        return rows.length >= 1 ? rows : null;
+      },
+      "the paid turn's ledger row",
+    );
     expect(ledger).toHaveLength(1); // paid-for usage IS ledgered
     expect(ledger[0]).toMatchObject({ kind: "chat", input_tokens: 11, output_tokens: 22 });
   });

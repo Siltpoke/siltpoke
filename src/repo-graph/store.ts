@@ -13,10 +13,12 @@
  * writes don't corrupt the graph on crash. All reads are tolerant —
  * missing/corrupt files return the empty defaults from `types.ts`.
  */
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { AST_SIG_VERSION } from "./ast-signature";
 import {
   emptyFingerprints,
   emptyGraph,
@@ -25,12 +27,14 @@ import {
   type QueryIndex,
   type RepoGraph,
   type RepoGraphMeta,
+  type SeenWatermark,
 } from "./types";
 
 const GRAPH_FILE = "graph.json";
 const QUERY_INDEX_FILE = "queryIndex.json";
 const FINGERPRINTS_FILE = "fingerprints.json";
 const META_FILE = "meta.json";
+const SEEN_FILE = "seen.json";
 
 async function atomicWriteJson(path: string, data: unknown): Promise<void> {
   const tmp = `${path}.tmp.${process.pid}.${Date.now()}.${randomBytes(4).toString("hex")}`;
@@ -108,4 +112,43 @@ export async function readMeta(storageDir: string): Promise<RepoGraphMeta | null
 export async function writeMeta(storageDir: string, meta: RepoGraphMeta): Promise<void> {
   await ensureStorageDir(storageDir);
   await atomicWriteJson(join(storageDir, META_FILE), meta);
+}
+
+export function emptySeen(): SeenWatermark {
+  return { ast_sig_version: AST_SIG_VERSION, baseline_sha: null, files: {}, unknown_baseline: false };
+}
+
+/**
+ * Read `seen.json`. Three outcomes (C11):
+ *   - file ABSENT           → `emptySeen()` (unknown_baseline: false — genuinely nothing seen yet)
+ *   - file present, VALID   → the parsed watermark, as-is
+ *   - file present, BROKEN  → `{ ...emptySeen(), unknown_baseline: true }` (invalid JSON or
+ *     wrong shape must never silently read as a clean empty seed — that would falsely mark
+ *     the whole repo "seen").
+ */
+export async function readSeen(storageDir: string): Promise<SeenWatermark> {
+  const path = join(storageDir, SEEN_FILE);
+  if (!existsSync(path)) return emptySeen();
+
+  try {
+    const raw = await readFile(path, "utf8");
+    const parsed = JSON.parse(raw) as Partial<SeenWatermark>;
+    if (
+      typeof parsed.ast_sig_version !== "number" ||
+      (parsed.baseline_sha !== null && typeof parsed.baseline_sha !== "string") ||
+      typeof parsed.files !== "object" ||
+      parsed.files === null ||
+      typeof parsed.unknown_baseline !== "boolean"
+    ) {
+      return { ...emptySeen(), unknown_baseline: true };
+    }
+    return parsed as SeenWatermark;
+  } catch {
+    return { ...emptySeen(), unknown_baseline: true };
+  }
+}
+
+export async function writeSeen(storageDir: string, seen: SeenWatermark): Promise<void> {
+  await ensureStorageDir(storageDir);
+  await atomicWriteJson(join(storageDir, SEEN_FILE), seen);
 }

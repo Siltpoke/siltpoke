@@ -21,15 +21,42 @@ import { aggregateBySuperGroup } from "./aggregator";
 import { computeContainerStats } from "./container-stats";
 import type { ArchitectureOverlay } from "./architecture-parser";
 import { emptyCounters, type RepoGraph, type RepoGraphMeta } from "./types";
+import { tokens } from "../web/tokens/tokens";
 
-/** Warm-palette accents, cycled by panel order. Leads with the prototype 4. */
+/**
+ * Warm-palette accents, cycled by panel order. Leads with the prototype 4.
+ *
+ * The first 4 are `tokens.color.*` (final dark-mode branch review,
+ * Important 3) — until 2026-08-03 these were hardcoded hex literals
+ * byte-identical to the LIGHT-mode value of those same 4 tokens, so a group's
+ * accent stayed pinned to light-mode terra/moss/sky/amber even when the
+ * dashboard itself was in dark mode (this value reaches the page as `accent`
+ * inside the `data-initial` JSON — see RepoGraph.tsx — and is painted
+ * directly by the client island's `cssAlpha`/`style="background:${accent}"`
+ * sites, both of which resolve a `var(--color-x)` string exactly like a hex
+ * one; this is a plain-data module with no JSX, but that's a resolution
+ * detail of the CONSUMER, not a reason the color has to be a literal here).
+ * `cssAlpha`'s own docstring (src/web/client/islands/repo-graph.ts) already
+ * treats its `color` parameter as "any valid CSS <color> the caller has in
+ * hand", so swapping a hex literal for a token string here needs no change
+ * on that side.
+ *
+ * The last 2 (violet/teal, "overflow" — only hit when a repo has 5+
+ * super-groups) stay literal: their hex does NOT match either brand
+ * `tokens.color.violet` (#9d86c2) or `tokens.color.teal` (#5e9ca3) — they
+ * were chosen as a visually-distinct 5th/6th hue, not derived from the brand
+ * accents — so there is no token to swap in without silently changing the
+ * rendered color. Allowlisted in .lint-colors-allowlist.json; they remain a
+ * real, open theme-blindness gap for the rare 5-6-group case, not something
+ * this fix closes.
+ */
 const GROUP_ACCENTS = [
-  "#d96b6b", // terra  (Core)
-  "#7a9a5e", // moss   (State)
-  "#7fb0c8", // sky    (Surfaces)
-  "#e8a85c", // amber  (Infra)
-  "#b88ad9", // violet (overflow)
-  "#5ec8c0", // teal   (overflow)
+  tokens.color.terra, // terra  (Core)
+  tokens.color.moss,  // moss   (State)
+  tokens.color.sky,   // sky    (Surfaces)
+  tokens.color.amber, // amber  (Infra)
+  "#b88ad9",          // violet (overflow) — no token match, see docstring above
+  "#5ec8c0",          // teal   (overflow) — no token match, see docstring above
 ] as const;
 
 export interface ProjectionGroup {

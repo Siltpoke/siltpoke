@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 import { spawnWithTimeout } from "../spawn";
-import type { GitDiffHunk, ToolResult, ToolStatus } from "./types";
 import { adaptiveHunkBody } from "./diff-summarizer";
+import {
+  formatReviewSubjectBlock,
+  type ReviewSubject,
+  splitRecentCommitsLog,
+} from "./review-subject";
+import type { GitDiffHunk, ToolResult, ToolStatus } from "./types";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
@@ -184,8 +189,13 @@ export async function runGitDiff(opts: {
 /**
  * Recent-commits fallback. When the working tree is clean,
  * `git diff HEAD` returns empty — but Brain still needs to see what
- * just happened in the session. Returns `git log -N -p --stat HEAD`
- * output + parsed hunks so Brain has the last N commits as context.
+ * just happened in the session. Returns the last N commits' diffs with every
+ * inline commit header stripped, prefixed by the ONE commit that is the review
+ * subject (`commit <sha>` + its message, git-shaped, no siltpoke prose), plus the
+ * hunks parsed from the stripped body. See ./review-subject.ts for why the headers
+ * cannot be left in. `raw` is persisted as the /critic snapshot and replayed to the
+ * chat model, so it stays diff-shaped; the human-facing notice is added at prompt
+ * assembly by `buildToolOutputSection`, never here.
  * Used by the Stop-hook critic path, NOT by the `review` CLI (which
  * intentionally treats a clean tree as "nothing to review").
  */
@@ -193,21 +203,47 @@ export async function runRecentCommitsDiff(opts: {
   cwd: string;
   commitCount?: number;
   timeoutMs?: number;
-}): Promise<{ raw: string; parsed: GitDiffHunk[] } | null> {
+}): Promise<{ raw: string; parsed: GitDiffHunk[]; reviewSubject?: ReviewSubject } | null> {
   const { cwd, commitCount = 3, timeoutMs = DEFAULT_TIMEOUT_MS } = opts;
   const result = await spawnWithTimeout({
-    argv: ["git", "log", `-${commitCount}`, "--no-color", "-p", "--stat", "HEAD"],
+    // The three `--*` flags pin the header shape against the adopter's git config:
+    // `format.pretty`, `log.abbrevCommit` and `log.showSignature` each reshape it,
+    // and a header we fail to recognise is a header we fail to strip — silently
+    // restoring the defect in exactly the repos nobody would test.
+    // No `--stat`: the per-commit file summary is dropped along with the header it
+    // belongs to, and requesting output that is then discarded is pure cost.
+    argv: [
+      "git", "log", `-${commitCount}`, "--no-color",
+      "--pretty=medium", "--no-abbrev-commit", "--no-show-signature",
+      "-p", "HEAD",
+    ],
     cwd,
     timeoutMs,
   });
   if (result.timedOut || result.exitCode !== 0) return null;
-  const out = result.stdout.trim();
-  if (out.length === 0) return null;
+  if (result.stdout.trim().length === 0) return null;
+
+  // Strip every inline commit header and name exactly one review subject, so a
+  // scope claim cannot be made against a message that belongs to another commit.
+  // See ./review-subject.ts for the mechanism and the two measured false positives.
+  const { subject, diffOnly } = splitRecentCommitsLog(result.stdout);
+  const body = subject === null ? result.stdout : diffOnly;
+  // `.citable`, not `.shown`: the notice is siltpoke's own prose, and `raw` is read
+  // back as a diff by the /critic snapshot, the chat `diff_text` channel and the
+  // Haiku pre-pass — and on the zero-hunk path it enters the evidence corpus
+  // unscoped, where prose would be quotable as if a tool had said it.
+  const raw = subject === null
+    ? result.stdout
+    : `${formatReviewSubjectBlock(subject).citable}\n\n${diffOnly}`;
+
   let parsed: GitDiffHunk[] = [];
   try {
-    parsed = await parseUnifiedDiff(result.stdout);
+    // Parse the header-free body: `parseUnifiedDiffRaw` does not stop a hunk body
+    // at a bare `---`, so parsing the unstripped blob attaches one commit's header
+    // to the previous commit's last hunk.
+    parsed = await parseUnifiedDiff(body);
   } catch {
     parsed = [];
   }
-  return { raw: result.stdout, parsed };
+  return subject === null ? { raw, parsed } : { raw, parsed, reviewSubject: subject };
 }

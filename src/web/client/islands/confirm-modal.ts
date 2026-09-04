@@ -31,6 +31,7 @@
  *   stack confirmModal calls without awaiting resolution of the first.
  * - Styles injected once (idempotent) into <head> on first call.
  */
+import { tokens } from "../../tokens/tokens";
 
 export interface ConfirmModalOpts {
   title: string;
@@ -48,23 +49,35 @@ function ensureStyles(): void {
   const style = document.createElement("style");
   style.id = STYLE_ID;
   // Scoped under [data-confirm-modal] to avoid colliding with .rg-host tokens.
+  // Every color below is a `tokens.color.X`/`tokens.shadow.X` PROPERTY
+  // ACCESS interpolated into the template, not a hand-written `var(--color-
+  // X)` string — a typo here is a compile error, not a silent no-op (the
+  // brief's own island-import rule, Task 10b batch 3 review round 1,
+  // Important 1). The overlay backdrop uses `tokens.shadow.scrim`, the SAME
+  // token MemoryModal.tsx / FloatingChat.tsx already use (Task 10b batch 1
+  // fix round, Important 3) — completing the 3-way modal-backdrop
+  // consolidation the classification flagged (this file's old `.45` is now
+  // the shared scrim's `.42`, a value delta of 0.03). The dialog's own
+  // box-shadow is `tokens.shadow.lg` — a physical drop shadow under the
+  // panel, not ink-derived (the ink-polarity rule: shadows simulate fixed
+  // real-world depth and must NOT flip to near-white in dark mode).
   style.textContent = `
 [data-confirm-modal]{
   position:fixed;inset:0;z-index:9000;
   display:flex;align-items:center;justify-content:center;
-  background:rgba(31,27,22,.45);
+  background:${tokens.shadow.scrim};
 }
 [data-confirm-modal] .cm-dialog{
-  background:#faf6ec;border:1px solid #d8cbab;border-radius:10px;
-  box-shadow:0 12px 34px rgba(31,27,22,.18);
+  background:${tokens.color.cream};border:1px solid ${tokens.color.edge};border-radius:10px;
+  box-shadow:${tokens.shadow.lg};
   padding:24px 28px 20px;min-width:320px;max-width:480px;width:100%;
-  font-family:"Geist",system-ui,sans-serif;font-size:14px;color:#1f1b16;
+  font-family:"Geist",system-ui,sans-serif;font-size:14px;color:${tokens.color.ink};
 }
 [data-confirm-modal] .cm-title{
   font-size:16px;font-weight:600;margin:0 0 12px;letter-spacing:-.2px;
 }
 [data-confirm-modal] .cm-body{
-  color:#5a4f3f;margin:0 0 20px;display:flex;flex-direction:column;gap:4px;
+  color:${tokens.color.ink2};margin:0 0 20px;display:flex;flex-direction:column;gap:4px;
 }
 [data-confirm-modal] .cm-body p{margin:0;line-height:1.5;}
 [data-confirm-modal] .cm-actions{
@@ -72,19 +85,19 @@ function ensureStyles(): void {
 }
 [data-confirm-modal] .cm-cancel{
   font-family:inherit;font-size:13px;font-weight:500;cursor:pointer;
-  background:#faf6ec;border:1px solid #d8cbab;border-radius:6px;
-  padding:7px 14px;color:#1f1b16;
+  background:${tokens.color.cream};border:1px solid ${tokens.color.edge};border-radius:6px;
+  padding:7px 14px;color:${tokens.color.ink};
 }
-[data-confirm-modal] .cm-cancel:hover{background:#f4eedf;border-color:#8a7c64;}
+[data-confirm-modal] .cm-cancel:hover{background:${tokens.color.paper};border-color:${tokens.color.ink3};}
 [data-confirm-modal] .cm-confirm{
   font-family:inherit;font-size:13px;font-weight:500;cursor:pointer;
-  background:#1f1b16;border:1px solid #1f1b16;border-radius:6px;
-  padding:7px 14px;color:#faf6ec;
+  background:${tokens.color.ink};border:1px solid ${tokens.color.ink};border-radius:6px;
+  padding:7px 14px;color:${tokens.color.cream};
 }
 [data-confirm-modal] .cm-confirm:hover{filter:brightness(1.15);}
 [data-confirm-modal] .cm-confirm:disabled{opacity:.6;cursor:default;}
-[data-confirm-modal] .cm-cancel:focus-visible{outline:2px solid #8a7c64;outline-offset:2px;}
-[data-confirm-modal] .cm-confirm:focus-visible{outline:2px solid #faf6ec;outline-offset:2px;}
+[data-confirm-modal] .cm-cancel:focus-visible{outline:2px solid ${tokens.color.ink3};outline-offset:2px;}
+[data-confirm-modal] .cm-confirm:focus-visible{outline:2px solid ${tokens.color.cream};outline-offset:2px;}
 `.trim();
   document.head.appendChild(style);
 }

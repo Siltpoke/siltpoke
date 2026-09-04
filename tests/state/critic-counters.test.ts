@@ -5,7 +5,7 @@ import { join } from "node:path";
 import {
   recordToolRun,
   recordGateDecision,
-  recordGuardReject,
+  recordEvidenceUnverified,
   getTodayTelemetry,
   type CriticCounters,
 } from "../../src/state/critic-counters";
@@ -65,7 +65,7 @@ test("getTodayTelemetry: returns empty telemetry when no file exists yet", async
   expect(tel.totalCritiqueRuns).toBe(0);
   expect(tel.abstentionCount).toBe(0);
   expect(tel.toolStatusCounts.tsc.ok).toBe(0);
-  expect(tel.guardRejectReasons).toEqual({});
+  expect(tel.unverifiedEvidenceReasons).toEqual({});
 });
 
 test("recordGateDecision: HARD_SUPPRESS writes a new file each distinct day key", async () => {
@@ -95,39 +95,39 @@ test("recordToolRun: concurrent calls both persist (mutex)", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 4: recordGuardReject truncates long reasons + bins
+// Test 4: recordEvidenceUnverified truncates long reasons + bins
 // ---------------------------------------------------------------------------
 
-test("recordGuardReject: truncates long reasons to 80 chars", async () => {
+test("recordEvidenceUnverified: truncates long reasons to 80 chars", async () => {
   const longReason = "A".repeat(200);
-  await recordGuardReject(homeBase, longReason);
+  await recordEvidenceUnverified(homeBase, longReason);
 
   const tel = await getTodayTelemetry(homeBase);
-  const keys = Object.keys(tel.guardRejectReasons);
+  const keys = Object.keys(tel.unverifiedEvidenceReasons);
   expect(keys).toHaveLength(1);
   expect(keys[0]?.length).toBe(80);
 });
 
-test("recordGuardReject: bins duplicate truncated keys", async () => {
+test("recordEvidenceUnverified: bins duplicate truncated keys", async () => {
   const prefix = "snippet not in evidence_corpus: ";
   const r1 = `${prefix}TS2304: Cannot find name 'foo' — extra suffix that is long`;
   const r2 = `${prefix}TS2304: Cannot find name 'foo' — extra suffix that is different`;
 
   // Both truncate to the same 80-char key
-  await recordGuardReject(homeBase, r1);
-  await recordGuardReject(homeBase, r2);
+  await recordEvidenceUnverified(homeBase, r1);
+  await recordEvidenceUnverified(homeBase, r2);
 
   const tel = await getTodayTelemetry(homeBase);
   const key = r1.slice(0, 80);
-  expect(tel.guardRejectReasons[key]).toBe(2);
+  expect(tel.unverifiedEvidenceReasons[key]).toBe(2);
 });
 
-test("recordGuardReject: increments normalRejectedCount", async () => {
-  await recordGuardReject(homeBase, "some reason");
-  await recordGuardReject(homeBase, "another reason");
+test("recordEvidenceUnverified: increments normalUnverifiedCount", async () => {
+  await recordEvidenceUnverified(homeBase, "some reason");
+  await recordEvidenceUnverified(homeBase, "another reason");
 
   const tel = await getTodayTelemetry(homeBase);
-  expect(tel.normalRejectedCount).toBe(2);
+  expect(tel.normalUnverifiedCount).toBe(2);
 });
 
 // ---------------------------------------------------------------------------

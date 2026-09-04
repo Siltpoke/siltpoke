@@ -222,7 +222,7 @@ export function mountCritiqueRoutes(
     const critiquePath = await findCritiqueByIdOrLatest(homeBase, id);
     if (!critiquePath) {
       return c.html(
-        <Layout title="critique not found · siltpoke">
+        <Layout title="critique not found · siltpoke" secret={secret}>
           <div
             style={{
               fontFamily: "var(--font-mono)",
@@ -242,7 +242,7 @@ export function mountCritiqueRoutes(
       raw = await readFile(critiquePath, "utf8");
     } catch {
       return c.html(
-        <Layout title="critique error · siltpoke">
+        <Layout title="critique error · siltpoke" secret={secret}>
           <div style={{ fontFamily: "var(--font-mono)", padding: 32 }}>
             error reading critique {id}
           </div>
@@ -270,7 +270,7 @@ export function mountCritiqueRoutes(
     }
 
     return c.html(
-      <Layout title={`critique ${id} · siltpoke`}>
+      <Layout title={`critique ${id} · siltpoke`} secret={secret}>
         <CritiquePermalink critique={critique} spans={spans} traceIds={traceIds} />
       </Layout>,
     );

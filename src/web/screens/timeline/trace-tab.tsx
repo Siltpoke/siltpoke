@@ -38,8 +38,18 @@ export const TRACE_NOTE_COPY = {
     "trace index unreadable — the sqlite span index exists but could not be queried. The review itself is unaffected; see the Code Review tab.",
   "no-trace":
     "no trace recorded for this turn — the trace index has no spans linked to this critique_id.",
-  "no-critique-id":
-    "no trace join possible — this turn pre-dates per-row review ids, so its spans (if any) cannot be linked.",
+  // REMOVED: "no-critique-id". It claimed the turn "pre-dates per-row review
+  // ids" — a guess, and on a real store the wrong one for 94.5% of turns, which
+  // have a specific recorded reason instead. It was also unreachable from here:
+  // this fragment is only rendered by GET /api/critique/:critique_id/trace, so
+  // a missing id never reaches it. The reachable branch lives in
+  // `detail-tabs.tsx`'s TraceTab and now renders `audit_absence`.
+  //
+  // Checked before deleting (deletion is the one edit reading cannot undo):
+  // no literal `kind="no-critique-id"` anywhere; the only dynamic index is
+  // `TRACE_NOTE_COPY[kind]` in TraceTabNote below, whose four call sites in
+  // `routes/timeline.tsx` all pass literals (index-error / no-index / no-trace);
+  // `tests/web/routes/timeline-tabs.test.ts` touches only `["no-trace"]`.
 } as const;
 
 export type TraceNoteKind = keyof typeof TRACE_NOTE_COPY;

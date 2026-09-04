@@ -26,6 +26,19 @@ export type RunToolsOpts = {
   cwd: string;
   changedFiles: string[];
   caps: ProjectCapabilities;
+  /**
+   * The unit of work under review, as `<lastReviewedHead>..HEAD` (spec D2).
+   *
+   * When present, git-diff shows that range instead of the working tree, which
+   * is what makes AC2/AC4 structural rather than parsed-around: the caller
+   * names the boundary, so the reviewer can no longer be handed an
+   * undelimited multi-commit blob with one commit's message on top of it.
+   *
+   * Absent for callers with no unit to name — a forced `/siltpoke-review` on a
+   * clean tree, and every test that predates the review-unit axis. Those keep
+   * the old `git diff HEAD` behaviour.
+   */
+  revisionRange?: string;
   timeoutsMs?: Partial<Record<ToolName, number>>;
   webSearch?: {
     config?: WebSearchConfig;
@@ -130,7 +143,7 @@ async function withToolSpan<T extends ToolResult>(
 }
 
 export async function runTools(opts: RunToolsOpts): Promise<RunToolsResult> {
-  const { cwd, changedFiles, caps, timeoutsMs = {}, webSearch, tracing } = opts;
+  const { cwd, changedFiles, caps, revisionRange, timeoutsMs = {}, webSearch, tracing } = opts;
 
   const timeouts: Record<ToolName, number> = {
     tsc: timeoutsMs.tsc ?? DEFAULT_TIMEOUTS.tsc,
@@ -154,7 +167,16 @@ export async function runTools(opts: RunToolsOpts): Promise<RunToolsResult> {
     if (dot === -1) return false;
     return ESLINT_EXTENSIONS.has(f.slice(dot));
   });
-  const shouldRunEslint = caps.hasEslint && eslintFiles.length > 0;
+  // `hasEslint` only means the binary can be spawned, and `bunx eslint
+  // --version` succeeds in any directory because bunx fetches it on demand — so
+  // on its own that flag is very nearly a constant `true`. Scheduling on it
+  // alone made eslint exit 2 ("couldn't find an eslint.config.(js|mjs|cjs)
+  // file") in every repo that lints with something else: 3,063 `error` results
+  // against 33 `ok` over 85 days of telemetry, siltpoke's own Biome-linted repo
+  // included. `eslintConfigPaths` already distinguishes the two cases and was
+  // read nowhere; tsc's line above has carried the same guard from the start.
+  const shouldRunEslint =
+    caps.hasEslint && caps.eslintConfigPaths.length > 0 && eslintFiles.length > 0;
 
   // --- git-diff: always if git available ---
   const shouldRunGitDiff = caps.hasGit;
@@ -186,7 +208,14 @@ export async function runTools(opts: RunToolsOpts): Promise<RunToolsResult> {
   }
 
   if (shouldRunGitDiff) {
-    const gitDiffArgs = { cwd, timeoutMs: timeouts["git-diff"] };
+    // `revisionRange` is spread in only when present so the span attributes
+    // (and the arg object runGitDiff validates) stay byte-identical to before
+    // for every caller that has no unit to name.
+    const gitDiffArgs = {
+      cwd,
+      timeoutMs: timeouts["git-diff"],
+      ...(revisionRange !== undefined ? { revisionRange } : {}),
+    };
     promises.push(
       withToolSpan("git-diff", gitDiffArgs as Record<string, unknown>, tracing, () =>
         runGitDiff(gitDiffArgs),

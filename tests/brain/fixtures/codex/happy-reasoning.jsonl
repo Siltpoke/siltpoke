@@ -1,0 +1,5 @@
+{"type":"_fixture_provenance","note":"captured from codex v0.142.5 live probe 2026-07-07 (model_reasoning_effort=high) — locks the output_tokens-INCLUSIVE-of-reasoning semantics: output 63 = reasoning 56 + ~7 visible. agent_message text replaced with a schema-valid BrainOutput; usage block verbatim."}
+{"type":"thread.started","thread_id":"019f3f19-8ba2-7b51-adfb-414a392feb4f"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\"mood\":\"happy\",\"pose\":\"base\",\"bubble_short\":\"looks good\",\"bubble_long\":\"\",\"critique_for_claude\":\"\",\"severity\":\"info\",\"confidence\":\"high\",\"xp_earned_events\":[]}"}}
+{"type":"turn.completed","usage":{"input_tokens":14522,"cached_input_tokens":2432,"output_tokens":63,"reasoning_output_tokens":56}}

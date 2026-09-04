@@ -221,13 +221,13 @@ describe("looksLikeFactStatement", () => {
   });
 
   // C1b — the headline correction case also passes (it additionally carries
-  // "我是", but must not depend on it).
+  // , but must not depend on it).
   test("C1b 故事主路径修正 → true", () => {
     expect(looksLikeFactStatement("不对，我是猫派不是狗派")).toBe(true);
   });
 
-  // C1c — canonical marker-free temporal update. "我现在是" defeats the
-  // contiguous "我是" marker (this gap was caught in testing); anchored
+  // C1c — canonical marker-free temporal update.  defeats the
+  // contiguous  marker (this gap was caught in testing); anchored
   // forms (我现在 / 现在+durable-verb) open the gate.
   test("C1c 无标记时间更新 → true", () => {
     expect(looksLikeFactStatement("我现在是猫派了")).toBe(true);
@@ -266,7 +266,7 @@ describe("looksLikeFactStatement", () => {
     expect(looksLikeFactStatement("the answer is no, thanks")).toBe(false);
   });
 
-  // C4 — layered responsibility (documented): "不对，13×7=91" is a correction
+  // C4 — layered responsibility (documented):  is a correction
   // of the PET'S ARITHMETIC, not of a memory about the user. It DOES pass this
   // layer-0 gate (contains 不对 — the gate is recall-oriented and cheap); the
   // EXTRACTOR's contract rejects it (no durable first-person claim about the

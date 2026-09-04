@@ -19,6 +19,10 @@ import {
   settingsJsonPath,
   commandsDirPath,
 } from "../installer/paths";
+import {
+  uninstallAutostartForPlatform,
+  type AutostartUninstallResult,
+} from "../installer/autostart";
 import { findLatestBackup, restoreFromBackup } from "../installer/backup";
 import {
   restoreStatusLine,
@@ -36,6 +40,8 @@ export interface UninstallOptions {
   repoRoot?: string;
   noninteractive?: boolean;
   purge?: boolean;
+  /** Injectable autostart cleanup — tests never touch launchctl/systemctl. */
+  uninstallAutostartFn?: () => Promise<AutostartUninstallResult>;
 }
 
 export interface UninstallResult {
@@ -46,6 +52,7 @@ export interface UninstallResult {
   backup_restored: string | null;
   inner_fallback_used: boolean;
   symlinks_removed: number;
+  autostart_removed: boolean;
   siltpoke_home_purged: boolean;
 }
 
@@ -81,6 +88,7 @@ export async function runUninstall(
       backup_restored: null,
       inner_fallback_used: false,
       symlinks_removed: 0,
+      autostart_removed: false,
       siltpoke_home_purged: false,
     };
   }
@@ -106,6 +114,7 @@ export async function runUninstall(
       backup_restored: null,
       inner_fallback_used: false,
       symlinks_removed: 0,
+      autostart_removed: false,
       siltpoke_home_purged: false,
     };
   }
@@ -179,7 +188,23 @@ export async function runUninstall(
   }
   io.write(`  removed ${symlinksRemoved} slash command symlinks\n`);
 
-  // 4. Optionally purge ~/.siltpoke/.
+  // 4. Remove daemon autostart (LaunchAgent plist / systemd user unit) if
+  //    present. Silent no-op when nothing installed; failures never block
+  //    the rest of the uninstall (AC10).
+  let autostartRemoved = false;
+  const uninstallAutostart =
+    opts.uninstallAutostartFn ?? (() => uninstallAutostartForPlatform());
+  try {
+    const autostartResult = await uninstallAutostart();
+    if (autostartResult.status === "removed") {
+      autostartRemoved = true;
+      io.write(`  removed daemon autostart (${autostartResult.platform})\n`);
+    }
+  } catch {
+    // best-effort cleanup — never block uninstall
+  }
+
+  // 5. Optionally purge ~/.siltpoke/.
   let purged = false;
   if (opts.purge) {
     purged = true;
@@ -206,6 +231,7 @@ export async function runUninstall(
     backup_restored: backupRestored,
     inner_fallback_used: innerFallbackUsed,
     symlinks_removed: symlinksRemoved,
+    autostart_removed: autostartRemoved,
     siltpoke_home_purged: purged,
   };
 }

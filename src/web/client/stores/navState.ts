@@ -24,8 +24,12 @@ import { atom } from "nanostores";
  * /critique/:id permalink renders with activeSection="history" and the
  * standalone /traces/:trace_id span explorer with activeSection="traces" —
  * both pages survive the merge, they just lost their sidebar entries.
+ *
+ * "progress" added ahead of its own nav entry (progress-page-slice-1 Task 4)
+ * so the screen typechecks with `activeSection="progress"` before Task 7
+ * wires the CANONICAL_NAV entry and its boot-time availability gate.
  */
-export type Section = "home" | "history" | "memory" | "chat" | "traces" | "timeline" | "rubric" | "preference-log" | "few-shot" | "repo-memory" | "explain" | "repo-graph";
+export type Section = "home" | "history" | "memory" | "chat" | "traces" | "timeline" | "rubric" | "preference-log" | "few-shot" | "repo-memory" | "explain" | "repo-graph" | "settings";
 
 export interface NavState {
   sidebarCollapsed: boolean;

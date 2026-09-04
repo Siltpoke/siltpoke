@@ -66,9 +66,12 @@ test("ack: preference entry goes to injected path, not the global default", asyn
     basePath: tmp,
     preferenceLogPath: prefLog,
   });
-  // appendPreferenceEntry is fire-and-forget inside runAck; give the
-  // microtask a tick to flush before asserting.
-  await new Promise((r) => setTimeout(r, 25));
+  // No sleep here on purpose. This used to be `await setTimeout(25)` with the
+  // comment "appendPreferenceEntry is fire-and-forget inside runAck; give the
+  // microtask a tick to flush" — a grace period that hid the real defect,
+  // because the CLI entry's process.exit(0) grants no such tick. runAck now
+  // awaits the append, so an in-process assertion needs no timing slack, and the
+  // subprocess guard lives in tests/cli/preference-log-write-back.test.ts.
   expect(existsSync(prefLog)).toBe(true);
   expect(readFileSync(prefLog, "utf8")).toContain("c-prefpath");
 });

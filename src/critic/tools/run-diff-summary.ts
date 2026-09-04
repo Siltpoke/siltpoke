@@ -6,7 +6,7 @@
  * the raw (often truncated) diff body.
  *
  * Why: Brain's prompt was being stuffed with `git log -p` output that
- * the model couldn't fully consume, leading to "缺差异. 审不了"
+ * the model couldn't fully consume, leading to 
  * comments even when concrete changes existed. A Haiku pass turns the
  * diff into a digest Brain can reason about: intent / key changes /
  * risks / per-file purpose.
@@ -15,7 +15,7 @@
  * digest alongside the colorized diff.
  */
 import { z } from "zod";
-import { callBrainRaw, BrainError, type BrainUsage, type CallBrainOptions } from "../../brain/brain";
+import { BrainError, type BrainUsage, type CallBrainOptions, callBrainRaw, resolveBrainTimeoutMs } from "../../brain/brain";
 
 export const diffSummarySchema = z.object({
   intent: z.string().max(600),
@@ -43,6 +43,38 @@ export const diffSummarySchema = z.object({
    * a subtle tag so the user knows the digest is degraded.
    */
   source: z.enum(["haiku", "heuristic"]).default("haiku"),
+  /**
+   * How many entries each array lost to its own cap, keyed by field. Absent key
+   * (or 0) means nothing was dropped.
+   *
+   * This lives in its OWN field, deliberately, instead of as a marker entry
+   * inside the arrays. A marker inside the array makes every `.length` and every
+   * `slice(0, N)` downstream silently wrong — an independent review of the first
+   * version of this fix found three such readers in two files, including one that
+   * rendered `${risks.length} risks flagged` into the pet bubble, so a truncated
+   * summary told the user "6 risks" when 5 were real and the 6th was the marker.
+   * That is the exact "signal decoupled from reality" shape (`docs/lessons.md` L3)
+   * this truncation exists to avoid, so the honesty signal must not be able to
+   * masquerade as content.
+   *
+   * Same conclusion, reached independently from prior art:
+   * an internal design note — SARIF keeps "was
+   * this evaluated" in `result.kind`, separate from the finding itself.
+   *
+   * `.optional()` rather than `.default({})` on purpose: a default would make the
+   * field REQUIRED on the output type, forcing every hand-built `DiffSummary`
+   * (the two `heuristicDiffSummary` constructors, every test fixture) to carry a
+   * `truncated: {}` that says nothing. Absent reads as "nothing was dropped",
+   * which is the same thing `{}` says, and summaries persisted before this field
+   * existed keep parsing either way.
+   */
+  truncated: z
+    .object({
+      key_changes: z.number().int().positive().optional(),
+      risks: z.number().int().positive().optional(),
+      files_with_purpose: z.number().int().positive().optional(),
+    })
+    .optional(),
 });
 
 export type DiffSummary = z.infer<typeof diffSummarySchema>;
@@ -68,13 +100,21 @@ Rules:
 - If the diff is empty or shows only whitespace/formatting, return { "intent": "no meaningful changes", "key_changes": [], "risks": [], "file_count": 0, "files_with_purpose": [] }.`;
 
 /**
- * The model the summarizer actually passes to `claude -p --model` — exported
- * so its span writer records the SAME string (single source of truth; the
- * critic Brain has its own DEFAULT_MODEL in brain/brain.ts).
+ * No hardcoded model default here anymore (single-brain #10, S2): the
+ * production caller (run-critic.ts) injects `callFn: makeRoleRawBrain(homeBase,
+ * "extract")`, which forces its own resolved model internally regardless of
+ * what (if anything) `opts.model` carries. The lazy `callBrainRaw` fallback
+ * below (for a direct caller that supplies no `callFn`) applies ITS OWN
+ * default (the undated alias, ../../brain/brain.ts DEFAULT_MODEL) when
+ * `opts.model` is omitted — NOT the dated pinned snapshot this file used to
+ * hardcode as SUMMARIZER_MODEL (that pin now lives only in the
+ * role-brain/registry resolution path).
  */
-export const SUMMARIZER_MODEL = "claude-haiku-4-5";
-const DEFAULT_MODEL = SUMMARIZER_MODEL;
-const DEFAULT_TIMEOUT_MS = 90_000;
+// Was a second, byte-identical 90_000 literal. It now defers to
+// `resolveBrainTimeoutMs` so the two paths cannot drift and so the env knob
+// moves both — a knob that retunes the critic call while silently leaving the
+// summariser at 90s would produce exactly the confused timing this whole
+// investigation started from.
 /**
  * Cap input passed to Haiku to bound cost + latency.
  * Raised from 100KB to 512KB (2026-05-20): 100KB truncated mid-file on real
@@ -117,8 +157,8 @@ export async function runDiffSummary(
   const callOpts: CallBrainOptions = {
     systemPrompt: SYSTEM_PROMPT,
     contextBundle: trimmed,
-    model: opts.model ?? DEFAULT_MODEL,
-    timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    model: opts.model,
+    timeoutMs: resolveBrainTimeoutMs(opts.timeoutMs),
   };
 
   const raw = await callFn(callOpts);
@@ -131,6 +171,12 @@ export async function runDiffSummary(
   if (!parsed.success) {
     throw new BrainError(
       `diff summary failed schema validation: ${parsed.error.message}`,
+      undefined,
+      undefined,
+      undefined,
+      // The COERCED value, not `raw.output`: the coercion above is what the
+      // schema actually rejected, so it is what a fix has to be read against.
+      coerced,
     );
   }
 
@@ -144,7 +190,16 @@ export async function runDiffSummary(
   if (actualCount > 0 && summary.file_count < actualCount) {
     const missing = actualCount - summary.file_count;
     summary.file_count = actualCount;
-    if (missing > 0) {
+    // Only append the note when there is room under the schema cap. Before
+    // `coerceLengths` learned to truncate arrays, an over-cap `files_with_purpose`
+    // always failed safeParse and never reached this line, so an unconditional
+    // push could not overflow. It can now: 40 kept entries + this one = 41, past
+    // the very `.max(40)` the truncation exists to satisfy, and carrying two
+    // truncation notes computed from two different bases sitting next to each
+    // other. When there is no room, the fact is not lost — `file_count` now holds
+    // the ground truth and `src/web/screens/critic/diff/render.tsx` renders the
+    // count-vs-enumerated mismatch banner off exactly that difference.
+    if (missing > 0 && summary.files_with_purpose.length < ARRAY_CAPS.files_with_purpose) {
       summary.files_with_purpose = [
         ...summary.files_with_purpose,
         {
@@ -174,28 +229,85 @@ function truncStr(v: unknown, max: number): unknown {
   return v.length <= max ? v : `${v.slice(0, max - 1)}…`;
 }
 
+/**
+ * Array caps declared by `diffSummarySchema` above. Kept beside the coercion so
+ * a cap change in the schema and a cap change here stay one edit apart, and so
+ * the arithmetic below has a single source.
+ */
+const ARRAY_CAPS = {
+  key_changes: 8,
+  risks: 6,
+  files_with_purpose: 40,
+} as const;
+
+/**
+ * Truncate an over-cap array to exactly `cap` and report how many were dropped.
+ *
+ * The count goes to the caller, which records it in the summary's `truncated`
+ * field — NOT into the array as a marker entry. See `truncated`'s doc on the
+ * schema for why: a marker inside the array corrupts every `.length` and every
+ * `slice(0, N)` downstream, and a review found three such readers.
+ *
+ * The negative-cap guard is narrower than two earlier versions of this comment
+ * claimed, and each narrowing came from a mutation run rather than from reading:
+ *
+ *  - It is NOT about `slice(0, -1)` meaning "all but the last". That was true of
+ *    an earlier `cap - 1` implementation; this one slices to `cap`.
+ *  - It is NOT needed at `cap === 0`. `slice(0, 0)` is already `[]`. Weakening
+ *    the condition from `cap < 1` to `cap < 0` left the entire suite green, so
+ *    the condition is written as `cap < 0` — the boundary the code can actually
+ *    defend.
+ *  - What it DOES stop is a wrong dropped COUNT: for `cap = -3` on a 2-element
+ *    array, `arr.length - cap` is `5`, so the summary would report five entries
+ *    dropped from an array that only ever held two. Mutating that expression is
+ *    caught, which is this guard's firing evidence.
+ *
+ * **Exported solely so that branch has firing evidence.** A guard no test can
+ * reach is this repo's most-repeated defect (`docs/lessons.md` L3, "dead" family:
+ * written, configured, never actually invoked), and nothing in this module can
+ * reach it — `ARRAY_CAPS` holds 8/6/40. Not part of the module's real API.
+ */
+export function truncArray<T>(arr: T[], cap: number): { kept: T[]; dropped: number } {
+  if (arr.length <= cap) return { kept: arr, dropped: 0 };
+  if (cap < 0) return { kept: [], dropped: arr.length };
+  return { kept: arr.slice(0, cap), dropped: arr.length - cap };
+}
+
 function coerceLengths(out: unknown): unknown {
   if (out === null || typeof out !== "object") return out;
   const o = out as Record<string, unknown>;
   const next: Record<string, unknown> = { ...o };
+  const truncated: Record<string, number> = {};
   if (typeof o.intent === "string") next.intent = truncStr(o.intent, 600);
   if (Array.isArray(o.key_changes)) {
-    next.key_changes = (o.key_changes as unknown[]).map(s => truncStr(s, 300));
+    const r = truncArray((o.key_changes as unknown[]).map(s => truncStr(s, 300)), ARRAY_CAPS.key_changes);
+    next.key_changes = r.kept;
+    if (r.dropped > 0) truncated.key_changes = r.dropped;
   }
   if (Array.isArray(o.risks)) {
-    next.risks = (o.risks as unknown[]).map(s => truncStr(s, 300));
+    const r = truncArray((o.risks as unknown[]).map(s => truncStr(s, 300)), ARRAY_CAPS.risks);
+    next.risks = r.kept;
+    if (r.dropped > 0) truncated.risks = r.dropped;
   }
   if (Array.isArray(o.files_with_purpose)) {
-    next.files_with_purpose = (o.files_with_purpose as unknown[]).map(item => {
-      if (item === null || typeof item !== "object") return item;
-      const it = item as Record<string, unknown>;
-      return {
-        ...it,
-        path: typeof it.path === "string" ? truncStr(it.path, 300) : it.path,
-        purpose: typeof it.purpose === "string" ? truncStr(it.purpose, 160) : it.purpose,
-      };
-    });
+    const r = truncArray(
+      (o.files_with_purpose as unknown[]).map(item => {
+        if (item === null || typeof item !== "object") return item;
+        const it = item as Record<string, unknown>;
+        return {
+          ...it,
+          path: typeof it.path === "string" ? truncStr(it.path, 300) : it.path,
+          purpose: typeof it.purpose === "string" ? truncStr(it.purpose, 160) : it.purpose,
+        };
+      }),
+      ARRAY_CAPS.files_with_purpose,
+    );
+    next.files_with_purpose = r.kept;
+    if (r.dropped > 0) truncated.files_with_purpose = r.dropped;
   }
+  // Overwrite rather than merge: whatever Haiku may have emitted under this key
+  // is not a measurement, and this is.
+  next.truncated = truncated;
   return next;
 }
 

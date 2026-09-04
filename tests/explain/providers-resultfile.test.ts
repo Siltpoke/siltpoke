@@ -12,7 +12,7 @@
  *   2. makeArchBrainProvider — end-to-end provider integration (stub `claude`).
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeArchBrainProvider, spawnArchToFile } from "../../src/explain/providers";
@@ -75,46 +75,48 @@ describe("spawnArchToFile — kernel-direct fd write", () => {
   });
 
   test("Finding 1 regression: result-file fd is closed on Bun.spawn throw (no fd leak)", () => {
-    // Bun.spawn throws synchronously for a missing binary
-    // ("Executable not found in $PATH"). Confirmed: the throw IS synchronous on
-    // Bun 1.x — see test output for "spawn THREW synchronously".
-    // Before the fix, openSync ran but closeSync never ran → fd leaked.
-    // After the fix, the catch block closes the fd before re-throwing.
+    // Bun.spawn throws synchronously for a missing binary ("Executable not found
+    // in $PATH"). Before the fix, openSync ran but closeSync never ran on the throw
+    // path → the result-file fd leaked once per call. After the fix, the catch block
+    // closes it before re-throwing.
     //
-    // To assert fd-closure indirectly: open a sentinel fd BEFORE the throw,
-    // trigger the throw, open another sentinel fd AFTER. If the leaked fd was
-    // consuming fd slots the post-throw sentinel would have a higher fd number
-    // than (pre-throw sentinel + 1). After the fix both sentinels are adjacent
-    // (or very close), proving no fd was leaked between them.
+    // We assert the REAL invariant — "no result-file fd is leaked per call" —
+    // deterministically, by ACCUMULATION rather than fd-number adjacency. The old
+    // adjacency heuristic (sentinel fd before/after, gap ≤ 1) was flaky under
+    // parallel CI: Bun.spawn opens its own transient internal pipe fds (stdin/stderr
+    // pipes) before it detects the missing binary, and those are released
+    // asynchronously (on GC / next tick), so the gap ballooned unpredictably
+    // (observed "Received 8"). The adjacency check couldn't tell OUR leaked fd from
+    // Bun's transient internals.
     //
-    // Note: this is a probabilistic heuristic — if the OS reuses the closed fd
-    // immediately (which it will under normal conditions) the post-throw sentinel
-    // gets fd == pre-sentinel + 1.  A leaked fd would shift it by +2 (one for the
-    // leaked result-file fd + one for the spawner internal fds). In practice the
-    // adjacency check reliably detects the regression in a single-threaded test.
+    // Accumulation isolates the two: a real per-call result-file-fd leak is
+    // MONOTONIC (N calls → ~N leaked fds), while Bun's transient internals are
+    // bounded and wash out under GC. So after N throwing calls + a forced GC, the
+    // net open-fd growth stays far below N when the fd is correctly closed, and
+    // climbs toward N when it leaks. The threshold below (N/2) cleanly separates
+    // the two regardless of scheduling.
     const dir = mkdtempSync(join(tmpdir(), "q4-fd-leak-"));
     tmps.push(dir);
     const resultFilePath = join(dir, "should-be-cleaned.out");
 
-    // sentinel BEFORE
-    const sentinelA = openSync("/dev/null", "r");
+    // Count this process's open fds. /dev/fd lists them on both macOS and Linux
+    // (Linux aliases it to /proc/self/fd). readdirSync opens+closes its own dir
+    // handle synchronously, so it contributes the same constant to before and
+    // after — it cancels out of the delta.
+    const openFdCount = () => readdirSync("/dev/fd").length;
 
-    // trigger the throw — binary does not exist
-    expect(() =>
-      spawnArchToFile(["definitely-not-a-real-binary-xyz-abc"], { resultFilePath }),
-    ).toThrow();
+    const N = 50;
+    const before = openFdCount();
+    for (let i = 0; i < N; i++) {
+      expect(() =>
+        spawnArchToFile(["definitely-not-a-real-binary-xyz-abc"], { resultFilePath }),
+      ).toThrow();
+    }
+    Bun.gc(true); // flush Bun's transient spawn-internal fds so only a real leak remains
+    const after = openFdCount();
 
-    // sentinel AFTER
-    const sentinelB = openSync("/dev/null", "r");
-
-    // If the fd was leaked: sentinelB > sentinelA + 1 (leaked fd sits between them).
-    // After the fix: sentinelB === sentinelA + 1 (OS reused the closed slot).
-    // Allow a slack of +1 for Bun internals, but not +2 (which would indicate a leak).
-    const gap = sentinelB - sentinelA;
-    // Clean up sentinels
-    closeSync(sentinelA);
-    closeSync(sentinelB);
-    expect(gap).toBeLessThanOrEqual(1); // fd was closed — reused immediately
+    // Fixed: growth ≈ 0 (each result-file fd closed + reused). Leaked: growth ≈ N.
+    expect(after - before).toBeLessThan(N / 2);
   });
 });
 

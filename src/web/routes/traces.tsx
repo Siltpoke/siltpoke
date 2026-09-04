@@ -37,6 +37,8 @@ import {
 
 export interface TraceWebRouteDeps {
   homeBase?: string;
+  /** Daemon secret — forwarded to `<Layout secret>` (FloatingChat + htmx). */
+  secret?: string;
 }
 
 interface SpanRow {
@@ -129,7 +131,7 @@ export function mountTraceWebRoutes(app: Hono, deps: TraceWebRouteDeps = {}): vo
       spans.find((s) => s.parent_span_id === null)?.span_id;
 
     return c.html(
-      <Layout title={`trace ${traceId.slice(0, 8)} · siltpoke`}>
+      <Layout title={`trace ${traceId.slice(0, 8)} · siltpoke`} secret={deps.secret}>
         <TraceDetail
           traceId={traceId}
           spans={spans}

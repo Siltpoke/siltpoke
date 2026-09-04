@@ -24,6 +24,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { DiffView } from "../screens/Critic";
+import { isAuthorized } from "../../daemon/auth";
 import type {
   CallStatus,
   StatusFilter,
@@ -39,6 +40,12 @@ import {
 
 export interface CriticRouteDeps {
   homeBase?: string;
+  /**
+   * Daemon secret — gates POST /api/critic/budget (rewrites the spend
+   * guardrail) and POST /api/critic/action. Absent → both fail CLOSED (401).
+   * See the daemon-hardening security audit, finding 2.
+   */
+  secret?: string;
 }
 
 const VALID_STATUS = new Set<CallStatus>(["fired", "skipped"]);
@@ -151,6 +158,11 @@ export function mountCriticRoutes(app: Hono, deps: CriticRouteDeps = {}): void {
   });
 
   app.post("/api/critic/budget", async (c) => {
+    // Secret-gate — rewrites the spend/cost guardrail; an unauthenticated
+    // cross-origin POST could disable it (finding 2). Fail CLOSED.
+    if (!isAuthorized(deps.secret ?? "", c.req.header("X-Siltpoke-Secret"))) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
     let body: unknown;
     try {
       body = await c.req.json();
@@ -270,6 +282,13 @@ export function mountCriticRoutes(app: Hono, deps: CriticRouteDeps = {}): void {
   // Empty text is allowed and means "user cleared the note" — there is no
   // separate delete endpoint; the latest entry's text always wins for display.
   app.post("/api/critique/:critique_id/feedback", async (c) => {
+    // Secret-gate — same pattern as /api/critic/action + /api/critic/budget
+    // above (daemon-hardening security audit, finding 3 — residual gap):
+    // an unauthenticated cross-origin POST could otherwise append an
+    // arbitrary feedback entry. Fail CLOSED.
+    if (!isAuthorized(deps.secret ?? "", c.req.header("X-Siltpoke-Secret"))) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
     const critiqueId = c.req.param("critique_id");
     if (!/^[A-Za-z0-9._-]{1,128}$/.test(critiqueId)) {
       return c.json({ error: "invalid critique_id" }, 400);
@@ -306,6 +325,11 @@ export function mountCriticRoutes(app: Hono, deps: CriticRouteDeps = {}): void {
   });
 
   app.post("/api/critic/action", async (c) => {
+    // Secret-gate — writes a dismiss/ack action to critic-actions.jsonl on an
+    // unauthenticated cross-origin POST otherwise (finding 2). Fail CLOSED.
+    if (!isAuthorized(deps.secret ?? "", c.req.header("X-Siltpoke-Secret"))) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
     let body: unknown;
     try {
       body = await c.req.json();

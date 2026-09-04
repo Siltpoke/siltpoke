@@ -13,6 +13,7 @@ import type { BrainOutput } from "../../../src/brain/schema";
 import { writeMemory, emptyMemory } from "../../../src/memory/memory";
 import { writeGlobal, emptyGlobal } from "../../../src/memory/global";
 import { seedEditedFile } from "./_shared";
+import { commitAll } from "../../_shared/git-fixture";
 
 let tmpHome: string;
 
@@ -335,14 +336,28 @@ test("identical event fired twice: second invocation skipped on no_change", asyn
     };
   };
 
+  // This test's premise is the content-hash "no_change" dedupe gate
+  // (src/router/skip-detector.ts), not the marker-based idempotency. Both calls
+  // fire the SAME event (same transcript), so under the now-default-on marker
+  // suppression they would collide on the SAME marker key (session_id +
+  // transcript-content hash): the second call would short-circuit BEFORE
+  // handleStopHook (and its content-hash gate) ever runs, writing ONE line to
+  // brain-calls.jsonl instead of two — breaking the `lines[1]?.skipped`
+  // assertion below. Opt out of suppression explicitly so this test keeps
+  // testing the content-hash gate it says it tests.
   await runHook({
     rawJson: JSON.stringify(event),
-    env: { HOME: tmpHome, SILTPOKE_TOOL_AUGMENTED: "0" },
+    env: { HOME: tmpHome, SILTPOKE_TOOL_AUGMENTED: "0", SILTPOKE_SUPPRESSION_ENABLED: "0" },
     brainFn,
   });
+  // A second commit, so the review-unit gate lets the turn through and the
+  // content-hash gate is the thing that stops it. Without this the run is
+  // stopped earlier, by `no_new_commit`, and the test would report a green
+  // dedupe gate it never reached.
+  commitAll(event.cwd, "second commit, same files and same question");
   await runHook({
     rawJson: JSON.stringify(event),
-    env: { HOME: tmpHome, SILTPOKE_TOOL_AUGMENTED: "0" },
+    env: { HOME: tmpHome, SILTPOKE_TOOL_AUGMENTED: "0", SILTPOKE_SUPPRESSION_ENABLED: "0" },
     brainFn,
   });
 

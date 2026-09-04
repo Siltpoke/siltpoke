@@ -33,7 +33,10 @@ export interface ChatSessionListItem {
 
 function deriveLabels(anchor: ChatAnchor | null): { label: string; pin: string; badge: string } {
   if (!anchor) return { label: "Chat", pin: "", badge: "" };
-  const badge = anchor.node_type === "file" ? "file" : "fn";
+  // "critique" anchors are pinned to a fired review, not a graph node — an
+  // honest badge beats the node-only fn/file discriminant (which would
+  // otherwise fall through to "fn" since node_type is "critique" for these).
+  const badge = anchor.kind === "critique" ? "review" : anchor.node_type === "file" ? "file" : "fn";
   return { label: anchor.node_name, pin: anchor.node_name, badge };
 }
 

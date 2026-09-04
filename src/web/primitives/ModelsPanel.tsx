@@ -47,7 +47,9 @@ function StatusPill({
   active: boolean;
 }) {
   const color = active ? tokens.color.moss : tokens.color.ink3;
-  const bg = active ? `${tokens.color.moss}22` : `${tokens.color.ink3}18`;
+  const bg = active
+    ? `color-mix(in srgb, ${tokens.color.moss} 13%, transparent)`
+    : `color-mix(in srgb, ${tokens.color.ink3} 9%, transparent)`;
   return (
     <span
       style={{

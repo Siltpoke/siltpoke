@@ -20,7 +20,6 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { aggregatePreferenceStats } from "../preference-log/stats";
-import { loadTriggerConfig } from "../router/trigger-modes";
 import {
   type BudgetConfig,
   type BudgetDecision,
@@ -370,16 +369,18 @@ function applyFilters(
     kind: SpeechKind | null;
     range: TimeRange;
     query: string | null;
+    family: string | null;
     now: Date;
   },
 ): CriticCall[] {
-  const { status, kind, query, now, range } = opts;
+  const { status, kind, query, family, now, range } = opts;
   const cutoff = rangeStart(now, range);
   const f: RowFilterOpts = {
     status,
     kind,
     cutoffMs: cutoff ? cutoff.getTime() : null,
     q: query ? query.toLowerCase() : null,
+    family,
   };
   return calls.filter((c) => matchesRowFilters(c, f));
 }
@@ -436,6 +437,7 @@ function assembleLinesWindow(
     activeKind: SpeechKind | null;
     activeRange: TimeRange;
     activeQuery: string | null;
+    activeFamily: string | null;
     activeSort: SortOrder;
     now: Date;
   },
@@ -464,6 +466,7 @@ function assembleLinesWindow(
     kind: f.activeKind,
     range: f.activeRange,
     query: f.activeQuery,
+    family: f.activeFamily,
     now: f.now,
   });
 
@@ -495,6 +498,7 @@ export async function readCriticTelemetry(
   const rawQuery = typeof opts.query === "string" ? opts.query.trim() : "";
   const activeQuery = rawQuery.length > 0 ? rawQuery : null;
   const activeSort: SortOrder = opts.sort ?? "newest";
+  const activeFamily = opts.family ?? null;
   const before = opts.before ?? null;
   const after = opts.after ?? null;
   const turnsMode = opts.windowMode === "turns";
@@ -503,7 +507,7 @@ export async function readCriticTelemetry(
   // already satisfy it, so it stays a harmless single source of truth.
   const rangeCutoff = rangeStart(now, activeRange);
 
-  const [callsWindow, pageWindow, rollup, budgetConfig, triggerConfig, quietConfig, actionsMap, preferenceStats] =
+  const [callsWindow, pageWindow, rollup, budgetConfig, quietConfig, actionsMap, preferenceStats] =
     await Promise.all([
       turnsMode
         ? Promise.resolve(null)
@@ -519,11 +523,11 @@ export async function readCriticTelemetry(
             kind: activeKind,
             query: activeQuery,
             project: activeProject,
+            family: activeFamily,
           })
         : Promise.resolve(null),
       readRollup(basePath),
       loadBudgetConfig(basePath),
-      loadTriggerConfig(basePath),
       loadQuietHoursConfig(basePath),
       readUserActions(basePath),
       aggregatePreferenceStats({ path: join(basePath, "preference-log.jsonl"), days: 30 }).catch(() => null),
@@ -538,6 +542,7 @@ export async function readCriticTelemetry(
           activeKind,
           activeRange,
           activeQuery,
+          activeFamily,
           activeSort,
           now,
         });
@@ -574,13 +579,13 @@ export async function readCriticTelemetry(
       config: budgetConfig,
       rollup,
     },
-    triggerConfig,
     quietConfig,
     gateState,
     projects,
     activeProject,
     activeStatus,
     activeKind,
+    activeFamily,
     activeRange,
     activeSort,
     activeQuery,

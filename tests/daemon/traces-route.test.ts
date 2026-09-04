@@ -278,3 +278,110 @@ describe("GET /api/traces/:trace_id (cost breakdown)", () => {
     expect(res.status).toBe(404);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Track #7 T3 (AC8/AC14) — a codex (quota-billed) brain span must never be
+// priced against the claude rate table, in either endpoint.
+// ---------------------------------------------------------------------------
+
+describe("cross-family provider cost guard (track #7 T3)", () => {
+  test("GET /api/traces — codex span contributes 0 cost/savings, not haiku-priced", async () => {
+    const dir = makeTmpDir();
+    dirs.push(dir);
+    const { db, traceDir } = setupTraceDb(dir);
+
+    const day = "2026-07-07";
+    const traceId = "c0de".repeat(8);
+    const now = Date.now() * 1_000_000;
+
+    const rootSpan = makeSpan({
+      trace_id: traceId,
+      span_id: "rootx".padEnd(16, "0"),
+      name: "siltpoke.turn",
+      start_unix_nano: now,
+      end_unix_nano: now + 2_000_000_000,
+    });
+    const brainSpan = makeSpan({
+      trace_id: traceId,
+      span_id: "brainx".padEnd(16, "0"),
+      parent_span_id: "rootx".padEnd(16, "0"),
+      name: "siltpoke.brain.find",
+      start_unix_nano: now + 100_000_000,
+      end_unix_nano: now + 1_500_000_000,
+      attributes: {
+        "gen_ai.system": "openai",
+        "gen_ai.request.model": "gpt-5-codex",
+        "gen_ai.usage.input_tokens": 100_000,
+        "gen_ai.usage.output_tokens": 50_000,
+        "gen_ai.usage.cache_read_input_tokens": 0,
+      },
+    });
+
+    insertSpan(db, rootSpan, day, null);
+    insertSpan(db, brainSpan, day, null);
+    writeJsonl(traceDir, day, [rootSpan, brainSpan]);
+    db.close();
+
+    const app = new Hono();
+    mountTracesRoutes(app, { homeBase: dir });
+
+    const res = await app.request("/api/traces");
+    const json = (await res.json()) as { success: boolean; data: TraceCostSummary[] };
+    const trace = json.data[0]!;
+    expect(trace.model).toBe("gpt-5-codex");
+    expect(trace.total_input_tokens).toBe(100_000);
+    expect(trace.cost_usd).toBe(0);
+    expect(trace.cache_savings_usd).toBe(0);
+  });
+
+  test("GET /api/traces/:trace_id — codex brain_costs row is $0, no haiku fallback", async () => {
+    const dir = makeTmpDir();
+    dirs.push(dir);
+    const { db, traceDir } = setupTraceDb(dir);
+
+    const day = "2026-07-07";
+    const traceId = "c0d3".repeat(8);
+    const now = Date.now() * 1_000_000;
+
+    const rootSpan = makeSpan({
+      trace_id: traceId,
+      span_id: "rooty".padEnd(16, "0"),
+      name: "siltpoke.turn",
+      start_unix_nano: now,
+      end_unix_nano: now + 2_000_000_000,
+    });
+    const brainSpan = makeSpan({
+      trace_id: traceId,
+      span_id: "brainy".padEnd(16, "0"),
+      parent_span_id: "rooty".padEnd(16, "0"),
+      name: "siltpoke.brain.find",
+      start_unix_nano: now + 100_000_000,
+      end_unix_nano: now + 1_500_000_000,
+      attributes: {
+        "gen_ai.system": "openai",
+        "gen_ai.usage.input_tokens": 10_000,
+        "gen_ai.usage.output_tokens": 5_000,
+      },
+    });
+
+    insertSpan(db, rootSpan, day, null);
+    insertSpan(db, brainSpan, day, null);
+    writeJsonl(traceDir, day, [rootSpan, brainSpan]);
+    db.close();
+
+    const app = new Hono();
+    mountTracesRoutes(app, { homeBase: dir });
+
+    const res = await app.request(`/api/traces/${traceId}`);
+    const json = (await res.json()) as {
+      brain_costs: Array<{ model: string; cost_usd: number }>;
+      totals: { cost_usd: number };
+    };
+    expect(json.brain_costs.length).toBe(1);
+    // No gen_ai.request.model attr at all + non-anthropic → "(unknown)",
+    // never mislabeled as claude-haiku-4-5.
+    expect(json.brain_costs[0]!.model).toBe("(unknown)");
+    expect(json.brain_costs[0]!.cost_usd).toBe(0);
+    expect(json.totals.cost_usd).toBe(0);
+  });
+});

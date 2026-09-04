@@ -55,6 +55,7 @@ function meta(root: string): RepoGraphMeta {
     last_indexed_ts: "2026-06-03T00:00:00Z", build_duration_ms: 1,
     counters: {
       files_walked: 2, files_cached: 0,
+ parse_degraded: 0,
       skipped: { tree_sitter_failed: 0, too_large: 0, not_a_source_file: 0, file_cap: 0 },
       nodes: { file: 2, function: 2, class: 0, module: 0, symbol: 0 },
       edges: { imports: 0, calls: 0, contains: 0 },

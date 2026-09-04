@@ -22,8 +22,8 @@
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { atomicWrite } from "../utils/atomic-write";
 import type { FailureClass } from "../brain/failure-classify";
+import { atomicWrite } from "../utils/atomic-write";
 
 export interface BrainFailureRecord {
   class: FailureClass;
@@ -50,10 +50,22 @@ export interface BrainHealth {
   breaker: BrainBreaker | null;
   /** Daily outer-retry budget (SRE retry-budget analog). Cap: 5/day. */
   retry_budget: { date: string; outer_retries_used: number };
+  /**
+   * Daily brain-call count for quota-billed providers, KEYED BY PROVIDER
+   * NAME (e.g. "codex", "agy") — the runaway brake the token budget gate
+   * can't see (a quota provider's zero-usage failures are invisible to
+   * `evaluateBudget`'s token sums). Cap: 50/day PER PROVIDER — codex
+   * (ChatGPT quota) and agy (Google Code Assist quota) are distinct quota
+   * families and must never share a pool; exhausting one must not gate the
+   * other. USD providers (claude) never touch this counter. Missing key =
+   * that provider has made 0 calls today.
+   */
+  quota_calls_today: Record<string, { date: string; count: number }>;
 }
 
 const FILE = "brain-health.json";
 export const OUTER_RETRY_DAILY_CAP = 5;
+export const QUOTA_CALL_DAILY_CAP = 50;
 const SIGNAL_AGE_OUT_MS = 24 * 60 * 60 * 1000;
 const MIN = 60_000;
 
@@ -70,6 +82,7 @@ export function freshBrainHealth(): BrainHealth {
     last_failure: null,
     breaker: null,
     retry_budget: { date: "", outer_retries_used: 0 },
+    quota_calls_today: {},
   };
 }
 
@@ -78,6 +91,44 @@ export function freshBrainHealth(): BrainHealth {
 /** True when the value is a string parsing to a finite epoch ms. */
 function isValidDateString(value: unknown): boolean {
   return typeof value === "string" && Number.isFinite(Date.parse(value));
+}
+
+/**
+ * Tolerant reader for `quota_calls_today`, migrating the pre-T6 single-scalar
+ * shape (`{ date, count }`, one shared pool for ALL quota providers) and any
+ * other corrupt value to a fresh empty per-provider map — never crash, never
+ * under/over-count. A discarded legacy count is a bounded, safe cost (this
+ * counter is a brake, not a ledger; worst case a provider gets one extra
+ * day's calls at the OLD shared-cap level before the new per-provider caps
+ * take over).
+ */
+function sanitizeQuotaCallsToday(raw: unknown): Record<string, { date: string; count: number }> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const asRecord = raw as Record<string, unknown>;
+  // Pre-T6 shape was a single scalar object with top-level `date`/`count`
+  // fields (no provider keying) — distinguishable from the new map because
+  // its "count" value is a number, not a nested { date, count } object.
+  if (typeof asRecord.date === "string" && typeof asRecord.count === "number") {
+    return {};
+  }
+  const result: Record<string, { date: string; count: number }> = {};
+  for (const [providerName, entry] of Object.entries(asRecord)) {
+    if (
+      entry !== null &&
+      typeof entry === "object" &&
+      typeof (entry as { date?: unknown }).date === "string" &&
+      typeof (entry as { count?: unknown }).count === "number" &&
+      Number.isFinite((entry as { count: number }).count)
+    ) {
+      result[providerName] = {
+        date: (entry as { date: string }).date,
+        // Same corrupt-tolerance discipline as retry_budget — a
+        // negative/float count must never under-count toward the cap.
+        count: Math.max(0, Math.floor((entry as { count: number }).count)),
+      };
+    }
+  }
+  return result;
 }
 
 function parseBrainHealth(raw: string): BrainHealth {
@@ -120,6 +171,9 @@ function parseBrainHealth(raw: string): BrainHealth {
               ),
             }
           : { date: "", outer_retries_used: 0 },
+      // Tolerant per-provider map read (T6) — migrates the pre-T6
+      // single-scalar shape and drops any corrupt entries individually.
+      quota_calls_today: sanitizeQuotaCallsToday(parsed.quota_calls_today),
     };
   } catch {
     // Corrupt → fresh closed-breaker state (contingency).
@@ -297,12 +351,81 @@ export function tryConsumeOuterRetry(basePath: string, now: Date): boolean {
   return true;
 }
 
+// ── Daily quota-call cap (brake for quota-billed providers, AC8) ─────────────
+// Keyed per-provider-name (T6): codex and agy are independent quota families
+// and must never share a pool — exhausting one must not gate the other.
+
+export function canConsumeQuotaCall(
+  health: BrainHealth,
+  providerName: string,
+  now: Date,
+  cap: number = QUOTA_CALL_DAILY_CAP,
+): boolean {
+  const today = dayOf(now);
+  const entry = health.quota_calls_today[providerName];
+  const used = entry?.date === today ? entry.count : 0;
+  return used < cap;
+}
+
+export function consumeQuotaCall(
+  health: BrainHealth,
+  providerName: string,
+  now: Date,
+): BrainHealth {
+  const today = dayOf(now);
+  const entry = health.quota_calls_today[providerName];
+  const used = entry?.date === today ? entry.count : 0;
+  return {
+    ...health,
+    quota_calls_today: {
+      ...health.quota_calls_today,
+      [providerName]: { date: today, count: used + 1 },
+    },
+  };
+}
+
+/**
+ * Read-check-consume in one step — same fresh-reread-consume-at-decision-time
+ * discipline as `tryConsumeOuterRetry`: re-reads the file fresh (never a
+ * caller-supplied stale snapshot), aborts (false) if THIS provider's daily
+ * cap is already reached, otherwise persists the consumed slot and returns
+ * true. Residual ms-window read→write race is accepted (bounded cost: one
+ * extra call beyond the cap; this is a brake, not a ledger). Other
+ * providers' entries in the map are untouched — independent pools.
+ */
+export function tryConsumeQuotaCall(
+  basePath: string,
+  providerName: string,
+  now: Date,
+  cap: number = QUOTA_CALL_DAILY_CAP,
+): boolean {
+  const fresh = readBrainHealth(basePath);
+  if (!canConsumeQuotaCall(fresh, providerName, now, cap)) return false;
+  writeBrainHealth(basePath, consumeQuotaCall(fresh, providerName, now));
+  return true;
+}
+
 // ── Surfacing predicate (card ⚠ line + dashboard strip) ──────────────────────
 
 export interface UnhealthySignal {
   show: boolean;
   /** One-liner for the card / strip, "" when show=false. */
   line: string;
+  /** The raw failure excerpt, for a `title`/tooltip. Empty when show=false.
+   *  It used to lead the line; a JSON tail is what a debugger wants and what
+   *  everyone else has to read past. */
+  detail: string;
+}
+
+/** "40m" / "1h" / "1h 30m". Minutes are rounded, hours are not folded away:
+ *  `Math.round(90/60)` is 2, and a strip that turns an hour and a half into
+ *  "2h" is wrong in the direction that matters for a countdown. */
+function coarseDuration(ms: number): string {
+  const mins = Math.max(0, Math.round(ms / 60_000));
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
 /**
@@ -310,25 +433,67 @@ export interface UnhealthySignal {
  * surface when consecutive_failures ≥ 2 OR the failing class is permanent
  * (which surfaces at the FIRST failure). 24h age-out; clears automatically
  * when a success resets consecutive_failures to 0.
+ *
+ * The line distinguishes THREE states, because the first version had only one
+ * and said the wrong thing for most of the time it was on screen. It read
+ * `⚠ brain: resource ×4 — <80 chars of raw stderr>` in the present tense for a
+ * full day after the last failure. Observed live: four failures at 15:34Z,
+ * `last_attempt_ts` still 15:34Z an hour later, the breaker open that whole
+ * hour — so nothing had even been attempted, and the strip was reporting a
+ * live fault. "I am not currently trying" had no rendering, so it rendered as
+ * "I am failing".
+ *
+ *   - breaker open on a timer → PAUSED, with the time left. The honest present
+ *     tense: the brain is not failing, it is not being called.
+ *   - breaker latched (permanent) → says so, and names the way out. A
+ *     countdown here would be a lie; nothing expires.
+ *   - breaker closed, failures still counted → past tense with an age, so a
+ *     strip left over from this morning cannot read as one from this minute.
+ *
+ * The raw excerpt moves to `detail` (a tooltip) in all three.
  */
 export function brainUnhealthySignal(
   health: BrainHealth,
   now: Date,
 ): UnhealthySignal {
   const f = health.last_failure;
-  if (f === null || health.consecutive_failures < 1) return { show: false, line: "" };
+  const NONE: UnhealthySignal = { show: false, line: "", detail: "" };
+  if (f === null || health.consecutive_failures < 1) return NONE;
   const escalated =
     health.consecutive_failures >= 2 || f.class === "permanent";
-  if (!escalated) return { show: false, line: "" };
+  if (!escalated) return NONE;
   const ageMs = now.getTime() - Date.parse(f.ts);
-  if (!Number.isFinite(ageMs) || ageMs > SIGNAL_AGE_OUT_MS) {
-    return { show: false, line: "" };
-  }
-  const reason = f.stderr_excerpt.trim().length > 0
-    ? f.stderr_excerpt.trim().slice(0, 80)
+  if (!Number.isFinite(ageMs) || ageMs > SIGNAL_AGE_OUT_MS) return NONE;
+
+  const detail = f.stderr_excerpt.trim().length > 0
+    ? f.stderr_excerpt.trim().slice(0, 200)
     : `exit ${f.exit_code ?? "?"}, no stderr`;
+  const n = health.consecutive_failures;
+  const times = `${n} ${f.class} failure${n === 1 ? "" : "s"}`;
+
+  const b = health.breaker;
+  if (b !== null && b.class === "permanent") {
+    // The ONE case that keeps the reason in the line. A permanent failure is
+    // an auth/flag problem where the reason IS the action — `/siltpoke-wake`
+    // does nothing about an invalid API key — and the statusline card renders
+    // this same string with no tooltip to put it in.
+    return {
+      show: true,
+      line: `⚠ brain stopped after ${times} — ${detail.slice(0, 80)} · clear with /siltpoke-wake or a passing doctor`,
+      detail,
+    };
+  }
+  const remainingMs = b === null ? 0 : Date.parse(b.next_eligible_at) - now.getTime();
+  if (b !== null && Number.isFinite(remainingMs) && remainingMs > 0) {
+    return {
+      show: true,
+      line: `⚠ brain paused after ${times} — retrying in ${coarseDuration(remainingMs)}`,
+      detail,
+    };
+  }
   return {
     show: true,
-    line: `⚠ brain: ${f.class} ×${health.consecutive_failures} — ${reason}`,
+    line: `⚠ brain: ${times}, last ${coarseDuration(ageMs)} ago — the next call will retry`,
+    detail,
   };
 }

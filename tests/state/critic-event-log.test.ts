@@ -63,6 +63,9 @@ function firedLine(c: FixtureCall): string {
     timestamp: c.ts,
     session_id: c.session,
     cwd: c.cwd ?? "/Users/foo/projA",
+    ...((c as { authorFamily?: string }).authorFamily
+      ? { authorFamily: (c as { authorFamily?: string }).authorFamily }
+      : {}),
     brain_output: {
       bubble_short: c.omit_bubble ? null : c.bubble_short ?? "short",
       bubble_long: c.bubble_long ?? null,
@@ -940,5 +943,39 @@ describe("readBrainCallsPage — predicate-counted turn windows (timeline pagina
     expect(t.recent.map((c) => c.session_id)).toEqual(["n4", "n3", "n2", "n1", "n0", "m4", "m3"]);
     expect(t.hasMore).toBe(true);
     expect(t.hasNewer).toBe(false);
+  });
+});
+
+describe("family filter (Brain select v2 T7 — filter-aware window)", () => {
+  test("family=codebuddy returns only codebuddy-built rows, and the window counts THEM", async () => {
+    await writeFixture(homeBase, [
+      { ts: "2026-05-19T14:00:00Z", session: "s1", status: "fired", authorFamily: "codebuddy" },
+      { ts: "2026-05-19T14:05:00Z", session: "s2", status: "fired", authorFamily: "codex" },
+      { ts: "2026-05-19T14:10:00Z", session: "s3", status: "fired", authorFamily: "codebuddy" },
+    ] as never);
+    const t = await readCriticTelemetry(homeBase, now, { family: "codebuddy", windowMode: "turns", limit: 20 });
+    expect(t.recent.length).toBe(2);
+    expect(t.recent.every((c) => (c.authorFamily || "claude") === "codebuddy")).toBe(true);
+    expect(t.activeFamily).toBe("codebuddy");
+  });
+
+  test("family=claude matches rows with absent/empty authorFamily (the default)", async () => {
+    await writeFixture(homeBase, [
+      { ts: "2026-05-19T14:00:00Z", session: "s1", status: "fired" }, // no authorFamily
+      { ts: "2026-05-19T14:05:00Z", session: "s2", status: "fired", authorFamily: "codex" },
+    ] as never);
+    const t = await readCriticTelemetry(homeBase, now, { family: "claude", windowMode: "turns", limit: 20 });
+    expect(t.recent.length).toBe(1);
+    expect(t.recent[0]?.session_id).toBe("s1");
+  });
+
+  test("no family filter → all rows (back-compat)", async () => {
+    await writeFixture(homeBase, [
+      { ts: "2026-05-19T14:00:00Z", session: "s1", status: "fired", authorFamily: "codebuddy" },
+      { ts: "2026-05-19T14:05:00Z", session: "s2", status: "fired", authorFamily: "codex" },
+    ] as never);
+    const t = await readCriticTelemetry(homeBase, now, { windowMode: "turns", limit: 20 });
+    expect(t.recent.length).toBe(2);
+    expect(t.activeFamily ?? null).toBeNull();
   });
 });

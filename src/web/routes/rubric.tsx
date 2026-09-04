@@ -40,11 +40,16 @@ async function loadCalibration(): Promise<Record<string, number>> {
   }
 }
 
-export function mountRubricRoutes(app: Hono): void {
+export interface RubricRouteDeps {
+  /** Daemon secret — forwarded to `<Layout secret>` (FloatingChat + htmx). */
+  secret?: string;
+}
+
+export function mountRubricRoutes(app: Hono, deps: RubricRouteDeps = {}): void {
   app.get("/rubric", async (c) => {
     const calibration = await loadCalibration();
     return c.html(
-      <Layout title="rubric · siltpoke">
+      <Layout title="rubric · siltpoke" secret={deps.secret}>
         <RubricList rules={ALL_RUBRIC_RULES} calibration={calibration} />
       </Layout>,
     );

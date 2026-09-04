@@ -16,6 +16,7 @@
  */
 
 import type { CriticCall } from "../../../state/api";
+import { auditAbsenceNote } from "../../primitives/critique-audit/shared";
 import { tokens } from "../../tokens/tokens";
 import { DiffSummaryView } from "../critic/diff";
 import { FeedbackSection, feedbackKey } from "../critic/feedback-section";
@@ -194,9 +195,26 @@ export function TraceTab({ c }: { c: CriticCall }) {
       />
     </div>
   ) : (
-    <div style={noteStyle} data-trace-note="no-critique-id">
-      no trace join possible — this turn pre-dates per-row review ids, so its spans (if any)
-      cannot be linked.
+    // No critique_id means no join key, so there is nothing to fetch. WHY there
+    // is no key is the part that used to be guessed: this branch rendered a
+    // fixed "this turn pre-dates per-row review ids" on turns that had run
+    // minutes earlier.
+    //
+    // The 5.5%-of-fired-reviews figure this comment used to quote is HISTORY as
+    // of 2026-08-19: the evidence check stopped discarding reviews, so a NORMAL
+    // run that reaches the Brain now always mints an id. The rows that still
+    // land here are the ones that never got that far — Brain killed at its
+    // timeout, schema-invalid reply, spawn failure, or nothing to review — and
+    // each carries a specific recorded reason on this very row. `audit_absence`
+    // is that reason, derived in code; see src/state/audit-absence.ts.
+    // No lead-in of our own. An earlier version prefixed "no trace to link — "
+    // and the rendered result read "no trace to link — no audit trail: the
+    // reviewer quoted code that could not be found…" — the same fact stated
+    // twice. Neither the unit tests nor the goldens could see that: both assert
+    // a substring is PRESENT, and neither reads the finished sentence. It
+    // surfaced on the first smoke pass against real rows.
+    <div style={noteStyle} data-trace-note="no-critique-id" data-absence={c.audit_absence}>
+      {auditAbsenceNote(c.audit_absence)}
     </div>
   );
   return (

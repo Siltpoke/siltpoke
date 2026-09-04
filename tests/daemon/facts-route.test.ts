@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -91,6 +91,17 @@ function buildHarness(initial: CoreMemory | null): Harness {
       stored = m;
     },
     now: () => NOW_FROZEN,
+    // Task 11 write-eligibility guard: this harness isn't exercising project
+    // resolution (that's facts-write-guard.test.ts's job) — inject a fixed
+    // "explicit" resolution so the guard doesn't 409 against this file's
+    // real-but-empty tmpdir homeBase.
+    resolveProject: async () => ({
+      project_id: null,
+      proj_hash: null,
+      project_root: null,
+      display_name: null,
+      source: "explicit" as const,
+    }),
   });
   return {
     app,
@@ -873,6 +884,65 @@ describe("POST /api/facts/parse", () => {
     const res = await postParse(app, { text: "记一条" });
     expect(res.status).toBe(502);
     expect((app as unknown as { _writes: () => number })._writes()).toBe(0);
+  });
+});
+
+describe("POST /api/facts/parse default seam (role-routed, single-brain S2)", () => {
+  test("no deps.parseFn + home config selecting qoder for extract → real qoder path is exercised", async () => {
+    const homeBase = mkdtempSync(join(tmpdir(), "facts-parse-role-"));
+    const bin = mkdtempSync(join(tmpdir(), "facts-parse-role-bin-"));
+    const originalPath = process.env.PATH;
+    try {
+      writeFileSync(
+        join(homeBase, "config.json"),
+        JSON.stringify({ brain: { roles: { extract: { provider: "qoder" } } } }),
+      );
+      const fakeBin = join(bin, "qodercli");
+      writeFileSync(
+        fakeBin,
+        [
+          "#!/usr/bin/env bun",
+          'const inner = JSON.stringify({ candidate_claim: "User prefers pink", classification: "add", target_fact_id: null, confidence: 0.9 });',
+          'const envelope = { type: "result", subtype: "success", is_error: false, result: inner, total_cost_usd: 0, usage: { input_tokens: 5, output_tokens: 3 } };',
+          "process.stdout.write(JSON.stringify(envelope));",
+          "",
+        ].join("\n"),
+      );
+      chmodSync(fakeBin, 0o755);
+      process.env.PATH = `${bin}:${originalPath ?? ""}`;
+
+      // No `parseFn` override — exercises the real default seam (facts.ts
+      // wires `makeRoleRawBrain(deps.homeBase, "extract")` into parseMemoryEdit).
+      const app = new Hono();
+      mountFactsRoutes(app, {
+        homeBase,
+        secret: SECRET,
+        readMemory: async () => makeMemory([]),
+        writeMemory: async () => {},
+        now: () => NOW_FROZEN,
+      });
+      const res = await app.request("/api/facts/parse", {
+        method: "POST",
+        headers: { "X-Siltpoke-Secret": SECRET, "Content-Type": "application/json" },
+        body: JSON.stringify({ text: "记得我喜欢粉红色" }),
+      });
+
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as {
+        candidate: string;
+        classification: string;
+        confidence: number;
+        targetFactId: string | null;
+      };
+      expect(json.classification).toBe("add");
+      expect(json.candidate).toBe("User prefers pink");
+      expect(json.confidence).toBe(0.9);
+      expect(json.targetFactId).toBeNull();
+    } finally {
+      process.env.PATH = originalPath;
+      rmSync(homeBase, { recursive: true, force: true });
+      rmSync(bin, { recursive: true, force: true });
+    }
   });
 });
 

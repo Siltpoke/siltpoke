@@ -8,14 +8,11 @@ import { readState, isStale } from "../state/state";
 import { loadPersonality } from "../brain/personality";
 import { loadDailyRollup } from "../state/usage";
 import { loadBudgetConfig } from "../state/budget-config";
-import { loadTriggerConfig } from "../router/trigger-modes";
+import { loadReviewUnit } from "../config/review-unit-config";
 import { readStatus } from "../state/critique-status";
 import { readMute } from "../state/mute";
 import { readBrainHealth, brainUnhealthySignal } from "../state/brain-health";
-
-function siltpokeHome(envHome: string | undefined): string {
-  return join(envHome ?? "", ".siltpoke");
-}
+import { siltpokeRoot } from "../installer/paths";
 
 export interface CardOptions {
   homeBase?: string;
@@ -48,7 +45,15 @@ export interface CardResult {
   titles: string[];
   mood: string;
   bubble: string;
-  trigger_mode: string;
+  /**
+   * Which unit of work closes before a review is considered ("commit" | "pr").
+   *
+   * Was `trigger_mode`. That axis stopped deciding anything in S3 and was
+   * deleted in S5, and this line is the only place a user can see which axis is
+   * live — so it names the one that is, rather than quietly going on showing
+   * the one that is not.
+   */
+  review_unit: string;
   brain_calls_today: number;
   reflections_today: number;
   cost_today_usd: number;
@@ -245,7 +250,7 @@ function formatCard(r: Omit<CardResult, "card_text">): string {
   }
   lines.push(
     `│ today: ${r.brain_calls_today} brain calls, ${r.reflections_today} reflections, $${r.cost_today_usd.toFixed(4)} spent`,
-    `│ mode: ${r.trigger_mode}`,
+    `│ unit: ${r.review_unit}`,
     `│ last 7d: ${r.sparkline_7d}`,
   );
   if (r.projects.length > 0) {
@@ -267,16 +272,16 @@ function formatCard(r: Omit<CardResult, "card_text">): string {
 }
 
 export async function runCard(opts: CardOptions = {}): Promise<CardResult> {
-  const homeBase = opts.homeBase ?? siltpokeHome(process.env.HOME);
+  const homeBase = opts.homeBase ?? siltpokeRoot();
   const now = (opts.now ?? (() => new Date()))();
 
-  const [personality, progression, state, budgetConfig, triggerConfig] =
+  const [personality, progression, state, budgetConfig, reviewUnit] =
     await Promise.all([
       loadPersonality(homeBase),
       readProgression(homeBase),
       readState(homeBase),
       loadBudgetConfig(homeBase),
-      loadTriggerConfig(homeBase),
+      loadReviewUnit(homeBase),
     ]);
 
   const rollup = await loadDailyRollup(
@@ -332,7 +337,7 @@ export async function runCard(opts: CardOptions = {}): Promise<CardResult> {
     titles: progression.unlocked_titles,
     mood,
     bubble,
-    trigger_mode: triggerConfig.mode,
+    review_unit: reviewUnit,
     brain_calls_today: rollup.brain_calls,
     reflections_today: rollup.reflections,
     cost_today_usd: rollup.total_cost_usd,

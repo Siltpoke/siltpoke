@@ -27,8 +27,9 @@ import type { RepoGraph } from "../repo-graph/types";
 import { assembleArchContext, type ArchContext } from "./arch-context";
 import { ARCH_SYSTEM_PROMPT } from "./arch-prompt";
 import { parseArchDocFromText, type ArchModelDoc } from "./arch-model-schema";
-import { groundArchModel, type SourceProvider } from "./arch-ground";
+import { groundArchModel, type GroundResult, type SourceProvider } from "./arch-ground";
 import type { SubdirEdge } from "./arch-ground-bands";
+import { reconcileReviewerExternals, resolveExternalScope } from "./arch-reconcile";
 import {
   computeRepoFingerprint,
   readArchModel,
@@ -240,6 +241,9 @@ type InputsResult =
       subdirEdges: SubdirEdge[];
       subdirs: SubdirsKeyspace;
       graphIndexedTs: string;
+      /** Absolute root of the repo being analyzed (`RepoGraphMeta.project_root`).
+       * Scopes the reviewer-external reconcile; null when meta omits it. */
+      projectRoot: string | null;
       fingerprint: string;
       validSubdirIds: Set<string>;
     }
@@ -248,7 +252,7 @@ type InputsResult =
 /** Pre-check + load graph/meta/overlay + assemble the signatures-only context. */
 async function loadArchInputs(ctx: ArchGenerateCtx): Promise<InputsResult> {
   if (!existsSync(join(ctx.graphStorageDir, "meta.json"))) {
-    return { ok: false, message: "No repo-graph found. Run `/siltpoke-index` first." };
+    return { ok: false, message: "No repo-graph found. Open Code Map and pick this repo to index it." };
   }
   // A corrupt graph.json/meta.json (truncated write, indexer crash mid-build)
   // must surface as a typed failure, not a rejected promise — keeps the
@@ -278,6 +282,7 @@ async function loadArchInputs(ctx: ArchGenerateCtx): Promise<InputsResult> {
       subdirEdges,
       subdirs,
       graphIndexedTs: meta.last_indexed_ts,
+      projectRoot: typeof meta.project_root === "string" ? meta.project_root : null,
       fingerprint: computeRepoFingerprint(fingerprints),
       validSubdirIds: new Set(projection.subdirs.map((s) => s.id)),
     };
@@ -311,6 +316,44 @@ export async function estimateArchGenerate(
   };
 }
 
+export interface FinalizedArch {
+  doc: ArchModelDoc;
+  groundedPct: number;
+  citedClaims: number;
+  totalClaims: number;
+  topologyBlindClaims: number;
+}
+
+/** Post-grounding assembly: sanitize the LLM doc, reconcile reviewer-provider
+ * externals from the registry (injects codebuddy/qoder that parameterized spawn
+ * hides from the LLM), and thread the reconcile-adjusted grounding counts.
+ * Extracted so the reconcile step has real firing evidence (a test on THIS
+ * function goes RED if reconcile is removed — audit A).
+ *
+ * `repoRoot` scopes that injection to repos that actually carry the registry's
+ * evidence anchor. The parameterized-spawn premise is true of siltpoke and of
+ * nothing else; without this argument every indexed repo's model was handed the
+ * same four review CLIs, cited to a file it does not contain. */
+export function finalizeArchModel(
+  grounded: GroundResult,
+  validSubdirIds: Set<string>,
+  subdirs: SubdirsKeyspace,
+  repoRoot: string | null,
+): FinalizedArch {
+  const sanitized = sanitizeArchModel(grounded.doc, validSubdirIds, subdirs);
+  const rec = reconcileReviewerExternals(sanitized, resolveExternalScope(repoRoot), {
+    totalClaims: grounded.totalClaims,
+    citedClaims: grounded.citedClaims,
+  });
+  return {
+    doc: rec.doc,
+    groundedPct: rec.groundedPct,
+    citedClaims: rec.citedClaims,
+    totalClaims: rec.totalClaims,
+    topologyBlindClaims: grounded.topologyBlindClaims,
+  };
+}
+
 /**
  * Run one grounded C4 generate. Returns a validated `ArchModelDoc` (no coords,
  * no tier — those are downstream). Atomic: hard-cap aborts pre-doc; malformed →
@@ -327,7 +370,7 @@ export async function runArchGenerate(ctx: ArchGenerateCtx): Promise<ArchGenerat
   // Step 3 — cache lookup (unless force). A fresh model is a 0-Brain hit; a
   // stale one is treated as a miss here (the caller surfaces the re-generate prompt).
   if (!ctx.force) {
-    const cached = await readArchModel(ctx.graphStorageDir, inputs.fingerprint, inputs.graphIndexedTs);
+    const cached = await readArchModel(ctx.graphStorageDir, inputs.fingerprint, inputs.graphIndexedTs, inputs.projectRoot);
     if (cached && !cached.stale) {
       return {
         kind: "generated",
@@ -365,9 +408,12 @@ export async function runArchGenerate(ctx: ArchGenerateCtx): Promise<ArchGenerat
 
   // Step 9 — grounding: tier every claim (cited | inferred) + groundedPct.
   const grounded = await groundArchModel(parsed.doc, inputs.graph, inputs.subdirEdges, inputs.subdirs, ctx.sourceProvider);
-  // Sanitize reasonable-but-imperfect LLM output (drop dangling drillTo) into a
-  // renderable model — both the cache AND the response use the sanitized doc.
-  const doc = sanitizeArchModel(grounded.doc, inputs.validSubdirIds, inputs.subdirs);
+  // Sanitize reasonable-but-imperfect LLM output (drop dangling drillTo), then
+  // reconcile reviewer-provider externals from the registry — both the cache
+  // AND the response use this finalized doc, and the counts below are the
+  // reconcile-adjusted ones (not the raw grounding counts).
+  const final = finalizeArchModel(grounded, inputs.validSubdirIds, inputs.subdirs, inputs.projectRoot);
+  const doc = final.doc;
 
   // Step 10 — integrity gate + atomic persist. A malformed model is rejected
   // (nothing written); a cost-capped run already returned above, so the cache
@@ -389,16 +435,17 @@ export async function runArchGenerate(ctx: ArchGenerateCtx): Promise<ArchGenerat
     fingerprint: inputs.fingerprint,
     graphIndexedTs: inputs.graphIndexedTs,
     costUsd,
-    groundedPct: grounded.groundedPct,
+    groundedPct: final.groundedPct,
     model: ctx.model ?? ARCH_DEFAULT_MODEL,
     generatedTs: new Date().toISOString(),
     ...(durationMs !== undefined ? { durationMs } : {}),
-    // Thread grounding counts (citedClaims/totalClaims/topologyBlindClaims)
-    // from GroundResult into the cache meta so the SSR payload + POST response
-    // can serve them to the client without a re-read of the model doc.
-    citedClaims: grounded.citedClaims,
-    totalClaims: grounded.totalClaims,
-    topologyBlindClaims: grounded.topologyBlindClaims,
+    // Thread the reconcile-adjusted counts (citedClaims/totalClaims/
+    // topologyBlindClaims) from FinalizedArch into the cache meta so the SSR
+    // payload + POST response can serve them to the client without a re-read
+    // of the model doc.
+    citedClaims: final.citedClaims,
+    totalClaims: final.totalClaims,
+    topologyBlindClaims: final.topologyBlindClaims,
   };
   const written = writeArchModel(ctx.graphStorageDir, doc, cacheMeta, inputs.validSubdirIds);
   if (!written.ok) return { kind: "integrity_failed", message: written.error, usage, costUsd };
@@ -410,7 +457,7 @@ export async function runArchGenerate(ctx: ArchGenerateCtx): Promise<ArchGenerat
     costUsd,
     softCapExceeded: costUsd > softCap,
     softCapUsd: softCap,
-    groundedPct: grounded.groundedPct,
+    groundedPct: final.groundedPct,
     fromCache: false,
     context: ctxStats,
   };

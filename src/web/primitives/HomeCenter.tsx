@@ -26,7 +26,6 @@ export interface HomeCenterPet {
 export interface HomeCenterToyData {
   pet: HomeCenterPet;
   hp: number;
-  pendingCritiqueCount: number;
 }
 
 export interface HomeCenterProps {

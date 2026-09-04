@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { atomicWrite } from "../utils/atomic-write";
 import { computeProjHash } from "./proj-hash";
 import { claimValue } from "./repo-card";
+import { resolveExternalScope, isOutOfScopeRegistryNode } from "../explain/arch-reconcile";
 
 const REPO_MEMORY_DIR = "repo-memory";
 const SUMMARY_FILE = "repo-summary.json";
@@ -40,9 +41,16 @@ function asRecord(x: unknown): Record<string, unknown> | null {
  * Build the context bundle (claude -p stdin) from a cached arch-model doc:
  * repo name, its layer labels, and each component's title + description.
  * Tolerates malformed/partial arch-models (missing pieces are skipped).
+ *
+ * `repoRoot` drops registry-declared reviewer externals the repo cannot
+ * evidence. This one matters more than the other surfaces: the bundle is the
+ * prompt for a PAID Brain call, so an unscoped model had Siltpoke spending real
+ * tokens telling the summariser that some travel app is built out of four code
+ * review CLIs — and then caching the blurb that came back.
  */
-export function buildSummaryContext(archModel: unknown): string {
+export function buildSummaryContext(archModel: unknown, repoRoot: string | null): string {
   const model = asRecord(archModel);
+  const scope = resolveExternalScope(repoRoot);
   const boundary = model ? claimValue(model.boundary) : "";
   const bands =
     model && Array.isArray(model.bands)
@@ -51,6 +59,7 @@ export function buildSummaryContext(archModel: unknown): string {
   const components =
     model && Array.isArray(model.nodes)
       ? model.nodes
+          .filter((n) => !isOutOfScopeRegistryNode(n, scope))
           .map((n) => {
             const r = asRecord(n);
             if (!r) return "";

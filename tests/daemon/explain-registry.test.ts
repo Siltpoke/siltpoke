@@ -72,9 +72,11 @@ function readEvents(home: string): UsageEvent[] {
   return readFileSync(p, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as UsageEvent);
 }
 
+// POST /api/repo-graph/explain is secret-gated (daemon-hardening security
+// audit, finding 3 — residual gap); mount() above sets secret: "s".
 function explain(app: Hono, body: Record<string, unknown>) {
   return app.request("/api/repo-graph/explain", {
-    method: "POST", headers: { "content-type": "application/json" },
+    method: "POST", headers: { "content-type": "application/json", "X-Siltpoke-Secret": "s" },
     body: JSON.stringify(body),
   });
 }

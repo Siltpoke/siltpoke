@@ -30,7 +30,20 @@ export interface DaemonHealthRouteDeps {
   readBootBuild?: () => BootBuild;
   /** Git probe bound to the siltpoke source repo. Injectable for tests. */
   gitProbe?: GitProbe;
+  /**
+   * Identity of THIS serving process. Injectable for tests.
+   *
+   * Distinct from bootSha/bootTime, which describe the COMMIT the daemon booted
+   * from — two different processes booted from the same commit report identical
+   * bootSha/bootTime, so those fields cannot answer "is this still the same
+   * process?". `siltpoked restart` needs exactly that question answered to tell
+   * a real restart from a no-op, which is why this pair exists.
+   */
+  processIdentity?: () => { pid: number; startedAt: string };
 }
+
+/** Captured once at module load = this process's start, not a commit date. */
+const PROCESS_STARTED_AT = new Date().toISOString();
 
 let loggedProbeError = false;
 
@@ -40,6 +53,7 @@ export function mountDaemonHealthRoute(
 ): void {
   const getBoot = deps.readBootBuild ?? readBootBuild;
   const probe = deps.gitProbe ?? makeGitProbe();
+  const identity = deps.processIdentity ?? (() => ({ pid: process.pid, startedAt: PROCESS_STARTED_AT }));
 
   app.get("/api/daemon-health", (c) => {
     const { bootSha, bootTime } = getBoot();
@@ -62,9 +76,10 @@ export function mountDaemonHealthRoute(
       commitsBehind = null;
       state = "unknown";
     }
+    const { pid, startedAt } = identity();
     return c.json({
       success: true,
-      data: { bootSha, bootTime, headSha, commitsBehind, state },
+      data: { bootSha, bootTime, headSha, commitsBehind, state, pid, startedAt },
     });
   });
 }

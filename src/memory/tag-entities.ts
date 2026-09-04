@@ -14,11 +14,11 @@
  */
 
 import { z } from "zod";
-import { callBrainRaw } from "../brain/brain";
+import type { callBrainRaw } from "../brain/brain";
+import { makeRoleRawBrain } from "../brain/role-brain";
 import { ledgerBrainCall } from "../state/usage";
 import type { CoreMemory, Fact } from "./memory";
 
-const TAG_MODEL = "claude-haiku-4-5-20251001";
 const TAG_TIMEOUT_MS = 60_000;
 const TAG_SESSION_ID = "entity-janitor";
 
@@ -55,7 +55,7 @@ export async function tagUntaggedEntities(
   memory: CoreMemory,
   deps: TagEntitiesDeps,
 ): Promise<CoreMemory> {
-  const brain = deps.callBrainRaw ?? callBrainRaw;
+  const brain = deps.callBrainRaw ?? makeRoleRawBrain(deps.homeBase, "extract");
   const ledger = deps.ledger ?? ledgerBrainCall;
 
   const untagged = memory.facts.filter(
@@ -70,7 +70,6 @@ export async function tagUntaggedEntities(
     raw = await brain({
       systemPrompt: TAG_SYSTEM_PROMPT,
       contextBundle: bundle,
-      model: TAG_MODEL,
       timeoutMs: TAG_TIMEOUT_MS,
     });
   } catch {
@@ -80,11 +79,11 @@ export async function tagUntaggedEntities(
   // Ledger the spend the moment the call returns, before parsing — same
   // honesty precedent as extract-facts.ts (a malformed reply still cost
   // tokens). ledgerBrainCall.session_id is a required string; this janitor
-  // runs outside any chat session, so it gets its own fixed marker.
+  // runs outside any chat session, so it gets its own fixed marker. No static
+  // `model` anymore — see extract-facts.ts for the cost-honesty rationale.
   await ledger(deps.homeBase, {
     kind: "chat_capture",
     session_id: TAG_SESSION_ID,
-    model: TAG_MODEL,
     usage: raw.usage,
   });
 

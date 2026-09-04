@@ -1,14 +1,15 @@
-import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  runRemember,
-  parseRememberArgs,
+  inferMemoryType,
   parseInferredType,
+  parseRememberArgs,
   type RememberType,
+  runRemember,
 } from "../../src/cli/remember";
-import { readMemory, writeMemory, emptyMemory } from "../../src/memory/memory";
+import { emptyMemory, readMemory, writeMemory } from "../../src/memory/memory";
 
 let tmp: string;
 
@@ -443,4 +444,86 @@ test("existing memory is preserved — new fact appended not replaced", async ()
   expect(memory?.facts.length).toBe(2);
   expect(memory?.facts.find((f) => f.id === "f-existing")).toBeDefined();
   expect(memory?.facts.find((f) => f.text === "new fact")).toBeDefined();
+});
+
+// ---------------------------------------------------------------------------
+// inferMemoryType default seam is role-routed (single-brain S2, task 11) —
+// inferMemoryType no longer hardcodes the inline `await import("../brain/
+// brain")` + a pinned model string with no homeBase; its `rawBrain` param
+// defaults to a lazy callBrainRaw import (direct-caller compat), and
+// runRemember's default `inferTypeFn` now wires it through
+// `makeRoleRawBrain(opts.homeBase, "extract")`. Mocking the shared
+// `role-brain` module is deliberately avoided (bun's `mock.module` leaks
+// across test files — see task-6 investigation note in
+// tests/memory/extract-facts.test.ts). Instead this exercises the REAL
+// (unmocked) chain end-to-end: a `config.json` under a tmp homeBase selects
+// the "qoder" family for the extract role, and a throwaway executable named
+// `qodercli` is put on PATH so the real (un-injected) subprocess spawn
+// resolves to a script this test controls — proving the default seam reads
+// `homeBase/config.json` and reaches a NON-claude provider, something the
+// old static `callBrainRaw` import (always claude, no homeBase) could never
+// do.
+// ---------------------------------------------------------------------------
+
+describe("runRemember default inferTypeFn seam (role-routed)", () => {
+  test("--type omitted + no deps.inferTypeFn + homeBase config selecting qoder → real qoder path is exercised", async () => {
+    const bin = mkdtempSync(join(tmpdir(), "remember-role-bin-"));
+    const originalPath = process.env.PATH;
+    try {
+      writeFileSync(
+        join(tmp, "config.json"),
+        JSON.stringify({ brain: { roles: { extract: { provider: "qoder" } } } }),
+      );
+      const fakeBin = join(bin, "qodercli");
+      writeFileSync(
+        fakeBin,
+        [
+          "#!/usr/bin/env bun",
+          'const inner = JSON.stringify({ type: "goal" });',
+          'const envelope = { type: "result", subtype: "success", is_error: false, result: inner, total_cost_usd: 0, usage: { input_tokens: 5, output_tokens: 3 } };',
+          "process.stdout.write(JSON.stringify(envelope));",
+          "",
+        ].join("\n"),
+      );
+      chmodSync(fakeBin, 0o755);
+      process.env.PATH = `${bin}:${originalPath ?? ""}`;
+
+      const code = await runRemember({
+        argv: ["user wants to ship the feature"],
+        homeBase: tmp,
+        now: NOW,
+        output: () => undefined,
+        // no deps.inferTypeFn — exercises the default seam
+      });
+
+      expect(code).toBe(0);
+      const memory = await readMemory(tmp);
+      expect(memory?.user_profile.goals.length).toBe(1);
+      expect(memory?.user_profile.goals[0]?.text).toBe("user wants to ship the feature");
+    } finally {
+      process.env.PATH = originalPath;
+      rmSync(bin, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// inferMemoryType unit test: injected rawBrain fn seam (direct-caller path)
+// ---------------------------------------------------------------------------
+
+test("inferMemoryType: uses injected rawBrain fn instead of the inline import", async () => {
+  let calledWith: unknown;
+  const fakeRawBrain = async (opts: { systemPrompt: string; contextBundle: string }) => {
+    calledWith = opts;
+    return { output: { type: "constraint" }, usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 0, output_tokens: 0, total_cost_usd: 0 } };
+  };
+
+  const result = await inferMemoryType("never use jQuery", fakeRawBrain);
+
+  expect(result).toBe("constraint");
+  expect(calledWith).toBeDefined();
+  expect((calledWith as { contextBundle: string }).contextBundle).toContain("never use jQuery");
+  // model must NOT be set by inferMemoryType itself — the caller-supplied
+  // rawBrain (makeRoleRawBrain in production) owns model resolution now.
+  expect((calledWith as { model?: string }).model).toBeUndefined();
 });

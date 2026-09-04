@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
+import { realTtyReadLine } from "./tty-io";
+
 export interface WizardIO {
   readLine(): Promise<string>;
   write(s: string): void;
@@ -9,32 +11,12 @@ const ANSI_CYAN = "\x1b[36m";
 const ANSI_RESET = "\x1b[0m";
 
 export function realWizardIO(): WizardIO {
-  let buffer = "";
-  let exhausted = false;
-  const decoder = new TextDecoder();
-  const reader = (Bun.stdin as unknown as { stream: () => ReadableStream<Uint8Array> })
-    .stream()
-    .getReader();
+  // readLine reads from /dev/tty when interactive so the wizard survives
+  // `bun run setup` (its subshell breaks Bun.stdin/process.stdin). See
+  // ./tty-io.ts for the full root cause.
+  const readLine = realTtyReadLine();
   return {
-    async readLine(): Promise<string> {
-      while (!exhausted) {
-        const newline = buffer.indexOf("\n");
-        if (newline !== -1) {
-          const line = buffer.slice(0, newline);
-          buffer = buffer.slice(newline + 1);
-          return line;
-        }
-        const { done, value } = await reader.read();
-        if (done) {
-          exhausted = true;
-          break;
-        }
-        buffer += decoder.decode(value, { stream: true });
-      }
-      const line = buffer;
-      buffer = "";
-      return line;
-    },
+    readLine,
     write(s: string) {
       process.stdout.write(s);
     },
@@ -75,12 +57,26 @@ export async function askText(
   return raw;
 }
 
+function parseChoice<T extends string>(
+  raw: string,
+  choices: readonly T[],
+): T | undefined {
+  const asIndex = parseInt(raw, 10);
+  if (Number.isFinite(asIndex) && asIndex >= 1 && asIndex <= choices.length) {
+    return choices[asIndex - 1];
+  }
+  return choices.find((c) => c === raw);
+}
+
 export async function askChoice<T extends string>(
   io: WizardIO,
   question: string,
   choices: readonly T[],
   defaultValue?: T,
 ): Promise<T> {
+  if (choices.some((c) => c === "y" || c === "Y")) {
+    throw new Error("choice value 'y'/'Y' collides with the --yes accept-default sentinel");
+  }
   for (let attempt = 0; attempt < 3; attempt++) {
     const list = choices
       .map((c, i) => `  ${i + 1}) ${c}${defaultValue === c ? " *" : ""}`)
@@ -90,16 +86,16 @@ export async function askChoice<T extends string>(
       prompt(`choose (1-${choices.length})`, defaultValue ? `[${defaultValue}]` : ""),
     );
     const raw = (await io.readLine()).trim();
-    if (raw === "" && defaultValue) return defaultValue;
-    const asIndex = parseInt(raw, 10);
-    if (Number.isFinite(asIndex) && asIndex >= 1 && asIndex <= choices.length) {
-      return choices[asIndex - 1]!;
-    }
-    const direct = choices.find((c) => c === raw);
-    if (direct) return direct;
+    // "" (blank Enter) or the bare "y" sentinel (used by --yes / autoYesIo, which
+    // isn't prompt-type-aware) both mean "accept the default" here.
+    if ((raw === "" || raw.toLowerCase() === "y") && defaultValue) return defaultValue;
+    const parsed = parseChoice(raw, choices);
+    if (parsed) return parsed;
     io.write(`${ANSI_CYAN}  (invalid choice, try again)${ANSI_RESET}\n`);
   }
-  return defaultValue ?? choices[0]!;
+  const fallback = defaultValue ?? choices[0];
+  if (fallback) return fallback;
+  throw new Error("askChoice requires at least one choice");
 }
 
 export interface LabeledChoice<T extends string> {
@@ -138,6 +134,62 @@ export async function askLabeledChoice<T extends string>(
     io.write(`${ANSI_CYAN}  (invalid choice, try again)${ANSI_RESET}\n`);
   }
   return defaultValue ?? choices[0]?.value;
+}
+
+function parseLabeledMultiChoice<T extends string>(
+  raw: string,
+  choices: readonly LabeledChoice<T>[],
+): T[] | null {
+  const selected: T[] = [];
+  for (const part of raw.split(",").map((p) => p.trim()).filter(Boolean)) {
+    const asIndex = parseInt(part, 10);
+    const value =
+      Number.isFinite(asIndex) && asIndex >= 1 && asIndex <= choices.length
+        ? choices[asIndex - 1]?.value
+        : choices.find((c) => c.value === part)?.value;
+    if (!value) return null;
+    if (!selected.includes(value)) selected.push(value);
+  }
+  return selected.length > 0 ? selected : null;
+}
+
+export async function askLabeledMultiChoice<T extends string>(
+  io: WizardIO,
+  question: string,
+  choices: readonly LabeledChoice<T>[],
+  defaultValues: readonly T[],
+): Promise<T[]> {
+  if (choices.some((c) => c.value === "y" || c.value === "Y")) {
+    throw new Error("choice value 'y'/'Y' collides with the --yes accept-default sentinel");
+  }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const list = choices
+      .map((c, i) => {
+        const selected = defaultValues.includes(c.value) ? "x" : " ";
+        return `  ${i + 1}) [${selected}] ${c.label}`;
+      })
+      .join("\n");
+    io.write(`${ANSI_CYAN}? ${question}${ANSI_RESET}\n${list}\n`);
+    const defaultIndices = choices
+      .map((c, i) => (defaultValues.includes(c.value) ? String(i + 1) : ""))
+      .filter(Boolean)
+      .join(",");
+    io.write(
+      prompt(
+        "choose one or more (comma-separated)",
+        defaultIndices ? `[${defaultIndices}]` : "",
+      ),
+    );
+    const raw = (await io.readLine()).trim();
+    // "" (blank Enter) or the bare "y" sentinel (used by --yes / autoYesIo, which
+    // isn't prompt-type-aware) both mean "accept the defaults" here.
+    if ((raw === "" || raw.toLowerCase() === "y") && defaultValues.length > 0) return [...defaultValues];
+
+    const selected = parseLabeledMultiChoice(raw, choices);
+    if (selected) return selected;
+    io.write(`${ANSI_CYAN}  (invalid selection, try again)${ANSI_RESET}\n`);
+  }
+  return [...defaultValues];
 }
 
 export async function askNumber(

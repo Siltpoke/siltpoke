@@ -10,13 +10,18 @@
  * siltpoke.brain.* spans (find, verify). For phase wall-time see /history.
  */
 import type { Hono } from "hono";
-import { join } from "node:path";
-import { homedir } from "node:os";
-import { existsSync } from "node:fs";
-import { readFileSync } from "node:fs";
-import { Database } from "bun:sqlite";
+import { siltpokeRoot } from "../../installer/paths";
 import { computeCost } from "../../observability/cost-calc";
 import type { Span } from "../../observability/types";
+import type { BrainSpanCost, TraceTotals } from "../../web/screens/TraceList";
+import {
+  buildBrainCosts,
+  buildTraceTotals,
+  loadFullSpans,
+  numAttr,
+  openIndexDb,
+  strAttr,
+} from "../../web/routes/trace-cost";
 
 export interface TracesRouteDeps {
   homeBase?: string;
@@ -62,59 +67,12 @@ export interface TraceCostSummary {
   cache_savings_usd: number;
 }
 
-export interface BrainSpanCost {
-  span_name: string;
-  model: string;
-  input_tokens: number;
-  output_tokens: number;
-  cached_tokens: number;
-  cost_usd: number;
-  cache_savings_usd: number;
-  duration_ms: number;
-}
-
-function openIndexDb(homeBase: string): Database | null {
-  const dbPath = join(homeBase, "traces", "index.sqlite");
-  if (!existsSync(dbPath)) return null;
-  return new Database(dbPath, { readonly: true });
-}
-
-function loadSpansFromJsonl(homeBase: string, day: string, traceId: string): Span[] {
-  const file = join(homeBase, "traces", `${day}.jsonl`);
-  if (!existsSync(file)) return [];
-  try {
-    return readFileSync(file, "utf8")
-      .trim()
-      .split("\n")
-      .filter((l) => l.length > 0)
-      .map((l) => JSON.parse(l) as Span)
-      .filter((s) => s.trace_id === traceId);
-  } catch {
-    return [];
-  }
-}
-
-function isBrainSpan(name: string): boolean {
-  return name.startsWith("siltpoke.brain.");
-}
-
-function numAttr(attrs: Record<string, string | number | boolean>, key: string): number {
-  const v = attrs[key];
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string") {
-    const n = Number(v);
-    if (Number.isFinite(n)) return n;
-  }
-  return 0;
-}
-
-function strAttr(attrs: Record<string, string | number | boolean>, key: string): string {
-  const v = attrs[key];
-  return typeof v === "string" ? v : "";
-}
-
+/** Track #7 T3 (AC8/AC14): a span whose `gen_ai.system` is present and
+ * non-anthropic (codex/quota-billed) never goes through computeCost — never
+ * haiku-fallback-price a quota-billed call. Legacy spans predating the
+ * attribute (empty string) default to anthropic, matching pre-track behavior. */
 function computeTraceCostSummary(row: TraceRow, spans: Span[]): TraceCostSummary {
-  const brainSpans = spans.filter((s) => isBrainSpan(s.name));
+  const brainSpans = spans.filter((s) => s.name.startsWith("siltpoke.brain."));
 
   let totalInput = 0;
   let totalOutput = 0;
@@ -124,20 +82,24 @@ function computeTraceCostSummary(row: TraceRow, spans: Span[]): TraceCostSummary
   let model = "";
 
   for (const s of brainSpans) {
+    const genAiSystem = strAttr(s.attributes, "gen_ai.system") || "anthropic";
+    const isAnthropic = genAiSystem === "anthropic";
     const spanModel = strAttr(s.attributes, "gen_ai.request.model");
     if (!model && spanModel) model = spanModel;
 
     const input = numAttr(s.attributes, "gen_ai.usage.input_tokens");
     const output = numAttr(s.attributes, "gen_ai.usage.output_tokens");
     const cached = numAttr(s.attributes, "gen_ai.usage.cache_read_input_tokens");
-    const m = spanModel || model || "claude-haiku-4-5";
+    const m = spanModel || (isAnthropic ? model || "claude-haiku-4-5" : "(unknown)");
 
-    const { cost_usd, cache_savings_usd } = computeCost({
-      input_tokens: input,
-      output_tokens: output,
-      cached_input_tokens: cached,
-      model: m,
-    });
+    const { cost_usd, cache_savings_usd } = isAnthropic
+      ? computeCost({
+          input_tokens: input,
+          output_tokens: output,
+          cached_input_tokens: cached,
+          model: m,
+        })
+      : { cost_usd: 0, cache_savings_usd: 0 };
 
     totalInput += input;
     totalOutput += output;
@@ -169,40 +131,8 @@ function computeTraceCostSummary(row: TraceRow, spans: Span[]): TraceCostSummary
   };
 }
 
-function computeBrainSpanCosts(spans: Span[]): BrainSpanCost[] {
-  return spans
-    .filter((s) => isBrainSpan(s.name))
-    .map((s) => {
-      const model = strAttr(s.attributes, "gen_ai.request.model") || "claude-haiku-4-5";
-      const input = numAttr(s.attributes, "gen_ai.usage.input_tokens");
-      const output = numAttr(s.attributes, "gen_ai.usage.output_tokens");
-      const cached = numAttr(s.attributes, "gen_ai.usage.cache_read_input_tokens");
-      const duration_ms =
-        s.end_unix_nano > 0 ? (s.end_unix_nano - s.start_unix_nano) / 1_000_000 : 0;
-
-      const { cost_usd, cache_savings_usd } = computeCost({
-        input_tokens: input,
-        output_tokens: output,
-        cached_input_tokens: cached,
-        model,
-      });
-
-      return {
-        span_name: s.name,
-        model,
-        input_tokens: input,
-        output_tokens: output,
-        cached_tokens: cached,
-        cost_usd,
-        cache_savings_usd,
-        duration_ms,
-      };
-    });
-}
-
 export function mountTracesRoutes(app: Hono, deps: TracesRouteDeps = {}): void {
-  const homeBase =
-    deps.homeBase ?? process.env.SILTPOKE_HOME ?? join(homedir(), ".siltpoke");
+  const homeBase = deps.homeBase ?? siltpokeRoot();
 
   /**
    * GET /api/traces?limit=50
@@ -234,7 +164,7 @@ export function mountTracesRoutes(app: Hono, deps: TracesRouteDeps = {}): void {
       `).all(limit);
 
       const data: TraceCostSummary[] = rows.map((row) => {
-        const spans = loadSpansFromJsonl(homeBase, row.day, row.trace_id);
+        const spans = loadFullSpans(homeBase, row.day, row.trace_id);
         return computeTraceCostSummary(row, spans);
       });
 
@@ -273,29 +203,15 @@ export function mountTracesRoutes(app: Hono, deps: TracesRouteDeps = {}): void {
 
       // Load full spans (with attributes) from JSONL for cost calculation
       const day = rows[0]?.day ?? "";
-      const fullSpans = day ? loadSpansFromJsonl(homeBase, day, trace_id) : [];
-      const brainCosts = computeBrainSpanCosts(fullSpans);
-
-      // Aggregate totals across all brain spans
-      const totalInput = brainCosts.reduce((s, b) => s + b.input_tokens, 0);
-      const totalOutput = brainCosts.reduce((s, b) => s + b.output_tokens, 0);
-      const totalCached = brainCosts.reduce((s, b) => s + b.cached_tokens, 0);
-      const totalCost = brainCosts.reduce((s, b) => s + b.cost_usd, 0);
-      const totalSavings = brainCosts.reduce((s, b) => s + b.cache_savings_usd, 0);
-      const wouldHaveCost = totalCost + totalSavings;
+      const fullSpans = day ? loadFullSpans(homeBase, day, trace_id) : [];
+      const brainCosts: BrainSpanCost[] = buildBrainCosts(fullSpans);
+      const totals: TraceTotals = buildTraceTotals(brainCosts);
 
       return c.json({
         success: true,
         data: rows,
         brain_costs: brainCosts,
-        totals: {
-          total_input_tokens: totalInput,
-          total_output_tokens: totalOutput,
-          total_cached_tokens: totalCached,
-          cost_usd: totalCost,
-          cache_savings_usd: totalSavings,
-          would_have_cost_usd: wouldHaveCost,
-        },
+        totals,
       });
     } finally {
       db.close();

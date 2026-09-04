@@ -257,15 +257,19 @@ describe("Memory screen SSR — by-entity view", () => {
     // re-expose the entity tab"). The byEntityGroups scaffold + island logic
     // remain (next test) so restoring is a one-block revert. `setView('entity')`
     // was ONLY the button's click handler — the scaffold uses `view === 'entity'`
-    // (x-show), so its absence specifically proves the button is gone, not the
+    // (x-if), so its absence specifically proves the button is gone, not the
     // grouping. This assertion fails the moment the button is restored.
     expect(html).not.toContain("setView(&#39;entity&#39;)");
     expect(html).not.toContain("实体");
   });
 
-  test("renders the byEntityGroups x-for scaffold gated on view === 'entity'", () => {
+  test("renders the byEntityGroups x-for scaffold gated on view === 'entity' (x-if)", () => {
     const html = render();
-    expect(html).toContain("x-show=\"view === &#39;entity&#39;\"");
+    // x-if (not x-show): the hidden entity view must UNMOUNT, not just display:none.
+    // Under x-show its x-for still rendered a duplicate .memory-row per fact
+    // (doubling every timeline row); x-if keeps it out of the DOM until the tab
+    // is restored. See Memory.tsx by-entity block.
+    expect(html).toContain("x-if=\"view === &#39;entity&#39;\"");
     expect(html).toContain('x-for="group in byEntityGroups()"');
     expect(html).toContain('x-text="group.label"');
   });

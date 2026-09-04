@@ -43,6 +43,8 @@ export const TL_AGENT_REPLY =
 export const TL_CRITIQUE_TEXT =
   "retry() rebuilds the AbortController per attempt — pass the caller's signal through instead.";
 export const TL_DIFF_INTENT = "make the cache retry loop restart-safe";
+/** Citations the evidence check dropped on the newest turn (drives the unconfirmed mark). */
+export const TL_UNVERIFIED_COUNT = 2;
 export const TL_DIFF_FILE = "src/cache/retry.ts";
 
 const DIFF_BODY = `diff --git a/${TL_DIFF_FILE} b/${TL_DIFF_FILE}
@@ -106,6 +108,13 @@ function buildBrainCallLines(): string[] {
         "The retry loop creates a fresh AbortController every attempt, so a daemon restart mid-write orphans the in-flight cache entry.",
       critique: TL_CRITIQUE_TEXT,
       severity: "high",
+      // The newest turn is deliberately a PARTLY-UNVERIFIED review: it is the
+      // pane every tab spec opens, so seeding the caveat here means the mark
+      // is on the pane a real browser renders first — which is the only place
+      // `toBeVisible` can catch it going missing. It also puts the mark into
+      // the tl-02 screenshot, where the feature is meant to be legible.
+      evidence_label: "partly_unverified",
+      evidence_unverified: TL_UNVERIFIED_COUNT,
       input_tokens: 12400,
       output_tokens: 810,
       cost: 0.0127,

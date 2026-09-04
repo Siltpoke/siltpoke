@@ -16,7 +16,12 @@ interface HealthData {
   headSha: string | null;
   commitsBehind: number | null;
   state: "current" | "behind" | "unknown";
+  pid: number;
+  startedAt: string;
 }
+
+/** Deterministic stand-in for the serving process's identity. */
+const IDENTITY = { pid: 4242, startedAt: "2026-06-13T09:00:00.000Z" };
 
 function buildApp(boot: BootBuild, probe: Partial<GitProbe>): Hono {
   const app = new Hono();
@@ -26,7 +31,7 @@ function buildApp(boot: BootBuild, probe: Partial<GitProbe>): Hono {
     countBetween: () => null,
     ...probe,
   };
-  mountDaemonHealthRoute(app, { readBootBuild: () => boot, gitProbe: fullProbe });
+  mountDaemonHealthRoute(app, { readBootBuild: () => boot, gitProbe: fullProbe, processIdentity: () => IDENTITY });
   return app;
 }
 
@@ -51,6 +56,12 @@ describe("GET /api/daemon-health", () => {
       headSha: "abc",
       commitsBehind: 0,
       state: "current",
+      // Process identity is deliberately separate from bootSha/bootTime: two
+      // processes booted from the same commit report identical boot fields, so
+      // only these can answer "is this still the same process?" — the question
+      // `siltpoked restart` has to answer to tell a real restart from a no-op.
+      pid: IDENTITY.pid,
+      startedAt: IDENTITY.startedAt,
     });
   });
 

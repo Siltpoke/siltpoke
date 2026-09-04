@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { extractDurableFacts } from "../../src/memory/extract-facts";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { callBrainRaw } from "../../src/brain/brain";
+import { extractDurableFacts } from "../../src/memory/extract-facts";
 import type { ledgerBrainCall } from "../../src/state/usage";
 
 // A complete BrainUsage shape (callBrainRaw always returns all fields).
@@ -301,7 +304,7 @@ describe("extractDurableFacts candidates (classification upgrade)", () => {
   // (K6 removed in a review-fix: it stubbed callBrainRaw to return {facts:[]}
   // and asserted [] — the stub encoded the answer, so it could never fail at
   // its checkpoint (anti-vacuous-assertion discipline). The gate-layer half of
-  // "不对，13×7=91" lives in chat-capture C4; the EXTRACTOR-side behavior is
+  //  lives in chat-capture C4; the EXTRACTOR-side behavior is
   // real-model territory and is verified by an eval set (pet-output
   // corrections category), not a unit stub.)
 
@@ -318,5 +321,63 @@ describe("extractDurableFacts candidates (classification upgrade)", () => {
     });
     expect(result).toEqual([]);
     expect(ledgerCalls).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Default seam is role-routed (single-brain S2, task 6) — extractDurableFacts
+// no longer defaults its `callBrainRaw` seam to the imported `callBrainRaw`
+// (always claude, model pinned via the deleted EXTRACT_MODEL constant); it
+// defaults to `makeRoleRawBrain(deps.homeBase, "extract")`. Mocking the
+// shared `role-brain` module is deliberately avoided here — bun's
+// `mock.module` was verified (see task-6 investigation) to leak across test
+// FILES with no working restore, which would corrupt tests/brain/role-brain.
+// test.ts when the full suite runs. Instead this exercises the REAL
+// (unmocked) chain end-to-end: a `config.json` under a tmp homeBase selects
+// the "qoder" family for the extract role, and a throwaway executable named
+// `qodercli` is put on PATH so the real (un-injected) subprocess spawn
+// resolves to a script this test controls — proving the default seam reads
+// `homeBase/config.json` and reaches a NON-claude provider, something the
+// old static `callBrainRaw` import could never do (it takes no homeBase and
+// is always claude).
+// ---------------------------------------------------------------------------
+
+describe("extractDurableFacts default seam (role-routed)", () => {
+  test("no inject.callBrainRaw + homeBase config selecting qoder → real qoder path is exercised", async () => {
+    const home = mkdtempSync(join(tmpdir(), "extract-facts-role-home-"));
+    const bin = mkdtempSync(join(tmpdir(), "extract-facts-role-bin-"));
+    const originalPath = process.env.PATH;
+    try {
+      writeFileSync(
+        join(home, "config.json"),
+        JSON.stringify({ brain: { roles: { extract: { provider: "qoder" } } } }),
+      );
+      const fakeBin = join(bin, "qodercli");
+      writeFileSync(
+        fakeBin,
+        [
+          "#!/usr/bin/env bun",
+          'const inner = JSON.stringify({ facts: [{ text: "来自qoder的事实", entities: [] }] });',
+          'const envelope = { type: "result", subtype: "success", is_error: false, result: inner, total_cost_usd: 0, usage: { input_tokens: 5, output_tokens: 3 } };',
+          "process.stdout.write(JSON.stringify(envelope));",
+          "",
+        ].join("\n"),
+      );
+      chmodSync(fakeBin, 0o755);
+      process.env.PATH = `${bin}:${originalPath ?? ""}`;
+
+      const result = await extractDurableFacts(
+        "我喜欢蛋糕",
+        { homeBase: home, sessionId: "s1" },
+        undefined,
+        { ledger: noLedger },
+      );
+
+      expect(result).toEqual([{ text: "来自qoder的事实", entities: [] }]);
+    } finally {
+      process.env.PATH = originalPath;
+      rmSync(home, { recursive: true, force: true });
+      rmSync(bin, { recursive: true, force: true });
+    }
   });
 });

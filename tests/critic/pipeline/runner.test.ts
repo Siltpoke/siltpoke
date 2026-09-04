@@ -1,7 +1,12 @@
-import { describe, test, expect, mock } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runPipeline } from "../../../src/critic/pipeline/runner";
 import type { BrainOutputV2 } from "../../../src/brain/schema-v2";
 import type { RubricTrigger } from "../../../src/critic/rubric/types";
+import { Tracer } from "../../../src/observability/tracer";
+import { TraceStore } from "../../../src/observability/storage";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -123,5 +128,87 @@ describe("runPipeline", () => {
     // No triggers from rubric → vetoed_rule_ids is empty (nothing to veto)
     expect(result.verifier.vetoed_rule_ids).toEqual([]);
     expect(result.finalTriggers).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Track #7 T3 (AC14) — genAiSystem span truth (this runner isn't wired into
+// the live critic path yet — see run-critic.ts TODO — but its span
+// attributes must not lie once it is).
+// ---------------------------------------------------------------------------
+
+describe("runPipeline — genAiSystem span attribute (track #7 T3)", () => {
+  let tmp: string;
+  let tracer: Tracer;
+  let traceStore: TraceStore;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "siltpoke-runner-genai-"));
+    tracer = new Tracer();
+    traceStore = new TraceStore({ dir: tmp, dbPath: join(tmp, "index.sqlite") });
+  });
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  function spyOnStartSpan(): {
+    tracer: Tracer;
+    seenAttrs: Array<Record<string, string | number | boolean>>;
+  } {
+    const seenAttrs: Array<Record<string, string | number | boolean>> = [];
+    const spyTracer = new Proxy(tracer, {
+      get(target, prop, receiver) {
+        if (prop === "startSpan") {
+          return (opts: Parameters<Tracer["startSpan"]>[0]) => {
+            const span = target.startSpan(opts);
+            seenAttrs.push(span.attributes);
+            return span;
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    return { tracer: spyTracer, seenAttrs };
+  }
+
+  function brainSpanAttrs(
+    seenAttrs: Array<Record<string, string | number | boolean>>,
+  ): Array<Record<string, string | number | boolean>> {
+    return seenAttrs.filter(
+      (a) => a["gen_ai.operation.name"] === "chat" || a["gen_ai.operation.name"] === "verify",
+    );
+  }
+
+  test("defaults to anthropic when genAiSystem is omitted", async () => {
+    const { tracer: spyTracer, seenAttrs } = spyOnStartSpan();
+    await runPipeline({
+      ...BASE_INPUT,
+      callBrainFind: mock(async () => makeFirstPass("high")),
+      callBrainVerifier: mock(async () => ({ ungrounded_ids: [] })),
+      verifierMode: "always",
+      tracer: spyTracer,
+      traceStore,
+    });
+
+    const attrs = brainSpanAttrs(seenAttrs);
+    expect(attrs.length).toBeGreaterThan(0);
+    for (const a of attrs) expect(a["gen_ai.system"]).toBe("anthropic");
+  });
+
+  test("threads a non-claude genAiSystem onto both brain spans", async () => {
+    const { tracer: spyTracer, seenAttrs } = spyOnStartSpan();
+    await runPipeline({
+      ...BASE_INPUT,
+      callBrainFind: mock(async () => makeFirstPass("high")),
+      callBrainVerifier: mock(async () => ({ ungrounded_ids: [] })),
+      verifierMode: "always",
+      tracer: spyTracer,
+      traceStore,
+      genAiSystem: "openai",
+    });
+
+    const attrs = brainSpanAttrs(seenAttrs);
+    expect(attrs.length).toBeGreaterThan(0);
+    for (const a of attrs) expect(a["gen_ai.system"]).toBe("openai");
   });
 });

@@ -23,8 +23,8 @@ const stories: PreviewStory[] = [
     render: () => (
       <div style={{ display: "flex", gap: 5 }}>
         <Dot color="#e36049" size={9} />
-        <Dot color="#e8a85c" size={9} />
-        <Dot color="#7a9a5e" size={9} />
+        <Dot color={tokens.color.amber} size={9} />
+        <Dot color={tokens.color.moss} size={9} />
       </div>
     ),
   },

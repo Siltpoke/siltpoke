@@ -15,6 +15,7 @@
  *   Feedback tab: existing feedback + ack/dismiss affordances wired
  *         to the existing APIs from the new surface.
  */
+import { AUDIT_ABSENCE_COPY } from "../../../src/state/audit-absence";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -345,13 +346,108 @@ describe("Trace tab client shell", () => {
     expect(html).not.toContain("Brain call cost breakdown");
   });
 
-  test("legacy turn without critique_id: honest no-join note, no loader", async () => {
+  // Read the legacy sentence off the copy map rather than re-typing it. A
+  // hardcoded literal here was already wrong once: the first draft asserted
+  // "pre-dates pipeline wire", a string this change deletes outright, so the
+  // test failed against copy that was working correctly. Sourcing it means the
+  // property under test — "the legacy wording appears on the legacy row and
+  // nowhere else" — survives any rewording of the copy itself.
+  const LEGACY_CLAIM = AUDIT_ABSENCE_COPY.unrecorded;
+
+  test("turn without critique_id and without a recorded reason: says so, no loader", async () => {
     await writeFixture(homeBase, [
       { ts: "2026-07-01T10:00:00Z", session: "s1", status: "fired" },
     ]);
     const html = await getHtml("/timeline");
     expect(html).toContain('data-trace-note="no-critique-id"');
+    expect(html).toContain('data-absence="unrecorded"');
     expect(html).not.toContain("load_trace()");
+    // This row genuinely has nothing recorded, so the legacy wording is correct
+    // HERE and only here.
+    expect(html).toContain(LEGACY_CLAIM);
+  });
+
+  /**
+   * The regression that matters, pinned at the ROUTE level rather than only on
+   * the component. Before this change every absence rendered the same "this
+   * review pre-dates pipeline wire OR ran on legacy path" — on reviews minutes
+   * old — while the accurate reason sat unread on the same row in
+   * `m112_guard_reason`. The component tests assert a substring is present; only
+   * a route render proves the reason travels from the JSONL row to the page.
+   */
+  test("turn whose guard reason IS recorded shows that reason, never the legacy claim", async () => {
+    await writeFixture(homeBase, [
+      {
+        ts: "2026-07-01T10:00:00Z",
+        session: "s1",
+        status: "fired",
+        guard_reason: "NORMAL mode but evidence array empty",
+      },
+    ]);
+    const html = await getHtml("/timeline");
+    expect(html).toContain('data-absence="evidence_empty"');
+    expect(html).toContain(AUDIT_ABSENCE_COPY.evidence_empty);
+    expect(html).not.toContain(LEGACY_CLAIM);
+  });
+
+  /**
+   * Pull the Trace tab's OWN note text out of the page.
+   *
+   * This exists because a mutation exposed a hole: reverting the Trace tab to
+   * its old fixed sentence turned NOTHING red. The assertions above matched the
+   * same reason text rendered by audit blocks A/C/D elsewhere on the page, so
+   * the Trace branch had no coverage of its own at all — a check that cannot
+   * fail for the thing it is named after.
+   */
+  function traceNoteText(html: string): string {
+    const m = /data-trace-note="no-critique-id"[^>]*>([^<]*)</.exec(html);
+    return m?.[1]?.trim() ?? "";
+  }
+
+  test("the Trace tab's OWN note carries the row's reason, not a fixed sentence", async () => {
+    await writeFixture(homeBase, [
+      {
+        ts: "2026-07-01T10:00:00Z",
+        session: "s1",
+        status: "fired",
+        guard_reason: "NORMAL mode but evidence array empty",
+      },
+    ]);
+    const note = traceNoteText(await getHtml("/timeline"));
+    expect(note).toBe(AUDIT_ABSENCE_COPY.evidence_empty);
+  });
+
+  test("the Trace tab's note changes with the row — not the same string every time", async () => {
+    await writeFixture(homeBase, [
+      {
+        ts: "2026-07-01T10:00:00Z",
+        session: "s1",
+        status: "fired",
+        suppress_reason:
+          "Brain call failed in NORMAL: BrainError: [brain-failure class=resource attempts=1] claude -p exited with code 143: ",
+      },
+    ]);
+    const note = traceNoteText(await getHtml("/timeline"));
+    expect(note).toBe(AUDIT_ABSENCE_COPY.brain_killed);
+    // The pair is the point: one row alone cannot distinguish "reads the row"
+    // from "prints a constant that happens to match".
+    expect(note).not.toBe(AUDIT_ABSENCE_COPY.evidence_empty);
+  });
+
+  test("a suppressed turn reports the suppression, not a guard rejection", async () => {
+    await writeFixture(homeBase, [
+      {
+        ts: "2026-07-01T10:00:00Z",
+        session: "s1",
+        status: "fired",
+        suppress_reason:
+          "Brain call failed in NORMAL: BrainError: [brain-failure class=resource attempts=1] claude -p exited with code 143: ",
+      },
+    ]);
+    const html = await getHtml("/timeline");
+    expect(html).toContain('data-absence="brain_killed"');
+    expect(html).toContain(AUDIT_ABSENCE_COPY.brain_killed);
+    expect(html).not.toContain(LEGACY_CLAIM);
   });
 });
 
@@ -391,20 +487,25 @@ describe("Feedback tab", () => {
       { ts: "2026-07-01T11:00:00Z", session: "s2", status: "fired", critique_id: "cq-b" },
     ]);
     const html = await getHtml("/timeline");
-    // Every FeedbackSection (x-init="load()") sits inert inside a
-    // <template x-if="fbMounted"> — one per fired pane, none live at load.
+    // Under the lazy-dossier page, only the PRE-SELECTED pane (newest = s2)
+    // ships its DetailPane eagerly, so exactly ONE FeedbackSection template +
+    // loader is present at page load — the other pane is a placeholder whose
+    // Feedback tab arrives only when its dossier is morph-loaded.
     const templates = html.match(/<template x-if="fbMounted">/g) ?? [];
     const loaders = html.match(/x-init="load\(\)"/g) ?? [];
-    expect(templates.length).toBe(2);
-    expect(loaders.length).toBe(2);
-    // One-way latch per pane: the gate flips fbMounted true on first open
-    // of THIS pane's Feedback tab (never back — x-if alone would unmount on
-    // switch-away and refetch on return).
+    expect(templates.length).toBe(1);
+    expect(loaders.length).toBe(1);
+    // The eager pane (s2) carries its per-pane latch gate…
     expect(html).toContain(
+      "if (tab === &quot;feedback&quot; &amp;&amp; selected === &quot;2026-07-01T11:00:00Z|s2&quot;) fbMounted = true",
+    );
+    // …the lazy pane (s1) carries NO eager feedback gate — it is a dossier
+    // placeholder that hx-gets its DetailPane (gate included) on first select.
+    expect(html).not.toContain(
       "if (tab === &quot;feedback&quot; &amp;&amp; selected === &quot;2026-07-01T10:00:00Z|s1&quot;) fbMounted = true",
     );
     expect(html).toContain(
-      "if (tab === &quot;feedback&quot; &amp;&amp; selected === &quot;2026-07-01T11:00:00Z|s2&quot;) fbMounted = true",
+      'hx-get="/api/timeline/dossier?key=2026-07-01T10%3A00%3A00Z%7Cs1"',
     );
   });
 

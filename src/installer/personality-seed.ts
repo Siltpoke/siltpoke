@@ -85,15 +85,25 @@ export const soulOnlySchema = z.object({
 export type SoulOnly = z.infer<typeof soulOnlySchema>;
 
 // ---------------------------------------------------------------------------
-// Quiz: 5 Likert + 1 BuzzFeed-style finale
+// Quiz: 5 Likert + N forced-choice finales
 //
-// v3 design:
+// v4 design:
 // each Likert item targets exactly ONE dial. v2 multi-axis items (e.g. the
 // "stove" and "temper" questions) felt random because user couldn't trace
 // why one answer moved three dials. Mono-axis items match IPIP/16P/HEXACO
 // convention and give the rationale-writer a clean attribution.
 //
-// One item is reverse-scored (Q4 curiosity) to fight acquiescence bias.
+// ALL 5 Likert items are positively keyed (no reverse-scored item). The
+// N=1,131 study behind this quiz found a lone cross-dial reverse item is a
+// net liability: mixing keying directions cuts reliability (0.92→0.65) and
+// manufactures method factors. The `reverse?` field on LikertItem (and the
+// sign-flip in scoreQuiz) is kept as a harmless, future-proof hook — no
+// current item sets it.
+//
+// Acquiescence bias is instead fought by the forced-choice FINALES — the
+// study's strongest-endorsed element (immune to "agree with everything"):
+// each finale is a desirability-matched pair/set of options tapping DIFFERENT
+// dials, so picking one reveals a real preference rather than a yea-saying.
 //
 // MBTI-style 5th axis (Assertive/Turbulent) is folded into `patience`:
 // low patience ≈ turbulent, high patience ≈ assertive. We don't add a 6th
@@ -120,39 +130,42 @@ export interface LikertItem {
   reverse?: boolean;
 }
 
+// v5: NON-TECHNICAL, general-personality statements. The owner targets
+// non-technical end users, and human personality is consistent across
+// contexts — so the quiz measures GENERAL traits (never code/tools/reviews).
+// Same dial mapping + impact weights as v4; still all positively keyed.
 export const QUIZ_LIKERT_ITEMS: readonly LikertItem[] = [
   {
-    // snark only — life / light. funny vs polite was a weak dichotomy
-    // (you can be both); sharp vs sweet is a real tonal opposition.
-    text: "I'd rather be sharp than sweet.",
+    // snark only — positively keyed. Agree = prefers candor over cushioning.
+    text: "I'd rather someone be honest with me than spare my feelings.",
     impact: { snark: 2 },
   },
   {
-    // patience only — life / mundane
-    text: "I let small things slide.",
+    // patience only — positively keyed. Agree = stays calm at repeat mistakes.
+    text: "When someone makes the same mistake twice, I stay calm about it.",
     impact: { patience: 2 },
   },
   {
-    // rigor only — dev-flavored / one dev item to anchor the quiz to code
-    text: "Before I push code, I re-read my own diff line by line.",
+    // rigor only — positively keyed. Agree = double-checks before finishing.
+    text: "I like to double-check my work before I call it done.",
     impact: { rigor: 2 },
   },
   {
-    // chattiness only — life / introspective
-    text: "I think out loud, even when nobody's listening.",
+    // chattiness only — positively keyed. Agree = enjoys long-form talk.
+    text: "I enjoy a good long conversation more than a quick exchange.",
     impact: { chattiness: 2 },
   },
   {
-    // curiosity only — reverse-scored to catch "agree to everything" bias.
-    // Agree = "I stop looking once something works" → curiosity DOWN.
-    text: "Once I find a way that works, I stop looking for other ways.",
+    // curiosity only — positively keyed. Agree = explores options first.
+    text: "I like to explore a few different options before I decide.",
     impact: { curiosity: 2 },
-    reverse: true,
   },
 ] as const;
 
+export type FinaleLetter = "a" | "b" | "c" | "d";
+
 export interface FinaleChoice {
-  letter: "a" | "b" | "c" | "d";
+  letter: FinaleLetter;
   text: string;
   impact: DialDelta;
 }
@@ -162,31 +175,75 @@ export interface FinaleQuestion {
   options: readonly FinaleChoice[];
 }
 
-export const QUIZ_FINALE: FinaleQuestion = {
-  text: "Your pet finds a bug while you're asleep. It:",
-  options: [
-    {
-      letter: "a",
-      text: "Writes a haiku roasting you and pins it to your desk",
-      impact: { snark: 2, rigor: 1, chattiness: 1 },
-    },
-    {
-      letter: "b",
-      text: "Leaves a polite sticky note with the file:line",
-      impact: { snark: -1, patience: 1, rigor: 1 },
-    },
-    {
-      letter: "c",
-      text: "Fixes it silently and takes the credit at standup",
-      impact: { rigor: 2, snark: 1, curiosity: 1 },
-    },
-    {
-      letter: "d",
-      text: "Shrugs. You'll find it eventually.",
-      impact: { rigor: -2, patience: 1, chattiness: -1 },
-    },
-  ],
-} as const;
+// Forced-choice finales — desirability-matched pairs/sets, each tapping
+// DIFFERENT dials with roughly equal appeal so a pick reveals a real
+// preference (not acquiescence). Impacts are modest (±1..±2) so no single
+// finale dominates the five Likert items.
+// v5: NON-TECHNICAL, everyday scenarios (no bugs/builds/code). Each is still a
+// desirability-matched set tapping DIFFERENT dials with roughly equal appeal,
+// so a pick reveals a real preference (not acquiescence). Impacts stay modest
+// (±1..±2) so no single finale dominates the five Likert items.
+export const QUIZ_FINALES: readonly FinaleQuestion[] = [
+  {
+    // snark vs patience vs rigor — four desirability-matched reactions to being
+    // called out (some want the tease, some the reassurance, some the coaching).
+    text: "A friend points out you slipped up. You'd rather they:",
+    options: [
+      {
+        letter: "a",
+        text: "Tease you about it with a grin",
+        impact: { snark: 2 },
+      },
+      {
+        letter: "b",
+        text: "Gently talk you through it",
+        impact: { patience: 2 },
+      },
+      {
+        letter: "c",
+        text: "Walk you through every step so it won't happen again",
+        impact: { rigor: 2 },
+      },
+      {
+        letter: "d",
+        text: "Just let it go",
+        impact: { patience: 1, snark: -1 },
+      },
+    ],
+  },
+  {
+    // chattiness — desirability-matched (the quick version vs the full telling).
+    text: "You're telling someone a story. You tend to:",
+    options: [
+      {
+        letter: "a",
+        text: "Give them the quick version",
+        impact: { chattiness: -2 },
+      },
+      {
+        letter: "b",
+        text: "Tell the whole thing with every detail",
+        impact: { chattiness: 2 },
+      },
+    ],
+  },
+  {
+    // curiosity — desirability-matched (decisive vs exploratory).
+    text: "Faced with a choice, you usually:",
+    options: [
+      {
+        letter: "a",
+        text: "Go with the first good option",
+        impact: { curiosity: -2 },
+      },
+      {
+        letter: "b",
+        text: "Explore a few alternatives first",
+        impact: { curiosity: 2 },
+      },
+    ],
+  },
+] as const;
 
 export interface QuizLikertAnswer {
   itemIndex: number;
@@ -194,13 +251,10 @@ export interface QuizLikertAnswer {
   score: 1 | 2 | 3 | 4 | 5;
 }
 
-export interface QuizFinaleAnswer {
-  letter: "a" | "b" | "c" | "d";
-}
-
 export interface QuizAnswers {
   likert: readonly QuizLikertAnswer[];
-  finale: QuizFinaleAnswer;
+  /** One chosen letter per finale in QUIZ_FINALES, aligned by index. */
+  finales: readonly FinaleLetter[];
 }
 
 export interface Dials {
@@ -255,12 +309,13 @@ export function scoreQuiz(
     }
   }
 
-  const finaleChoice = QUIZ_FINALE.options.find(
-    (o) => o.letter === answers.finale.letter,
-  );
-  if (finaleChoice) {
+  for (let i = 0; i < answers.finales.length; i++) {
+    const scenario = QUIZ_FINALES[i];
+    if (!scenario) continue;
+    const choice = scenario.options.find((o) => o.letter === answers.finales[i]);
+    if (!choice) continue;
     for (const k of DIALS) {
-      const delta = finaleChoice.impact[k];
+      const delta = choice.impact[k];
       if (typeof delta === "number") {
         dials[k] += delta * dialPolarity(k, matchMode);
       }
@@ -670,15 +725,21 @@ function buildQuizContext(
     })
     .join("\n");
 
-  const finaleChoice = QUIZ_FINALE.options.find(
-    (o) => o.letter === answers.finale.letter,
-  );
+  const finaleLines = answers.finales
+    .map((letter, i) => {
+      const scenario = QUIZ_FINALES[i];
+      if (!scenario) return "";
+      const choice = scenario.options.find((o) => o.letter === letter);
+      return `Scenario: ${scenario.text}\n   → ${choice?.letter}) ${choice?.text ?? "?"}`;
+    })
+    .filter(Boolean)
+    .join("\n");
 
   return [
     `<user_picked>\nname: ${userPickedName}\nspecies: ${userPickedSpecies}\n</user_picked>`,
     `<computed_dials>\nsnark=${dials.snark}, patience=${dials.patience}, rigor=${dials.rigor}, chattiness=${dials.chattiness}, curiosity=${dials.curiosity}\n</computed_dials>`,
     `<quiz_likert>\n${likertLines}\n</quiz_likert>`,
-    `<quiz_finale>\nScenario: ${QUIZ_FINALE.text}\n   → ${finaleChoice?.letter}) ${finaleChoice?.text ?? "?"}\n</quiz_finale>`,
+    `<quiz_finales>\n${finaleLines}\n</quiz_finales>`,
     "",
     `Write the SOUL and per-dial rationale for "${userPickedName} the ${userPickedSpecies}" given the answers above. Reference specific answers in the rationale. Do not output dial numbers.`,
   ].join("\n");

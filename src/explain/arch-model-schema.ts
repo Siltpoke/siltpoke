@@ -50,6 +50,9 @@ export const archBandDoc = z.object({
 });
 export type ArchBandDoc = z.infer<typeof archBandDoc>;
 
+export const provenanceSchema = z.enum(["llm-callsite", "registry-declared"]);
+export type Provenance = z.infer<typeof provenanceSchema>;
+
 export const archNodeDoc = z.object({
   id: z.string().min(1),
   kind: z.enum(["cont", "person", "ext"]),
@@ -62,6 +65,12 @@ export const archNodeDoc = z.object({
   drillTo: z.string().optional(),
   /** Member file paths for grounding membership (fact tier). */
   members: z.array(z.string()).optional(),
+  /** Canonical reviewer-family key for ext nodes (dedup key for the registry
+   * reconcile pass). Absent on non-provider externals + LLM output pre-enrich. */
+  externalFamily: z.string().optional(),
+  /** Where this node's claim came from — orthogonal to `tier` (which answers
+   * "was it topology-grounded"). registry-declared ⇒ reachability unverified. */
+  provenance: provenanceSchema.optional(),
 });
 export type ArchNodeDoc = z.infer<typeof archNodeDoc>;
 
@@ -70,6 +79,7 @@ export const archEdgeDoc = z.object({
   target: z.string().min(1),
   /** Relationship verb (judgment — corroborated by snippet-token in the grounding pass). */
   verb: claim(z.string()),
+  provenance: provenanceSchema.optional(),
 });
 export type ArchEdgeDoc = z.infer<typeof archEdgeDoc>;
 

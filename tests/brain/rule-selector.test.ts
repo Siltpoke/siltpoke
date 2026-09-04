@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import {
   detectFileTypes,
   selectRelevantRules,
+  selectRelevantRulesWithFunnel,
 } from "../../src/brain/rule-selector";
 import type { LearnedRule } from "../../src/memory/memory";
 
@@ -115,3 +116,77 @@ test("selectRelevantRules: sorts by effectiveness then recency desc", () => {
     "neutral-recent",
   ]);
 });
+
+test("selectRelevantRules: within equal effectiveness, sorts high > medium > low; missing = medium", () => {
+  const rules = [
+    rule({ id: "low", confidence: "low", created_at: "2026-05-14T12:00:00Z" }),
+    rule({ id: "high", confidence: "high", created_at: "2026-05-14T12:00:00Z" }),
+    rule({ id: "none", created_at: "2026-05-14T12:00:00Z" }), // treated as medium
+    rule({ id: "med", confidence: "medium", created_at: "2026-05-14T12:00:00Z" }),
+  ];
+  const selected = selectRelevantRules(rules, new Set(), 10);
+  const ids = selected.map((r) => r.id);
+  expect(ids.indexOf("high")).toBeLessThan(ids.indexOf("med"));
+  expect(ids.indexOf("high")).toBeLessThan(ids.indexOf("none"));
+  expect(ids.indexOf("med")).toBeLessThan(ids.indexOf("low"));
+  expect(ids.indexOf("none")).toBeLessThan(ids.indexOf("low")); // missing ranks as medium
+});
+
+// --- memory-funnel stages [1]-[3] (eval design §2.1) ---
+//
+// The funnel's whole value is that the FIRST stage to read zero names the break.
+// That only works if the stages are independently observable, so this fixture is
+// built so all three counts differ (5 / 4 / 2): a fixture where two stages happen
+// to be equal would pass even if the implementation returned the wrong one.
+
+function funnelFixture(): LearnedRule[] {
+  return [
+    rule({ id: "retired1", effectiveness: "retired" }), // dropped at stage 1
+    rule({ id: "universal" }), // no applies_to_file_types → always scope-matched
+    rule({ id: "ts1", applies_to_file_types: ["ts"] }),
+    rule({ id: "ts2", applies_to_file_types: ["ts"] }),
+    rule({ id: "ts3", applies_to_file_types: ["tsx", "ts"] }),
+    rule({ id: "py1", applies_to_file_types: ["py"] }), // dropped at stage 2
+  ];
+}
+
+test("funnel: the three read-half stages are counted independently", () => {
+  const { selected, rules_in_store, rules_scope_matched } =
+    selectRelevantRulesWithFunnel(funnelFixture(), new Set(["ts"]), 2);
+
+  expect(rules_in_store).toBe(5); // 6 rules minus the retired one
+  expect(rules_scope_matched).toBe(4); // universal + ts1 + ts2 + ts3; py1 filtered out
+  expect(selected.length).toBe(2); // maxRules cap
+});
+
+test("funnel: a scope filter that drops everything is distinguishable from an empty store", () => {
+  // Stage 2 zero with stage 1 non-zero = "the selector filtered everything out",
+  // which is a different diagnosis from "the store is empty" — the funnel exists
+  // to tell those two apart.
+  const rules = [rule({ id: "py1", applies_to_file_types: ["py"] })];
+  const filtered = selectRelevantRulesWithFunnel(rules, new Set(["ts"]), 15);
+  expect(filtered.rules_in_store).toBe(1);
+  expect(filtered.rules_scope_matched).toBe(0);
+  expect(filtered.selected.length).toBe(0);
+
+  const empty = selectRelevantRulesWithFunnel([], new Set(["ts"]), 15);
+  expect(empty.rules_in_store).toBe(0);
+  expect(empty.rules_scope_matched).toBe(0);
+});
+
+test("funnel: the cap is what drops rules, not the scope filter", () => {
+  // Stage 2 non-zero but stage 3 smaller = "ranking/cap dropped them".
+  const { selected, rules_scope_matched } = selectRelevantRulesWithFunnel(
+    funnelFixture(),
+    new Set(["ts"]),
+    1,
+  );
+  expect(rules_scope_matched).toBe(4);
+  expect(selected.length).toBe(1);
+});
+
+// NOTE: no `withFunnel(...).selected === selectRelevantRules(...)` test here, for
+// the same reason as in prompt-assembly.test.ts — `selectRelevantRules` is now
+// `return selectRelevantRulesWithFunnel(...).selected`, so the assertion is
+// X === X by construction and cannot fail. The selection behavior is pinned by
+// the unmodified `selectRelevantRules` tests above.

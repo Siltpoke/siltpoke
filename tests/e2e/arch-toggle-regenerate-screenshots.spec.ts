@@ -333,6 +333,65 @@ test("02 — click Auto: subset view active, URL shows ?arch-source=subset", asy
   }
 });
 
+// ── Scenario 02b ──────────────────────────────────────────────────────────
+//
+// Regression guard for a CI-only flake (2026-07-28): scenario 02 passed
+// reliably on macOS but timed out in CI with "<div class="pagehead">…"
+// / "<span class="src-chip">…" intercepts pointer events" on the same
+// click. Root cause — `.src-chip` sets `overflow:hidden` (for the pill's
+// rounded corners), which per the flexbox spec makes its automatic
+// min-width resolve to 0 instead of content-based, so it was the one
+// pagehead child the browser could shrink below its own text width once
+// the quiz controls widened the row. Linux's fallback-font metrics render
+// this row measurably wider than macOS's, so only CI ever got tight enough
+// to clip it. Fixed with `flex-shrink:0` on `.src-chip` (RepoGraph.tsx),
+// mirroring the existing `.idx-stat` "review fixup" pattern.
+//
+// This test can't reproduce the exact CI font metrics, so it simulates a
+// squeeze directly: a modest letter-spacing bump on the pagehead row
+// (~5-15% wider glyphs — the ballpark of a real Linux-vs-macOS fallback-font
+// delta, not an exaggeration) pushes pageheadScrollWidth right up against
+// the viewport boundary, then performs the exact click scenario 02 makes.
+// Verified this reproduces the CI failure byte-for-byte when
+// `.src-chip{flex-shrink:0}` is reverted (ancestor-intercepts, same
+// alternating `.pagehead` / `.src-chip` signature) and passes with the fix.
+test("02b — Auto toggle stays clickable under a squeezed pagehead row (CI font-metric regression)", async ({
+  page,
+}) => {
+  let storageDir = "";
+  try {
+    const { storageDir: sd } = await seedBigEstimateFixture();
+    storageDir = sd;
+    const metaPath = join(storageDir, "meta.json");
+    const metaRaw = await import("node:fs/promises").then((fs) =>
+      fs.readFile(metaPath, "utf8"),
+    );
+    const graphMeta = JSON.parse(metaRaw) as { last_indexed_ts: string };
+    await writeArchFixture(storageDir, FRESH_FINGERPRINT, graphMeta.last_indexed_ts);
+    await page.goto(`/repo-graph?repo=${BIG_FIXTURE_HASH}&arch-source=generated`);
+    await page.waitForSelector('[x-data="repoGraph"]', { timeout: 10_000 });
+    await page.waitForTimeout(800);
+    await page.addStyleTag({
+      content: `.pagehead * { letter-spacing: 1.2px !important; }`,
+    });
+    await page.waitForTimeout(200);
+
+    // The click itself is the assertion: it times out with "intercepts
+    // pointer events" if `.src-chip` (or any pagehead child) is being
+    // squeezed below its content by the tight row.
+    await page.locator("#rg-src-authored").click({ timeout: 5000 });
+    await page.waitForFunction(
+      () =>
+        new URLSearchParams(window.location.search).get("arch-source") ===
+        "subset",
+      { timeout: 6_000 },
+    );
+  } finally {
+    await removeArchFixture(storageDir);
+    await cleanupBigEstimateFixture();
+  }
+});
+
 // ── Scenario 03 ───────────────────────────────────────────────────────────
 //
 // Re-generate modal from FRESH state (ghost ↻ Re-generate click).

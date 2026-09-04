@@ -10,7 +10,7 @@
   ],
   "mood": "idle",
   "bubble": "",
-  "trigger_mode": "gates",
+  "review_unit": "commit",
   "brain_calls_today": 0,
   "reflections_today": 0,
   "cost_today_usd": 0,
@@ -18,5 +18,5 @@
   "projects": [],
   "mute": null,
   "brain_warning": null,
-  "card_text": "┌─ Siltpoke ─────────────────────────────────────\n│ Mochi the slime\n│ level 1  [░░░░░░░░░░░░░░░░░░░░] 0%  (0/100 XP)\n│ titles: Hatchling\n│ mood: idle\n│ today: 0 brain calls, 0 reflections, $0.0000 spent\n│ mode: gates\n│ last 7d:        \n└────────────────────────────────────────────────"
+  "card_text": "┌─ Siltpoke ─────────────────────────────────────\n│ Mochi the slime\n│ level 1  [░░░░░░░░░░░░░░░░░░░░] 0%  (0/100 XP)\n│ titles: Hatchling\n│ mood: idle\n│ today: 0 brain calls, 0 reflections, $0.0000 spent\n│ unit: commit\n│ last 7d:        \n└────────────────────────────────────────────────"
 }

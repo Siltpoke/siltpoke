@@ -1,0 +1,7 @@
+{
+  "hooks": {
+    "Stop": [
+      { "type": "command", "command": "sh ./hooks/agy-stop.sh", "timeout": 30 }
+    ]
+  }
+}

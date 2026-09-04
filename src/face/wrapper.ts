@@ -1,20 +1,42 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
-import { getSpecies, DEFAULT_SPECIES } from "./species";
-import { composeOutput } from "./composer";
-import { visualWidth, truncateToVisualWidth } from "./width";
-import { readState, isStale } from "../state/state";
+import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { siltpokeRoot } from "../installer/paths";
+import { readRestartOutcome } from "../cli/restart-outcome";
 import { resolveArt } from "../state/pose";
-import { readProgression, pickAuraGlyph } from "../state/progression";
+import { pickAuraGlyph, readProgression } from "../state/progression";
+import { isStale, readState } from "../state/state";
+import { composeOutput } from "./composer";
+import { renderMenubar } from "./menubar";
+import { collectPendingReviews } from "./menubar-aggregate";
+import { DEFAULT_SPECIES, getSpecies } from "./species";
+import { formatTasklistSegment, parseTasklist, readTasklist } from "./tasklist";
+import { truncateToVisualWidth, visualWidth } from "./width";
 
 export interface WrapperOptions {
   basePath: string;
   termWidth?: number;
   projectBase?: string;
   innerStdin?: string;
+  /** Session cwd (from the statusline stdin JSON). Used to locate
+   *  cwd/.claude/tasklist.md for the tasklist-progress segment. */
+  cwd?: string;
+  /**
+   * When set, this render is for a specific non-Claude host (e.g.
+   * "antigravity") whose statusLine has no relationship to the shared
+   * ~/.siltpoke/inner.txt chain — that file records CLAUDE's prior
+   * statusLine.command specifically (install.ts, Claude settings.json
+   * only); running it under a different host would execute the wrong
+   * command in the wrong context. Skips the inner-chaining step entirely;
+   * renders Siltpoke's face standalone (the same code path an absent
+   * inner.txt already takes).
+   */
+  agent?: string;
 }
 
 async function logError(basePath: string, message: string): Promise<void> {
@@ -37,7 +59,7 @@ interface WrapperConfig {
   minimalMode: boolean;
 }
 
-async function readConfig(basePath: string): Promise<WrapperConfig> {
+export async function readConfig(basePath: string): Promise<WrapperConfig> {
   const fallback: WrapperConfig = {
     species: DEFAULT_SPECIES,
     name: "",
@@ -285,8 +307,10 @@ export async function runWrapper(options: WrapperOptions): Promise<string> {
   // fresh") legitimately has no inner.txt; there is simply no inner line, and
   // we still render Siltpoke's own face standalone rather than a
   // "not configured" cliff that leaves the first-touch user staring at text.
+  // options.agent set -> this render belongs to a non-Claude host; inner.txt
+  // is Claude-specific bookkeeping and must never be executed here.
   let stdout = "";
-  if (existsSync(innerPath)) {
+  if (!options.agent && existsSync(innerPath)) {
     let innerCommand: string;
     try {
       innerCommand = (await readFile(innerPath, "utf8")).trim();
@@ -358,10 +382,20 @@ async function spliceFace(
       options.termWidth ??
       (cfg.terminalWidth > 0 ? cfg.terminalWidth : detectTermWidth());
 
+    const tasklistRaw = await readTasklist(options.cwd);
+    const tasklistParsed = tasklistRaw ? parseTasklist(tasklistRaw) : null;
+    const tasklistSeg = tasklistParsed
+      ? colorize(formatTasklistSegment(tasklistParsed), "gray")
+      : "";
+    // Append the segment as the bottom line of the inner column. Strips any
+    // trailing newlines first so the segment sits directly under the last line.
+    const appendSeg = (s: string): string =>
+      tasklistSeg ? `${s.replace(/\n+$/, "")}\n${tasklistSeg}` : s;
+
     if (cfg.minimalMode) {
-      if (!bubbleText) return stdout;
+      if (!bubbleText) return appendSeg(stdout);
       const bubbleBlock = buildBubbleBlock(bubbleText, bubbleColor, 0, termWidth);
-      return `${stdout.replace(/\n+$/, "")}\n\n${bubbleBlock}\n`;
+      return appendSeg(`${stdout.replace(/\n+$/, "")}\n\n${bubbleBlock}`);
     }
 
     const progression = await readProgression(options.basePath);
@@ -385,7 +419,7 @@ async function spliceFace(
     const inner = bubbleText
       ? `${stdout.replace(/\n+$/, "")}\n\n${buildBubbleBlock(bubbleText, bubbleColor, faceWidth, termWidth)}`
       : stdout;
-    return composeOutput({ face, inner, termWidth });
+    return composeOutput({ face, inner: appendSeg(inner), termWidth });
   } catch (err) {
     await logError(options.basePath, `Face splice failed, falling through: ${err}`);
     return stdout;
@@ -400,6 +434,74 @@ async function readStdinAll(): Promise<string> {
   }
 }
 
+/** Resolve the bun binary for the menu-bar Restart row. Prefers the running
+ *  interpreter (process.execPath) — PATH-independent, correct under SwiftBar's
+ *  minimal GUI-launchd PATH — and falls back to `which bun`. */
+export function resolveBunBinary(
+  execPath: string | undefined,
+  which: (cmd: string) => string | null,
+): string | null {
+  if (execPath && execPath.length > 0) return execPath;
+  return which("bun");
+}
+
+/**
+ * Resolve the daemon-restart script path from the directory THIS module is
+ * currently running from. wrapper.ts ships two ways
+ * (scripts/build-dist.ts's BUNDLES list):
+ *   - BUNDLED (plugin install): esbuild inlines this file into
+ *     dist/siltpoke-card.js, landing in the SAME dist/ outdir as
+ *     dist/siltpoke-daemon.js (src/cli/daemon.ts's own bundle). A plugin
+ *     cache ships no `src/`, so `import.meta.url`'s `../cli/daemon.ts`
+ *     resolution used to overshoot to a TypeScript source file that doesn't
+ *     exist there — `bun <root>/cli/daemon.ts restart` threw "Module not
+ *     found", and `terminal=false` on the SwiftBar line hid the failure,
+ *     making the menu-bar "Restart daemon" item a silent no-op. Mirrors
+ *     src/memory/distil-launcher.ts's `basename(...) === "dist"` precedent
+ *     (also used by resolveOnStopTarget in src/hooks/agy-stop.ts) for the
+ *     same ship-two-ways problem: the bundle target is a plain sibling join,
+ *     no `..` traversal to get wrong.
+ *   - SOURCE (dev install): bun runs src/face/wrapper.ts directly, and
+ *     src/cli/daemon.ts is reachable via its sibling directory `cli/`.
+ *
+ * Exported so the dist/source split is unit-testable without touching a
+ * real filesystem or import.meta.url.
+ */
+export function resolveDaemonScript(hereDir: string): string {
+  if (basename(hereDir) === "dist") {
+    return join(hereDir, "siltpoke-daemon.js");
+  }
+  return join(hereDir, "..", "cli", "daemon.ts");
+}
+
+/**
+ * Resolve the command-surface CLI (`siltpoke-cli.js` = src/cli/plugin-cli.ts)
+ * that carries the `dashboard` verb, using the same dist/source split as
+ * resolveDaemonScript. BUNDLED: dist/siltpoke-cli.js is a sibling of the
+ * inlined wrapper in dist/. SOURCE: src/cli/plugin-cli.ts via the sibling
+ * `cli/` dir. Exported for the same unit-testability reason.
+ */
+export function resolveDashboardCli(hereDir: string): string {
+  if (basename(hereDir) === "dist") {
+    return join(hereDir, "siltpoke-cli.js");
+  }
+  return join(hereDir, "..", "cli", "plugin-cli.ts");
+}
+
+/**
+ * Resolve the `restart` field for the menu-bar dropdown. Returns undefined when
+ * bun can't be located, so renderMenubar simply omits the Restart row rather
+ * than emitting a broken `bash=` with no interpreter.
+ */
+export function resolveRestartField(
+  which: (cmd: string) => string | null,
+  scriptPath: string,
+): { bun: string; script: string } | undefined {
+  const bun = which("bun");
+  if (!bun) return undefined;
+  return { bun, script: scriptPath };
+}
+
 function parseCwd(rawJson: string): string | undefined {
   if (!rawJson) return undefined;
   try {
@@ -411,10 +513,100 @@ function parseCwd(rawJson: string): string | undefined {
   }
 }
 
+/** CLI-entry helper — extracts the value following `--agent` from argv. */
+export function parseAgentFlag(argv: string[]): string | undefined {
+  const idx = argv.indexOf("--agent");
+  if (idx === -1) return undefined;
+  const value = argv[idx + 1];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/**
+ * Last-resort net beyond the try/catch blocks below. Those only cover
+ * synchronous throws and *awaited* rejections inside this file's own call
+ * stack — a dependency that fires an unhandled rejection or throws from a
+ * detached callback (timer, event emitter) on some other tick bypasses them
+ * entirely and hits Bun's default reporter, which prints a stack trace to
+ * stderr and can leave the process exiting non-zero. The shim
+ * (src/installer/shim.ts) already suppresses stderr and passes exit code /
+ * stdout straight through via `exec` — it cannot buffer the bundle's output
+ * to inspect it first without breaking streaming, so this file must
+ * guarantee "exit 0, print nothing" against ANY fault, not just the ones
+ * reachable through its own try/catch. Mirrors the exit-0-on-any-fault
+ * contract src/hooks/on-stop.ts already applies to its own top-level catch.
+ */
+function installFaultNet(basePath: string): void {
+  let caught = false;
+  const net = (label: string, err: unknown): void => {
+    if (caught) return; // process.exit is requested once; ignore re-entrant faults
+    caught = true;
+    void logError(basePath, `FATAL ${label}: ${err}`).finally(() => process.exit(0));
+  };
+  process.on("uncaughtException", (err) => net("uncaughtException", err));
+  process.on("unhandledRejection", (reason) => net("unhandledRejection", reason));
+}
+
 if (import.meta.main) {
-  const basePath = join(process.env.HOME ?? "", ".siltpoke");
+  const basePath = siltpokeRoot();
+  installFaultNet(basePath);
+
+  // Test-only fault-injection seam (mirrors SILTPOKE_TEST_MOCK_STREAM in
+  // src/daemon/server.ts) — lets tests/face/wrapper-entry-crash.test.ts
+  // prove the net above against a fault that arrives from OUTSIDE this
+  // file's own try/catch, the exact class installFaultNet exists to catch.
+  // Never set in real installs.
+  if (process.env.SILTPOKE_TEST_FAULT === "unhandled-rejection") {
+    void Promise.reject(new Error("test-injected unhandled rejection"));
+  } else if (process.env.SILTPOKE_TEST_FAULT === "uncaught-exception") {
+    setTimeout(() => {
+      throw new Error("test-injected uncaught exception");
+    }, 0);
+  }
+  if (process.env.SILTPOKE_TEST_FAULT) {
+    // Give the injected fault above a chance to win the race against the
+    // real render below, so the test actually exercises a fault arriving
+    // mid-flight rather than one that loses to this process's own exit.
+    await new Promise((r) => setTimeout(r, 20));
+  }
+
+  if (process.argv.includes("--menubar")) {
+    try {
+      const cfg = await readConfig(basePath);
+      const reviews = await collectPendingReviews(basePath);
+      const hereDir = dirname(fileURLToPath(import.meta.url));
+      const daemonScript = resolveDaemonScript(hereDir);
+      const dashboardCli = resolveDashboardCli(hereDir);
+      const whichBun = (cmd: string): string | null => {
+        const r = spawnSync("which", [cmd], { encoding: "utf8" });
+        const p = (r.stdout ?? "").trim();
+        return p.length > 0 ? p : null;
+      };
+      const bunBinary = resolveBunBinary(process.execPath, whichBun);
+      process.stdout.write(
+        renderMenubar({
+          name: cfg.name || "Siltpoke",
+          emoji: getSpecies(cfg.species).menubarEmoji,
+          reviews,
+          dashboardUrl: "http://127.0.0.1:9876",
+          nowMs: Date.now(),
+          restart: resolveRestartField(() => bunBinary, daemonScript),
+          // Closes the loop the `terminal=false` restart row opens: SwiftBar
+          // discards the CLI's output, so the outcome comes back through disk.
+          restartOutcome: readRestartOutcome(basePath) ?? undefined,
+          dashboard: bunBinary ? { bun: bunBinary, cli: dashboardCli } : undefined,
+        }),
+      );
+    } catch (err) {
+      await logError(basePath, `menubar mode failed: ${err}`);
+      process.stdout.write(
+        "🟢 Siltpoke\n---\nOpen dashboard | href=http://127.0.0.1:9876\n",
+      );
+    }
+    process.exit(0);
+  }
 
   try {
+    const agent = parseAgentFlag(process.argv);
     const innerStdin = await readStdinAll();
     const cwd = parseCwd(innerStdin);
     const projectBase = cwd ? join(cwd, ".siltpoke") : undefined;
@@ -422,6 +614,8 @@ if (import.meta.main) {
       basePath,
       projectBase,
       innerStdin,
+      agent,
+      cwd,
     });
     process.stdout.write(output);
     process.exit(0);

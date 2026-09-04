@@ -6,6 +6,12 @@
  * owns its own Alpine x-data so save/load state doesn't leak between cards.
  *
  * Extracted from src/web/screens/Critic.tsx.
+ *
+ * `save()` POSTs with the secret read from the nearest [data-secret]
+ * ancestor at call time (pattern from active-repos.ts / a retired island) — the
+ * FloatingChat panel root renders one on every page — since POST
+ * /api/critique/:critique_id/feedback is secret-gated (daemon-hardening
+ * security audit, finding 3).
  */
 import { tokens } from "../../tokens/tokens";
 import { Section } from "./section";
@@ -73,9 +79,10 @@ export function FeedbackSection({ critiqueId }: { critiqueId: string }) {
       if (this.saving) return;
       this.saving = true; this.err = '';
       try {
+        const secret = document.querySelector('[data-secret]')?.getAttribute('data-secret') || '';
         const r = await fetch('${endpoint}', {
           method: 'POST',
-          headers: {'Content-Type': 'application/json'},
+          headers: {'Content-Type': 'application/json', 'X-Siltpoke-Secret': secret},
           body: JSON.stringify({ text: this.draft, action: 'edit' })
         });
         if (!r.ok) {

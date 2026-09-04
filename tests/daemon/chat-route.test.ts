@@ -9,6 +9,19 @@ import { readSession } from "../../src/chat/jsonl-store";
 import { readMemory } from "../../src/memory/memory";
 import type { StreamEvent } from "../../src/daemon/routes/chat-stream";
 
+const TEST_SECRET = "test-secret";
+
+// Task 11 write-eligibility guard on POST /api/chat: this file isn't
+// exercising project resolution — inject a fixed "explicit" resolution so
+// the guard doesn't 409 against this file's real-but-empty tmpdir homeBase.
+const ELIGIBLE_PROJECT = async () => ({
+  project_id: null,
+  proj_hash: null,
+  project_root: null,
+  display_name: null,
+  source: "explicit" as const,
+});
+
 describe("POST /api/chat", () => {
   let app: Hono;
   let home: string;
@@ -29,6 +42,8 @@ describe("POST /api/chat", () => {
     mountChatRoutes(app, {
       homeBase: home,
       index: idx,
+      secret: TEST_SECRET,
+      resolveProject: ELIGIBLE_PROJECT,
       streamFactory: async function* () {
         for (const ev of events) yield ev;
       },
@@ -39,7 +54,7 @@ describe("POST /api/chat", () => {
     mountWithEvents([]);
     const res = await app.request("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(400);
@@ -49,7 +64,7 @@ describe("POST /api/chat", () => {
     mountWithEvents([]);
     const res = await app.request("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: "not json",
     });
     expect(res.status).toBe(400);
@@ -69,7 +84,7 @@ describe("POST /api/chat", () => {
 
     const res = await app.request("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ message: "hello" }),
     });
 
@@ -97,6 +112,46 @@ describe("POST /api/chat", () => {
     expect(session?.message_count).toBe(2);
   });
 
+  // Task 16: Task 11's write-eligibility gate on POST /api/chat is removed —
+  // nothing in the send's write path (JSONL append, chat_sessions via daemon
+  // cwd, fact-capture via the anchor-derived memScope) reads `resolveProject`'s
+  // result as a write target, so gating on it only blocked a chat send on a
+  // fresh install (source: "none") for no protective benefit. This proves the
+  // regression guard: a send with a "none" resolution still streams normally
+  // (mirrors the equivalent facts-write-guard.test.ts assertion).
+  test("send still streams (200) even when the request's project resolves to 'none' (fresh install)", async () => {
+    mountChatRoutes(app, {
+      homeBase: home,
+      index: idx,
+      secret: TEST_SECRET,
+      resolveProject: async () => ({
+        project_id: null,
+        proj_hash: null,
+        project_root: null,
+        display_name: null,
+        source: "none" as const,
+      }),
+      streamFactory: async function* () {
+        yield { type: "message_start", message_id: "m-srv", model: "claude-sonnet-4-6" } as StreamEvent;
+        yield { type: "content_block_delta", text: "hi" } as StreamEvent;
+        yield {
+          type: "message_stop",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          full_text: "hi",
+        } as StreamEvent;
+      },
+    });
+
+    const res = await app.request("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
+      body: JSON.stringify({ message: "hello" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("text/event-stream");
+  });
+
   test("ledgers one chat usage-event (derived cost) on a turn", async () => {
     mountWithEvents([
       { type: "message_start", message_id: "m-srv", model: "claude-sonnet-4-6" },
@@ -109,7 +164,7 @@ describe("POST /api/chat", () => {
     ]);
     const res = await app.request("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ message: "hello" }),
     });
     const sid = res.headers.get("X-Siltpoke-Session-Id");
@@ -134,7 +189,7 @@ describe("POST /api/chat", () => {
     ]);
     const res1 = await app.request("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ session_id: "s-fixed", message: "first" }),
     });
     expect(res1.headers.get("X-Siltpoke-Session-Id")).toBe("s-fixed");
@@ -146,13 +201,15 @@ describe("POST /api/chat", () => {
     mountChatRoutes(app, {
       homeBase: home,
       index: idx,
+      secret: TEST_SECRET,
+      resolveProject: ELIGIBLE_PROJECT,
       streamFactory: async function* () {
         throw new Error("boom");
       },
     });
     const res = await app.request("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ message: "hi" }),
     });
     const body = await res.text();
@@ -174,7 +231,7 @@ describe("POST /api/chat", () => {
 
     const r1 = await app.request("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ session_id: "s-same", message: "q1" }),
     });
     await r1.text();
@@ -184,6 +241,8 @@ describe("POST /api/chat", () => {
     mountChatRoutes(app, {
       homeBase: home,
       index: idx,
+      secret: TEST_SECRET,
+      resolveProject: ELIGIBLE_PROJECT,
       streamFactory: async function* () {
         yield {
           type: "message_stop",
@@ -194,7 +253,7 @@ describe("POST /api/chat", () => {
     });
     const r2 = await app.request("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ session_id: "s-same", message: "q2" }),
     });
     await r2.text();
@@ -214,7 +273,7 @@ describe("POST /api/chat/search", () => {
     home = mkdtempSync(join(tmpdir(), "siltpoke-chat-search-"));
     idx = openIndex(home);
     app = new Hono();
-    mountChatRoutes(app, { homeBase: home, index: idx });
+    mountChatRoutes(app, { homeBase: home, index: idx, secret: TEST_SECRET });
   });
 
   afterEach(() => {

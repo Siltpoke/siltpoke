@@ -19,11 +19,31 @@
  */
 import type { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { isAuthorized } from "../auth";
 import { listExplanations, readExplanation } from "../../explain/store";
+import { BrandIcons } from "../../web/_shared/brand-icons";
+import { THEME_BOOTSTRAP_SCRIPT } from "../../web/_shared/theme-bootstrap";
+import { isAuthorized } from "../auth";
+import { resolveRequestProject } from "../project-context";
 
 export interface ExplainRouteDeps {
+  /**
+   * Last-resort fallback only — used when neither `resolveProjectRoot` nor
+   * the default `resolveRequestProject` lookup yields a project root (e.g.
+   * a fresh daemon with no recent/pinned project). Prefer per-request
+   * resolution below; a frozen `cwd` captured at boot is what caused the
+   * launchd bug this deps shape fixes.
+   */
   cwd: string;
+  /**
+   * Resolves the project root for the current request, given the daemon's
+   * home base and an optional explicit `?repo=` hash. Defaults to
+   * `resolveRequestProject` from `../project-context`. Injectable for tests.
+   */
+  resolveProjectRoot?: (
+    home: string,
+    explicit: string | undefined,
+  ) => Promise<string | null>;
+  homeBase: string;
   secret?: string;
 }
 
@@ -40,6 +60,19 @@ export function mountExplainRoutes(
 ): void {
   const { cwd } = deps;
   const secret = deps.secret ?? process.env.SILTPOKE_SECRET ?? "";
+
+  /**
+   * Resolve the requesting project's root per request instead of the `cwd`
+   * frozen at daemon boot (that froze to `/` under launchd — see the daemon
+   * per-request project-resolution track). Falls back to `cwd` only when
+   * resolution yields nothing (fresh daemon, no recent/pinned project).
+   */
+  async function resolveCwd(explicit: string | undefined): Promise<string> {
+    const projectRoot = deps.resolveProjectRoot
+      ? await deps.resolveProjectRoot(deps.homeBase, explicit)
+      : (await resolveRequestProject(deps.homeBase, explicit)).project_root;
+    return projectRoot ?? cwd;
+  }
 
   // If neither dep.secret nor SILTPOKE_SECRET is
   // configured, `checkBearer` silently allows every request — explanations
@@ -67,7 +100,8 @@ export function mountExplainRoutes(
     if (!ID_RE.test(id)) {
       return c.json({ success: false, error: "invalid id" }, 400);
     }
-    const result = await readExplanation(cwd, id);
+    const projectRoot = await resolveCwd(c.req.query("repo"));
+    const result = await readExplanation(projectRoot, id);
     if (!result) {
       return c.json({ success: false, error: "explanation not found" }, 404);
     }
@@ -93,28 +127,42 @@ export function mountExplainRoutes(
   // Browser-facing list of all persisted explanations under {cwd}/.siltpoke/
   // explanations. No auth (same trust model as /explain/:id).
   app.get("/explain", async (c) => {
-    const entries = await listExplanations(cwd);
+    const projectRoot = await resolveCwd(c.req.query("repo"));
+    const entries = await listExplanations(projectRoot);
     return c.html(
       <html lang="en">
         <head>
           <meta charset="utf-8" />
           <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <meta name="color-scheme" content="light dark" />
           <title>explanations · siltpoke</title>
+          <BrandIcons />
+          {/* Same theme-variable source the dashboard uses (src/web/_shared/layout.tsx)
+              — this page used to re-declare its own light-only ":root" color block,
+              a duplicate of what tokens.css already generates for all four theme
+              blocks. Loading the generated stylesheet instead of re-declaring is
+              what lets this page follow the theme at all. */}
+          <link rel="stylesheet" href="/static/tokens.css" />
+          {/* Pre-paint theme application — the SAME script `layout.tsx` uses
+              (src/web/_shared/theme-bootstrap.ts), not a re-authored copy, so a
+              user who forced dark/light in the dashboard gets the same theme
+              here, not just the OS `prefers-color-scheme`. */}
+          <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP_SCRIPT }} />
           <style>{`
-            :root { --cream:#faf6ec; --paper:#f4eedf; --paperD:#e8dec7; --edge:#d8cbab; --ink:#1f1b16; --ink2:#5a4f3f; --ink3:#8a7c64; --terra:#d96b6b; --moss:#7a9a5e; --amber:#e8a85c; --mono:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace; }
-            body { font-family: 'Geist',-apple-system,BlinkMacSystemFont,system-ui,sans-serif; max-width: 880px; margin: 2.5rem auto; padding: 0 1.5rem; line-height: 1.55; color: var(--ink); background: var(--cream); }
+            :root { --mono:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace; }
+            body { font-family: 'Geist',-apple-system,BlinkMacSystemFont,system-ui,sans-serif; max-width: 880px; margin: 2.5rem auto; padding: 0 1.5rem; line-height: 1.55; color: var(--color-ink); background: var(--color-cream); }
             h1 { font-size: 1.55rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
-            .subtitle { color: var(--ink3); margin: 0 0 1.5rem; font-size: .9rem; }
-            .empty { background: var(--paper); border: 1px solid var(--edge); padding: 1rem 1.2rem; border-radius: 10px; color: var(--ink2); font-size: .9rem; }
-            .empty code { font-family: var(--mono); background: var(--paperD); padding: .12rem .4rem; border-radius: 4px; font-size: .85em; }
+            .subtitle { color: var(--color-ink3); margin: 0 0 1.5rem; font-size: .9rem; }
+            .empty { background: var(--color-paper); border: 1px solid var(--color-edge); padding: 1rem 1.2rem; border-radius: 10px; color: var(--color-ink2); font-size: .9rem; }
+            .empty code { font-family: var(--mono); background: var(--color-paperD); padding: .12rem .4rem; border-radius: 4px; font-size: .85em; }
             ul.entries { list-style: none; margin: 0; padding: 0; display: grid; gap: .55rem; }
-            ul.entries li a { display: block; background: var(--paper); border: 1px solid var(--edge); border-radius: 10px; padding: .9rem 1.1rem; text-decoration: none; color: var(--ink); transition: border-color .15s, background .15s, transform .1s; }
-            ul.entries li a:hover { border-color: var(--terra); background: var(--paperD); transform: translateY(-1px); }
+            ul.entries li a { display: block; background: var(--color-paper); border: 1px solid var(--color-edge); border-radius: 10px; padding: .9rem 1.1rem; text-decoration: none; color: var(--color-ink); transition: border-color .15s, background .15s, transform .1s; }
+            ul.entries li a:hover { border-color: var(--color-terra); background: var(--color-paperD); transform: translateY(-1px); }
             .target { font-weight: 600; font-family: var(--mono); font-size: .92rem; }
-            .target small { font-family: 'Geist',-apple-system,system-ui,sans-serif; color: var(--ink3); font-weight: 400; font-size: .78rem; }
-            .meta-row { font-family: var(--mono); font-size: .76rem; color: var(--ink3); margin-top: .4rem; display: flex; gap: 1.1rem; flex-wrap: wrap; }
-            .low { color: var(--amber); font-weight: 600; }
-            .high { color: var(--moss); }
+            .target small { font-family: 'Geist',-apple-system,system-ui,sans-serif; color: var(--color-ink3); font-weight: 400; font-size: .78rem; }
+            .meta-row { font-family: var(--mono); font-size: .76rem; color: var(--color-ink3); margin-top: .4rem; display: flex; gap: 1.1rem; flex-wrap: wrap; }
+            .low { color: var(--color-amber); font-weight: 600; }
+            .high { color: var(--color-moss); }
           `}</style>
         </head>
         <body>
@@ -167,14 +215,19 @@ export function mountExplainRoutes(
         <html lang="en">
           <head>
             <meta charset="utf-8" />
+            <meta name="color-scheme" content="light dark" />
             <title>invalid id · siltpoke</title>
+            <BrandIcons />
+            <link rel="stylesheet" href="/static/tokens.css" />
+            <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP_SCRIPT }} />
           </head>
           <body
             style={{
               fontFamily:
                 "-apple-system, BlinkMacSystemFont, system-ui, sans-serif",
               padding: 32,
-              color: "#71717a",
+              color: "var(--color-ink3)",
+              background: "var(--color-cream)",
             }}
           >
             invalid explanation id
@@ -183,20 +236,26 @@ export function mountExplainRoutes(
         400,
       );
     }
-    const result = await readExplanation(cwd, id);
+    const projectRoot = await resolveCwd(c.req.query("repo"));
+    const result = await readExplanation(projectRoot, id);
     if (!result) {
       return c.html(
         <html lang="en">
           <head>
             <meta charset="utf-8" />
+            <meta name="color-scheme" content="light dark" />
             <title>explanation not found · siltpoke</title>
+            <BrandIcons />
+            <link rel="stylesheet" href="/static/tokens.css" />
+            <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP_SCRIPT }} />
           </head>
           <body
             style={{
               fontFamily:
                 "-apple-system, BlinkMacSystemFont, system-ui, sans-serif",
               padding: 32,
-              color: "#71717a",
+              color: "var(--color-ink3)",
+              background: "var(--color-cream)",
             }}
           >
             explanation {id} not found
@@ -212,17 +271,31 @@ export function mountExplainRoutes(
         <head>
           <meta charset="utf-8" />
           <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <meta name="color-scheme" content="light dark" />
           <title>{meta.target} · siltpoke explain</title>
+          <BrandIcons />
+          <link rel="stylesheet" href="/static/tokens.css" />
+          <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP_SCRIPT }} />
           <style>{`
-            :root { --cream:#faf6ec; --paper:#f4eedf; --paperD:#e8dec7; --edge:#d8cbab; --ink:#1f1b16; --ink2:#5a4f3f; --ink3:#8a7c64; --amber:#e8a85c; --mono:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace; }
-            body { font-family: 'Geist',-apple-system,BlinkMacSystemFont,system-ui,sans-serif; max-width: 880px; margin: 2.5rem auto; padding: 0 1.5rem; line-height: 1.65; color: var(--ink); background: var(--cream); }
-            a.back { display: inline-block; margin-bottom: 1.2rem; font-family: var(--mono); font-size: .82rem; color: var(--ink3); text-decoration: none; }
-            a.back:hover { color: var(--ink); }
-            .banner { background: #fbf0d8; border: 1px solid var(--amber); padding: .65rem 1rem; border-radius: 8px; margin-bottom: 1.2rem; color: #8a5a1a; }
-            pre { background: var(--paper); border: 1px solid var(--edge); padding: 1rem; border-radius: 10px; overflow-x: auto; font-size: .85rem; line-height: 1.6; }
+            :root { --mono:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace; }
+            body { font-family: 'Geist',-apple-system,BlinkMacSystemFont,system-ui,sans-serif; max-width: 880px; margin: 2.5rem auto; padding: 0 1.5rem; line-height: 1.65; color: var(--color-ink); background: var(--color-cream); }
+            a.back { display: inline-block; margin-bottom: 1.2rem; font-family: var(--mono); font-size: .82rem; color: var(--color-ink3); text-decoration: none; }
+            a.back:hover { color: var(--color-ink); }
+            /* Amber-tinted warning banner, derived from tokens via color-mix
+               (not itself a hardcoded literal — see FUNC_NAME's comment in
+               scripts/lint-no-hardcoded-color.ts for why color-mix() is exempt
+               from the guard by construction: it takes var() operands, not
+               literals). 18% amber + 82% paper measures (contrastRatio, palette.ts,
+               8-bit-quantized per CSS color-mix "in srgb" semantics):
+               light ink2-on-mix 6.24:1, dark ink2-on-mix 5.05:1 — both clear the
+               4.5:1 body-text floor with margin; see
+               tests/web/tokens/palette.test.ts "explain.tsx .banner" for the
+               live-computed assertion. */
+            .banner { background: color-mix(in srgb, var(--color-amber) 18%, var(--color-paper)); border: 1px solid var(--color-amber); padding: .65rem 1rem; border-radius: 8px; margin-bottom: 1.2rem; color: var(--color-ink2); }
+            pre { background: var(--color-paper); border: 1px solid var(--color-edge); padding: 1rem; border-radius: 10px; overflow-x: auto; font-size: .85rem; line-height: 1.6; }
             code { font-family: var(--mono); }
-            .meta { color: var(--ink3); font-size: .82rem; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--edge); font-family: var(--mono); }
-            .meta dt { font-weight: 600; color: var(--ink2); }
+            .meta { color: var(--color-ink3); font-size: .82rem; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--color-edge); font-family: var(--mono); }
+            .meta dt { font-weight: 600; color: var(--color-ink2); }
             .meta dd { margin: 0 0 .4rem 0; }
           `}</style>
         </head>
@@ -268,7 +341,8 @@ export function mountExplainRoutes(
     if (!ID_RE.test(id)) {
       return c.json({ success: false, error: "invalid id" }, 400);
     }
-    const result = await readExplanation(cwd, id);
+    const projectRoot = await resolveCwd(c.req.query("repo"));
+    const result = await readExplanation(projectRoot, id);
     if (!result) {
       return c.json({ success: false, error: "explanation not found" }, 404);
     }

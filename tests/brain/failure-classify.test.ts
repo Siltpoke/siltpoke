@@ -87,6 +87,38 @@ test("overloaded marker on STDOUT classifies throttle (claude -p errors land on 
   ).toBe("throttle");
 });
 
+// ── codex markers (track #7 T2, AC10) ───────────────────────────────────────
+
+test("codex quota/usage-limit phrasing classifies throttle", () => {
+  expect(
+    classifyBrainFailure({
+      exitCode: 1,
+      stderr: "usage limit reached for this account",
+      stdout: "",
+    }),
+  ).toBe("throttle");
+});
+
+test("codex 'quota exceeded' phrasing classifies throttle", () => {
+  expect(
+    classifyBrainFailure({
+      exitCode: 1,
+      stderr: "",
+      stdout: "quota exceeded, try again later",
+    }),
+  ).toBe("throttle");
+});
+
+test("codex 'login required' / 'codex login' phrasing classifies permanent", () => {
+  expect(
+    classifyBrainFailure({
+      exitCode: 1,
+      stderr: "login required — run `codex login` first",
+      stdout: "",
+    }),
+  ).toBe("permanent");
+});
+
 // ── permanent ───────────────────────────────────────────────────────────────
 
 test("binary-missing spawn error (ENOENT) classifies permanent", () => {

@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { runHook } from "../../../src/hooks/on-stop";
 import type { BrainOutput } from "../../../src/brain/schema";
 import { eventWithProj, noopUsage, fakeBrainOutput, seedEditedFile } from "./_shared";
+import { commitAll } from "../../_shared/git-fixture";
 
 let tmpHome: string;
 
@@ -241,14 +242,24 @@ test("new Edit tool_use invalidates skip → Brain re-runs", async () => {
     cwd: join(tmpHome, "p"),
   };
 
+  // This test's premise is the content-hash "no_change" dedupe gate
+  // (src/router/skip-detector.ts), not the marker-based idempotency. Opt out of
+  // the now-default-on marker suppression explicitly so the assertions below
+  // exercise ONLY the content-hash gate, without the marker layer as a
+  // confound.
   await runHook({
     rawJson: JSON.stringify({ ...base, transcript_path: t1 }),
-    env: { HOME: tmpHome, SILTPOKE_TOOL_AUGMENTED: "0" },
+    env: { HOME: tmpHome, SILTPOKE_TOOL_AUGMENTED: "0", SILTPOKE_SUPPRESSION_ENABLED: "0" },
     brainFn,
   });
+  // The second turn also closes a unit. Under the ⏱ review-unit axis an edit
+  // that is never committed is not a unit of work, so without this the second
+  // run stops at `no_new_commit` and the content-hash gate — the thing this
+  // test is about — is never reached.
+  commitAll(base.cwd, "second turn's work");
   await runHook({
     rawJson: JSON.stringify({ ...base, transcript_path: t2 }),
-    env: { HOME: tmpHome, SILTPOKE_TOOL_AUGMENTED: "0" },
+    env: { HOME: tmpHome, SILTPOKE_TOOL_AUGMENTED: "0", SILTPOKE_SUPPRESSION_ENABLED: "0" },
     brainFn,
   });
 

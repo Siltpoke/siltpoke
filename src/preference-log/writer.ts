@@ -2,10 +2,10 @@
 // Copyright (c) 2026 Jiaqi Duan
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
 import type { PreferenceLogEntry } from "./types";
+import { siltpokeRoot } from "../installer/paths";
 
-const DEFAULT_PATH = join(homedir(), ".siltpoke", "preference-log.jsonl");
+const DEFAULT_PATH = join(siltpokeRoot(), "preference-log.jsonl");
 
 export interface AppendOpts {
   path?: string;

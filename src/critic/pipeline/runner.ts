@@ -26,6 +26,12 @@ export interface PipelineRunnerInput {
   /** Optional tracer + store. When absent, no spans are emitted (silent). */
   tracer?: Tracer;
   traceStore?: TraceStore;
+  /**
+   * Track #7 T3 (AC14) — span truth when this runner is eventually wired
+   * behind a non-claude reviewer provider. Defaults to "anthropic" so the
+   * (not-yet-wired, see run-critic.ts TODO) existing callers need no change.
+   */
+  genAiSystem?: string;
 }
 
 export interface PipelineRunnerOutput {
@@ -38,6 +44,7 @@ export interface PipelineRunnerOutput {
 
 export async function runPipeline(input: PipelineRunnerInput): Promise<PipelineRunnerOutput> {
   const { tracer, traceStore } = input;
+  const genAiSystem = input.genAiSystem ?? "anthropic";
   const trace = tracer && traceStore;
 
   // Root span: siltpoke.turn
@@ -98,7 +105,7 @@ export async function runPipeline(input: PipelineRunnerInput): Promise<PipelineR
           name: "siltpoke.brain.find",
           kind: "CLIENT",
           parent: rootSpan!,
-          attributes: { "gen_ai.system": "anthropic", "gen_ai.operation.name": "chat" },
+          attributes: { "gen_ai.system": genAiSystem, "gen_ai.operation.name": "chat" },
         })
       : null;
 
@@ -129,7 +136,7 @@ export async function runPipeline(input: PipelineRunnerInput): Promise<PipelineR
           name: "siltpoke.brain.verify",
           kind: "CLIENT",
           parent: rootSpan!,
-          attributes: { "gen_ai.system": "anthropic", "gen_ai.operation.name": "verify" },
+          attributes: { "gen_ai.system": genAiSystem, "gen_ai.operation.name": "verify" },
         })
       : null;
 

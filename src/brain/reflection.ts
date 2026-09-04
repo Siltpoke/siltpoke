@@ -4,7 +4,12 @@ import {
   parseReflectionOutput,
   type ReflectionOutput,
 } from "./reflection-schema";
-import { BrainError, type BrainUsage } from "./brain";
+import {
+  BrainError,
+  extractJsonString,
+  runBrainCall,
+  type BrainUsage,
+} from "./brain";
 
 export const REFLECTION_SYSTEM_PROMPT = `You are Siltpoke in REFLECTION mode.
 
@@ -34,9 +39,57 @@ Rules:
 - The rule must be specific enough to act on but general enough to apply to future similar critiques. Do not echo the user's words verbatim.
 - Do not apologize, do not explain at length. Be terse and operational.`;
 
+/**
+ * Acted-on reflection is the INVERSE signal from dismiss: the critique was
+ * CORRECT (the user fixed the flagged code, git-confirmed). Feeding the acted-on
+ * seed into the dismiss-framed prompt above ("you were wrong, prevent this
+ * error") inverts the rule — a validated catch distils into a suppression /
+ * be-more-cautious rule instead of a reinforcement rule (observed 2026-07-28).
+ * This prompt keeps the acted-on path reinforcement-framed.
+ */
+export const REFLECTION_ACTED_ON_SYSTEM_PROMPT = `You are Siltpoke in REFLECTION mode.
+
+You previously wrote a code-review critique. The user ACTED ON it — they fixed
+the flagged code, mechanically confirmed by git. Your critique was CORRECT. Your
+job is to distil ONE generalizable rule this validated catch embodies, so the
+critic keeps catching this class of issue in the future.
+
+You will receive:
+- The full critique you wrote (verbatim).
+- Confirmation that the user acted on it.
+
+You will output ONE JSON object and nothing else (no prose, no markdown).
+Schema:
+
+{
+  "reflection": string,           // 1-2 sentences, first person, why this catch was valuable
+  "learned_rule": string,         // 1 sentence, imperative, generalizable — REINFORCES catching this class (e.g. "Flag property access on an optional/possibly-undefined value that has no preceding guard.")
+  "rule_category": string,        // kebab-case tag (e.g. "null_check", "import_path", "test_isolation")
+  "confidence": "high" | "medium" | "low",
+  "applies_to_file_types": string[] // e.g. ["py"] or ["ts","tsx"] or []
+}
+
+Rules:
+- Output exactly one rule. Do not list multiple.
+- The rule REINFORCES the catch — keep catching this class. It must NOT be a suppression / "be more cautious before flagging" / "grep for existing guards first" rule; that framing is for DISMISSED critiques, not this validated one.
+- Use "high" confidence ONLY when the catch generalizes cleanly. Default to "medium".
+- The rule must be specific enough to act on but general enough to apply to future similar code. Do not echo the critique verbatim.
+- Do not apologize, do not explain at length. Be terse and operational.`;
+
+export type ReflectionMode = "dismiss" | "acted_on";
+
+/** Select the reflection system prompt by mode (defaults to dismiss). */
+export function reflectionSystemPrompt(mode: ReflectionMode = "dismiss"): string {
+  return mode === "acted_on"
+    ? REFLECTION_ACTED_ON_SYSTEM_PROMPT
+    : REFLECTION_SYSTEM_PROMPT;
+}
+
 export interface CallReflectionOptions {
   critiqueBody: string;
   userReason: string;
+  /** dismiss (default) = the critique was wrong; acted_on = it was right (git-confirmed). */
+  mode?: ReflectionMode;
   fileContext?: string;
   model?: string;
   timeoutMs?: number;
@@ -51,61 +104,19 @@ export interface ReflectionCallResult {
 const DEFAULT_MODEL = "claude-haiku-4-5";
 const DEFAULT_TIMEOUT_MS = 60_000;
 
-interface ResultEvent {
-  type: "result";
-  subtype?: string;
-  is_error?: boolean;
-  result?: string;
-  error?: string;
-  total_cost_usd?: number;
-  usage?: {
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
-    input_tokens?: number;
-    output_tokens?: number;
-  };
-}
-
-interface ClaudeStreamEvent {
-  type: string;
-  [key: string]: unknown;
-}
-
-const FENCED_JSON = /```(?:json)?\s*([\s\S]*?)\s*```/;
-
-function extractJsonString(text: string): string {
-  const match = text.match(FENCED_JSON);
-  return match ? match[1]?.trim() : text.trim();
-}
-
-function findResultEvent(events: ClaudeStreamEvent[]): ResultEvent {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const ev = events[i]!;
-    if (ev.type === "result") return ev as unknown as ResultEvent;
-  }
-  throw new BrainError("claude -p stream contained no result event");
-}
-
-function extractUsage(resultEvent: ResultEvent): BrainUsage {
-  const u = resultEvent.usage ?? {};
-  return {
-    cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0,
-    cache_read_input_tokens: u.cache_read_input_tokens ?? 0,
-    input_tokens: u.input_tokens ?? 0,
-    output_tokens: u.output_tokens ?? 0,
-    total_cost_usd: resultEvent.total_cost_usd ?? null,
-  };
-}
-
-function buildContextBundle(opts: CallReflectionOptions): string {
+export function buildContextBundle(opts: CallReflectionOptions): string {
+  const reasonTag =
+    (opts.mode ?? "dismiss") === "acted_on"
+      ? "user_acted_on_reason"
+      : "user_dismiss_reason";
   const parts = [
     "<critique_you_wrote>",
     opts.critiqueBody.trim(),
     "</critique_you_wrote>",
     "",
-    "<user_dismiss_reason>",
+    `<${reasonTag}>`,
     opts.userReason.trim(),
-    "</user_dismiss_reason>",
+    `</${reasonTag}>`,
   ];
   if (opts.fileContext && opts.fileContext.trim().length > 0) {
     parts.push(
@@ -125,79 +136,20 @@ function buildContextBundle(opts: CallReflectionOptions): string {
 export async function callReflection(
   opts: CallReflectionOptions,
 ): Promise<ReflectionCallResult> {
-  const model = opts.model ?? DEFAULT_MODEL;
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const spawn = opts.spawnFn ?? Bun.spawn;
+  // Spawn + collect + result-event parsing is identical to brain.ts's
+  // runBrainCall (same `claude -p --output-format json` CLI) — delegate
+  // instead of re-implementing. Reflection's own defaults (60s timeout vs
+  // brain.ts's 90s) are threaded through explicitly so behavior is unchanged
+  // when the caller doesn't override them.
+  const { resultText, usage } = await runBrainCall({
+    systemPrompt: reflectionSystemPrompt(opts.mode),
+    contextBundle: buildContextBundle(opts),
+    model: opts.model ?? DEFAULT_MODEL,
+    timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    spawnFn: opts.spawnFn,
+  });
 
-  const proc = spawn(
-    [
-      "claude",
-      "-p",
-      "--model",
-      model,
-      "--system-prompt",
-      REFLECTION_SYSTEM_PROMPT,
-      "--output-format",
-      "json",
-      "--no-session-persistence",
-    ],
-    {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, SILTPOKE_INTERNAL: "1" },
-    },
-  );
-
-  proc.stdin.write(buildContextBundle(opts));
-  proc.stdin.end();
-
-  const killTimer = setTimeout(() => {
-    try {
-      proc.kill();
-    } catch {
-      // ignore — process may already have exited
-    }
-  }, timeoutMs);
-
-  let stdout: string;
-  let stderr: string;
-  let exitCode: number;
-  try {
-    stdout = await new Response(proc.stdout).text();
-    stderr = await new Response(proc.stderr).text();
-    exitCode = await proc.exited;
-  } finally {
-    clearTimeout(killTimer);
-  }
-
-  if (exitCode !== 0) {
-    throw new BrainError(
-      `claude -p exited with code ${exitCode}: ${stderr.slice(0, 500)}`,
-    );
-  }
-
-  let events: ClaudeStreamEvent[];
-  try {
-    const parsed = JSON.parse(stdout);
-    if (!Array.isArray(parsed)) {
-      throw new BrainError("claude -p stdout was not a JSON array");
-    }
-    events = parsed as ClaudeStreamEvent[];
-  } catch (err) {
-    if (err instanceof BrainError) throw err;
-    throw new BrainError("claude -p stdout was not valid JSON", err);
-  }
-
-  const resultEvent = findResultEvent(events);
-
-  if (resultEvent.is_error || !resultEvent.result) {
-    throw new BrainError(
-      `claude -p reported an error: ${resultEvent.error ?? resultEvent.subtype ?? "no result field"}`,
-    );
-  }
-
-  const innerText = extractJsonString(resultEvent.result);
+  const innerText = extractJsonString(resultText);
 
   let inner: unknown;
   try {
@@ -206,6 +158,9 @@ export async function callReflection(
     throw new BrainError(
       "Reflection response was not valid JSON; possibly hallucinated prose around it",
       err,
+      undefined,
+      undefined,
+      resultText,
     );
   }
 
@@ -213,8 +168,8 @@ export async function callReflection(
   try {
     output = parseReflectionOutput(inner);
   } catch (err) {
-    throw new BrainError("Reflection response failed schema validation", err);
+    throw new BrainError("Reflection response failed schema validation", err, undefined, undefined, inner);
   }
 
-  return { output, usage: extractUsage(resultEvent) };
+  return { output, usage };
 }

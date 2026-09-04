@@ -32,7 +32,7 @@ export interface EntityGroup<F = Fact> {
 
 /**
  * Group active facts by entity. A multi-entity fact appears under each of its
- * entities. Facts with no entities fall into one trailing `key:""` / "未分类"
+ * entities. Facts with no entities fall into one trailing `key:""` / 
  * group. Sorted by descending fact count, then label; untagged group always last.
  *
  * Generic over `F` (anything carrying `entities?`) so non-`Fact` shapes —

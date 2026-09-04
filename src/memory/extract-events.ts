@@ -154,7 +154,6 @@ export function assembleEventPrompt(context: SummarizerContext): string {
 const EVENT_SYSTEM_PROMPT =
   "You are Siltpoke's episodic-event extractor. From the inputs, extract discrete events that happened — what the developer shipped, struggled with, or discussed — as short third-person narratives. You do NOT record durable profile facts (that is the summarizer's job).";
 
-const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 // ---------------------------------------------------------------------------
@@ -175,14 +174,25 @@ function toDraft(c: EventCandidate): EventFragmentDraft {
 
 export async function extractEventFragments(
   context: SummarizerContext,
-  opts?: { brainFn?: BrainFn; modelOverride?: string },
+  opts?: { brainFn?: BrainFn },
 ): Promise<EventFragmentDraft[]> {
   const { callBrainRaw } = await import("../brain/brain");
+  // Last-resort fallback ONLY (single-brain S2, task 8): consolidate.ts, the
+  // sole production caller, always injects a role-routed `brainFn`
+  // (`makeRoleRawBrain(homeBase, "extract")`, shared with callSummarizerBrain)
+  // — this default only fires for a direct caller that supplies no homeBase.
   const brainFn = opts?.brainFn ?? callBrainRaw;
-  const model = opts?.modelOverride ?? DEFAULT_MODEL;
 
   const contextBundle = assembleEventPrompt(context);
 
+  // No `model` field: a role-routed brainFn (the production seam) forces its
+  // own resolved model internally; the fallback callBrainRaw applies ITS OWN
+  // default (the undated alias, ../brain/brain.ts DEFAULT_MODEL) when `model`
+  // is omitted — NOT the dated pinned snapshot this fn used to hardcode (that
+  // pin now lives only in the role-brain/registry resolution path). A
+  // hypothetical direct caller that supplies no `brainFn` gets that unpinned
+  // default, not byte-identical pre-migration behavior.
+  //
   // The brain call is guarded: callBrainRaw throws BrainError on spawn failure /
   // timeout / non-JSON stdout — the most common real failure class. Because this
   // wires into consolidate, a thrown error must NOT propagate and crash the
@@ -193,7 +203,6 @@ export async function extractEventFragments(
     raw = await brainFn({
       systemPrompt: EVENT_SYSTEM_PROMPT,
       contextBundle,
-      model,
       timeoutMs: DEFAULT_TIMEOUT_MS,
     });
   } catch (err) {

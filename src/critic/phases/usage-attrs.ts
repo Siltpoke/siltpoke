@@ -16,12 +16,16 @@ export function setBrainUsageAttrs(
   span: Span,
   usage: BrainUsage,
   model: string,
+  /** Track #7 T3 (AC14) — span truth for cross-family providers. Defaults
+   * to "anthropic" so existing claude-only call sites need no change. */
+  genAiSystem = "anthropic",
 ): void {
   // usage originates in external subprocess JSON; both call sites sit inside
   // the phases' Brain-call try blocks, where a throw would mislabel an
   // already-successful call as "Brain call failed" → HARD_SUPPRESS. Guard the
   // whole object, not just the fields.
   const u: Partial<BrainUsage> = usage ?? {};
+  tracer.setAttribute(span, "gen_ai.system", genAiSystem);
   tracer.setAttribute(span, "gen_ai.request.model", model);
   tracer.setAttribute(span, "gen_ai.usage.input_tokens", u.input_tokens ?? 0);
   tracer.setAttribute(span, "gen_ai.usage.output_tokens", u.output_tokens ?? 0);

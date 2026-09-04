@@ -44,6 +44,8 @@ export interface RowFilterOpts {
   cutoffMs: number | null;
   /** Lowercased query; null = no text filter. */
   q: string | null;
+  /** Builder-family filter (Brain select v2); null = all families. */
+  family: string | null;
 }
 
 /**
@@ -59,6 +61,7 @@ function matchesStatus(c: CriticCall, status: StatusFilter | null): boolean {
 export function matchesRowFilters(c: CriticCall, f: RowFilterOpts): boolean {
   if (!matchesStatus(c, f.status)) return false;
   if (f.kind && c.speech_kind !== f.kind) return false;
+  if (f.family && (c.authorFamily || "claude") !== f.family) return false;
   if (f.cutoffMs !== null) {
     const t = new Date(c.timestamp).getTime();
     if (Number.isNaN(t) || t < f.cutoffMs) return false;
@@ -87,6 +90,8 @@ export interface BrainCallsPageOpts {
   kind: SpeechKind | null;
   /** Raw text query (trimmed/lowercased internally); null = none. */
   query: string | null;
+  /** Builder-family filter (Brain select v2); null = all families. */
+  family?: string | null;
   /** Project (cwd basename) filter; unknown values filter nothing. */
   project: string | null;
 }
@@ -201,6 +206,7 @@ export async function readBrainCallsPage(
     // Range is enforced in the scan on the parsed epoch — no double parse.
     cutoffMs: null,
     q: opts.query ? opts.query.trim().toLowerCase() || null : null,
+    family: opts.family ?? null,
   };
 
   const projectsSet = new Set<string>();

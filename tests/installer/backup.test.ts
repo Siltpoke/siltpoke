@@ -70,3 +70,20 @@ test("findLatestBackup returns null when no backups exist", async () => {
   const found = await findLatestBackup(claudeHome);
   expect(found).toBeNull();
 });
+
+test("win32: skips the pointer symlink but still writes a findable backup", async () => {
+  const home = mkdtempSync(join(tmpdir(), "bk-"));
+  try {
+    writeFileSync(join(home, "settings.json"), "{}");
+    const r = await backupSettings(home, new Date(0), "win32");
+    // backup file written:
+    expect(existsSync(r.path)).toBe(true);
+    // NO pointer symlink created on win32:
+    expect(existsSync(join(home, "settings.json.pre-siltpoke"))).toBe(false);
+    // scan fallback still locates the backup:
+    const found = await findLatestBackup(home);
+    expect(found).not.toBeNull();
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

@@ -19,7 +19,15 @@ import { buildMemoryLog, type MemoryEvent } from "./memory-log";
 
 export interface LoadMemoryEventsDeps {
   readMemory?: (homeBase: string) => Promise<CoreMemory | null>;
-  loadCritiques?: (homeBase: string) => Promise<CritiqueLogEntry[]>;
+  loadCritiques?: (base: string) => Promise<CritiqueLogEntry[]>;
+  /**
+   * Base directory to walk for critiques. The critic writes them project-local
+   * (`<repo>/.siltpoke`, see writeCritique's stateBase in hooks/handle-stop.ts),
+   * so a caller that resolved a project MUST pass that project's base — passing
+   * a bare homeBase yields an empty episodic half for every project.
+   * Defaults to `homeBase` (correct only when no project resolved).
+   */
+  critiquesBase?: string;
   /**
    * Injection point for the read-time clock (drives the event-fragment expiry
    * filter). Defaults to `new Date()`; tests pass a fixed Date to assert the
@@ -33,7 +41,9 @@ export interface LoadMemoryEventsDeps {
  * into a single MemoryEvent[] sorted newest-first.
  *
  * @param homeBase  Path to the siltpoke home directory (e.g. ~/.siltpoke).
- * @param deps      Optional overrides for storage readers (for unit testing).
+ * @param deps      Optional overrides for storage readers (for unit testing),
+ *                  plus `critiquesBase` — the project-local base to walk for
+ *                  critiques when a project resolved.
  */
 export async function loadMemoryEvents(
   homeBase: string,
@@ -45,7 +55,7 @@ export async function loadMemoryEvents(
 
   const [memory, critiqueEntries] = await Promise.all([
     _readMemory(homeBase),
-    _loadCritiques(homeBase),
+    _loadCritiques(deps?.critiquesBase ?? homeBase),
   ]);
 
   const facts = memory?.facts ?? [];

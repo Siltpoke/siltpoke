@@ -16,6 +16,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expandLanguage, loadPersonality } from "../brain/personality";
+import { makeRoleRawBrain } from "../brain/role-brain";
 import { readSession as readSessionFile } from "../chat/jsonl-store";
 import type { ApplyResult } from "./apply-candidates";
 import { applyCandidates } from "./apply-candidates";
@@ -191,7 +192,12 @@ async function countBrainCallsSince(
 }
 
 // ---------------------------------------------------------------------------
-// Critique loader — reads ~/.siltpoke/critiques/archive/**/*.md
+// Critique loader — reads <base>/critiques/archive/**/*.md
+// The base is the CALLER's choice, not necessarily the home base: the critic
+// writes critiques project-local, so consolidate() and the Memory Book routes
+// pass a project base here. See an internal design note
+// wrong-base.md — a stale "~/.siltpoke" comment plus a homeBase parameter name
+// on this very function sent one audit to the wrong conclusion.
 // Parses YAML frontmatter for `timestamp` and extracts `critique_for_claude`
 // body. Returns up to CRITIQUES_CAP strings, sorted newest-first.
 // ---------------------------------------------------------------------------
@@ -220,14 +226,25 @@ function parseCritiqueFile(content: string): CritiqueEntry | null {
   return { ts, body };
 }
 
-export async function loadRecentCritiques(
-  homeBase: string,
-  sinceTime: Date,
-): Promise<string[]> {
-  const archiveRoot = join(homeBase, "critiques", "archive");
+type RawCritiqueEntry = { id: string; ts: Date; body: string };
+
+/**
+ * Walk `base/critiques/archive/<date>/*.md`, parse each critique file,
+ * and collect entries passing `predicate` — the shared file-walking core for
+ * loadRecentCritiques / loadAllCritiqueEntries /
+ * loadAllCritiqueEntriesUnfiltered, which differ only in which entries pass
+ * (time-gate + rubric-noise filter, rubric-noise filter only, or no filter)
+ * and how the result is shaped. Returns entries newest-first (by ts, desc);
+ * unreadable files/dirs are skipped, a missing/unreadable archive → [].
+ */
+async function walkCritiqueArchive(
+  base: string,
+  predicate: (entry: CritiqueEntry) => boolean,
+): Promise<RawCritiqueEntry[]> {
+  const archiveRoot = join(base, "critiques", "archive");
   if (!existsSync(archiveRoot)) return [];
 
-  const entries: CritiqueEntry[] = [];
+  const entries: RawCritiqueEntry[] = [];
 
   try {
     const dateDirs = await readdir(archiveRoot);
@@ -241,13 +258,12 @@ export async function loadRecentCritiques(
       }
       for (const file of files) {
         if (!file.endsWith(".md")) continue;
+        const id = file.slice(0, -3); // strip ".md" extension to get the id
         try {
           const content = await readFile(join(dayPath, file), "utf8");
           const entry = parseCritiqueFile(content);
-          // Bug#4-C: skip deterministic rubric-noise fallbacks — they are not
-          // episodic user-state signal and produce junk facts downstream.
-          if (entry && entry.ts > sinceTime && !isRubricNoiseCritique(entry.body)) {
-            entries.push(entry);
+          if (entry && predicate(entry)) {
+            entries.push({ id, ts: entry.ts, body: entry.body });
           }
         } catch {
           // skip unreadable file
@@ -259,6 +275,19 @@ export async function loadRecentCritiques(
   }
 
   entries.sort((a, b) => b.ts.getTime() - a.ts.getTime());
+  return entries;
+}
+
+export async function loadRecentCritiques(
+  base: string,
+  sinceTime: Date,
+): Promise<string[]> {
+  // Bug#4-C: skip deterministic rubric-noise fallbacks — they are not
+  // episodic user-state signal and produce junk facts downstream.
+  const entries = await walkCritiqueArchive(
+    base,
+    (e) => e.ts > sinceTime && !isRubricNoiseCritique(e.body),
+  );
   return entries.slice(0, CRITIQUES_CAP).map((e) => e.body);
 }
 
@@ -277,42 +306,9 @@ export type CritiqueLogEntry = {
 };
 
 export async function loadAllCritiqueEntries(
-  homeBase: string,
+  base: string,
 ): Promise<CritiqueLogEntry[]> {
-  const archiveRoot = join(homeBase, "critiques", "archive");
-  if (!existsSync(archiveRoot)) return [];
-
-  const entries: Array<{ id: string; ts: Date; body: string }> = [];
-
-  try {
-    const dateDirs = await readdir(archiveRoot);
-    for (const dateDir of dateDirs) {
-      const dayPath = join(archiveRoot, dateDir);
-      let files: string[];
-      try {
-        files = await readdir(dayPath);
-      } catch {
-        continue;
-      }
-      for (const file of files) {
-        if (!file.endsWith(".md")) continue;
-        const id = file.slice(0, -3); // strip ".md" extension to get the id
-        try {
-          const content = await readFile(join(dayPath, file), "utf8");
-          const entry = parseCritiqueFile(content);
-          if (entry && !isRubricNoiseCritique(entry.body)) {
-            entries.push({ id, ts: entry.ts, body: entry.body });
-          }
-        } catch {
-          // skip unreadable file
-        }
-      }
-    }
-  } catch {
-    return [];
-  }
-
-  entries.sort((a, b) => b.ts.getTime() - a.ts.getTime());
+  const entries = await walkCritiqueArchive(base, (e) => !isRubricNoiseCritique(e.body));
   return entries.map((e) => ({
     id: e.id,
     ts: e.ts.toISOString(),
@@ -333,42 +329,10 @@ export async function loadAllCritiqueEntries(
 // ---------------------------------------------------------------------------
 
 export async function loadAllCritiqueEntriesUnfiltered(
-  homeBase: string,
+  base: string,
 ): Promise<CritiqueLogEntry[]> {
-  const archiveRoot = join(homeBase, "critiques", "archive");
-  if (!existsSync(archiveRoot)) return [];
-
-  const entries: Array<{ id: string; ts: Date; body: string }> = [];
-
-  try {
-    const dateDirs = await readdir(archiveRoot);
-    for (const dateDir of dateDirs) {
-      const dayPath = join(archiveRoot, dateDir);
-      let files: string[];
-      try {
-        files = await readdir(dayPath);
-      } catch {
-        continue;
-      }
-      for (const file of files) {
-        if (!file.endsWith(".md")) continue;
-        const id = file.slice(0, -3);
-        try {
-          const content = await readFile(join(dayPath, file), "utf8");
-          const entry = parseCritiqueFile(content);
-          if (entry) { // no rubric-noise filter — include all for category counts
-            entries.push({ id, ts: entry.ts, body: entry.body });
-          }
-        } catch {
-          // skip unreadable file
-        }
-      }
-    }
-  } catch {
-    return [];
-  }
-
-  entries.sort((a, b) => b.ts.getTime() - a.ts.getTime());
+  // no rubric-noise filter — include all for category counts
+  const entries = await walkCritiqueArchive(base, () => true);
   return entries.map((e) => ({
     id: e.id,
     ts: e.ts.toISOString(),
@@ -466,10 +430,16 @@ export async function buildSummarizerContext(
 
   const [recentCritiques, recentDismissals, recentChat] = await Promise.all([
     critiquesLoader(critiquesBase, lastConsolidatedAt),
-    // TODO: harden memory capture — file mismatch — loadRecentDismissals reads
-    // <homeBase>/feedback-archive.jsonl (absent in practice), but dismissals are
-    // actually written to ~/.siltpoke/preference-log.jsonl. Separate path-repair
-    // tracked for a follow-up; left reading homeBase for now (out of this fix's scope).
+    // Reading <homeBase>/feedback-archive.jsonl is CORRECT and stays. An earlier
+    // TODO here claimed the opposite — that the archive was "absent in practice"
+    // and dismissals really landed in preference-log.jsonl — and had the direction
+    // exactly backwards. Measured 2026-08-19: feedback-archive.jsonl holds the only
+    // genuine dismissals on disk (two, with reflexion rules attached), while
+    // preference-log.jsonl held zero real entries because the dismiss/ack/forward
+    // CLIs dropped their append at process.exit. That is fixed at the write side
+    // (src/cli/{dismiss,ack,mark-forwarded}.ts) rather than by re-pointing this
+    // loader: the two files are different records, not duplicates — the archive is
+    // the durable verdict store, preference-log is the raw signal stream.
     dismissalsLoader(homeBase, lastConsolidatedAt),
     chatLoader(homeBase, lastConsolidatedAt),
   ]);
@@ -614,7 +584,16 @@ export async function consolidate(opts: ConsolidateOpts): Promise<ConsolidateRes
   // Step 5: run summarizer → apply → prune → write
   const t0 = Date.now();
   try {
-    const summaryOutput = await summarizerFn(context);
+    // Single shared extract-role seam (single-brain S2, task 8): both the
+    // summarizer and the event extractor are leaf functions that don't
+    // receive `homeBase` themselves — consolidate builds ONE role-routed
+    // brainFn here and injects it into both, so a family selected for the
+    // `extract` role (config.json) reaches both consumers identically. Under
+    // the default (no config.json → claude) this resolves to the SAME pinned
+    // model both leaves hardcoded before this change, so the migration is
+    // byte-identical for existing installs.
+    const rawExtract = makeRoleRawBrain(homeBase, "extract");
+    const summaryOutput = await summarizerFn(context, { brainFn: rawExtract });
 
     // Episodic capture: ground extracted drafts against verifiable real
     // ids. knownRefs = the commit shas from this run's coding activity — the ONLY
@@ -636,7 +615,8 @@ export async function consolidate(opts: ConsolidateOpts): Promise<ConsolidateRes
     // silently skip extraction — resurrecting the exact ungrounded-capture bug
     // groundEventDrafts exists to prevent. Broaden the condition alongside the
     // knownRefs set and the groundEventDrafts predicate in lockstep.
-    const eventDrafts = knownRefs.size > 0 ? await extractEventsFn(context) : [];
+    const eventDrafts =
+      knownRefs.size > 0 ? await extractEventsFn(context, { brainFn: rawExtract }) : [];
 
     const { memory: m1, result: applyResult } = applyCandidates(
       memory,

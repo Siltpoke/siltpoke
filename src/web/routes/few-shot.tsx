@@ -15,7 +15,12 @@ import { loadIndex } from "../../few-shot/index";
 import { findNearest } from "../../few-shot/retriever";
 import { createStubEmbedder } from "../../few-shot/embedder";
 
-export function mountFewShotRoutes(app: Hono): void {
+export interface FewShotRouteDeps {
+  /** Daemon secret — forwarded to `<Layout secret>` (FloatingChat + htmx). */
+  secret?: string;
+}
+
+export function mountFewShotRoutes(app: Hono, deps: FewShotRouteDeps = {}): void {
   app.get("/few-shot", async (c) => {
     const query = c.req.query("q") ?? null;
     const index = await loadIndex();
@@ -43,7 +48,7 @@ export function mountFewShotRoutes(app: Hono): void {
     }
 
     return c.html(
-      <Layout title="few-shot · siltpoke">
+      <Layout title="few-shot · siltpoke" secret={deps.secret}>
         <FewShotScreen
           totalEntries={totalEntries}
           embeddingDim={embeddingDim}

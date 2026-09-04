@@ -1,32 +1,56 @@
-import { describe, test, expect, beforeEach } from "bun:test";
-import { mkdtempSync, writeFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  claimMarker,
+  completeMarker,
+  deriveStopMarkerKey,
+} from "../../src/daemon/marker";
 import { runHook } from "../../src/hooks/on-stop";
-import { claimMarker, completeMarker, markerKey } from "../../src/daemon/marker";
 
-function makeStopJson(sessionId: string, ts: number): string {
-  return JSON.stringify({
-    hook_event_name: "Stop",
-    session_id: sessionId,
-    stop_event_timestamp_ms: ts,
-    transcript_path: "/dev/null",
-    cwd: "/tmp",
-    stop_hook_active: false,
-  });
-}
-
+// The marker key is derived from session_id + a hash of the transcript
+// CONTENT (deriveStopMarkerKey), NOT from any timestamp. These tests therefore
+// key off a real transcript file whose bytes are what both the pre-seed and
+// runHook hash — exactly what a real install does.
 describe("on-stop suppression", () => {
   let markerDir: string;
+  let home: string;
+  let transcriptPath: string;
   let brainCalls: number;
   let baseEnv: NodeJS.ProcessEnv;
 
+  function makeStopJson(sessionId: string): string {
+    return JSON.stringify({
+      hook_event_name: "Stop",
+      session_id: sessionId,
+      transcript_path: transcriptPath,
+      cwd: "/tmp",
+      stop_hook_active: false,
+    });
+  }
+
+  // The transcript is always written in beforeEach, so the key is never null
+  // here — resolve it without a non-null assertion.
+  function keyFor(sessionId: string): string {
+    const k = deriveStopMarkerKey({ session_id: sessionId, transcript_path: transcriptPath });
+    if (k === null) throw new Error("test transcript should be readable");
+    return k;
+  }
+
   beforeEach(() => {
     markerDir = mkdtempSync(join(tmpdir(), "supp-"));
+    home = mkdtempSync(join(tmpdir(), "supp-home-"));
+    transcriptPath = join(home, "transcript.jsonl");
+    // A single stable transcript — the identity of THIS Stop event.
+    writeFileSync(
+      transcriptPath,
+      `${JSON.stringify({ type: "user", message: { role: "user", content: "hi" } })}\n`,
+    );
     brainCalls = 0;
     baseEnv = {
       ...process.env,
-      HOME: mkdtempSync(join(tmpdir(), "supp-home-")),
+      HOME: home,
       SILTPOKE_SUPPRESSION_ENABLED: "1",
       SILTPOKE_MARKER_DIR: markerDir,
       SILTPOKE_DAEMON_PORT: "65535", // unreachable port — probe always fails
@@ -34,13 +58,23 @@ describe("on-stop suppression", () => {
     };
   });
 
-  test("suppression disabled (no env) → falls through to handleStopHook", async () => {
+  // Task 7 flipped the default: marker suppression is now ON unless the caller
+  // explicitly opts out with SILTPOKE_SUPPRESSION_ENABLED=0 — so "no env" no
+  // longer means legacy. This test now exercises the explicit escape hatch.
+  test("suppression explicitly disabled (SILTPOKE_SUPPRESSION_ENABLED=0) → falls through to handleStopHook", async () => {
     await runHook({
-      rawJson: makeStopJson("s1", 100),
-      env: { ...process.env, HOME: mkdtempSync(join(tmpdir(), "h-")) },
+      rawJson: makeStopJson("s1"),
+      env: {
+        ...process.env,
+        HOME: mkdtempSync(join(tmpdir(), "h-")),
+        SILTPOKE_SUPPRESSION_ENABLED: "0",
+      },
       brainFn: async () => {
         return {} as any;
       },
+      // Legacy path now self-heals too (AC9) — intercept so the test never
+      // spawns a real daemon.
+      spawnFn: () => ({ unref() {} }),
     });
     // Legacy behavior preserved. handleStopHook may or may not call brainFn depending on gates,
     // but the suppression-marker layer must NOT short-circuit.
@@ -49,11 +83,11 @@ describe("on-stop suppression", () => {
   });
 
   test("marker state=done → suppresses (no brain call, no claim)", async () => {
-    const key = markerKey({ session_id: "s1", stop_event_timestamp_ms: 200 });
+    const key = keyFor("s1");
     claimMarker(markerDir, key);
     completeMarker(markerDir, key);
     await runHook({
-      rawJson: makeStopJson("s1", 200),
+      rawJson: makeStopJson("s1"),
       env: baseEnv,
       brainFn: async () => {
         brainCalls += 1;
@@ -64,12 +98,12 @@ describe("on-stop suppression", () => {
   });
 
   test("marker state=claimed + daemon probe fails → claims + runs brain", async () => {
-    const key = markerKey({ session_id: "s1", stop_event_timestamp_ms: 300 });
+    const key = keyFor("s1");
     // Pre-write a CLAIMED (not stale) marker but daemon is unreachable (port 65535).
     claimMarker(markerDir, key);
     // No completeMarker call.
     await runHook({
-      rawJson: makeStopJson("s1", 300),
+      rawJson: makeStopJson("s1"),
       env: baseEnv,
       brainFn: async () => {
         brainCalls += 1;
@@ -84,7 +118,7 @@ describe("on-stop suppression", () => {
 
   test("no marker + daemon down → claims + runs brain", async () => {
     await runHook({
-      rawJson: makeStopJson("s1", 400),
+      rawJson: makeStopJson("s1"),
       env: baseEnv,
       brainFn: async () => {
         brainCalls += 1;
@@ -94,12 +128,12 @@ describe("on-stop suppression", () => {
     // We claimed our own marker and ran brain (subject to handleStopHook's gates).
     // brain may or may not be called depending on handleStopHook gates (code-change gate, etc.).
     // But the marker MUST be present.
-    const key = markerKey({ session_id: "s1", stop_event_timestamp_ms: 400 });
+    const key = keyFor("s1");
     expect(readdirSync(markerDir).some((f) => f.includes(key))).toBe(true);
   });
 
   test("stale claimed marker (>120s) → treated retry-eligible, claims-or-skips", async () => {
-    const key = markerKey({ session_id: "s1", stop_event_timestamp_ms: 500 });
+    const key = keyFor("s1");
     claimMarker(markerDir, key);
     // Manually age the claim by overwriting the file with old claimedAt.
     writeFileSync(
@@ -111,7 +145,7 @@ describe("on-stop suppression", () => {
       }),
     );
     await runHook({
-      rawJson: makeStopJson("s1", 500),
+      rawJson: makeStopJson("s1"),
       env: baseEnv,
       brainFn: async () => {
         brainCalls += 1;

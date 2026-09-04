@@ -128,7 +128,7 @@ export function MemoryActionLog() {
                 fontFamily: tokens.font.mono,
                 fontSize: 9.5,
                 fontWeight: 500,
-                color: "#5a86a0",
+                color: tokens.color.memTypeInkSemantic,
                 textDecoration: "underline",
                 textUnderlineOffset: "2px",
                 textDecorationStyle: "dotted",

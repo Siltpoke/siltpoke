@@ -32,7 +32,7 @@ function syntaxColor(type: "key" | "string" | "number" | "boolean" | "null"): st
     case "number":
       return tokens.color.amber;
     case "boolean":
-      return "#c8a87f";
+      return tokens.color.tan;
     case "null":
       return tokens.color.ink3;
   }

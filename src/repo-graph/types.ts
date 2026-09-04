@@ -98,6 +98,21 @@ export interface QueryIndex {
 export interface FileFingerprint {
   content_sha256: string;
   ast_sig: string;
+  /**
+   * True when tree-sitter recovered from unparseable spans in this file
+   * (ERROR / MISSING nodes) instead of parsing it cleanly. Persisted so an
+   * incremental build — which reuses cached files WITHOUT re-parsing — can
+   * still report the repo's true degradation count.
+   *
+   * OPTIONAL only because fingerprints written before this field existed lack
+   * it. Absent does NOT mean "clean": the builder treats `undefined` as
+   * "unknown" and refuses the cache for that file, forcing one re-parse that
+   * fills the field in. So an index predating this field re-parses in full on
+   * its next build (≈ the cost of `--force`, once) and is accurate from then
+   * on. Never write `undefined` deliberately to mean "not degraded" — write
+   * `false`.
+   */
+  degraded?: boolean;
 }
 
 export interface Fingerprints {
@@ -105,9 +120,49 @@ export interface Fingerprints {
   files: Record<string, FileFingerprint>;
 }
 
+/**
+ * User-seen watermark (slice ③) — tracks which files/signatures the USER has
+ * already reviewed, distinct from `Fingerprints` (which tracks the repo-graph
+ * index's own incremental-rebuild cache). Persisted as `seen.json`.
+ */
+export interface SeenWatermark {
+  /** `AST_SIG_VERSION` at write time — lets a reader detect a stale algorithm. */
+  ast_sig_version: number;
+  /** Git SHA the watermark was captured against, or null if never captured. */
+  baseline_sha: string | null;
+  files: Record<string, { content_sha256: string; ast_sig: string }>;
+  /**
+   * True when the on-disk `seen.json` was present but unreadable/wrong-shape
+   * (corrupt JSON, missing fields) — the baseline is UNKNOWN, not "clean empty".
+   * Callers must not treat `unknown_baseline:true` as "nothing seen yet"; it
+   * means "we can't tell what was seen" and should degrade conservatively
+   * (e.g. treat everything as `new_to_you` rather than `tracked`).
+   */
+  unknown_baseline: boolean;
+}
+
+/** Per-file diff between a `SeenWatermark` baseline and the current tree. */
+export interface SeenFileDelta {
+  path: string;
+  baseline_status: "tracked" | "new_to_you" | "deleted";
+  signature_changed: boolean;
+  body_changed: boolean;
+  unparseable: boolean;
+}
+
 export interface RepoGraphMetaCounters {
   files_walked: number;
   files_cached: number;
+  /**
+   * Files that parsed into a tree but only PARTIALLY — tree-sitter is
+   * error-tolerant, so on input it cannot fully parse it inserts ERROR /
+   * MISSING nodes and returns a tree anyway. Those files are still walked and
+   * still contribute whatever could be extracted; this counter exists so the
+   * under-extraction is visible instead of silent. Distinct from
+   * `skipped.tree_sitter_failed`, which counts only a hard parser failure
+   * (no tree at all).
+   */
+  parse_degraded: number;
   nodes: {
     file: number;
     function: number;
@@ -203,6 +258,7 @@ export function emptyCounters(): RepoGraphMetaCounters {
   return {
     files_walked: 0,
     files_cached: 0,
+    parse_degraded: 0,
     nodes: { file: 0, function: 0, class: 0, module: 0, symbol: 0 },
     edges: { imports: 0, calls: 0, contains: 0 },
     skipped: { tree_sitter_failed: 0, too_large: 0, not_a_source_file: 0, file_cap: 0 },

@@ -102,6 +102,8 @@ export function archDocToC4Model(
       kind: n.kind,
       title: n.title.value,
       desc: n.desc?.value || undefined,
+      provenance: n.provenance,
+      externalFamily: n.externalFamily,
       x: extX,
       y: boundary.y + 20 + i * (EXT_H + EXT_GAP),
       w: EXT_W,

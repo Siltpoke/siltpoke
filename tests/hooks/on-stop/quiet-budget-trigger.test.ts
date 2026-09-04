@@ -184,14 +184,18 @@ test("wake bypass overrides quiet + budget gates", async () => {
   expect(existsSync(join(homeBase, "wake.json"))).toBe(false);
 });
 
-test("on_demand trigger mode without bypass: skips", async () => {
+// REPLACES "on_demand trigger mode without bypass: skips". That test covered
+// the axis this branch deletes — and covered its worst property: `on_demand`
+// fired only on a wake marker whose command `/siltpoke-wake` was removed in
+// #279, so anyone who set it got no review ever and no way to ask for one.
+// What matters now is that such a config STOPS doing that.
+test("AC10/AC11 — a config still carrying `triggerMode: on_demand` reviews, and is not rewritten", async () => {
   const homeBase = join(tmpHome, ".siltpoke");
   const fs = await import("node:fs");
   fs.mkdirSync(homeBase, { recursive: true });
-  fs.writeFileSync(
-    join(homeBase, "config.json"),
-    JSON.stringify({ triggerMode: "on_demand" }),
-  );
+  const configPath = join(homeBase, "config.json");
+  const original = JSON.stringify({ triggerMode: "on_demand" });
+  fs.writeFileSync(configPath, original);
 
   const ev = eventWithProj(tmpHome, "od", "sess-od");
   let brainCalled = 0;
@@ -203,8 +207,13 @@ test("on_demand trigger mode without bypass: skips", async () => {
       return { output: fakeBrainOutput, usage: noopUsage };
     },
   });
-  expect(brainCalled).toBe(0);
+  // AC10 — the old value means `reviewUnit: "commit"`, so the review happens.
+  expect(brainCalled).toBe(1);
+
+  // AC11 — and the old key is left exactly as the user wrote it, so a
+  // downgrade finds its own setting rather than one siltpoke invented.
+  expect(fs.readFileSync(configPath, "utf8")).toBe(original);
 
   const log = readFileSync(join(homeBase, "brain-calls.jsonl"), "utf8");
-  expect(log).toContain('"skipped":"on_demand_no_bypass"');
+  expect(log).not.toContain("on_demand_no_bypass");
 });

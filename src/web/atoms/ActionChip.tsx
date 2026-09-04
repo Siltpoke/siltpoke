@@ -143,7 +143,17 @@ export function ActionChip(props: ActionChipProps) {
         fontWeight: 600,
         cursor: "pointer",
         userSelect: "none",
-        boxShadow: "0 2px 4px rgba(31,27,22,0.12), inset 0 -2px 0 rgba(0,0,0,0.10)",
+        // Outer drop shadow -> tokens.shadow.md (fix round 1: `md`'s own
+        // "0 2px 6px …0.10" is closer than `sm`'s "0 1px 2px …0.06" on
+        // BOTH offset and alpha to the original "0 2px 4px …0.12" — `sm`
+        // visibly flattened this in light mode). Ink-colored but NOT
+        // ink-derived — the ink-polarity rule: a box-shadow simulates
+        // fixed physical depth, must stay near-black in both themes,
+        // unlike a border/hover tint that should track ink/paper. The
+        // inset bevel (offset-only, no blur) has no matching shadowPalette
+        // geometry and is a fixed physical press-bevel, not page ink —
+        // stays literal.
+        boxShadow: `${tokens.shadow.md}, inset 0 -2px 0 rgba(0,0,0,0.10)`,
       }}
     >
       {icon && <span class="action-chip__icon">{icon}</span>}

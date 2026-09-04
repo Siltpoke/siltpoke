@@ -141,22 +141,48 @@ export interface StopHookPair {
   secret: string;
 }
 
-function findOurPairMatcher(
-  matchers: HookMatcher[],
-  pair: StopHookPair,
-): number {
-  // A matcher is "ours" if it contains either our http url OR our command.
-  for (let i = 0; i < matchers.length; i++) {
-    const hooks = matchers[i]?.hooks ?? [];
-    const matchesHttp = hooks.some(
-      (h) => h.type === "http" && h.url === pair.httpUrl,
-    );
-    const matchesCmd = hooks.some(
-      (h) => h.type === "command" && h.command === pair.command,
-    );
-    if (matchesHttp || matchesCmd) return i;
-  }
-  return -1;
+// Fast-path Stop hook: a silent curl POST to the daemon instead of a
+// type:"http" entry. Claude Code prints its own red ECONNREFUSED for http
+// entries when the daemon is down; a command entry with --silent, redirected
+// output and `|| true` exits 0 with zero output — nothing to print (AC6).
+// `--data-binary @-` forwards the hook's stdin JSON; the X-Siltpoke-Secret
+// header preserves auth (AC8) — same daemon contract as the old http entry
+// (src/daemon/routes/hooks.ts).
+export function buildStopCurlCommand(httpUrl: string, secret: string): string {
+  return (
+    `curl --silent --max-time 5 -X POST ` +
+    `-H "X-Siltpoke-Secret: ${secret}" -H "Content-Type: application/json" ` +
+    `--data-binary @- ${httpUrl} >/dev/null 2>&1 || true`
+  );
+}
+
+// Pre-track-#6 fast-path shape: type:"http" pointed at the daemon's
+// /hooks/stop route. registerStopHookPair removes these on sight (migration,
+// AC7) and hasStopHookPair treats their presence as "not installed" so a
+// setup re-run takes the migration branch.
+function isStaleHttpStopEntry(h: HookEntry): boolean {
+  return (
+    h.type === "http" &&
+    typeof h.url === "string" &&
+    h.url.includes("/hooks/stop")
+  );
+}
+
+function isOurCurlEntry(h: HookEntry): boolean {
+  return (
+    h.type === "command" &&
+    typeof h.command === "string" &&
+    h.command.startsWith("curl ") &&
+    h.command.includes("/hooks/stop")
+  );
+}
+
+function isOurPairEntry(h: HookEntry, pair: StopHookPair): boolean {
+  return (
+    isStaleHttpStopEntry(h) ||
+    isOurCurlEntry(h) ||
+    (h.type === "command" && h.command === pair.command)
+  );
 }
 
 export function registerStopHookPair(
@@ -168,31 +194,35 @@ export function registerStopHookPair(
   const existing = next.hooks.Stop;
   const matchers: HookMatcher[] = Array.isArray(existing) ? [...existing] : [];
 
-  const httpEntry: HookEntry = {
-    type: "http",
-    url: pair.httpUrl,
-    headers: { "X-Siltpoke-Secret": pair.secret },
-    timeout: 5,
+  const curlEntry: HookEntry = {
+    type: "command",
+    command: buildStopCurlCommand(pair.httpUrl, pair.secret),
   };
   const cmdEntry: HookEntry = { type: "command", command: pair.command };
 
-  const ourIdx = findOurPairMatcher(matchers, pair);
+  // A matcher is "ours" if it contains any of our entries (old http shape,
+  // curl fast-path, or the on-stop command).
+  const ourIdx = matchers.findIndex((m) =>
+    (m?.hooks ?? []).some((h) => isOurPairEntry(h, pair)),
+  );
+  // Migration sweep across ALL matchers: remove every stale http stop entry
+  // (including historical duplicates) and any previous versions of our own
+  // entries, so we re-insert exactly one fresh pair (AC7).
+  const stripped = matchers.map((m) => ({
+    ...m,
+    hooks: (m?.hooks ?? []).filter((h) => !isOurPairEntry(h, pair)),
+  }));
   if (ourIdx === -1) {
-    matchers.push({ matcher: "", hooks: [httpEntry, cmdEntry] });
+    stripped.push({ matcher: "", hooks: [curlEntry, cmdEntry] });
   } else {
-    const current = matchers[ourIdx]?.hooks ?? [];
-    // Remove any of our previous entries (so we can re-append fresh / update secret).
-    const filtered = current.filter(
-      (h) =>
-        !(h.type === "http" && h.url === pair.httpUrl) &&
-        !(h.type === "command" && h.command === pair.command),
-    );
-    matchers[ourIdx] = {
-      ...matchers[ourIdx],
-      hooks: [...filtered, httpEntry, cmdEntry],
+    stripped[ourIdx] = {
+      ...stripped[ourIdx],
+      hooks: [...(stripped[ourIdx]?.hooks ?? []), curlEntry, cmdEntry],
     };
   }
-  next.hooks.Stop = matchers;
+  // Drop matchers left empty by the sweep (e.g. one that held only a stale
+  // http duplicate).
+  next.hooks.Stop = stripped.filter((m) => (m.hooks ?? []).length > 0);
   return next;
 }
 
@@ -203,18 +233,21 @@ export function hasStopHookPair(
   const settings = asSettings(input);
   const matchers = settings.hooks?.Stop;
   if (!Array.isArray(matchers)) return false;
+  // Any lingering old http entry ⇒ NOT installed, so install.ts's
+  // already-installed early-return does not fire before migration (AC7).
+  for (const m of matchers) {
+    if ((m?.hooks ?? []).some(isStaleHttpStopEntry)) return false;
+  }
+  const curlCommand = buildStopCurlCommand(pair.httpUrl, pair.secret);
   for (const m of matchers) {
     const hooks = m?.hooks ?? [];
-    const httpOk = hooks.some(
-      (h) =>
-        h.type === "http" &&
-        h.url === pair.httpUrl &&
-        h.headers?.["X-Siltpoke-Secret"] === pair.secret,
+    const curlOk = hooks.some(
+      (h) => h.type === "command" && h.command === curlCommand,
     );
     const cmdOk = hooks.some(
       (h) => h.type === "command" && h.command === pair.command,
     );
-    if (httpOk && cmdOk) return true;
+    if (curlOk && cmdOk) return true;
   }
   return false;
 }
@@ -228,11 +261,7 @@ export function unregisterStopHookPair(
   const cleaned = next
     .hooks?.Stop?.map((m) => ({
       ...m,
-      hooks: (m.hooks ?? []).filter(
-        (h) =>
-          !(h.type === "http" && h.url === pair.httpUrl) &&
-          !(h.type === "command" && h.command === pair.command),
-      ),
+      hooks: (m.hooks ?? []).filter((h) => !isOurPairEntry(h, pair)),
     }))
     .filter((m) => (m.hooks ?? []).length > 0);
   if (cleaned.length > 0) {

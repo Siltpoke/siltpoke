@@ -96,9 +96,13 @@ async function seed(graph: RepoGraph, queryIndex: QueryIndex, coverage?: RepoGra
   await writeMeta(storage_dir, meta);
 }
 
+// POST /api/repo-graph/trace/purpose is secret-gated (daemon-hardening
+// security audit, finding 2) — every POST below now carries this header.
+const TEST_SECRET = "test-secret";
+
 function makeApp(): Hono {
   const app = new Hono();
-  mountRepoGraphRoutes(app, { cwd, home });
+  mountRepoGraphRoutes(app, { cwd, home, secret: TEST_SECRET });
   return app;
 }
 
@@ -371,6 +375,7 @@ describe("POST/GET /api/repo-graph/trace/purpose (M3 grounded generate)", () => 
     mountRepoGraphRoutes(app, {
       cwd,
       home,
+      secret: TEST_SECRET,
       explainSourceProvider: async () => "function packContext(o){ return ''; }\n",
       explainBrainProvider: opts.throws
         ? async () => {
@@ -398,7 +403,7 @@ describe("POST/GET /api/repo-graph/trace/purpose (M3 grounded generate)", () => 
     const app = appWithBrain("packContext packs the session transcript into the Brain context. See [src/router/context.ts:41].");
     const post = await app.request("/api/repo-graph/trace/purpose", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ node: "function:src/router/context.ts:packContext" }),
     });
     expect(post.status).toBe(200);
@@ -431,7 +436,7 @@ describe("POST/GET /api/repo-graph/trace/purpose (M3 grounded generate)", () => 
     const app = appWithBrain("", { throws: true });
     const res = await app.request("/api/repo-graph/trace/purpose", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ node: "function:src/router/context.ts:packContext" }),
     });
     expect(res.status).toBe(422);
@@ -448,7 +453,7 @@ describe("POST/GET /api/repo-graph/trace/purpose (M3 grounded generate)", () => 
     await seed(graph, queryIndex);
     const res = await makeApp().request("/api/repo-graph/trace/purpose", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: "{}",
     });
     expect(res.status).toBe(400);
@@ -464,7 +469,7 @@ describe("POST/GET /api/repo-graph/trace/purpose (M3 grounded generate)", () => 
     const tailId = "unres:function:src/router/context.ts:packContext:writeFileSync";
     const res = await app.request("/api/repo-graph/trace/purpose", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ node: tailId }),
     });
     expect(res.status).toBe(200);
@@ -472,5 +477,37 @@ describe("POST/GET /api/repo-graph/trace/purpose (M3 grounded generate)", () => 
     expect(b.success).toBe(true);
     expect(b.data.text).toContain("dynamic sink");
     expect(b.data.cite).toBe("src/router/context.ts:41"); // the PARENT's location
+  });
+
+  // daemon-hardening security audit, finding 2 — a blind cross-origin POST
+  // could otherwise trigger a paid Brain call + a cache write for free.
+  test("without the secret → 401, no Brain call, no cache write", async () => {
+    const { graph, queryIndex } = seedTraceGraph();
+    await seed(graph, queryIndex);
+    await seedFp("src/router/context.ts", "sha-ctx");
+    let brainCalled = false;
+    const app = new Hono();
+    mountRepoGraphRoutes(app, {
+      cwd,
+      home,
+      secret: TEST_SECRET,
+      explainSourceProvider: async () => "function packContext(o){ return ''; }\n",
+      explainBrainProvider: async () => {
+        brainCalled = true;
+        return {
+          markdown: "should never run",
+          usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 1, output_tokens: 1, total_cost_usd: 0.001 },
+        };
+      },
+    });
+    const res = await app.request("/api/repo-graph/trace/purpose", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ node: "function:src/router/context.ts:packContext" }),
+    });
+    expect(res.status).toBe(401);
+    expect(brainCalled).toBe(false);
+    const get = await app.request("/api/repo-graph/trace/purpose?node=function:src/router/context.ts:packContext");
+    expect((await get.json()).data.state).toBe("none");
   });
 });

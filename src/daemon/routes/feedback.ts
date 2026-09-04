@@ -7,22 +7,30 @@
  *   Body: { text: string }
  *   Response 200: { ok: true }
  *   Response 400: { error: "text required" }
+ *   Response 401: { error: "unauthorized" }
  *
  * Appends a preference-log entry with signal="feedback".
- * Auth: no additional auth beyond the shared secret already enforced by the
- * daemon at the network level. The route mirrors the pattern used by
- * /api/critiques/:id (critique.tsx) — same-origin trust model.
+ * Auth: secret-gated via X-Siltpoke-Secret (daemon-hardening security audit,
+ * finding 3 — residual gap). There is no network-level secret enforcement in
+ * this daemon; every state-changing POST must gate for itself. Fail CLOSED —
+ * no configured secret ⇒ reject (isAuthorized("", …) is false).
  */
 import type { Hono } from "hono";
 import { appendPreferenceEntry } from "../../preference-log/writer";
+import { isAuthorized } from "../auth";
 
 export interface FeedbackRouteDeps {
   /** Override preference-log path (for test isolation). */
   logPath?: string;
+  /** Daemon shared secret — required to authorize this POST. */
+  secret?: string;
 }
 
 export function mountFeedbackRoutes(app: Hono, deps: FeedbackRouteDeps = {}): void {
   app.post("/api/critiques/:id/feedback", async (c) => {
+    if (!isAuthorized(deps.secret ?? "", c.req.header("X-Siltpoke-Secret"))) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
     const id = c.req.param("id");
 
     let body: { text?: string };

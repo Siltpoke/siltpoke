@@ -10,6 +10,8 @@ import { MemoryByTypeCards } from "../primitives/MemoryByTypeCards";
 import { MemoryComposer } from "../primitives/MemoryComposer";
 import { MemoryFilterBar } from "../primitives/MemoryFilterBar";
 import { MemoryModal } from "../primitives/MemoryModal";
+import { ResolvedContextBadge, type ResolvedContextBadgeProps } from "../primitives/ResolvedContextBadge";
+import { SinceYouLookedPanel } from "../primitives/SinceYouLookedPanel";
 import { WorkingMemoryPanel } from "../primitives/WorkingMemoryPanel";
 import { CANONICAL_NAV } from "../routes/nav";
 import { Dashboard } from "../shells/Dashboard";
@@ -27,6 +29,10 @@ export interface MemoryProps {
   currentProjectId?: string;
   /** OS home dir, for path collapsing in the rail. */
   homeDir?: string;
+  /** The daemon's per-request project resolution (source/display_name/proj_hash)
+   *  — see `src/daemon/project-context.ts`. Optional so existing callers/tests
+   *  that don't pass it still render (badge is simply omitted). */
+  resolvedProject?: ResolvedContextBadgeProps;
 }
 
 /** Compact, client-safe projection of chat sessions for the island. */
@@ -51,6 +57,73 @@ const tabBase = {
   cursor: "pointer",
 } as const;
 
+/** Empty-state row shared by the timeline and by-entity streams — same
+ * markup, only the Alpine x-show guard (which "is empty" check) differs. */
+function StreamEmptyState({ showWhen }: { showWhen: string }) {
+  return (
+    <div
+      class="memory-empty-state"
+      x-show={showWhen}
+      x-text="emptyMessage()"
+      style={{
+        padding: "32px 16px",
+        textAlign: "center",
+        color: tokens.color.ink3,
+        fontFamily: tokens.font.mono,
+        fontSize: 12,
+      }}
+    />
+  );
+}
+
+/**
+ * One date-grouped row of the memory stream — used by both the TIMELINE
+ * view (`groups()`, with the "group.sub" relative-time span) and the
+ * BY-ENTITY view (`byEntityGroups()`, no sub span). References `group` /
+ * `event` from the enclosing Alpine `x-for` scope, not JS props — this is
+ * server-rendered markup, the Alpine expressions are identical either way.
+ */
+function DateGroupRow({ showSub }: { showSub: boolean }) {
+  return (
+    <div style={{ marginBottom: "6px" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
+          margin: "14px 0 12px",
+        }}
+      >
+        <span
+          x-text="group.label"
+          style={{
+            fontFamily: tokens.font.display,
+            fontSize: 14,
+            fontWeight: 600,
+            color: tokens.color.ink3,
+          }}
+        />
+        {showSub && (
+          <span
+            x-text="group.sub"
+            style={{
+              fontFamily: tokens.font.mono,
+              fontSize: 10,
+              color: tokens.color.dateGroupSubInk,
+            }}
+          />
+        )}
+        <div style={{ flex: 1, height: "1px", background: tokens.color.dateGroupDivider }} />
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "13px" }}>
+        <template x-for="event in group.items" x-bind:key="event.id">
+          <MemoryAlpineRow />
+        </template>
+      </div>
+    </div>
+  );
+}
+
 export function Memory({
   events,
   secret,
@@ -58,6 +131,7 @@ export function Memory({
   activeProjects = [],
   currentProjectId = "",
   homeDir = "",
+  resolvedProject,
 }: MemoryProps) {
   return (
     <Dashboard activeSection="memory" navSections={CANONICAL_NAV}>
@@ -109,6 +183,13 @@ export function Memory({
                 MEMORY · everything siltpoke has learned
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: "11px" }}>
+                {resolvedProject && (
+                  <ResolvedContextBadge
+                    source={resolvedProject.source}
+                    displayName={resolvedProject.displayName}
+                    projHash={resolvedProject.projHash}
+                  />
+                )}
                 <span style={{ fontSize: 21 }}>📖</span>
                 <h1
                   style={{
@@ -182,54 +263,10 @@ export function Memory({
           <div x-show="view === 'timeline'" style={{ paddingBottom: "40px" }}>
             <MemoryFilterBar />
             <div class="memory-timeline">
-              <div
-                class="memory-empty-state"
-                x-show="filteredMemories().length === 0"
-                x-text="emptyMessage()"
-                style={{
-                  padding: "32px 16px",
-                  textAlign: "center",
-                  color: tokens.color.ink3,
-                  fontFamily: tokens.font.mono,
-                  fontSize: 12,
-                }}
-              />
+              <StreamEmptyState showWhen="filteredMemories().length === 0" />
               {/* date-grouped stream */}
               <template x-for="group in groups()" x-bind:key="group.date">
-                <div style={{ marginBottom: "6px" }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "10px",
-                      margin: "14px 0 12px",
-                    }}
-                  >
-                    <span
-                      x-text="group.label"
-                      style={{
-                        fontFamily: tokens.font.display,
-                        fontSize: 14,
-                        fontWeight: 600,
-                        color: tokens.color.ink3,
-                      }}
-                    />
-                    <span
-                      x-text="group.sub"
-                      style={{
-                        fontFamily: tokens.font.mono,
-                        fontSize: 10,
-                        color: "#bcae92",
-                      }}
-                    />
-                    <div style={{ flex: 1, height: "1px", background: "#ece3d0" }} />
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "13px" }}>
-                    <template x-for="event in group.items" x-bind:key="event.id">
-                      <MemoryAlpineRow />
-                    </template>
-                  </div>
-                </div>
+                <DateGroupRow showSub={true} />
               </template>
               {/* footer — x-show on the wrapper; the flex row lives on an inner
                   div so Alpine's display-restore doesn't drop it to block. */}
@@ -248,7 +285,7 @@ export function Memory({
                       width: "11px",
                       height: "11px",
                       borderRadius: "50%",
-                      border: "2px dashed #cbbda0",
+                      border: `2px dashed ${tokens.color.bookPendingBorder}`,
                       flexShrink: 0,
                     }}
                   />
@@ -265,60 +302,44 @@ export function Memory({
             {/* flex column on an inner wrapper — x-show owns `display` on its own node */}
             <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
               <MemoryByTypeCards />
+              {/* "Since you last looked" — current-repo discovery panel
+                  (slice ③, task 6). Only mounted once a repo has actually
+                  resolved; the island's own defensive branch handles "" but
+                  there's no reason to render the shell for a session with
+                  no repo context at all. */}
+              {resolvedProject?.projHash ? (
+                <SinceYouLookedPanel projHash={resolvedProject.projHash} />
+              ) : null}
               <ActiveReposPanel
                 activeProjects={activeProjects}
                 currentProjectId={currentProjectId}
                 homeDir={homeDir}
                 now={new Date()}
+                // Switching stays on /memory — the panel's rows describe each
+                // repo's memory, so "read that one instead" means this page
+                // about that repo, not a different page entirely.
+                switchPath="/memory"
               />
             </div>
           </div>
 
-          {/* ── BY-ENTITY VIEW ── (Task 6: groups facts via shared groupByEntity) */}
-          <div x-show="view === 'entity'" x-cloak style={{ paddingBottom: "40px" }}>
+          {/* ── BY-ENTITY VIEW ── (Task 6: groups facts via shared groupByEntity)
+              x-if (not x-show): the entity tab was removed in #182, so `view` is
+              never 'entity'. Under x-show the block stayed in the DOM (display:none)
+              and its x-for still rendered a duplicate .memory-row / .memory-timeline
+              / .memory-empty-state for every fact — doubling every row and breaking
+              memory-book e2e strict-mode/row-count assertions. x-if unmounts it so a
+              hidden view renders nothing; restoring the tab re-enables it unchanged. */}
+          <template x-if="view === 'entity'">
+            <div x-cloak style={{ paddingBottom: "40px" }}>
             <div class="memory-timeline">
-              <div
-                class="memory-empty-state"
-                x-show="byEntityGroups().length === 0"
-                x-text="emptyMessage()"
-                style={{
-                  padding: "32px 16px",
-                  textAlign: "center",
-                  color: tokens.color.ink3,
-                  fontFamily: tokens.font.mono,
-                  fontSize: 12,
-                }}
-              />
+              <StreamEmptyState showWhen="byEntityGroups().length === 0" />
               <template x-for="group in byEntityGroups()" x-bind:key="group.key">
-                <div style={{ marginBottom: "6px" }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "10px",
-                      margin: "14px 0 12px",
-                    }}
-                  >
-                    <span
-                      x-text="group.label"
-                      style={{
-                        fontFamily: tokens.font.display,
-                        fontSize: 14,
-                        fontWeight: 600,
-                        color: tokens.color.ink3,
-                      }}
-                    />
-                    <div style={{ flex: 1, height: "1px", background: "#ece3d0" }} />
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "13px" }}>
-                    <template x-for="event in group.items" x-bind:key="event.id">
-                      <MemoryAlpineRow />
-                    </template>
-                  </div>
-                </div>
+                <DateGroupRow showSub={false} />
               </template>
             </div>
           </div>
+          </template>
             </div>
 
             {/* Display-only working-memory rail — stream view only (SSR). */}

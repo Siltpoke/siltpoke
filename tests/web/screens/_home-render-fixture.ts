@@ -77,9 +77,6 @@ export const HOME_RENDER_FIXTURE: HomeData = {
     events: [],
     },
   ],
-  critiques: [],
-  pendingCritiqueCount: 0,
-  latestCritique: null,
   topbarBadges: {
     wellFed: true,
     sinceDressed: "22 hrs",
@@ -116,7 +113,6 @@ export const HOME_RENDER_FIXTURE: HomeData = {
       },
       rollup: null,
     },
-    triggerConfig: { mode: "diff" },
     quietConfig: { startMinutes: null, endMinutes: null },
     gateState: {
       blocking: null,
@@ -164,5 +160,5 @@ export const HOME_RENDER_FIXTURE: HomeData = {
     biasAudit: { name: "Qwen2.5-Coder-7B-Q4", provider: "Local Ollama", enabled: false },
     verifierMode: "conditional",
   },
-  brainHealth: { show: false, line: "" },
+  brainHealth: { show: false, line: "", detail: "" },
 };

@@ -74,6 +74,14 @@ export interface MemoryEvent {
    * null/undefined for non-fact rows (episodic/procedural) and untagged facts.
    */
   entities?: EntityRef[] | null;
+  /**
+   * Manual decay-protection flag (Fact.pinned) — drives the 📌 pin/unpin
+   * control on /memory (POST /api/facts/:id/pin, setFactPinnedCore). Only
+   * facts carry it (undefined for episodic/procedural rows). Optional so
+   * legacy fixtures that predate this field keep compiling — mirrors the
+   * existing `kind` field convention.
+   */
+  pinned?: boolean;
 }
 
 export interface MemoryLogInput {
@@ -99,7 +107,7 @@ export interface MemoryLogInput {
 
 /**
  * Short human-readable source summary for an event fragment → the row's `why`
- * ("为什么" line). Each source is `<kind> <ref>` (ref truncated to 8 chars, the
+ * ( line). Each source is `<kind> <ref>` (ref truncated to 8 chars, the
  * length of a short commit sha). Returns null when there are no sources (the
  * schema requires ≥1, so this is defensive only).
  */
@@ -114,7 +122,7 @@ function eventFragmentWhy(fragment: EventFragment): string | null {
 
 /**
  * Short human-readable label for a synthesized episode → the row's `why`
- * ("为什么" line). Distinguishes an episode-narrative row (this cluster is a
+ * ( line). Distinguishes an episode-narrative row (this cluster is a
  * SYNTHESIS over N event fragments, not a single event) from an individual
  * event-fragment row's `eventFragmentWhy` source citation. Format:
  * "episode · 3 events on 2026-07-01".
@@ -147,6 +155,7 @@ export function buildMemoryLog(input: MemoryLogInput): MemoryEvent[] {
     stream: f.learned_from?.stream ?? null,
     kind: f.kind ?? null,
     entities: f.entities ?? null,
+    pinned: f.pinned,
   }));
 
   const episodicEvents: MemoryEvent[] = input.critiques

@@ -144,7 +144,10 @@ describe("auto-migration + shim end-to-end", () => {
     await migrateV2toV3({ home, cwd: projectCwd });
     const r = await appendLearnedRule(home, {
       id: "lr-new",
-      rule: "no emojis in commits",
+      // Realistic imperative rule (passes the write-time garbage filter — has
+      // an action verb + >= 4 words). Content is incidental here; this test
+      // exercises shim write-through, not garbage filtering.
+      rule: "Avoid emojis in commit messages entirely.",
       category: "style",
       created_at: "2026-05-16T00:00:00Z",
       applied_count: 0,

@@ -251,7 +251,6 @@ export function assembleSummarizerPrompt(context: SummarizerContext): string {
 const SUMMARIZER_SYSTEM_PROMPT =
   "You are Siltpoke's memory summarizer. Review the inputs and decide which facts to add, update, retire, or skip.";
 
-const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 // ---------------------------------------------------------------------------
@@ -260,21 +259,30 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 
 export async function callSummarizerBrain(
   context: SummarizerContext,
-  opts?: { brainFn?: BrainFn; modelOverride?: string },
+  opts?: { brainFn?: BrainFn },
 ): Promise<SummarizerOutput> {
   const { callBrainRaw } = await import("../brain/brain");
   // Use callBrainRaw (not callBrain) so the critic-shaped brainOutputSchema
   // validation inside callBrain does not reject the summarizer's {candidates}
   // response. The summarizer validates its own output via summarizerOutputSchema.
+  // Last-resort fallback ONLY (single-brain S2, task 8): consolidate.ts, the
+  // sole production caller, always injects a role-routed `brainFn`
+  // (`makeRoleRawBrain(homeBase, "extract")`) — this default only fires for a
+  // direct caller (e.g. a test or future consumer) that supplies no homeBase.
   const brainFn = opts?.brainFn ?? callBrainRaw;
-  const model = opts?.modelOverride ?? DEFAULT_MODEL;
 
   const contextBundle = assembleSummarizerPrompt(context);
 
+  // No `model` field: a role-routed brainFn (the production seam) forces its
+  // own resolved model internally; the fallback callBrainRaw applies ITS OWN
+  // default (the undated alias, ../brain/brain.ts DEFAULT_MODEL) when `model`
+  // is omitted — NOT the dated pinned snapshot this fn used to hardcode
+  // (that pin now lives only in the role-brain/registry resolution path). A
+  // hypothetical direct caller that supplies no `brainFn` gets that unpinned
+  // default, not byte-identical pre-migration behavior.
   const raw = await brainFn({
     systemPrompt: SUMMARIZER_SYSTEM_PROMPT,
     contextBundle,
-    model,
     timeoutMs: DEFAULT_TIMEOUT_MS,
   });
 
@@ -296,6 +304,9 @@ export async function callSummarizerBrain(
     throw new BrainError(
       "Summarizer response failed schema validation",
       outer.error,
+      undefined,
+      undefined,
+      raw.output,
     );
   }
 

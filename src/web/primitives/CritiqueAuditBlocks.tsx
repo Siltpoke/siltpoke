@@ -11,12 +11,13 @@
  * Blocks:
  *   A — WHAT I READ       (files, user query, agent restatement, diff intent)
  *   B — INTENT ALIGNMENT  (side-by-side query vs restatement; placeholder)
- *   C — RUBRIC CHECKLIST  (13 rules with ✓ / ✗ / ⊘ per rule, grouped by tier)
- *   D — SIGNALS APPLIED   (preference-log / few-shot / repo-memory signals)
- *   E — VERDICT CHAIN     (reasoning → severity → category → critique_for_claude)
+ *   C — RUBRIC CHECKLIST  (13 rules with ✓ / ✗ / · per rule, grouped by tier)
+ *   D — WHAT ELSE I KNEW  (preference-log / few-shot / repo-memory signals)
+ *   E — HOW I DECIDED     (reasoning → severity → category → critique_for_claude)
  *   F — COST              (tokens, cache hit %, $)
  */
 export { RULE_EXPLAIN_BY_ID, SPAN_KIND_EXPLAIN } from "./critique-audit/rules-data";
+export { EvidenceMark, PartialDiffMark } from "./critique-audit/shared";
 export { BlockA, redactPath, type BlockAProps } from "./critique-audit/BlockA";
 export { BlockC, type BlockCProps } from "./critique-audit/BlockC";
 export {

@@ -21,6 +21,8 @@ import type { ArchModelDoc } from "../../../src/explain/arch-model-schema";
 import { emptyGraph, emptyFingerprints } from "../../../src/repo-graph/types";
 import type { RepoGraphMeta } from "../../../src/repo-graph/types";
 import { resolveRepoGraphLocation } from "../../../src/repo-graph/proj-hash";
+import { listReviewerExternals } from "../../../src/brain/registry";
+import { writeRegistryAnchor } from "../../_shared/arch-repo-root";
 
 let cwd: string;
 let home: string;
@@ -80,6 +82,7 @@ async function seedWithMeta(meta: Omit<ArchModelMeta, "schemaVersion" | "fingerp
     counters: {
       files_walked: 0,
       files_cached: 0,
+      parse_degraded: 0,
       skipped: { tree_sitter_failed: 0, too_large: 0, not_a_source_file: 0, file_cap: 0 },
       nodes: { file: 0, function: 0, class: 0, module: 0, symbol: 0 },
       edges: { imports: 0, calls: 0, contains: 0 },
@@ -115,11 +118,37 @@ describe("SSR /repo-graph — generatedModel grounding counts in data-initial", 
     const html = await res.text();
     const payload = parseInitial(html);
     const gm = payload.generatedModel as Record<string, unknown> | null;
-    // ── generatedModel must be non-null and carry the 3 counts.
+    // ── generatedModel must be non-null and carry the 3 counts, unchanged: the
+    // fixture repo is a bare tmp dir with no `src/brain/registry.ts`, so the
+    // reviewer externals are out of scope for it and nothing is injected. The
+    // injecting case is the sibling test below, which gives it that anchor.
     expect(gm).not.toBeNull();
     expect(gm!.citedClaims).toBe(29);
     expect(gm!.totalClaims).toBe(37);
     expect(gm!.topologyBlindClaims).toBe(2);
+  });
+
+  test("a repo that DOES carry the registry anchor still gets the reviewer externals injected", async () => {
+    await seedWithMeta({
+      costUsd: 0.3,
+      groundedPct: 78,
+      model: "sonnet",
+      generatedTs: "2026-06-12T00:00:00Z",
+      citedClaims: 29,
+      totalClaims: 37,
+      topologyBlindClaims: 2,
+    });
+    // Same cache, same page — only the repo differs.
+    writeRegistryAnchor(cwd);
+
+    const res = await makeApp().fetch(new Request(`http://localhost/repo-graph`));
+    const payload = parseInitial(await res.text());
+    const gm = payload.generatedModel as Record<string, unknown> | null;
+    // 3 claims each (title+band+desc); no edge, since GOOD_DOC's node carries no
+    // `src/brain/` members. citedClaims is untouched — injected claims are inferred.
+    const injected = listReviewerExternals().length * 3;
+    expect(gm!.citedClaims).toBe(29);
+    expect(gm!.totalClaims).toBe(37 + injected);
   });
 
   test("legacy meta WITHOUT counts → generatedModel fields absent, never 0 (honesty rule)", async () => {

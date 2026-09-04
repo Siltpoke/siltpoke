@@ -2,12 +2,12 @@
 // Copyright (c) 2026 Jiaqi Duan
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { glob } from "node:fs/promises";
 import { summarizeFile, type SummarizeFn } from "./summarizer.ts";
 import type { RepoMemoryIndex, RepoMemoryFileEntry, RepoMemoryConvention } from "./types.ts";
+import { siltpokeRoot } from "../installer/paths";
 
-const DEFAULT_DIR = join(homedir(), ".siltpoke", "repo-memory");
+const DEFAULT_DIR = join(siltpokeRoot(), "repo-memory");
 
 export interface BuildOpts {
   cwd: string;

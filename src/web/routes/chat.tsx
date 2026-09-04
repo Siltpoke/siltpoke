@@ -5,10 +5,19 @@ import type { Hono } from "hono";
 import { Chat } from "../screens/Chat";
 import { Layout } from "../_shared/layout";
 
-export function mountChatWebRoutes(app: Hono): void {
+export interface ChatWebRouteDeps {
+  /**
+   * Daemon secret — forwarded to `<Layout secret>` so FloatingChat's
+   * data-secret carries it (chat-stream.ts's own `POST /api/chat` reads it
+   * via `document.querySelector("[data-secret]")`, same idiom).
+   */
+  secret?: string;
+}
+
+export function mountChatWebRoutes(app: Hono, deps: ChatWebRouteDeps = {}): void {
   app.get("/chat", (c) => {
     return c.html(
-      <Layout title="Chat · siltpoke">
+      <Layout title="Chat · siltpoke" secret={deps.secret}>
         <Chat />
       </Layout>,
     );

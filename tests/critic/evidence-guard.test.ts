@@ -3,6 +3,18 @@ import { guardCritique, hasUngroundedExternalClaim } from "../../src/critic/evid
 import type { BrainOutput } from "../../src/brain/schema";
 import type { WebSource } from "../../src/brain/schema-v2";
 
+/**
+ * These tests were rewritten on 2026-08-19, when the guard stopped deleting.
+ *
+ * The old suite asserted `accept === false` on every failure path. Every one of
+ * those assertions has a successor here, and each successor asserts something
+ * strictly stronger: not "the review died", but WHICH item was refused, which
+ * survived, and what the review is now labelled. `accept` was one bit; a
+ * dropped item, a kept item and a label are three, and only the three can tell
+ * "one bad citation out of two" apart from "both bad" — a distinction the old
+ * contract could not express and the new UI depends on.
+ */
+
 /** Minimal valid BrainOutput — evidence overridden per-test. */
 const baseBrainOutput: BrainOutput = {
   mood: "annoyed",
@@ -24,168 +36,193 @@ const evidenceCorpus =
 const changedFiles = new Set(["src/foo.ts", "src/bar.ts"]);
 
 const snippetInCorpus = "TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.";
+const secondSnippetInCorpus = "TS2304: Cannot find name 'missingVar'.";
 const fileInCorpus = "src/baz.ts"; // in corpus but NOT in changedFiles
 
 // ---------------------------------------------------------------------------
 // PASSIVE_BUBBLE mode
 // ---------------------------------------------------------------------------
 
-test("PASSIVE_BUBBLE: always accepts with empty evidence", () => {
+test("PASSIVE_BUBBLE: not checked, empty evidence", () => {
   const result = guardCritique(baseBrainOutput, "PASSIVE_BUBBLE", evidenceCorpus, changedFiles);
-  expect(result.accept).toBe(true);
+  expect(result.label).toBe("not_checked");
+  expect(result.unverified).toEqual([]);
 });
 
-test("PASSIVE_BUBBLE: always accepts even when evidence would fail checks", () => {
-  const out: BrainOutput = {
-    ...baseBrainOutput,
-    evidence: [
-      { tool: "tsc", file: "phantom.ts", snippet: "completely fabricated snippet that doesn't exist" },
-    ],
+test("PASSIVE_BUBBLE: passes evidence through UNFILTERED and says it did not check", () => {
+  const fabricated = {
+    tool: "tsc" as const,
+    file: "phantom.ts",
+    snippet: "completely fabricated snippet that doesn't exist",
   };
+  const out: BrainOutput = { ...baseBrainOutput, evidence: [fabricated] };
   const result = guardCritique(out, "PASSIVE_BUBBLE", evidenceCorpus, changedFiles);
-  expect(result.accept).toBe(true);
+  // The label is the whole point: reporting "verified" here would claim a check
+  // that never ran. The item survives BECAUSE nothing looked at it.
+  expect(result.label).toBe("not_checked");
+  expect(result.verified).toEqual([fabricated]);
+  expect(result.unverified).toEqual([]);
 });
 
 // ---------------------------------------------------------------------------
-// HARD_SUPPRESS mode (defensive — caller shouldn't invoke us but accept is safe)
+// HARD_SUPPRESS mode (defensive — caller shouldn't invoke us but pass-through is safe)
 // ---------------------------------------------------------------------------
 
-test("HARD_SUPPRESS: always accepts (defensive no-op)", () => {
+test("HARD_SUPPRESS: not checked (defensive no-op)", () => {
   const result = guardCritique(baseBrainOutput, "HARD_SUPPRESS", evidenceCorpus, changedFiles);
-  expect(result.accept).toBe(true);
+  expect(result.label).toBe("not_checked");
 });
 
 // ---------------------------------------------------------------------------
 // NORMAL mode — empty evidence
 // ---------------------------------------------------------------------------
 
-test("NORMAL: rejects when evidence array is empty", () => {
+test("NORMAL: empty evidence is labelled, NOT refused", () => {
   const result = guardCritique(baseBrainOutput, "NORMAL", evidenceCorpus, changedFiles);
-  expect(result.accept).toBe(false);
-  if (!result.accept) {
-    expect(result.reason).toMatch(/empty/i);
-  }
+  expect(result.label).toBe("no_evidence");
+  expect(result.verified).toEqual([]);
+  // Nothing was cited, so nothing can have been refused. `no_evidence` and
+  // `none_verified` are different facts and must not collapse into each other.
+  expect(result.unverified).toEqual([]);
 });
 
 // ---------------------------------------------------------------------------
 // NORMAL mode — snippet checks
 // ---------------------------------------------------------------------------
 
-test("NORMAL: accepts when snippet is in corpus", () => {
-  const out: BrainOutput = {
-    ...baseBrainOutput,
-    evidence: [
-      { tool: "tsc", file: "src/foo.ts", snippet: snippetInCorpus },
-    ],
-  };
-  const result = guardCritique(out, "NORMAL", evidenceCorpus, changedFiles);
-  expect(result.accept).toBe(true);
+test("NORMAL: snippet in corpus → verified", () => {
+  const item = { tool: "tsc" as const, file: "src/foo.ts", snippet: snippetInCorpus };
+  const result = guardCritique({ ...baseBrainOutput, evidence: [item] }, "NORMAL", evidenceCorpus, changedFiles);
+  expect(result.label).toBe("verified");
+  expect(result.verified).toEqual([item]);
+  expect(result.unverified).toEqual([]);
 });
 
-test("NORMAL: rejects when snippet is NOT in corpus", () => {
+test("NORMAL: snippet NOT in corpus → that item is dropped, review is labelled none_verified", () => {
   const fabricated = "completely fabricated snippet that is definitely not in corpus";
   const out: BrainOutput = {
     ...baseBrainOutput,
-    evidence: [
-      { tool: "tsc", file: "src/foo.ts", snippet: fabricated },
-    ],
+    evidence: [{ tool: "tsc", file: "src/foo.ts", snippet: fabricated }],
   };
   const result = guardCritique(out, "NORMAL", evidenceCorpus, changedFiles);
-  expect(result.accept).toBe(false);
-  if (!result.accept) {
-    // Reason must mention the snippet truncated to 60 chars
-    expect(result.reason).toContain(fabricated.slice(0, 60));
-  }
+  expect(result.label).toBe("none_verified");
+  // The fabricated citation still never travels on — that invariant did not
+  // change when the guard stopped killing whole reviews.
+  expect(result.verified).toEqual([]);
+  expect(result.unverified).toHaveLength(1);
+  expect(result.unverified[0]?.index).toBe(0);
+  expect(result.unverified[0]?.reason).toContain(fabricated.slice(0, 60));
 });
 
 // ---------------------------------------------------------------------------
 // NORMAL mode — file checks
 // ---------------------------------------------------------------------------
 
-test("NORMAL: accepts when file is in changedFiles", () => {
-  const out: BrainOutput = {
-    ...baseBrainOutput,
-    evidence: [
-      { tool: "tsc", file: "src/foo.ts", snippet: snippetInCorpus },
-    ],
-  };
-  const result = guardCritique(out, "NORMAL", evidenceCorpus, changedFiles);
-  expect(result.accept).toBe(true);
+test("NORMAL: file in changedFiles → verified", () => {
+  const item = { tool: "tsc" as const, file: "src/foo.ts", snippet: snippetInCorpus };
+  const result = guardCritique({ ...baseBrainOutput, evidence: [item] }, "NORMAL", evidenceCorpus, changedFiles);
+  expect(result.label).toBe("verified");
+  expect(result.verified).toEqual([item]);
 });
 
-test("NORMAL: accepts when file is NOT in changedFiles but IS in corpus", () => {
-  const out: BrainOutput = {
-    ...baseBrainOutput,
-    evidence: [
-      // fileInCorpus = "src/baz.ts" — in corpus, not in changedFiles
-      { tool: "eslint", file: fileInCorpus, snippet: "src/baz.ts: some eslint warning here" },
-    ],
+test("NORMAL: file NOT in changedFiles but IS in corpus → verified", () => {
+  // fileInCorpus = "src/baz.ts" — in corpus, not in changedFiles
+  const item = {
+    tool: "eslint" as const,
+    file: fileInCorpus,
+    snippet: "src/baz.ts: some eslint warning here",
   };
-  const result = guardCritique(out, "NORMAL", evidenceCorpus, changedFiles);
-  expect(result.accept).toBe(true);
+  const result = guardCritique({ ...baseBrainOutput, evidence: [item] }, "NORMAL", evidenceCorpus, changedFiles);
+  expect(result.label).toBe("verified");
+  expect(result.verified).toEqual([item]);
 });
 
-test("NORMAL: rejects when file is in NEITHER changedFiles NOR corpus", () => {
+test("NORMAL: file in NEITHER changedFiles NOR corpus → dropped, reason names the file", () => {
   const out: BrainOutput = {
     ...baseBrainOutput,
-    evidence: [
-      { tool: "tsc", file: "phantom.ts", snippet: snippetInCorpus },
-    ],
+    evidence: [{ tool: "tsc", file: "phantom.ts", snippet: snippetInCorpus }],
   };
   const result = guardCritique(out, "NORMAL", evidenceCorpus, changedFiles);
-  expect(result.accept).toBe(false);
-  if (!result.accept) {
-    expect(result.reason).toMatch(/file/i);
-    expect(result.reason).toContain("phantom.ts");
-  }
+  expect(result.label).toBe("none_verified");
+  expect(result.verified).toEqual([]);
+  expect(result.unverified).toHaveLength(1);
+  expect(result.unverified[0]?.reason).toMatch(/file/i);
+  expect(result.unverified[0]?.reason).toContain("phantom.ts");
 });
 
 // ---------------------------------------------------------------------------
 // NORMAL mode — multiple evidence items
 // ---------------------------------------------------------------------------
 
-test("NORMAL: rejects on first failure when multiple items and one fails", () => {
-  const out: BrainOutput = {
-    ...baseBrainOutput,
-    evidence: [
-      // First item: valid
-      { tool: "tsc", file: "src/foo.ts", snippet: snippetInCorpus },
-      // Second item: fabricated snippet
-      { tool: "eslint", file: "src/bar.ts", snippet: "this snippet is not in the corpus at all" },
-    ],
+test("NORMAL: one bad item out of two drops ONLY that item", () => {
+  const good = { tool: "tsc" as const, file: "src/foo.ts", snippet: snippetInCorpus };
+  const bad = {
+    tool: "eslint" as const,
+    file: "src/bar.ts",
+    snippet: "this snippet is not in the corpus at all",
   };
-  const result = guardCritique(out, "NORMAL", evidenceCorpus, changedFiles);
-  expect(result.accept).toBe(false);
+  const result = guardCritique({ ...baseBrainOutput, evidence: [good, bad] }, "NORMAL", evidenceCorpus, changedFiles);
+  expect(result.label).toBe("partly_unverified");
+  expect(result.verified).toEqual([good]);
+  expect(result.unverified).toHaveLength(1);
+  expect(result.unverified[0]?.index).toBe(1);
 });
 
-test("NORMAL: accepts when all multiple items are valid", () => {
+test("NORMAL: a bad FIRST item does not stop later items being read", () => {
+  // The regression this pins: the old loop `return`ed on the first failure, so
+  // an item after a bad one was never examined at all. Order-swapped twin of
+  // the test above — same two items, and the good one must still survive.
+  const bad = {
+    tool: "eslint" as const,
+    file: "src/bar.ts",
+    snippet: "this snippet is not in the corpus at all",
+  };
+  const good = { tool: "tsc" as const, file: "src/foo.ts", snippet: snippetInCorpus };
+  const result = guardCritique({ ...baseBrainOutput, evidence: [bad, good] }, "NORMAL", evidenceCorpus, changedFiles);
+  expect(result.label).toBe("partly_unverified");
+  expect(result.verified).toEqual([good]);
+  expect(result.unverified.map((u) => u.index)).toEqual([0]);
+});
+
+test("NORMAL: every item bad → none_verified, and EVERY one is reported", () => {
+  // The old contract could only ever name one. Two bad items must produce two
+  // entries, or the count the UI prints is wrong in the direction that flatters.
   const out: BrainOutput = {
     ...baseBrainOutput,
     evidence: [
-      { tool: "tsc", file: "src/foo.ts", snippet: snippetInCorpus },
-      { tool: "tsc", file: "src/bar.ts", snippet: "TS2304: Cannot find name 'missingVar'." },
+      { tool: "tsc", file: "src/foo.ts", snippet: "first fabricated snippet not present" },
+      { tool: "tsc", file: "src/bar.ts", snippet: "second fabricated snippet not present" },
     ],
   };
   const result = guardCritique(out, "NORMAL", evidenceCorpus, changedFiles);
-  expect(result.accept).toBe(true);
+  expect(result.label).toBe("none_verified");
+  expect(result.verified).toEqual([]);
+  expect(result.unverified.map((u) => u.index)).toEqual([0, 1]);
+});
+
+test("NORMAL: all multiple items valid → verified, all kept in order", () => {
+  const a = { tool: "tsc" as const, file: "src/foo.ts", snippet: snippetInCorpus };
+  const b = { tool: "tsc" as const, file: "src/bar.ts", snippet: secondSnippetInCorpus };
+  const result = guardCritique({ ...baseBrainOutput, evidence: [a, b] }, "NORMAL", evidenceCorpus, changedFiles);
+  expect(result.label).toBe("verified");
+  expect(result.verified).toEqual([a, b]);
+  expect(result.unverified).toEqual([]);
 });
 
 // ---------------------------------------------------------------------------
 // Edge cases
 // ---------------------------------------------------------------------------
 
-test("NORMAL: accepts long snippet (200+ chars) at corpus position 0", () => {
+test("NORMAL: long snippet (200+ chars) at corpus position 0 verifies", () => {
   // Build a corpus that starts with a long snippet — no off-by-one if includes() is used
   const longSnippet = `${"A".repeat(50)}src/foo.ts: error TS2345 very long diagnostic ${"B".repeat(100)}`;
   const corpusWithLong = `${longSnippet}\nmore stuff here`;
   const out: BrainOutput = {
     ...baseBrainOutput,
-    evidence: [
-      { tool: "tsc", file: "src/foo.ts", snippet: longSnippet },
-    ],
+    evidence: [{ tool: "tsc", file: "src/foo.ts", snippet: longSnippet }],
   };
   const result = guardCritique(out, "NORMAL", corpusWithLong, new Set(["src/foo.ts"]));
-  expect(result.accept).toBe(true);
+  expect(result.label).toBe("verified");
 });
 
 test("NORMAL: snippet with newlines — substring check honors newlines (no normalization)", () => {
@@ -193,41 +230,45 @@ test("NORMAL: snippet with newlines — substring check honors newlines (no norm
   const corpusWithNewlines = `preamble\n${multilineSnippet}\npostamble`;
   const out: BrainOutput = {
     ...baseBrainOutput,
-    evidence: [
-      { tool: "ripgrep", file: "src/foo.ts", snippet: multilineSnippet },
-    ],
+    evidence: [{ tool: "ripgrep", file: "src/foo.ts", snippet: multilineSnippet }],
   };
   const result = guardCritique(out, "NORMAL", corpusWithNewlines, new Set(["src/foo.ts"]));
-  expect(result.accept).toBe(true);
+  expect(result.label).toBe("verified");
 });
 
-test("NORMAL: snippet with newlines NOT in corpus — rejects", () => {
+test("NORMAL: snippet with newlines NOT contiguous in corpus — dropped", () => {
   // Corpus has the lines but not adjacent (newline normalization would incorrectly accept)
   const multilineSnippet = "line one of diagnostic\nline two of diagnostic";
   const corpusWithoutSequence = "line one of diagnostic\nsome other line\nline two of diagnostic";
   const out: BrainOutput = {
     ...baseBrainOutput,
-    evidence: [
-      { tool: "ripgrep", file: "src/foo.ts", snippet: multilineSnippet },
-    ],
+    evidence: [{ tool: "ripgrep", file: "src/foo.ts", snippet: multilineSnippet }],
   };
   const result = guardCritique(out, "NORMAL", corpusWithoutSequence, new Set(["src/foo.ts"]));
-  expect(result.accept).toBe(false);
+  expect(result.label).toBe("none_verified");
+  expect(result.unverified).toHaveLength(1);
 });
 
-test("NORMAL: rejects when corpus is empty string and evidence is non-empty", () => {
+test("NORMAL: empty corpus with non-empty evidence → every item dropped", () => {
   // Degenerate case — every snippet check fails immediately against an empty corpus.
   const out: BrainOutput = {
     ...baseBrainOutput,
-    evidence: [
-      { tool: "tsc", file: "src/foo.ts", snippet: "TS2345: Argument of type 'string'" },
-    ],
+    evidence: [{ tool: "tsc", file: "src/foo.ts", snippet: "TS2345: Argument of type 'string'" }],
   };
   const result = guardCritique(out, "NORMAL", "", new Set(["src/foo.ts"]));
-  expect(result.accept).toBe(false);
-  if (!result.accept) {
-    expect(result.reason).toContain("snippet not in evidence_corpus");
-  }
+  expect(result.label).toBe("none_verified");
+  expect(result.unverified[0]?.reason).toContain("snippet not in evidence_corpus");
+});
+
+test("NORMAL: reason string does NOT append ellipsis when snippet ≤60 chars", () => {
+  const shortSnippet = "exactly ten"; // 11 chars — under the 60-char truncation threshold
+  const out: BrainOutput = {
+    ...baseBrainOutput,
+    evidence: [{ tool: "tsc", file: "src/foo.ts", snippet: shortSnippet }],
+  };
+  const result = guardCritique(out, "NORMAL", "corpus with no matching snippet here", new Set(["src/foo.ts"]));
+  expect(result.unverified[0]?.reason).not.toContain("...");
+  expect(result.unverified[0]?.reason).toContain(shortSnippet);
 });
 
 // ---------------------------------------------------------------------------
@@ -295,20 +336,4 @@ test("hasUngroundedExternalClaim: critique mentions webhook keyword + empty web_
     web_sources: [],
   });
   expect(result).toBe(true);
-});
-
-test("NORMAL: reason string does NOT append ellipsis when snippet ≤60 chars", () => {
-  const shortSnippet = "exactly ten"; // 11 chars — under the 60-char truncation threshold
-  const out: BrainOutput = {
-    ...baseBrainOutput,
-    evidence: [
-      { tool: "tsc", file: "src/foo.ts", snippet: shortSnippet },
-    ],
-  };
-  const result = guardCritique(out, "NORMAL", "corpus with no matching snippet here", new Set(["src/foo.ts"]));
-  expect(result.accept).toBe(false);
-  if (!result.accept) {
-    expect(result.reason).not.toContain("...");
-    expect(result.reason).toContain(shortSnippet);
-  }
 });

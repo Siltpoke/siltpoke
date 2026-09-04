@@ -56,6 +56,16 @@ import {
 
 // ── harness ──────────────────────────────────────────────────────────────────
 
+const TEST_SECRET = "test-secret";
+
+const ELIGIBLE_PROJECT = async () => ({
+  project_id: null,
+  proj_hash: null,
+  project_root: null,
+  display_name: null,
+  source: "explicit" as const,
+});
+
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length > 0) cleanups.pop()?.();
@@ -77,14 +87,14 @@ function appWith(
   streamFactory: (opts: StreamChatOptions) => AsyncGenerator<StreamEvent, void, void>,
 ): Hono {
   const app = new Hono();
-  mountChatRoutes(app, { homeBase: home, index: idx, streamFactory });
+  mountChatRoutes(app, { homeBase: home, resolveProject: ELIGIBLE_PROJECT, index: idx, streamFactory, secret: TEST_SECRET });
   return app;
 }
 
 async function post(app: Hono, body: Record<string, unknown>): Promise<{ sid: string; sse: string }> {
   const res = await app.request("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
     body: JSON.stringify(body),
   });
   expect(res.status).toBe(200);
@@ -554,7 +564,7 @@ describe("client disconnect during a failing stream", () => {
 
     const res = await app.request("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
       body: JSON.stringify({ message: "hi" }),
     });
     expect(res.status).toBe(200);

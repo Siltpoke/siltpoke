@@ -44,6 +44,26 @@ describe("RetroDevice", () => {
     expect(html).toContain(tokens.color.amber);
   });
 
+  // Fix round 1 (2026-08-01): ToyButton's label text used `onAccent` (white
+  // in light mode, where terra's fill is light too — 3.35:1, under the 4.5:1
+  // text floor these ~15-18px bold labels don't clear the WCAG large-text
+  // exemption for) as its default `ink`, and an explicit `ink={tokens.color.ink}`
+  // override on the B button (near-white on amber in dark — 1.56:1). Both
+  // fixed to the dedicated per-accent tokens; asserted here so a revert of
+  // either the default or the explicit override fails loud — nothing else
+  // covers ToyButton's foreground color (the two tests above only ever
+  // checked the FILL, never the ink drawn on it).
+  test("A and C buttons (default terra) use onTerra ink, not onAccent", () => {
+    const html = String(<RetroDevice><span>x</span></RetroDevice>);
+    expect(html).toContain(tokens.color.onTerra);
+    expect(html).not.toContain(tokens.color.onAccent);
+  });
+
+  test("B button (amber) uses onAmber ink, not ink", () => {
+    const html = String(<RetroDevice><span>x</span></RetroDevice>);
+    expect(html).toContain(tokens.color.onAmber);
+  });
+
   test("lanyard ring is INSIDE the egg at canonical top:32 (16×22)", () => {
     const html = String(<RetroDevice><span>x</span></RetroDevice>);
     expect(html).toContain("width:16");

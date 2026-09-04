@@ -32,7 +32,6 @@ import { join, resolve } from "node:path";
 
 const REPO_ROOT = resolve(__dirname, "..", "..");
 const CLI_PATH = join(REPO_ROOT, "src", "cli", "index-repo.ts");
-const SLASH_PATH = join(REPO_ROOT, ".claude-plugin", "commands", "siltpoke-index.md");
 
 interface CliRunResult {
   exitCode: number;
@@ -100,15 +99,13 @@ function seed(rel: string, content: string): void {
   writeFileSync(abs, content);
 }
 
-describe("slash command markdown sanity", () => {
-  test("siltpoke-index.md points at canonical CLI path", () => {
-    expect(existsSync(SLASH_PATH)).toBe(true);
-    const md = readFileSync(SLASH_PATH, "utf8");
-    expect(md).toContain("src/cli/index-repo.ts");
-    expect(md).toMatch(/bun .*src\/cli\/index-repo\.ts \$ARGUMENTS/);
-    expect(md).toContain("argument-hint: [--force]");
-  });
-});
+// The "slash command markdown sanity" block that used to live here asserted
+// `.claude-plugin/commands/siltpoke-index.md` shipped and invoked
+// `bun …/src/cli/index-repo.ts $ARGUMENTS`. Both premises are dead as of the
+// 8-command cull (2026-07-14): the plugin no longer exposes /siltpoke-index,
+// and no command may invoke `src/*.ts` (a plugin cache has no src/, no
+// node_modules). src/cli/index-repo.ts itself is untouched — the dev repo still
+// runs it, and the E2E coverage of the CLI below is what actually guards it.
 
 describe("bare CLI incremental + artifacts + meta shape", () => {
   test("bare CLI on fresh project writes 4 artifacts + meta carries the expected fields", async () => {

@@ -1,0 +1,5 @@
+{"type":"_fixture_provenance","note":"verbatim copy of scratchpad codex-brain-probe/run3.jsonl, captured from codex v0.142.5 live probes 2026-07-07 — the agent_message text is the toy {\"ok\":true,\"n\":3} payload from the probe's own prompt, which does NOT satisfy brainOutputSchema; used to exercise the schema-violation -> BrainError path (AC3)."}
+{"type":"thread.started","thread_id":"019f3ec6-198f-7ea3-823a-f9e3274f5673"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\"ok\":true,\"n\":3}"}}
+{"type":"turn.completed","usage":{"input_tokens":15006,"cached_input_tokens":4992,"output_tokens":13,"reasoning_output_tokens":0}}

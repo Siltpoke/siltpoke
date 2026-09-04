@@ -1,4 +1,4 @@
-import { test, expect, afterEach } from "bun:test";
+import { test, expect, afterEach, afterAll } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,6 +7,12 @@ import { Database } from "bun:sqlite";
 
 // NOTE: Bun caches modules, so SILTPOKE_HOME must be set before the first import.
 // We set it here once, pointing to a shared tmp dir for the suite.
+// Capture whatever SILTPOKE_HOME held before this file mutated it (usually
+// undefined) so afterAll can restore it exactly — otherwise this override
+// leaks into every test file bun loads after this one in the same process,
+// which can make an unrelated file's siltpokeRoot()-based reader resolve the
+// wrong path depending on load order.
+const PRIOR_SILTPOKE_HOME = process.env.SILTPOKE_HOME;
 const SUITE_TMP = mkdtempSync(join(tmpdir(), "siltpoke-demo-seed-suite-"));
 const SILTPOKE_HOME = join(SUITE_TMP, ".siltpoke");
 mkdirSync(SILTPOKE_HOME, { recursive: true });
@@ -30,8 +36,16 @@ afterEach(() => {
   }
 });
 
-// Clean up suite tmp after all tests
-// (bun:test doesn't have afterAll, so we rely on OS tmp cleanup)
+// Clean up suite tmp + restore SILTPOKE_HOME after this file's tests finish,
+// so the override does not leak into test files bun loads afterward.
+afterAll(() => {
+  if (PRIOR_SILTPOKE_HOME === undefined) {
+    delete process.env.SILTPOKE_HOME;
+  } else {
+    process.env.SILTPOKE_HOME = PRIOR_SILTPOKE_HOME;
+  }
+  rmSync(SUITE_TMP, { recursive: true, force: true });
+});
 
 test("demo-seed: exports a main function", () => {
   expect(typeof main).toBe("function");

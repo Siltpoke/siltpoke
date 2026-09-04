@@ -139,11 +139,21 @@ describe("generate handler — cost → usage-events (detached)", () => {
     const app = mount(home);
     await generate(app, { repo: HASH });            // fresh → 1 event
     await pollTerminal(home);                        // let it complete + cache
-    expect(readEvents(home)).toHaveLength(1);
+    // `pollEvents`, not a bare `readEvents` — the three reads in this test were
+    // the only ones in the file still doing it the racy way, and this line is
+    // where it bit: measured 1 failure in 5 isolated runs, reporting 0 events
+    // where 1 was expected. The helper's own comment says why (the ledger
+    // append is awaited AFTER the registry flips terminal, so a read the
+    // instant `pollTerminal` returns races the `appendFile`).
+    expect(await pollEvents(home, 1)).toHaveLength(1);
     const res2 = await generate(app, { repo: HASH }); // fromCache → 0 new events
     expect(res2.status).toBe(202);
     await pollTerminal(home);
-    expect(readEvents(home)).toHaveLength(1);         // still 1 — cache hit spent $0
+    // Waits for a SECOND event that must never arrive, then settles at the
+    // timeout — the "settles at timeout for == assertions" half of the
+    // helper's contract. A bare read here would pass on a cache hit that
+    // wrongly billed, simply by looking before the append landed.
+    expect(await pollEvents(home, 2, 250)).toHaveLength(1); // still 1 — cache hit spent $0
   });
 
   test("a billed-but-rejected (malformed) generate STILL records its cost (no invisible burn)", async () => {
@@ -156,7 +166,7 @@ describe("generate handler — cost → usage-events (detached)", () => {
     const res = await generate(app, { repo: HASH });
     expect(res.status).toBe(202);
     await pollTerminal(home);
-    const events = readEvents(home);
+    const events = await pollEvents(home, 1);
     expect(events).toHaveLength(1);
     expect(events[0].kind).toBe("arch_generate");
     expect(events[0].total_cost_usd).toBeCloseTo(0.1, 5);

@@ -7,9 +7,13 @@ import { existsSync } from "node:fs";
 // bare `rg` argv fails with "Executable not found". Prefer the Cursor-bundled
 // `@vscode/ripgrep` binary (genuine ripgrep), overridable for tests / CI.
 //
-// `sprawling-abstraction.ts` carries an equivalent private copy of this logic;
-// this module is the reusable home new tools should import, and that copy is a
-// consolidation candidate (not migrated here to keep this task surgical).
+// `sprawling-abstraction.ts` used to carry an equivalent private copy of this
+// logic; that copy was removed in favor of in-process regex counting (no
+// external rg process needed there at all), so this module is currently the
+// only caller-facing home for resolving a real rg binary. The hardcoded
+// Cursor.app root here is a known, tracked limitation (see caller-resolver.ts,
+// which also depends on getRgBin()) — it degrades honestly (`{ok:false}`)
+// rather than silently emitting zeros, so it is left as-is (deferred).
 const CURSOR_RG =
   "/Applications/Cursor.app/Contents/Resources/app/node_modules/@vscode/ripgrep/bin/rg";
 

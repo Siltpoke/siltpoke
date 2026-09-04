@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import type { Node as SyntaxNode } from "web-tree-sitter";
-import type { RubricRule, RubricInput, RubricTrigger } from "../types";
+import type { RubricInput, RubricRule, RubricTrigger } from "../types";
 import { parseSource } from "./ast-loader";
 
 /**
@@ -14,47 +13,44 @@ import { parseSource } from "./ast-loader";
  * line range (i.e., it is newly introduced in this diff).
  */
 
-// Prefer the Cursor-bundled rg binary which is always the real ripgrep,
-// not a shell function wrapper (e.g. RTK or Claude Code hooks).
-const CURSOR_RG =
-  "/Applications/Cursor.app/Contents/Resources/app/node_modules/@vscode/ripgrep/bin/rg";
-
-function getRgBin(): string {
-  if (process.env.RG_BIN_OVERRIDE) return process.env.RG_BIN_OVERRIDE;
-  if (existsSync(CURSOR_RG)) return CURSOR_RG;
-  return "rg";
+// In-process regex counting instead of shelling out to `rg`. The previous
+// implementation resolved a real ripgrep binary via a hardcoded Cursor.app
+// path (macOS-only) with a bare "rg" fallback, silently caught any spawn
+// failure, and returned 0. On any machine without Cursor.app AND without
+// `rg` on PATH — every Linux CI runner, plus any Mac without Cursor
+// installed — this rule silently produced ZERO triggers instead of erroring,
+// so it never caught a real premature-abstraction violation there (verified:
+// GitHub Actions ubuntu-latest does not ship ripgrep). The patterns this
+// rule counts (`implements X`, `: X`, `import { X }`) are simple regexes
+// over each file's source, read once via `contentCache` and shared with the
+// tree-sitter parsing below — `countPattern` runs 3 patterns per new
+// declaration over every changed TS/TSX file, so without the cache the same
+// file would otherwise be re-read from disk repeatedly (3 × files × decls).
+async function readCached(file: string, contentCache: Map<string, string>): Promise<string | null> {
+  const cached = contentCache.get(file);
+  if (cached !== undefined) return cached;
+  try {
+    const content = await readFile(file, "utf8");
+    contentCache.set(file, content);
+    return content;
+  } catch {
+    return null;
+  }
 }
 
-// Ripgrep search using Bun.spawn directly
-async function rgCount(pattern: string, files: string[]): Promise<number> {
+async function countPattern(
+  pattern: string,
+  files: string[],
+  contentCache: Map<string, string>,
+): Promise<number> {
   if (files.length === 0) return 0;
-
-  const rgBin = getRgBin();
-
-  let proc: ReturnType<typeof Bun.spawn>;
-  try {
-    proc = Bun.spawn(
-      [rgBin, "--count-matches", "--multiline", "-e", pattern, ...files],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-  } catch {
-    return 0;
-  }
-
-  const exitCode = await proc.exited;
-  // rg exits 1 when no matches (not an error)
-  if (exitCode !== 0 && exitCode !== 1) return 0;
-
-  const stdout = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
-  // Each line is "file:count" — sum all counts
+  const re = new RegExp(pattern, "g");
   let total = 0;
-  for (const line of stdout.trim().split("\n")) {
-    if (!line) continue;
-    // Format: path:N or just N (single file)
-    const parts = line.split(":");
-    const countStr = parts[parts.length - 1];
-    const n = parseInt(countStr ?? "0", 10);
-    if (!Number.isNaN(n)) total += n;
+  for (const file of files) {
+    const content = await readCached(file, contentCache);
+    if (content === null) continue;
+    const matches = content.match(re);
+    if (matches) total += matches.length;
   }
   return total;
 }
@@ -172,17 +168,17 @@ export const sprawlingAbstractionRule: RubricRule = {
 
     // Find all newly added interface / abstract class declarations
     const newDecls: NewDeclaration[] = [];
+    // Shared with countPattern below so each changed file is read from disk
+    // at most once per run, regardless of how many patterns/declarations
+    // scan it.
+    const contentCache = new Map<string, string>();
 
     for (const file of tsFiles) {
       const addedLines = addedLinesMap.get(file) ?? [];
       if (addedLines.length === 0) continue; // No additions in this file
 
-      let source: string;
-      try {
-        source = await readFile(file, "utf8");
-      } catch {
-        continue;
-      }
+      const source = await readCached(file, contentCache);
+      if (source === null) continue;
 
       const ext = file.split(".").pop()?.toLowerCase() as "ts" | "tsx";
       const tree = await parseSource(source, ext);
@@ -204,7 +200,7 @@ export const sprawlingAbstractionRule: RubricRule = {
 
       // Count `implements Name` references (implementations)
       const implPattern = `implements\\s+${name}\\b`;
-      const implCount = await rgCount(implPattern, tsFiles);
+      const implCount = await countPattern(implPattern, tsFiles, contentCache);
 
       if (implCount !== 1) continue; // only flag exactly-1-impl
 
@@ -213,8 +209,8 @@ export const sprawlingAbstractionRule: RubricRule = {
       const callerPattern = `:\\s*${name}\\b`;
       const importPattern = `import\\s*\\{[^}]*\\b${name}\\b[^}]*\\}`;
 
-      const callerCount = await rgCount(callerPattern, tsFiles);
-      const importCount = await rgCount(importPattern, tsFiles);
+      const callerCount = await countPattern(callerPattern, tsFiles, contentCache);
+      const importCount = await countPattern(importPattern, tsFiles, contentCache);
 
       // A caller file would have both an import + a `: Name` annotation
       // We use the min of the two as a conservative estimate of caller files

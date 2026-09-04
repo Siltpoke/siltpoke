@@ -16,6 +16,25 @@
  * [data-secret] ancestor (the memoryBook root) at call time.
  */
 
+/**
+ * The page's resolved proj_hash as a `?repo=` query suffix, read from the
+ * `[data-proj-hash]` attribute Layout.tsx sets on the root `<html>` element
+ * (per-request project resolution — see src/daemon/project-context.ts).
+ * Appended to the generate-summary fetch below for consistency with the
+ * other write islands (memory-book, chat-stream). NOTE: `POST /api/repo-summary`
+ * (src/daemon/routes/repo-summary.ts) does not currently read this query param
+ * or carry a write-eligibility guard — it takes `project_root` from the JSON
+ * body instead — so this suffix is inert today. Wiring that route's own guard
+ * is tracked as follow-up, out of this task's scope (facts/chat only).
+ */
+function writeRepoQuery(): string {
+  const projHash =
+    (typeof document !== "undefined"
+      ? document.querySelector("[data-proj-hash]")?.getAttribute("data-proj-hash")
+      : null) ?? "";
+  return projHash ? `?repo=${projHash}` : "";
+}
+
 export interface RepoRowData {
   projectRoot: string;
   summary: string;
@@ -52,7 +71,7 @@ export function makeRepoRow(): RepoRowData {
       const el = (this as unknown as { $el?: HTMLElement }).$el;
       const secret = el?.closest("[data-secret]")?.getAttribute("data-secret") ?? "";
       try {
-        const res = await fetch("/api/repo-summary", {
+        const res = await fetch(`/api/repo-summary${writeRepoQuery()}`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": secret },
           body: JSON.stringify({ project_root: this.projectRoot }),

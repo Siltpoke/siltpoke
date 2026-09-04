@@ -27,7 +27,16 @@ export function MemoryModal() {
         bottom: 0,
         width: "100%",
         height: "100%",
-        background: "rgba(31,27,22,0.42)",
+        // Modal-backdrop opacity — `tokens.shadow.scrim`, NOT an ink
+        // color-mix. A scrim must stay near-black in BOTH themes (its job
+        // is to dim the page underneath); `ink` flips to near-white in dark
+        // mode, which would have turned this into a brightening veil (Task
+        // 10b review round 1, Important 3). `confirm-modal.ts` (a different
+        // family, out of this batch's scope) uses `.45` for the same role —
+        // a 3-way near-duplicate the classification flags for a future
+        // consolidation pass; NOT touched here since that file isn't in
+        // Family 1 or 2.
+        background: tokens.shadow.scrim,
         padding: "24px",
         overflowY: "auto",
         zIndex: 100,
@@ -196,9 +205,9 @@ export function MemoryModal() {
           <div style={{ padding: "18px 22px" }}>
           <div
             style={{
-              background: "#fffdf8",
+              background: tokens.color.memCardBg,
               border: `1px solid ${tokens.color.paperD}`,
-              borderLeft: "3px solid #9d86c2",
+              borderLeft: `3px solid ${tokens.color.violet}`,
               borderRadius: "10px",
               padding: "13px 14px",
             }}
@@ -214,7 +223,7 @@ export function MemoryModal() {
             <div style={{ display: "flex", flexDirection: "column", gap: "7px" }}>
               <template x-for="chat in recentChats" x-bind:key="chat.started_at">
                 <div style={{ fontSize: 12, color: tokens.color.ink2, display: "flex", gap: "7px" }}>
-                  <span style={{ color: "#9d86c2", flexShrink: 0 }}>↳</span>
+                  <span style={{ color: tokens.color.violet, flexShrink: 0 }}>↳</span>
                   <span x-text="chat.summary" />
                 </div>
               </template>
@@ -231,7 +240,7 @@ export function MemoryModal() {
             }}
           >
             💡 Short-term · cleared after chat —{" "}
-            <b style={{ color: "#9a8c74" }}>not written to the Memory Book</b>. Anything useful gets
+            <b style={{ color: tokens.color.mutedCaveat }}>not written to the Memory Book</b>. Anything useful gets
             consolidated into semantic memory.
           </div>
         </div>

@@ -32,6 +32,7 @@ import { mountCriticRoutes } from "../../src/web/routes/critic";
 import { mountTimelineRoutes } from "../../src/web/routes/timeline";
 import { mountHomeRoutes } from "../../src/web/routes/home";
 import { mountBrainHealthRoute } from "../../src/daemon/routes/brain-health";
+import { makeGitRepo } from "../_shared/git-fixture";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..");
 const HOOK_ENTRY = join(REPO_ROOT, "src", "hooks", "on-stop.ts");
@@ -138,6 +139,9 @@ function invocationCount(counterPath: string): number {
 function buildStopEvent(tmpHome: string, name: string, sessionId: string): object {
   const transcriptPath = join(tmpHome, `${name}.jsonl`);
   const cwd = join(tmpHome, name);
+  // A real repo: the ⏱ review-unit gate answers a cwd git knows nothing about
+  // with `not_a_git_repo` and skips before any of this test's subject matter.
+  makeGitRepo(cwd);
   const editedPath = join(cwd, "src", "dummy.ts");
   mkdirSync(join(cwd, "src"), { recursive: true });
   writeFileSync(editedPath, "export const dummy = 1;\n");
@@ -458,17 +462,17 @@ test(
     await runStopHook(h, buildStopEvent(h.tmpHome, "turn-2", "sess-warn-2"));
     expect(invocationCount(h.counter)).toBe(2);
     const cardAfter2 = await runCli(CARD_ENTRY, [], h);
-    expect(cardAfter2.stdout).toContain("⚠ brain: ambiguous ×2");
+    expect(cardAfter2.stdout).toContain("2 ambiguous failures");
     const api2 = (await (await brainHealthApp(h.homeBase).request("/api/brain-health")).json()) as BrainHealthApi;
     expect(api2.data.show).toBe(true);
-    expect(api2.data.line).toContain("ambiguous ×2");
+    expect(api2.data.line).toContain("2 ambiguous failures");
 
     // Dashboard strip (SSR'd home) carries the same line.
     const homeRes = await homeApp(h.homeBase).request("/");
     expect(homeRes.status).toBe(200);
     const homeHtml = await homeRes.text();
     expect(homeHtml).toContain("brain-health-strip");
-    expect(homeHtml).toContain("ambiguous ×2");
+    expect(homeHtml).toContain("2 ambiguous failures");
 
     // Permanent class (auth) surfaces at the FIRST failure.
     const hp = makeHome("surface-warn-perm");
@@ -476,7 +480,11 @@ test(
     await runStopHook(hp, buildStopEvent(hp.tmpHome, "turn-perm", "sess-warn-perm"));
     expect(invocationCount(hp.counter)).toBe(1);
     const cardPerm = await runCli(CARD_ENTRY, [], hp);
-    expect(cardPerm.stdout).toContain("⚠ brain: permanent ×1");
+    expect(cardPerm.stdout).toContain("1 permanent failure");
+    // The permanent branch keeps the reason IN the line — the statusline has
+    // no tooltip, and for this class the reason is the action.
+    expect(cardPerm.stdout).toContain("Invalid API key");
+    expect(cardPerm.stdout).toContain("/siltpoke-wake");
   },
   120_000,
 );
@@ -500,7 +508,8 @@ test(
     expect(health.last_failure).not.toBeNull();
     expect(health.last_failure!.class).toBe("permanent");
     const card = await runCli(CARD_ENTRY, [], h);
-    expect(card.stdout).toContain("⚠ brain: permanent ×1");
+    expect(card.stdout).toContain("1 permanent failure");
+    expect(card.stdout).toContain("/siltpoke-wake");
   },
   120_000,
 );
@@ -522,7 +531,7 @@ test(
 
     // Verify surfaced BEFORE recovery (the assertion below can fail).
     const cardBefore = await runCli(CARD_ENTRY, [], h);
-    expect(cardBefore.stdout).toContain("⚠ brain: ambiguous ×2");
+    expect(cardBefore.stdout).toContain("2 ambiguous failures");
     const apiBefore = (await (await brainHealthApp(h.homeBase).request("/api/brain-health")).json()) as BrainHealthApi;
     expect(apiBefore.data.show).toBe(true);
 

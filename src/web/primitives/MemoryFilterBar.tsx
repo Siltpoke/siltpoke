@@ -16,19 +16,21 @@ const CHIPS: Chip[] = [
     value: "semantic",
     label: "Semantic",
     count: "countByType('semantic')",
-    color: "#5a86a0",
+    color: tokens.color.memTypeInkSemantic,
   },
   {
     value: "episodic",
     label: "Episodic",
     count: "countByType('episodic')",
-    color: "#8a72a8",
+    color: tokens.color.memTypeInkEpisodic,
   },
   {
     value: "procedural",
     label: "Procedural",
     count: "countByType('procedural')",
-    color: "#6f8a54",
+    // Consolidates the 3rd independent copy of this drift — see
+    // MemoryByTypeCards.tsx's comment on the same value.
+    color: tokens.color.memTypeInkProcedural,
   },
 ];
 
@@ -40,8 +42,8 @@ interface StatusChip {
 
 /** 生效 / 退休 status chips. Clicking an already-active chip clears to "". */
 const STATUS_CHIPS: StatusChip[] = [
-  { value: "active", label: "Active", color: "#5a7a3e" },
-  { value: "retired", label: "Retired", color: "#b84a4a" },
+  { value: "active", label: "Active", color: tokens.color.memStatusActiveInk },
+  { value: "retired", label: "Retired", color: tokens.color.memStatusRetiredInk },
 ];
 
 /**
@@ -82,7 +84,7 @@ export function MemoryFilterBar() {
           type="button"
           class="memory-filter-chip"
           x-on:click={`setFilterType('${chip.value}')`}
-          x-bind:style={`filterType === '${chip.value}' ? { color: '${tokens.color.cream}', background: '${chip.color}', border: '1px solid ${chip.color}' } : { color: '${tokens.color.ink3}', background: '#fff', border: '1px solid ${tokens.color.edge}' }`}
+          x-bind:style={`filterType === '${chip.value}' ? { color: '${tokens.color.cream}', background: '${chip.color}', border: '1px solid ${chip.color}' } : { color: '${tokens.color.ink3}', background: '${tokens.color.cream}', border: '1px solid ${tokens.color.edge}' }`}
           style={{
             fontFamily: tokens.font.body,
             fontSize: 11.5,
@@ -128,7 +130,7 @@ export function MemoryFilterBar() {
           type="button"
           class="memory-status-chip"
           x-on:click={`setFilterStatus(filterStatus === '${chip.value}' ? '' : '${chip.value}')`}
-          x-bind:style={`filterStatus === '${chip.value}' ? { color: '${tokens.color.cream}', background: '${chip.color}', border: '1px solid ${chip.color}' } : { color: '${tokens.color.ink3}', background: '#fff', border: '1px solid ${tokens.color.edge}' }`}
+          x-bind:style={`filterStatus === '${chip.value}' ? { color: '${tokens.color.cream}', background: '${chip.color}', border: '1px solid ${chip.color}' } : { color: '${tokens.color.ink3}', background: '${tokens.color.cream}', border: '1px solid ${tokens.color.edge}' }`}
           style={{
             fontFamily: tokens.font.body,
             fontSize: 11.5,

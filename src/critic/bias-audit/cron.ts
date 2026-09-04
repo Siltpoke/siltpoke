@@ -4,7 +4,7 @@ import type { BrainOutputV2 } from "../../brain/schema-v2";
 import { callOllama } from "./ollama-client";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { siltpokeRoot } from "../../installer/paths";
 
 export interface BiasAuditConfig {
   enabled: boolean;
@@ -27,7 +27,7 @@ export function dispatchBiasAudit(
       const ollamaVerdict = await callOllama(cfg.model, promptContext);
       if (!ollamaVerdict) return;
       const day = new Date().toISOString().slice(0, 10);
-      const dir = join(homedir(), ".siltpoke", "bias-audit");
+      const dir = join(siltpokeRoot(), "bias-audit");
       await mkdir(dir, { recursive: true });
       await appendFile(join(dir, `${day}.jsonl`), `${JSON.stringify({
         ts: new Date().toISOString(),

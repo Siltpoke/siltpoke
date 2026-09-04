@@ -15,15 +15,24 @@
  * Build: `bun scripts/build-client.ts [--minify]`
  * Served: GET /static/index.js
  */
-import Alpine from "alpinejs";
+
 import { NanoStores } from "@nanostores/alpine";
+import Alpine from "alpinejs";
 
 // Register the nanostores plugin BEFORE Alpine.start() so the
 // x-nano / x-nano-model / $nano directives are available to all islands.
 Alpine.plugin(NanoStores);
 
+// Not an Alpine island — a single global listener that re-implements the
+// browser's own `#fragment` scroll after an hx-boost swap, which suppresses it.
+// Imported here because it must be live on every dashboard surface, not just
+// the one that noticed it was missing.
+import "./islands/hash-anchor";
 // Island registrations (each side-effect import registers on alpine:init).
 import "./islands/sidebar";
+// Three-state theme toggle in the sidebar footer (system -> light -> dark).
+import "./islands/theme-toggle";
+import "./islands/build-stamp";
 import "./islands/modal";
 import "./islands/chat-stream";
 import "./islands/action-result";
@@ -38,9 +47,28 @@ import "./islands/floating-chat";
 import "./islands/memory-book";
 // Active-repos card — per-row expand + on-demand summary generation.
 import "./islands/active-repos";
+import "./islands/staleness-badge";
+// "Since you last looked" discovery panel (slice ③) — lazy GET + gesture-
+// bound advance/mark-all.
+import "./islands/since-you-looked";
+// Progress a retired map — which a retired surface the detail rail shows (pure x-show).
+// Settings — review-brain selector (family/model -> POST /api/brain/roles/review).
+import "./islands/brain-settings";
+// Settings — directly-selectable per-role rows (review/extract → POST /api/brain/roles/:role).
+import "./islands/role-row";
+// Timeline (/timeline) — ⏱ which unit of work closes before a review fires (→ POST /api/config).
+import "./islands/review-unit";
+// Knowledge screen — ⌘K / Ctrl-K command-palette search overlay (Task 13).
 
 // Expose Alpine on window — the documented seam for the @nanostores/alpine
 // plugin AND for browser-console debugging.
+//
+// INVARIANT: this assignment must stay synchronous and immediately before
+// `Alpine.start()`, with no `await` between them. `tests/e2e/knowledge-drawer
+// .spec.ts`'s "F opens the drawer and Escape closes it" test reads readiness
+// off `window.Alpine !== undefined` -- that wait is a real signal only
+// because of this ordering; inserting an `await` here would silently degrade
+// it back into the race it was written to fix, with nothing to catch it.
 (globalThis as unknown as { Alpine: typeof Alpine }).Alpine = Alpine;
 
 Alpine.start();

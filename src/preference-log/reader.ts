@@ -3,10 +3,10 @@
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import type { PreferenceLogEntry, PreferenceLogSignal } from "./types";
+import { siltpokeRoot } from "../installer/paths";
 
-const DEFAULT_PATH = join(homedir(), ".siltpoke", "preference-log.jsonl");
+const DEFAULT_PATH = join(siltpokeRoot(), "preference-log.jsonl");
 
 export interface QueryOpts {
   path?: string;

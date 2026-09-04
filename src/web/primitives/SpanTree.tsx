@@ -16,13 +16,20 @@ import { SPAN_KIND_EXPLAIN } from "./CritiqueAuditBlocks";
 
 export type SpanKind = "llm" | "tool" | "rubric" | "chain" | "parser" | "persist" | "unknown";
 
+// Task 10b batch 2 — exact/near token matches, plus `rubric` (a genuine new
+// tan hue, no brand match; also byte-identical to JsonView.tsx's
+// `syntaxColor("boolean")`, out of this batch's scope but a real future
+// reuse of the same `tan` token — see palette.ts). `chain` was 3 hex units
+// off `violet` (#9d86c2 vs #9b89c8) — an unintentional near-duplicate, not a
+// TraceWaterfall-style deliberate distinct hue, so it's consolidated onto
+// `violet` directly rather than kept as its own near-identical token.
 export const KIND_COLOR: Record<SpanKind, string> = {
-  llm: "#7fb0c8",
-  tool: "#7a9a5e",
-  rubric: "#c8a87f",
-  chain: "#9b89c8",
-  parser: "#8a7c64",
-  persist: "#5a4f3f",
+  llm: tokens.color.sky,
+  tool: tokens.color.moss,
+  rubric: tokens.color.tan,
+  chain: tokens.color.violet,
+  parser: tokens.color.ink3,
+  persist: tokens.color.ink2,
   unknown: tokens.color.edge,
 };
 

@@ -26,6 +26,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Fingerprints } from "../repo-graph/types";
 import { atomicWrite } from "../utils/atomic-write";
+import { reconcileReviewerExternals, resolveExternalScope } from "./arch-reconcile";
 import { validateArchDoc, type ArchModelDoc } from "./arch-model-schema";
 import { memberToSubdirId, type SubdirsKeyspace } from "./subdir-resolve";
 
@@ -74,11 +75,17 @@ export function computeRepoFingerprint(fp: Fingerprints): string {
 
 export type ArchReadResult = { model: ArchModelDoc; meta: ArchModelMeta; stale: boolean } | null;
 
-/** Read the cached model + classify fresh / stale (or null on miss). */
+/** Read the cached model + classify fresh / stale (or null on miss).
+ *
+ * `repoRoot` is the analyzed repo's absolute root (`RepoGraphMeta.project_root`),
+ * and it SCOPES the reviewer-external reconcile — required, not optional, so a
+ * new call site is a compile error rather than a silent mis-scope. Pass null
+ * only when the root genuinely cannot be resolved; the pass then fails closed. */
 export async function readArchModel(
   storageDir: string,
   curFingerprint: string,
   curGraphIndexedTs: string,
+  repoRoot: string | null,
 ): Promise<ArchReadResult> {
   const mPath = archModelPath(storageDir);
   const metaPath = archMetaPath(storageDir);
@@ -96,7 +103,41 @@ export async function readArchModel(
     // masquerading as a fresh hit.
     if (typeof meta?.fingerprint !== "string" || typeof meta?.graphIndexedTs !== "string") return null;
     const stale = meta.fingerprint !== curFingerprint || meta.graphIndexedTs !== curGraphIndexedTs;
-    return { model: parsed.doc, meta, stale };
+
+    // Reconcile against the reviewer-provider registry so EXISTING cached models
+    // (predating a registry addition, e.g. codebuddy/qoder) gain the missing
+    // external nodes on read — zero paid regenerate. Idempotent: matchNodeFamily's
+    // externalFamily-first branch means an already-reconciled cache adds nothing
+    // on a second pass.
+    // SCOPED to this repo: the registry's evidence anchor is siltpoke's own
+    // `src/brain/registry.ts`, so in any other repo the list narrows to [] and
+    // this same pass instead PRUNES the nodes an earlier unscoped generate
+    // persisted — the read path is what heals the already-written models.
+    const hasCounts = typeof meta.totalClaims === "number" && typeof meta.citedClaims === "number";
+    const prior = {
+      totalClaims: hasCounts ? meta.totalClaims! : 0,
+      citedClaims: hasCounts ? meta.citedClaims! : 0,
+    };
+    const rec = reconcileReviewerExternals(parsed.doc, resolveExternalScope(repoRoot), prior);
+    let model = rec.doc;
+    let adjustedMeta: ArchModelMeta;
+    if (hasCounts && rec.countsCoherent) {
+      adjustedMeta = { ...meta, totalClaims: rec.totalClaims, citedClaims: rec.citedClaims, groundedPct: rec.groundedPct };
+    } else {
+      // Two cases, one honest handling. (a) Legacy meta with NO counts. (b) A
+      // meta whose counts predate the pruned claims, so subtracting them lands
+      // below citedClaims — the numbers demonstrably do not describe this doc.
+      // Either way: keep the counts ABSENT (the popover already degrades
+      // gracefully) rather than fabricating a denominator, AND restore the
+      // model's own groundedPct — reconcile returns 0 in both cases, which must
+      // not clobber a real value. The NODES are still reconciled, so the graph
+      // is correct even when the arithmetic about it is not recoverable.
+      model = { ...rec.doc, groundedPct: parsed.doc.groundedPct };
+      adjustedMeta = { ...meta };
+      delete adjustedMeta.totalClaims;
+      delete adjustedMeta.citedClaims;
+    }
+    return { model, meta: adjustedMeta, stale };
   } catch {
     return null;
   }

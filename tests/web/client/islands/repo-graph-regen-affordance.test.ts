@@ -37,6 +37,7 @@ import {
   registerDom,
   unregisterDom,
 } from "./_dom-harness";
+import { ARCH_TRUNCATION_WARNING } from "../../../../src/web/client/islands/repo-graph";
 
 // ── Lifecycle ──────────────────────────────────────────────────────────────────
 
@@ -1128,4 +1129,125 @@ describe("confidence chip in right cluster of ph-bar, preceded by spacer", () =>
     const pickWrap = barChildren[pickWrapIdx];
     expect(pickWrap?.classList.contains("ph-pwrap-right")).toBe(false);
   });
+});
+
+describe("stale-cache path: the Re-generate button carries NO ≈$ either", () => {
+  test("stale cache: the button label stays short — no cost, no truncation warning", async () => {
+    // The gap between the two suites above. `fetchArchEstimate` wrote the cost
+    // whenever the affordance had no hint, which is true for BOTH the no-cache
+    // path AND the stale path — while the comment two lines above it says the
+    // no-cache path is "the ONLY pre-burn ≈$ surface on the button".
+    //
+    // The user-visible symptom: on a fresh page load the button read
+    //   "↻ Re-generate — code changed ≈$1.54 · uses Claude · large repo — generate
+    //    may hit the output cap and truncate"
+    // which overflowed its row and was clipped, and then silently became short
+    // again after any interaction that re-ran updateArchAffordance (because
+    // estFetched was by then true, so nothing rewrote it). Same button, two
+    // different labels depending on how you got there.
+    installFetchMock([
+      ["/arch/task", () => Promise.resolve(jsonResponse({ data: { task: null } }))],
+      [
+        "/arch/estimate",
+        () =>
+          Promise.resolve(
+            jsonResponse({ success: true, data: { estUsd: 1.54, mayTruncate: true } }),
+          ),
+      ],
+    ]);
+
+    window.history.replaceState(null, "", "/repo-graph?arch-source=subset");
+    const root = await mountRepoGraph({
+      generatedModel: { doc: GEN_DOC, groundedPct: 88, stale: true },
+    });
+    await tick();
+    await tick();
+
+    const genBtn = root.querySelector<HTMLButtonElement>("#rg-arch-gen");
+    const genCost = root.querySelector<HTMLElement>("#rg-arch-gen-cost");
+    expect(genBtn).not.toBeNull();
+    expect(genCost).not.toBeNull();
+
+    // Anti-vacuous: we really are in the stale/accent state.
+    expect(genBtn!.hidden).toBe(false);
+    expect(genBtn!.classList.contains("rg-btn-accent")).toBe(true);
+    const label = root.querySelector<HTMLElement>("#rg-arch-gen-label");
+    expect(label!.textContent).toBe("↻ Re-generate — code changed");
+
+    // The whole point: nothing appended.
+    expect(genCost!.textContent).toBe("");
+  });
+
+  test("stale cache: the cost still reaches the user, in the confirm modal", async () => {
+    // Suppressing it on the button must not mean losing it — a re-generate
+    // spends real money, so the number has to be in front of the user before
+    // they confirm. It moves, it does not disappear.
+    installFetchMock([
+      ["/arch/task", () => Promise.resolve(jsonResponse({ data: { task: null } }))],
+      [
+        "/arch/estimate",
+        () =>
+          Promise.resolve(
+            jsonResponse({ success: true, data: { estUsd: 1.54, mayTruncate: true } }),
+          ),
+      ],
+    ]);
+
+    window.history.replaceState(null, "", "/repo-graph?arch-source=subset");
+    const root = await mountRepoGraph({
+      generatedModel: { doc: GEN_DOC, groundedPct: 88, stale: true },
+    });
+    await tick();
+    await tick();
+
+    root.querySelector<HTMLButtonElement>("#rg-arch-gen")!.click();
+    await tick();
+    await tick();
+
+    const bodyEl = document.querySelector(".rg-modal-body, [data-modal-body]");
+    expect(bodyEl?.textContent ?? "").toContain("≈$");
+
+    // Dismiss it. A modal left open leaks document-level state (the scroll lock
+    // in particular) into whatever runs next — it broke two confirm-modal tests
+    // in a different file before this line existed.
+    document.querySelector<HTMLButtonElement>("[data-cancel-btn]")?.click();
+    await tick();
+  });
+});
+
+test("no-cache + mayTruncate: the button carries the truncation warning, not just the price", async () => {
+  // The no-cache path fires DIRECTLY — no confirm modal stands between the click
+  // and the spend — so the button is the last surface where "this may truncate"
+  // can reach the user before the money goes. Suppressing the cost on the cached
+  // paths must not quietly take this with it.
+  installFetchMock([
+    ["/arch/task", () => Promise.resolve(jsonResponse({ data: { task: null } }))],
+    [
+      "/arch/estimate",
+      () =>
+        Promise.resolve(jsonResponse({ success: true, data: { estUsd: 1.54, mayTruncate: true } })),
+    ],
+  ]);
+
+  const root = await mountRepoGraph();
+  await tick();
+  await tick();
+
+  const genCost = root.querySelector<HTMLElement>("#rg-arch-gen-cost");
+  expect(genCost).not.toBeNull();
+  expect(genCost!.textContent).toContain("≈$1.54");
+  expect(genCost!.textContent).toContain(ARCH_TRUNCATION_WARNING);
+});
+
+test("no-cache without mayTruncate: price only, no warning invented", async () => {
+  installFetchMock([
+    ["/arch/task", () => Promise.resolve(jsonResponse({ data: { task: null } }))],
+    ["/arch/estimate", () => Promise.resolve(jsonResponse({ success: true, data: { estUsd: 0.2 } }))],
+  ]);
+  const root = await mountRepoGraph();
+  await tick();
+  await tick();
+  const genCost = root.querySelector<HTMLElement>("#rg-arch-gen-cost");
+  expect(genCost!.textContent).toContain("≈$0.20");
+  expect(genCost!.textContent).not.toContain(ARCH_TRUNCATION_WARNING);
 });

@@ -13,8 +13,9 @@
  * reads memory, dispatches the transition, and writes the result.
  */
 
-import type { Hono } from "hono";
-import type { CoreMemory, Fact } from "../../memory/memory";
+import type { Context, Hono } from "hono";
+import { makeRoleRawBrain } from "../../brain/role-brain";
+import { GLOBAL_ONLY, type CoreMemory, type Fact, type ProjectScope } from "../../memory/memory";
 import {
   type MemoryEditResult,
   parseMemoryEdit,
@@ -27,9 +28,12 @@ import {
   restateFactCore,
   retireFactCore,
   setFactKindCore,
+  setFactPinnedCore,
   type TransitionError,
 } from "../../memory/transitions";
 import { isAuthorized } from "../auth";
+import type { DaemonProject } from "../../memory/active-project";
+import { resolveRequestProject } from "../project-context";
 import type { BudgetSignal, QuietHoursSignal } from "./chat";
 
 export interface FactsDeps {
@@ -43,9 +47,15 @@ export interface FactsDeps {
    * check stops working and writeMemory fires on every retire call.
    * Production `readMemory` from `src/memory/memory.ts` satisfies this (the
    * Zod parse output is stable for a given on-disk state within a request).
+   *
+   * `projectCwd`: the scope `resolveScope` resolves from the request's `?repo=`
+   * — `project_root` for a resolved project (so an untagged fact in that
+   * project's slice is read/written), else `GLOBAL_ONLY`. `readMemoryV3Merged`
+   * merges global + project on read; `writeMemoryV3Split` re-partitions on write
+   * (style/profile → global, untagged → slice), preserving `isGlobalFact`.
    */
-  readMemory: (homeBase: string) => Promise<CoreMemory | null>;
-  writeMemory: (homeBase: string, memory: CoreMemory) => Promise<void>;
+  readMemory: (homeBase: string, projectCwd?: ProjectScope) => Promise<CoreMemory | null>;
+  writeMemory: (homeBase: string, memory: CoreMemory, projectCwd?: ProjectScope) => Promise<void>;
   /**
    * Clock injection. MUST return an ISO-8601 string (`new Date().toISOString()`
    * shape). The Zod schema in `memory.ts` validates `last_seen_at` on the next
@@ -65,6 +75,20 @@ export interface FactsDeps {
    * `{ paused: true, reason }` (HTTP 200) instead of making the Brain call.
    */
   checkSendGate?: () => Promise<BudgetSignal | QuietHoursSignal | null>;
+  /**
+   * Resolves the request's project scope from `?repo=` (the projHash the client
+   * appends to every action fetch). `resolveScope` calls this then maps
+   * `project_root ?? GLOBAL_ONLY`, so an action reads/writes the SAME merged
+   * scope the Memory Book READ used — the fix for untagged-fact-in-project-slice
+   * actions 404'ing. Defaults to the real `resolveRequestProject`; injectable so
+   * the facts-route tests drive resolution deterministically (a stub returning
+   * `project_root: null` exercises the GLOBAL_ONLY fallback). Was declared-unused
+   * after Task 16 dropped the write-eligibility guard; now the live scope source.
+   */
+  resolveProject?: (
+    home: string,
+    explicitProjHash: string | undefined,
+  ) => Promise<DaemonProject>;
 }
 
 // Exhaustive enum map — keying on `Fact["status"]` forces a compile error if a
@@ -85,18 +109,124 @@ function isValidStatus(value: string): value is Fact["status"] {
   return (VALID_STATUSES as ReadonlyArray<string>).includes(value);
 }
 
+// Every route below starts with the same X-Siltpoke-Secret check. Returns the
+// 401 Response to short-circuit on, or null when the request is authorized.
+function authGuard(c: Context, secret: string): Response | null {
+  if (!isAuthorized(secret, c.req.header("X-Siltpoke-Secret"))) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  return null;
+}
+
+// Shared "load the fact store, 404 if it doesn't exist yet" preamble used by
+// every :id transition route (approve/kind/retire/reactivate/restate) — all
+// five read the same way and 404 with the same body on a missing store.
+/**
+ * Resolve the SAME merged scope the Memory Book READ used, from the `?repo=`
+ * the client (memory-book.ts) already appends to every action fetch. The book
+ * shows `readMemoryV3Merged` (global + resolved project); an untagged fact
+ * lives in the project slice, so an action that read/wrote GLOBAL_ONLY could
+ * never find it → 404. Resolving here (project_root → that slice, else
+ * GLOBAL_ONLY) makes actions honor exactly what the page displayed.
+ * `writeMemoryV3Split` re-partitions on write (style/profile → global, untagged
+ * → slice), so the isGlobalFact boundary is preserved and no migration runs.
+ */
+async function resolveScope(c: Context, deps: FactsDeps): Promise<ProjectScope> {
+  const resolve =
+    deps.resolveProject ?? ((home, repo) => resolveRequestProject(home, repo));
+  const proj = await resolve(deps.homeBase, c.req.query("repo"));
+  return proj.project_root ?? GLOBAL_ONLY;
+}
+
+async function loadMemoryOrNotFound(
+  c: Context,
+  deps: FactsDeps,
+  id: string,
+): Promise<{ memory: CoreMemory; scope: ProjectScope } | { response: Response }> {
+  const scope = await resolveScope(c, deps);
+  const memory = await deps.readMemory(deps.homeBase, scope);
+  if (!memory) {
+    return { response: c.json({ error: "not_found", id }, 404) };
+  }
+  return { memory, scope };
+}
+
+// approve/retire/reactivate/restate all start with the exact same
+// auth-check -> load-or-404 preamble once the :id param is in hand (kind.ts
+// does the same load but interleaved with its own body validation, so it
+// stays separate to avoid reordering when its 400s fire relative to the 404
+// check). `id` is extracted by the caller — Hono infers a plain `string`
+// (not `string | undefined`) for `:id` params only at a route's own typed
+// call site, so hoisting the `.param("id")` call into this untyped helper
+// would widen the type and require a redundant runtime check.
+//
+// Task 16 removed the Task 11 write-eligibility gate that used to sit here.
+// The `resolveProject` dep it introduced is now the live SCOPE source instead
+// (facts are project-scoped again: untagged → slice, style/profile → global —
+// see `resolveScope` above and the `FactsDeps.resolveProject` doc comment).
+// Auth still runs BEFORE scope resolution, so an unauthorized request never
+// touches project state.
+async function authAndLoad(
+  c: Context,
+  deps: FactsDeps,
+  id: string,
+): Promise<{ memory: CoreMemory; scope: ProjectScope } | { response: Response }> {
+  const unauthorized = authGuard(c, deps.secret);
+  if (unauthorized) return { response: unauthorized };
+  return loadMemoryOrNotFound(c, deps, id);
+}
+
+// approveFactCore and retireFactCore share the exact same TransitionError ->
+// HTTP mapping (not_found -> 404, not_pending -> 409, every other kind the
+// core doesn't currently produce for these two transitions -> 500 with an
+// "unexpected transition error" detail). Extracted verbatim from both
+// handlers — same status codes, same response bodies.
+function respondApproveOrRetireError(
+  c: Context,
+  err: TransitionError,
+  id: string,
+) {
+  switch (err.kind) {
+    case "not_found":
+      return c.json({ error: "not_found", id }, 404);
+    case "not_pending":
+      return c.json(
+        { error: "not_pending", current_status: err.current_status },
+        409,
+      );
+    case "not_retire_proposed":
+    case "already_retired":
+    case "not_retired":
+      return c.json(
+        {
+          error: "internal",
+          detail: `unexpected transition error: ${err.kind}`,
+        },
+        500,
+      );
+    default: {
+      // Compile-time guard: future TransitionError kinds become a type error
+      // here. If somehow reached at runtime (e.g. core diverges from types),
+      // return 500 rather than returning `never` (which would hang the
+      // request because Hono never sees a Response).
+      const _exhaustive: never = err;
+      void _exhaustive;
+      return c.json({ error: "internal_error" }, 500);
+    }
+  }
+}
+
 export function mountFactsRoutes(app: Hono, deps: FactsDeps): void {
   app.get("/api/facts", async (c) => {
-    if (!isAuthorized(deps.secret, c.req.header("X-Siltpoke-Secret"))) {
-      return c.json({ error: "unauthorized" }, 401);
-    }
+    const unauthorized = authGuard(c, deps.secret);
+    if (unauthorized) return unauthorized;
 
     const statusParam = c.req.query("status");
     if (statusParam !== undefined && !isValidStatus(statusParam)) {
       return c.json({ error: "invalid_status" }, 400);
     }
 
-    const memory = await deps.readMemory(deps.homeBase);
+    const memory = await deps.readMemory(deps.homeBase, await resolveScope(c, deps));
     const allFacts = memory?.facts ?? [];
     const filtered =
       statusParam === undefined
@@ -113,67 +243,18 @@ export function mountFactsRoutes(app: Hono, deps: FactsDeps): void {
   });
 
   app.post("/api/facts/:id/approve", async (c) => {
-    if (!isAuthorized(deps.secret, c.req.header("X-Siltpoke-Secret"))) {
-      return c.json({ error: "unauthorized" }, 401);
-    }
-
     const id = c.req.param("id");
-    const memory = await deps.readMemory(deps.homeBase);
-    if (!memory) {
-      return c.json({ error: "not_found", id }, 404);
-    }
+    const loaded = await authAndLoad(c, deps, id);
+    if ("response" in loaded) return loaded.response;
+    const { memory, scope } = loaded;
 
     const result = approveFactCore(memory, id, deps.now);
     if (result.ok) {
-      await deps.writeMemory(deps.homeBase, result.memory);
+      await deps.writeMemory(deps.homeBase, result.memory, scope);
       return c.json({ fact: result.fact }, 200);
     }
 
-    // Exhaustive switch on TransitionError.kind so a future error variant
-    // becomes a compile error here rather than a silent 500.
-    const err: TransitionError = result.error;
-    switch (err.kind) {
-      case "not_found":
-        return c.json({ error: "not_found", id }, 404);
-      case "not_pending":
-        return c.json(
-          { error: "not_pending", current_status: err.current_status },
-          409,
-        );
-      case "not_retire_proposed":
-        return c.json(
-          {
-            error: "internal",
-            detail: `unexpected transition error: ${err.kind}`,
-          },
-          500,
-        );
-      case "already_retired":
-        return c.json(
-          {
-            error: "internal",
-            detail: `unexpected transition error: ${err.kind}`,
-          },
-          500,
-        );
-      case "not_retired":
-        return c.json(
-          {
-            error: "internal",
-            detail: `unexpected transition error: ${err.kind}`,
-          },
-          500,
-        );
-      default: {
-        // Compile-time guard: future TransitionError kinds become a type error
-        // here. If somehow reached at runtime (e.g. core diverges from types),
-        // return 500 rather than returning `never` (which would hang the
-        // request because Hono never sees a Response).
-        const _exhaustive: never = err;
-        void _exhaustive;
-        return c.json({ error: "internal_error" }, 500);
-      }
-    }
+    return respondApproveOrRetireError(c, result.error, id);
   });
 
   // Re-tag a fact's communication-style classification (style/profile).
@@ -181,9 +262,8 @@ export function mountFactsRoutes(app: Hono, deps: FactsDeps): void {
   // write) + a body-validated `kind`. Idempotent: setFactKindCore returns the
   // input memory reference when the kind is unchanged → skip writeMemory.
   app.post("/api/facts/:id/kind", async (c) => {
-    if (!isAuthorized(deps.secret, c.req.header("X-Siltpoke-Secret"))) {
-      return c.json({ error: "unauthorized" }, 401);
-    }
+    const unauthorized = authGuard(c, deps.secret);
+    if (unauthorized) return unauthorized;
 
     let body: unknown;
     try {
@@ -197,15 +277,16 @@ export function mountFactsRoutes(app: Hono, deps: FactsDeps): void {
     }
 
     const id = c.req.param("id");
-    const memory = await deps.readMemory(deps.homeBase);
-    if (!memory) {
-      return c.json({ error: "not_found", id }, 404);
-    }
+    const loaded = await loadMemoryOrNotFound(c, deps, id);
+    if ("response" in loaded) return loaded.response;
+    const { memory, scope } = loaded;
 
     const result = setFactKindCore(memory, id, kind, deps.now);
     if (result.ok) {
       if (result.memory !== memory) {
-        await deps.writeMemory(deps.homeBase, result.memory);
+        // Tagging untagged→style/profile flips isGlobalFact → writeMemoryV3Split
+        // moves the fact from the project slice into global. Intended promote.
+        await deps.writeMemory(deps.homeBase, result.memory, scope);
       }
       return c.json({ fact: result.fact }, 200);
     }
@@ -230,67 +311,60 @@ export function mountFactsRoutes(app: Hono, deps: FactsDeps): void {
     }
   });
 
-  app.post("/api/facts/:id/retire", async (c) => {
-    if (!isAuthorized(deps.secret, c.req.header("X-Siltpoke-Secret"))) {
-      return c.json({ error: "unauthorized" }, 401);
+  // Pin/unpin a fact against decay. Mirrors /kind: authGuard + body-validated
+  // boolean + write. Wires the "manual hard-constraint protection" affordance
+  // the schema promised (memory.ts:160) for facts not born pinned via
+  // /remember.
+  //
+  // Unlike setFactKindCore, setFactPinnedCore has NO reference-equality
+  // idempotency guard (confirmed transitions.ts:462-479 — it unconditionally
+  // calls replaceFact and allocates a fresh memory object even when `pinned`
+  // is unchanged). The endpoint compares the PRE-transition fact's `pinned`
+  // value itself to decide whether to skip writeMemory, since the core
+  // doesn't signal that via `result.memory !== memory` the way /kind's does.
+  app.post("/api/facts/:id/pin", async (c) => {
+    const unauthorized = authGuard(c, deps.secret);
+    if (unauthorized) return unauthorized;
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid_json" }, 400);
+    }
+    const pinned = (body as { pinned?: unknown })?.pinned;
+    if (typeof pinned !== "boolean") {
+      return c.json({ error: "invalid_body" }, 400);
     }
 
     const id = c.req.param("id");
-    const memory = await deps.readMemory(deps.homeBase);
-    if (!memory) {
-      return c.json({ error: "not_found", id }, 404);
-    }
+    const loaded = await loadMemoryOrNotFound(c, deps, id);
+    if ("response" in loaded) return loaded.response;
+    const { memory, scope } = loaded;
 
-    const result = retireFactCore(memory, id, deps.now);
+    const existingFact = memory.facts.find((f) => f.id === id);
+    const result = setFactPinnedCore(memory, id, pinned, deps.now);
     if (result.ok) {
-      // Idempotent no-op: when the core returns the input memory reference
-      // unchanged the fact was already retired — skip writeMemory.
-      if (result.memory !== memory) {
-        await deps.writeMemory(deps.homeBase, result.memory);
+      if (existingFact?.pinned !== pinned) {
+        await deps.writeMemory(deps.homeBase, result.memory, scope);
       }
       return c.json({ fact: result.fact }, 200);
     }
 
-    // Exhaustive guard — retire currently only produces `not_found`, but the
-    // switch matches the approve handler so a future kind is caught.
     const err: TransitionError = result.error;
     switch (err.kind) {
       case "not_found":
         return c.json({ error: "not_found", id }, 404);
-      case "not_pending":
-        return c.json(
-          { error: "not_pending", current_status: err.current_status },
-          409,
-        );
-      case "not_retire_proposed":
-        return c.json(
-          {
-            error: "internal",
-            detail: `unexpected transition error: ${err.kind}`,
-          },
-          500,
-        );
       case "already_retired":
-        return c.json(
-          {
-            error: "internal",
-            detail: `unexpected transition error: ${err.kind}`,
-          },
-          500,
-        );
+        return c.json({ error: "already_retired", id }, 409);
+      case "not_pending":
+      case "not_retire_proposed":
       case "not_retired":
         return c.json(
-          {
-            error: "internal",
-            detail: `unexpected transition error: ${err.kind}`,
-          },
+          { error: "internal", detail: `unexpected transition error: ${err.kind}` },
           500,
         );
       default: {
-        // Compile-time guard: future TransitionError kinds become a type error
-        // here. If somehow reached at runtime (e.g. core diverges from types),
-        // return 500 rather than returning `never` (which would hang the
-        // request because Hono never sees a Response).
         const _exhaustive: never = err;
         void _exhaustive;
         return c.json({ error: "internal_error" }, 500);
@@ -298,21 +372,37 @@ export function mountFactsRoutes(app: Hono, deps: FactsDeps): void {
     }
   });
 
-  // POST /api/facts/:id/reactivate → retired → active (undo a retire).
-  app.post("/api/facts/:id/reactivate", async (c) => {
-    if (!isAuthorized(deps.secret, c.req.header("X-Siltpoke-Secret"))) {
-      return c.json({ error: "unauthorized" }, 401);
+  app.post("/api/facts/:id/retire", async (c) => {
+    const id = c.req.param("id");
+    const loaded = await authAndLoad(c, deps, id);
+    if ("response" in loaded) return loaded.response;
+    const { memory, scope } = loaded;
+
+    const result = retireFactCore(memory, id, deps.now);
+    if (result.ok) {
+      // Idempotent no-op: when the core returns the input memory reference
+      // unchanged the fact was already retired — skip writeMemory.
+      if (result.memory !== memory) {
+        await deps.writeMemory(deps.homeBase, result.memory, scope);
+      }
+      return c.json({ fact: result.fact }, 200);
     }
 
+    // Retire currently only produces `not_found`, but the shared mapping
+    // matches the approve handler so a future kind is caught the same way.
+    return respondApproveOrRetireError(c, result.error, id);
+  });
+
+  // POST /api/facts/:id/reactivate → retired → active (undo a retire).
+  app.post("/api/facts/:id/reactivate", async (c) => {
     const id = c.req.param("id");
-    const memory = await deps.readMemory(deps.homeBase);
-    if (!memory) {
-      return c.json({ error: "not_found", id }, 404);
-    }
+    const loaded = await authAndLoad(c, deps, id);
+    if ("response" in loaded) return loaded.response;
+    const { memory, scope } = loaded;
 
     const result = reactivateFactCore(memory, id, deps.now);
     if (result.ok) {
-      await deps.writeMemory(deps.homeBase, result.memory);
+      await deps.writeMemory(deps.homeBase, result.memory, scope);
       return c.json({ fact: result.fact }, 200);
     }
 
@@ -348,9 +438,8 @@ export function mountFactsRoutes(app: Hono, deps: FactsDeps): void {
   // the supersede link (if any) is set on the old fact but it stays active
   // until the new fact is approved.
   app.post("/api/facts", async (c) => {
-    if (!isAuthorized(deps.secret, c.req.header("X-Siltpoke-Secret"))) {
-      return c.json({ error: "unauthorized" }, 401);
-    }
+    const unauthorized = authGuard(c, deps.secret);
+    if (unauthorized) return unauthorized;
 
     let body: unknown;
     try {
@@ -371,7 +460,8 @@ export function mountFactsRoutes(app: Hono, deps: FactsDeps): void {
       supersedes: typeof b.supersedes === "string" ? b.supersedes : null,
     };
 
-    const memory = await deps.readMemory(deps.homeBase);
+    const scope = await resolveScope(c, deps);
+    const memory = await deps.readMemory(deps.homeBase, scope);
     if (!memory) {
       return c.json({ error: "not_found" }, 404);
     }
@@ -396,7 +486,7 @@ export function mountFactsRoutes(app: Hono, deps: FactsDeps): void {
 
     const result = addFactCore(memory, draft, deps.now);
     if (result.ok) {
-      await deps.writeMemory(deps.homeBase, result.memory);
+      await deps.writeMemory(deps.homeBase, result.memory, scope);
       return c.json({ fact: result.fact }, 201);
     }
 
@@ -408,22 +498,17 @@ export function mountFactsRoutes(app: Hono, deps: FactsDeps): void {
     return c.json({ error: "internal_error" }, 500);
   });
 
-  // POST /api/facts/:id/restate → reconfirm an existing fact (NL "重申"); a
+  // POST /api/facts/:id/restate → reconfirm an existing fact (NL ); a
   // pending target is approved, an active target gets its clocks refreshed.
   app.post("/api/facts/:id/restate", async (c) => {
-    if (!isAuthorized(deps.secret, c.req.header("X-Siltpoke-Secret"))) {
-      return c.json({ error: "unauthorized" }, 401);
-    }
-
     const id = c.req.param("id");
-    const memory = await deps.readMemory(deps.homeBase);
-    if (!memory) {
-      return c.json({ error: "not_found", id }, 404);
-    }
+    const loaded = await authAndLoad(c, deps, id);
+    if ("response" in loaded) return loaded.response;
+    const { memory, scope } = loaded;
 
     const result = restateFactCore(memory, id, deps.now);
     if (result.ok) {
-      await deps.writeMemory(deps.homeBase, result.memory);
+      await deps.writeMemory(deps.homeBase, result.memory, scope);
       return c.json({ fact: result.fact }, 200);
     }
 
@@ -447,9 +532,8 @@ export function mountFactsRoutes(app: Hono, deps: FactsDeps): void {
   // Gated by budget/quiet-hours (mirrors the chat composer): a block returns
   // { paused: true, reason } at HTTP 200 (never a silent failure).
   app.post("/api/facts/parse", async (c) => {
-    if (!isAuthorized(deps.secret, c.req.header("X-Siltpoke-Secret"))) {
-      return c.json({ error: "unauthorized" }, 401);
-    }
+    const unauthorized = authGuard(c, deps.secret);
+    if (unauthorized) return unauthorized;
 
     let body: unknown;
     try {
@@ -476,7 +560,7 @@ export function mountFactsRoutes(app: Hono, deps: FactsDeps): void {
       }
     }
 
-    const memory = await deps.readMemory(deps.homeBase);
+    const memory = await deps.readMemory(deps.homeBase, await resolveScope(c, deps));
     const activeFacts = (memory?.facts ?? []).filter(
       (f) => f.status === "active",
     );
@@ -485,7 +569,9 @@ export function mountFactsRoutes(app: Hono, deps: FactsDeps): void {
     try {
       result = deps.parseFn
         ? await deps.parseFn(text, activeFacts)
-        : await parseMemoryEdit(text, activeFacts);
+        : await parseMemoryEdit(text, activeFacts, {
+            brainFn: makeRoleRawBrain(deps.homeBase, "extract"),
+          });
     } catch {
       // Parse / Brain failure — honest non-2xx so the composer toasts and never
       // fabricates a write.

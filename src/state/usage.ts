@@ -44,6 +44,15 @@ export interface UsageEvent {
   cache_read_input_tokens: number;
   total_cost_usd: number | null;
   basis?: UsageBasis;
+  /**
+   * Cross-family provider truth (track #7 T3, AC7). Absent on every
+   * historical row (and on rows this track doesn't touch) — readers default
+   * to "claude"/"usd", no migration rewrite.
+   */
+  provider?: string;
+  billing?: "usd" | "quota";
+  /** Served model string, when known (absent under some quota-provider auth modes). */
+  model?: string;
 }
 
 export interface DailyRollup {

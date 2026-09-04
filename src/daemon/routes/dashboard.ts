@@ -35,6 +35,7 @@ import {
 } from "./dashboard-helpers";
 import { SPECIES } from "../../web/creature/parts";
 import type { Species } from "../../web/creature/parts";
+import { isAuthorized } from "../auth";
 
 const VALID_ACTIONS: PetAction[] = ["feed", "play", "pet", "tease", "clean", "sleep"];
 
@@ -47,10 +48,17 @@ const WRITABLE_CONFIG_KEYS = new Set<string>([
   "rigor",
   "chattiness",
   "curiosity",
-  "triggerMode",
+  // Replaces `triggerMode`, which is no longer writable: its four values all
+  // mean `commit` now (AC10) and the key is never rewritten on disk (AC11), so
+  // leaving it writable would let the dashboard persist a setting nothing reads.
+  "reviewUnit",
 ]);
 
-function sanitizeConfigPatch(
+/**
+ * Exported for tests. The route that uses it needs a whole daemon to stand up,
+ * and this is the piece where a wrong answer writes to the user's config file.
+ */
+export function sanitizeConfigPatch(
   patch: Record<string, unknown>,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -66,6 +74,15 @@ function sanitizeConfigPatch(
       const n = Number(v);
       if (!Number.isFinite(n) || n < 0 || n > 10) continue;
       out[k] = Math.round(n);
+      continue;
+    }
+    // An enum, not free text. `parseReviewUnit` already treats anything that
+    // is not "pr" as "commit", so a junk value could never crash anything —
+    // but it WOULD be written to config.json and then shown back in the
+    // dashboard's own select as a value that silently means something else.
+    // Reject at the boundary instead of relying on the reader to fail safe.
+    if (k === "reviewUnit") {
+      if (v === "commit" || v === "pr") out[k] = v;
       continue;
     }
     if (typeof v === "string" && v.length <= 200) out[k] = v;
@@ -102,6 +119,14 @@ function todayKey(): string {
 export interface DashboardRouteDeps {
   homeBase: string;
   projectCwd?: string;
+  /**
+   * Daemon secret — gates POST /api/action and POST /api/config. Absent →
+   * both fail CLOSED (401). The dashboard's `ActionChip`/`hx-post` buttons
+   * reach this via Layout's body-level `hx-headers` cascade (hx-boost picks
+   * it up automatically — no per-button change needed). See the
+   * daemon-hardening security audit, finding 2.
+   */
+  secret?: string;
 }
 
 export function mountDashboardRoutes(
@@ -119,6 +144,13 @@ export function mountDashboardRoutes(
   );
 
   app.post("/api/action", async (c) => {
+    // Secret-gate — writes pet progression state; an unauthenticated
+    // cross-origin POST (blind CSRF) could otherwise farm XP / drain daily
+    // action caps for free. Fail CLOSED. See finding 2. `ActionChip`'s
+    // hx-post reaches this via Layout's body-level hx-headers cascade.
+    if (!isAuthorized(deps.secret ?? "", c.req.header("X-Siltpoke-Secret"))) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
     // HTMX posts form-encoded by default; programmatic callers post JSON.
     // Accept both so the UI buttons and external/test clients both work.
     let action: unknown;
@@ -234,6 +266,12 @@ export function mountDashboardRoutes(
   });
 
   app.post("/api/config", async (c) => {
+    // Secret-gate — persists a config patch (name/species/personality
+    // sliders/review unit); an unauthenticated cross-origin POST could
+    // otherwise rewrite it blind. Fail CLOSED. See finding 2.
+    if (!isAuthorized(deps.secret ?? "", c.req.header("X-Siltpoke-Secret"))) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
     let patch: unknown;
     try {
       patch = await c.req.json();

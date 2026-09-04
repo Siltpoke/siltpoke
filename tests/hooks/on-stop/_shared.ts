@@ -5,8 +5,11 @@
 // so each test file's own tmpHome from beforeEach() drives the fixture.
 
 import { mkdirSync, writeFileSync } from "node:fs";
+import { makeGitRepo } from "../../_shared/git-fixture";
 import { dirname, join } from "node:path";
 import type { BrainOutput } from "../../../src/brain/schema";
+
+export { makeGitRepo } from "../../_shared/git-fixture";
 
 /**
  * Build a synthetic Stop-event payload + write a 2-line transcript
@@ -24,6 +27,7 @@ export function eventWithProj(
   // Edit a real file under cwd so the Stop hook's pruneMissing (drops paths gone
   // from disk) keeps it — a fake relative path would resolve to nothing → skip.
   const cwd = join(tmpHome, name);
+  makeGitRepo(cwd);
   const editedPath = join(cwd, "src", "dummy.ts");
   mkdirSync(join(cwd, "src"), { recursive: true });
   writeFileSync(editedPath, "export const dummy = 1;\n");
@@ -55,6 +59,9 @@ export function eventWithProj(
  * changedFiles → hook skips. Call once per test after its cwd is known.
  */
 export function seedEditedFile(cwd: string, rel: string = "src/dummy.ts"): void {
+  // The cwd must also be a git repo, or the review-unit gate skips before the
+  // edited file is ever looked at (see makeGitRepo).
+  makeGitRepo(cwd);
   const abs = join(cwd, rel);
   mkdirSync(dirname(abs), { recursive: true });
   writeFileSync(abs, "export const dummy = 1;\n");

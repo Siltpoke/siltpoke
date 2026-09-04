@@ -28,12 +28,40 @@ export type CriticCounters = {
   abstentionCount: number;
   hardSuppressCount: number;
   passiveBubbleCount: number;
-  /** NORMAL runs attempted (pre-guard; includes guard-rejected runs). Use normalAttemptCount - normalRejectedCount for actual accepted count. */
+  /**
+   * NORMAL runs ATTEMPTED. Incremented by `recordGateDecision` at
+   * classification time (`src/critic/run-critic.ts`), which is BEFORE the Brain
+   * call — so a run that classified NORMAL and then died in the Brain call
+   * (`exit 143`, schema-invalid reply, spawn failure: 34%+ of fired reviews on
+   * the measured store) is counted here and produced no review.
+   *
+   * **This is not the accepted count**, and it never was. The evidence check no
+   * longer discards reviews, so `- normalRejectedCount` is gone; but subtracting
+   * that was only ever one of two corrections, and the in-NORMAL Brain failure
+   * is the other. Nothing counts that one today, so the accepted count is not
+   * derivable from this file — which is why `/siltpoke-stats` prints this as
+   * "attempted" rather than restating it as "accepted".
+   */
   normalAttemptCount: number;
-  /** Guard-rejected NORMAL runs */
-  normalRejectedCount: number;
-  /** Top guard-reject reasons, binned by first ~80 chars of reason string */
-  guardRejectReasons: Record<string, number>;
+  /**
+   * NORMAL runs that carried at least one citation the evidence check could
+   * not confirm. The review was still shown; the citation was dropped.
+   *
+   * Replaces `normalRejectedCount` (a count of reviews thrown away), which no
+   * longer has anything to count. The key was renamed rather than reused: a
+   * pre-2026-08-19 file's number meant "suppressed", and reading it under the
+   * new name would silently re-label history. Old files simply read 0 here.
+   *
+   * The old keys are not migrated and not preserved: `writeTelemetry`
+   * serialises the parsed object, so the first increment on a day whose file
+   * still carries `normalRejectedCount` drops it. That is bounded to the one
+   * same-UTC-day file straddling the upgrade, and losing a day's operational
+   * counter is the cheaper of the two errors — the alternative is carrying a
+   * number whose meaning changed mid-file.
+   */
+  normalUnverifiedCount: number;
+  /** Top unverified-citation reasons, binned by first ~80 chars of reason string */
+  unverifiedEvidenceReasons: Record<string, number>;
 };
 
 // ---------------------------------------------------------------------------
@@ -51,7 +79,7 @@ const ALL_TOOL_STATUSES: readonly ToolStatus[] = [
   "output_too_large",
 ];
 
-const GUARD_REJECT_KEY_MAX = 80;
+const UNVERIFIED_REASON_KEY_MAX = 80;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -89,8 +117,8 @@ function emptyTelemetry(date: string): CriticCounters {
     hardSuppressCount: 0,
     passiveBubbleCount: 0,
     normalAttemptCount: 0,
-    normalRejectedCount: 0,
-    guardRejectReasons: {},
+    normalUnverifiedCount: 0,
+    unverifiedEvidenceReasons: {},
   };
 }
 
@@ -133,12 +161,12 @@ function parseTelemetry(raw: string, date: string): CriticCounters {
     }
   }
 
-  const guardRejectReasons: Record<string, number> = {};
-  if (typeof obj.guardRejectReasons === "object" && obj.guardRejectReasons !== null) {
-    const raw_ = obj.guardRejectReasons as Record<string, unknown>;
+  const unverifiedEvidenceReasons: Record<string, number> = {};
+  if (typeof obj.unverifiedEvidenceReasons === "object" && obj.unverifiedEvidenceReasons !== null) {
+    const raw_ = obj.unverifiedEvidenceReasons as Record<string, unknown>;
     for (const [k, v] of Object.entries(raw_)) {
       if (typeof v === "number") {
-        guardRejectReasons[k] = v;
+        unverifiedEvidenceReasons[k] = v;
       }
     }
   }
@@ -151,8 +179,8 @@ function parseTelemetry(raw: string, date: string): CriticCounters {
     hardSuppressCount: pick("hardSuppressCount", 0),
     passiveBubbleCount: pick("passiveBubbleCount", 0),
     normalAttemptCount: pick("normalAttemptCount", 0),
-    normalRejectedCount: pick("normalRejectedCount", 0),
-    guardRejectReasons,
+    normalUnverifiedCount: pick("normalUnverifiedCount", 0),
+    unverifiedEvidenceReasons,
   };
 }
 
@@ -289,10 +317,18 @@ export async function recordGateDecision(
 }
 
 /**
- * Record a guard-rejected NORMAL run. Truncates the reason to
- * GUARD_REJECT_KEY_MAX chars to prevent unbounded key growth.
+ * Record a NORMAL run that carried at least one citation the evidence check
+ * could not confirm. The review itself was still shown — this counts dropped
+ * citations, NOT dropped reviews (which is why it replaced `recordGuardReject`).
+ *
+ * Called ONCE per review, not once per bad citation: the counter answers "how
+ * often does a review reach the user with something unverifiable in it", and
+ * a review with three bad snippets is one such review, not three.
+ *
+ * Truncates the reason to UNVERIFIED_REASON_KEY_MAX chars to prevent unbounded
+ * key growth.
  */
-export async function recordGuardReject(
+export async function recordEvidenceUnverified(
   homeBase: string,
   reason: string,
 ): Promise<void> {
@@ -300,18 +336,18 @@ export async function recordGuardReject(
     try {
       const date = utcDateKey();
       const tel = await readTelemetry(homeBase, date);
-      const key = reason.slice(0, GUARD_REJECT_KEY_MAX);
+      const key = reason.slice(0, UNVERIFIED_REASON_KEY_MAX);
       const updated: CriticCounters = {
         ...tel,
-        normalRejectedCount: tel.normalRejectedCount + 1,
-        guardRejectReasons: {
-          ...tel.guardRejectReasons,
-          [key]: (tel.guardRejectReasons[key] ?? 0) + 1,
+        normalUnverifiedCount: tel.normalUnverifiedCount + 1,
+        unverifiedEvidenceReasons: {
+          ...tel.unverifiedEvidenceReasons,
+          [key]: (tel.unverifiedEvidenceReasons[key] ?? 0) + 1,
         },
       };
       await writeTelemetry(homeBase, updated);
     } catch (err) {
-      console.error(`[siltpoke telemetry] recordGuardReject failed: ${err}`);
+      console.error(`[siltpoke telemetry] recordEvidenceUnverified failed: ${err}`);
     }
   });
 }

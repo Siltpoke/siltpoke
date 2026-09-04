@@ -1,6 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import { CANONICAL_NAV } from "../../../src/web/routes/nav";
 import type { NavEntry, NavSection } from "../../../src/web/routes/nav";
+import { ICON_NAMES } from "../../../src/web/atoms/Icon";
 
 describe("CANONICAL_NAV (sectioned)", () => {
   test("exports exactly 2 sections", () => {
@@ -17,7 +18,15 @@ describe("CANONICAL_NAV (sectioned)", () => {
     expect(labels).toEqual(["PET", "WORK"]);
   });
 
-  test("total flat entry count is 4", () => {
+  // This one is a genuine count test by design (a change detector for
+  // accidental additions/removals to CANONICAL_NAV), not a stand-in for a
+  // named assertion — kept as a count per the file's own convention, bumped
+  // 4 → 5 for the "knowledge" WORK entry added in Task 12, then 5 → 6 for
+  // "decisions" (Task 8 of the Decisions-log view, 2026-08-13), then 6 → 7
+  // for "progress" (progress-page-slice-1 Task 7, 2026-08-14), then back to 6
+  // when "decisions" was removed with its route (2026-08-17): that view is a
+  // sheet on /knowledge now, so a nav entry would point at a dead path.
+  test("total flat entry count is 4 (Knowledge added 2026-08-06; Progress added 2026-08-14; Decisions removed 2026-08-17 with its route; Quests + Settings removed 2026-08-06 with their unmounts)", () => {
     const allEntries = CANONICAL_NAV.flatMap((s) => s.entries);
     expect(allEntries).toHaveLength(4);
   });
@@ -34,6 +43,23 @@ describe("CANONICAL_NAV (sectioned)", () => {
       "memory",
       "repo-graph",
     ]);
+  });
+
+  // The removal, asserted rather than merely implied by the count above: a
+  // nav entry pointing at a route nobody mounts renders a link to a 404.
+  test("no nav entry points at the retired /knowledge/decisions page", () => {
+    const allEntries = CANONICAL_NAV.flatMap((s) => s.entries);
+    expect(allEntries.map((e) => e.id)).not.toContain("decisions");
+    expect(allEntries.map((e) => e.href)).not.toContain("/knowledge/decisions");
+  });
+
+  test("reinternalize/Restate nav entry stays removed (spec §5, shelved surface stripped)", () => {
+    const allEntries = CANONICAL_NAV.flatMap((s) => s.entries);
+    // `id: Section` no longer has a "reinternalize" member (removed with the
+    // surface) — the type system now enforces this at compile time. The
+    // runtime check that still makes sense is on the plain-string fields.
+    expect(allEntries.find((e) => e.href === "/reinternalize")).toBeUndefined();
+    expect(allEntries.find((e) => e.label === "Restate")).toBeUndefined();
   });
 
   test("no entry is disabled (placeholders were removed, not parked)", () => {
@@ -57,6 +83,21 @@ describe("CANONICAL_NAV (sectioned)", () => {
     expect(home?.href).toBe("/");
   });
 
+  /**
+   * `NavEntry.icon` is a plain `string` and `Icon` renders an unknown name as
+   * raw TEXT rather than failing, so a typo here reaches the sidebar as a word.
+   * This is the only check between that and a shipped page.
+   */
+  test("every nav icon names a glyph the registry actually has", () => {
+    const allEntries = CANONICAL_NAV.flatMap((s) => s.entries);
+    const named = allEntries.filter((e) => e.icon !== undefined);
+    // Non-empty, or the loop below asserts nothing at all.
+    expect(named.length).toBeGreaterThan(0);
+    for (const e of named) {
+      expect({ id: e.id, known: ICON_NAMES.has(e.icon as string) }).toEqual({ id: e.id, known: true });
+    }
+  });
+
   test("memory entry has href '/memory'", () => {
     const allEntries = CANONICAL_NAV.flatMap((s) => s.entries);
     const mem = allEntries.find((e) => e.id === "memory");
@@ -68,9 +109,12 @@ describe("CANONICAL_NAV (sectioned)", () => {
     expect(allEntries.find((e) => e.id === "chat")).toBeUndefined();
   });
 
-  test("removed surfaces stay removed (settings/help/inventory/friends/commands)", () => {
+  // "settings" was re-added in Slice C (the review-brain selector), then hidden again
+  // 2026-08-06 with its route's unmount. It is covered by the entry-count and
+  // unmounted-route guards above rather than by this removed-set list, which predates it.
+  test("removed surfaces stay removed (help/inventory/friends/commands)", () => {
     const ids = CANONICAL_NAV.flatMap((s) => s.entries).map((e) => e.id as string);
-    for (const gone of ["settings", "help", "inventory", "friends", "commands"]) {
+    for (const gone of ["help", "inventory", "friends", "commands"]) {
       expect(ids).not.toContain(gone);
     }
   });
@@ -121,5 +165,14 @@ describe("CANONICAL_NAV (sectioned)", () => {
     };
     expect(section.id).toBe("pet");
     expect(section.entries).toHaveLength(1);
+  });
+
+  test("no nav entry points at an unmounted route", () => {
+    // The nav is the only thing that made a retired page discoverable, so this is the guard
+    // that keeps the hide honest: a link to a route the daemon does not mount is a 404
+    // the user finds, not a page.
+    const hrefs = CANONICAL_NAV.flatMap((s) => s.entries).map((e) => e.href);
+    expect(hrefs).not.toContain("/derived-view");
+    expect(hrefs).not.toContain("/settings");
   });
 });

@@ -47,6 +47,16 @@ import {
 
 // ── harness ──────────────────────────────────────────────────────────────────
 
+const TEST_SECRET = "test-secret";
+
+const ELIGIBLE_PROJECT = async () => ({
+  project_id: null,
+  proj_hash: null,
+  project_root: null,
+  display_name: null,
+  source: "explicit" as const,
+});
+
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length > 0) cleanups.pop()?.();
@@ -68,7 +78,7 @@ function appWith(
   streamFactory: (opts: StreamChatOptions) => AsyncGenerator<StreamEvent, void, void>,
 ): Hono {
   const app = new Hono();
-  mountChatRoutes(app, { homeBase: home, index: idx, streamFactory });
+  mountChatRoutes(app, { homeBase: home, resolveProject: ELIGIBLE_PROJECT, index: idx, streamFactory, secret: TEST_SECRET });
   return app;
 }
 
@@ -80,7 +90,7 @@ async function postLive(
 ): Promise<{ res: Response; sid: string }> {
   const res = await app.request("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Siltpoke-Secret": TEST_SECRET },
     body: JSON.stringify(body),
     ...(init?.signal ? { signal: init.signal } : {}),
   });
@@ -117,6 +127,71 @@ async function pollRows(
     await new Promise((r) => setTimeout(r, 10));
   }
   throw new Error("assistant row never persisted");
+}
+
+/**
+ * Read the SSE body until `needle` shows up, and hand back everything read.
+ *
+ * Replaces a `pollUntil` whose body fired `void reader.read().then(...)` —
+ * unawaited — and then checked an accumulator the callback had not written to
+ * yet. Two defects in that shape, one of them able to fail a run that had
+ * already succeeded:
+ *
+ *   1. **Lost wakeup.** The chunk could land between the loop's last `cond()`
+ *      and the deadline, so the append happened, the condition became true,
+ *      and the loop threw anyway because nothing looked again. Awaiting the
+ *      read removes the window by construction: there is no callback that can
+ *      run after the last check, because the check IS after the read.
+ *   2. **A read per tick.** One `read()` was issued every 10ms for the whole
+ *      budget — up to ~300 concurrent reads on one reader for a stream with
+ *      two chunks. Awaiting issues exactly one read per chunk consumed.
+ *
+ * Whether either of these caused the CI failure of 2026-08-10 is NOT known:
+ * that run's assertion detail did not survive into the log, and the test has
+ * never reproduced locally (5/5 green). What IS known is that the old failure
+ * message — "condition never became true" — names nothing, which is why the
+ * question could not be settled. This one reports the needle it wanted, how
+ * long it waited, and what was actually on the wire, so the next occurrence
+ * explains itself instead of costing another round of guessing.
+ */
+async function readUntil(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  needle: string,
+  timeoutMs = 3_000,
+): Promise<string> {
+  const dec = new TextDecoder();
+  const started = Date.now();
+  let wire = "";
+  let reads = 0;
+  while (!wire.includes(needle)) {
+    const waited = Date.now() - started;
+    if (waited >= timeoutMs) {
+      throw new Error(
+        `never saw ${JSON.stringify(needle)} on the wire after ${waited}ms and ${reads} read(s). ` +
+          `Wire so far (${wire.length} chars): ${JSON.stringify(wire.slice(0, 400))}`,
+      );
+    }
+    // The read is raced against the remaining budget so a stream that goes
+    // quiet cannot hang the suite — but a SLOW stream simply waits, which is
+    // the behaviour a loaded CI runner needs and the polling version denied it.
+    const chunk = await Promise.race([
+      reader.read().then((r) => {
+        reads += 1;
+        return r;
+      }),
+      new Promise<null>((r) => setTimeout(() => r(null), timeoutMs - waited)),
+    ]);
+    if (chunk === null) continue;
+    if (chunk.done) break;
+    if (chunk.value) wire += dec.decode(chunk.value, { stream: true });
+  }
+  if (!wire.includes(needle)) {
+    throw new Error(
+      `stream ended before ${JSON.stringify(needle)} appeared, after ${reads} read(s). ` +
+        `Wire (${wire.length} chars): ${JSON.stringify(wire.slice(0, 400))}`,
+    );
+  }
+  return wire;
 }
 
 async function pollUntil(cond: () => boolean, timeoutMs = 3_000): Promise<void> {
@@ -265,16 +340,9 @@ describe("stopped turn persists as cancelled; never re-enters context", () => {
 
     const { res, sid } = await postLive(app, { message: "the question I cancelled" });
     const reader = res.body!.getReader();
-    const dec = new TextDecoder();
     // Read until the partial delta is on the wire — the abort must arrive
     // AFTER partial text accumulated (the pre-hardening success-branch poisoning shape).
-    let wire = "";
-    await pollUntil(() => {
-      void reader.read().then((r) => {
-        if (r.value) wire += dec.decode(r.value, { stream: true });
-      });
-      return wire.includes("partial answer");
-    });
+    await readUntil(reader, "partial answer");
     await reader.cancel();
 
     const rows = await pollRows(home, sid);
@@ -343,14 +411,7 @@ describe("stopped turn persists as cancelled; never re-enters context", () => {
 
     const { res, sid } = await postLive(app, { message: "q" });
     const reader = res.body!.getReader();
-    const dec = new TextDecoder();
-    let wire = "";
-    await pollUntil(() => {
-      void reader.read().then((r) => {
-        if (r.value) wire += dec.decode(r.value, { stream: true });
-      });
-      return wire.includes("message_stop");
-    });
+    await readUntil(reader, "message_stop");
     // Disconnect AFTER the complete reply arrived, then let the stream end.
     await reader.cancel();
     release();
@@ -360,6 +421,19 @@ describe("stopped turn persists as cancelled; never re-enters context", () => {
     // A complete, paid-for reply is never discarded by a late disconnect.
     expect(row.status).toBeUndefined();
     expect(row.content).toBe("complete answer");
+    // Wait for the ledger separately — `pollRows` only settles the ROW, and the
+    // ledger is written AFTER it, further down the same stream callback
+    // (`src/daemon/routes/chat.ts:1444`). Asserting straight off `pollRows`
+    // assumes the two land together. They do not; the gap is just narrow.
+    //
+    // Measured rather than reasoned. A probe reading the ledger at the instant
+    // `pollRows` returns — exactly what the bare assertion used to read — came
+    // back `1` on **18/18** unloaded runs, and `0` on **5 of 18** with ten
+    // spinners saturating the CPU. That is the CI failure of 2026-08-24
+    // (`Expected length: 1 / Received length: 0`) reproduced on demand, and all
+    // five of those loaded runs pass with this poll in front of the assertion.
+    // The other two ledger assertions in this file (below) already poll first.
+    await pollUntil(() => ledgerLines(home).length === 1);
     expect(ledgerLines(home)).toHaveLength(1);
   });
 });
@@ -393,15 +467,8 @@ describe("F1 fixup — terminal batch reduced after disconnect stays an OK turn"
 
     const { res, sid } = await postLive(app, { message: "q" });
     const reader = res.body!.getReader();
-    const dec = new TextDecoder();
     // Prove the stream is LIVE and the reply text already streamed in.
-    let wire = "";
-    await pollUntil(() => {
-      void reader.read().then((r) => {
-        if (r.value) wire += dec.decode(r.value, { stream: true });
-      });
-      return wire.includes("the full billed answer");
-    });
+    await readUntil(reader, "the full billed answer");
     // Disconnect BEFORE the terminal batch is emitted, then let it flow.
     await reader.cancel();
     release();
@@ -442,14 +509,7 @@ describe("F1 fixup — terminal batch reduced after disconnect stays an OK turn"
 
     const { res, sid } = await postLive(app, { message: "q" });
     const reader = res.body!.getReader();
-    const dec = new TextDecoder();
-    let wire = "";
-    await pollUntil(() => {
-      void reader.read().then((r) => {
-        if (r.value) wire += dec.decode(r.value, { stream: true });
-      });
-      return wire.includes("part one");
-    });
+    await readUntil(reader, "part one");
     await reader.cancel();
     release();
 
@@ -515,5 +575,112 @@ describe("disconnect (tab close) kills the subprocess via the cancel path", () =
       const { done } = await reader.read();
       if (done) break;
     }
+  });
+});
+
+
+// ── The reader helper itself ────────────────────────────────────────────────
+//
+// A test helper that can fail a run which actually succeeded is worse than no
+// helper: it spends a CI slot and a person's afternoon on a defect that is not
+// in the product. These pin the two properties the old `pollUntil(() => { void
+// reader.read().then(...) })` shape did not have.
+
+describe("readUntil — the SSE reader helper", () => {
+  /** A stream whose chunks are already queued: every `read()` resolves without
+   *  waiting on anything, which is what makes the lost-wakeup case below
+   *  deterministic rather than a race the test would sometimes lose. */
+  const readyStream = (...chunks: string[]) =>
+    new ReadableStream<Uint8Array>({
+      start(c) {
+        for (const chunk of chunks) c.enqueue(new TextEncoder().encode(chunk));
+        c.close();
+      },
+    }).getReader();
+
+  /** The shape this helper replaced, kept verbatim so the comparison below is
+   *  against the real thing rather than a paraphrase of it. */
+  async function oldPollingRead(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    needle: string,
+    timeoutMs: number,
+  ): Promise<{ threw: boolean; wire: string }> {
+    const dec = new TextDecoder();
+    let wire = "";
+    try {
+      await pollUntil(() => {
+        void reader.read().then((r) => {
+          if (r.value) wire += dec.decode(r.value, { stream: true });
+        });
+        return wire.includes(needle);
+      }, timeoutMs);
+      return { threw: false, wire };
+    } catch {
+      return { threw: true, wire };
+    }
+  }
+
+  test("the old shape throws with the answer already in hand — the lost wakeup, reproduced", async () => {
+    // Deterministic by construction, not by timing luck. The chunk is already
+    // queued, so `read()` resolves on the first microtask turn — during the
+    // loop's 10ms sleep, i.e. AFTER that iteration's `cond()` had already
+    // returned false. The budget is one tick, so the loop then exits on the
+    // deadline and throws. Nothing is racing: a `setTimeout(10)` cannot fire
+    // before 10ms, and an already-queued chunk cannot arrive later than the
+    // first turn.
+    const { threw, wire } = await oldPollingRead(readyStream("message_stop\n"), "message_stop", 10);
+
+    expect(threw).toBe(true);
+    // The condition it reported as "never became true" WAS true: the data is
+    // sitting in the accumulator the loop stopped looking at.
+    expect(wire).toContain("message_stop");
+  });
+
+  test("readUntil returns that same stream's content instead of throwing", async () => {
+    // Same stream, same one-tick budget. The only variable changed is the
+    // helper, which is what makes this a control rather than an anecdote.
+    const wire = await readUntil(readyStream("message_stop\n"), "message_stop", 10);
+    expect(wire).toContain("message_stop");
+  });
+
+  test("it joins chunks and stops at the needle rather than draining the stream", async () => {
+    const wire = await readUntil(readyStream("partial ", "answer\n", "trailing"), "answer");
+    expect(wire).toBe("partial answer\n");
+  });
+
+  test("a stream that goes quiet reports what it wanted, how long it waited, and what it got", async () => {
+    // The old message was "condition never became true", which names neither
+    // the needle nor the wire — the reason the 2026-08-10 CI failure could not
+    // be diagnosed from its log at all.
+    const quiet = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode("event: open\n"));
+      },
+    }).getReader();
+
+    const err = await readUntil(quiet, "message_stop", 40).then(
+      () => null,
+      (e: Error) => e,
+    );
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err?.message).toContain("message_stop");
+    expect(err?.message).toContain("event: open");
+    expect(err?.message).toMatch(/after \d+ms/);
+  });
+
+  test("a stream that ends early says so, rather than blaming the clock", () => {
+    // Distinct from the timeout above: nothing is coming, and reporting a
+    // timeout for a closed stream would send the next reader looking for a
+    // slow server that does not exist.
+    return readUntil(readyStream("event: open\n"), "message_stop", 500).then(
+      () => {
+        throw new Error("expected a rejection");
+      },
+      (e: Error) => {
+        expect(e.message).toContain("stream ended before");
+        expect(e.message).toContain("message_stop");
+      },
+    );
   });
 });

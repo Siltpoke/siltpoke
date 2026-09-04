@@ -189,6 +189,9 @@ test("m112 NORMAL writer (~506): low-confidence accepted critique writes NO stat
   await handleStopHook(event as never, {
     env: { HOME: tmpHome, SILTPOKE_TOOL_AUGMENTED: "1" },
     m112Deps: deps,
+    // T5 side effects are real spawnSync calls on darwin — stub so this
+    // fired-path test never shells out or pops a real notification.
+    menubarDeps: { exec: () => {} },
   });
 
   expect(existsSync(join(event.cwd, ".siltpoke", "state.json"))).toBe(false);
@@ -216,6 +219,7 @@ test("PASSIVE_BUBBLE writer (~437): empty bubble_short writes NO state file; jso
   await handleStopHook(event as never, {
     env: { HOME: tmpHome, SILTPOKE_TOOL_AUGMENTED: "1" },
     m112Deps: deps,
+    menubarDeps: { exec: () => {} },
   });
 
   expect(existsSync(join(event.cwd, ".siltpoke", "state.json"))).toBe(false);

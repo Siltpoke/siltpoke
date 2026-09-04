@@ -218,8 +218,9 @@ describe("SpanDetailPanel", () => {
     expect(html).not.toContain("collapse");
     // Span name appears in the colored JSON dump.
     expect(html).toContain("raw-test-span");
-    // Syntax color spans present (sky color for keys)
-    expect(html).toContain("color:#7fb0c8");
+    // Syntax color spans present (sky color for keys) — SSR renders the
+    // var() indirection for tokens.color.sky.
+    expect(html).toContain("color:var(--color-sky)");
   });
 
   test("tab links include span id and tab in href for enabled tabs", () => {

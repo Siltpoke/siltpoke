@@ -30,12 +30,14 @@ test("1. renders all 5 regions on home page (polished layout)", async ({ page })
   const stats = page.locator(".stats-panel");
   await expect(stats).toBeVisible({ timeout: 10_000 });
 
-  // Region 4: telemetry cards lifted from former /stats — BUDGET +
-  // REASON BREAKDOWN. GateCheckList was redundant once quiet-hours moved to
-  // a header pill and budget got its own card; intentionally dropped.
+  // Region 4: telemetry cards lifted from former /stats — BUDGET only.
+  // REASON BREAKDOWN / MODELS / BIAS AUDIT were hidden 2026-08-06: they report on
+  // siltpoke's own internals rather than on the user's work. Asserted ABSENT in a real
+  // browser, not merely dropped from the list, so re-adding one is a deliberate act.
   // Match the section header text exactly to disambiguate from per-row labels.
   await expect(page.getByText("BUDGET", { exact: true })).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText("REASON BREAKDOWN", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("REASON BREAKDOWN", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("BIAS AUDIT", { exact: true })).toHaveCount(0);
 
   // Region 5: Home header
   const homeHeader = page.locator(".home-header");
@@ -53,27 +55,30 @@ test("1. renders all 5 regions on home page (polished layout)", async ({ page })
   }
 });
 
-test("2. sidebar disabled entries are non-interactive (no <a> href)", async ({ page }) => {
+test("2. sidebar has no disabled placeholder entries (all nav links interactive)", async ({ page }) => {
   await page.goto("/");
 
   const sidebar = page.locator("[data-sidebar]");
   await expect(sidebar).toBeVisible({ timeout: 10_000 });
 
-  // /stats nav entry removed, so 4 disabled entries remain.
-  const disabledHrefs = [
-    "/inventory",
-    "/friends",
-    "/commands",
-    "/settings",
-  ];
-
-  for (const href of disabledHrefs) {
+  // CANONICAL_NAV carries only interactive entries; the former disabled
+  // placeholder entries (inventory / friends / commands) were removed entirely
+  // — no anchor to them and no <span aria-disabled> at all. (settings was
+  // re-added as a LIVE route in Slice C — the review-brain selector — so it is
+  // no longer in the removed set; asserted present below.)
+  const removedHrefs = ["/inventory", "/friends", "/commands"];
+  for (const href of removedHrefs) {
     const anchor = page.locator(`[data-sidebar] a[href="${href}"]`);
     await expect(anchor).toHaveCount(0, { timeout: 5_000 });
   }
 
+  // settings was unmounted 2026-08-06 — its nav link must be gone with it.
+  await expect(page.locator('[data-sidebar] a[href="/settings"]')).toHaveCount(0, {
+    timeout: 5_000,
+  });
+
   const disabledSpans = page.locator('[data-sidebar] span[aria-disabled="true"]');
-  await expect(disabledSpans).toHaveCount(4, { timeout: 5_000 });
+  await expect(disabledSpans).toHaveCount(0, { timeout: 5_000 });
 });
 
 test("3. feed chip click does not trigger full page reload (URL unchanged, hero present)", async ({ page }) => {

@@ -9,6 +9,7 @@ process.env.TZ = "UTC";
  */
 import { afterEach, describe, expect, it } from "bun:test";
 import { groupByEntity } from "../../../../src/memory/entity";
+import { tokens } from "../../../../src/web/tokens/tokens";
 import type { FactEvent, MemoryEventClient } from "../../../../src/web/client/islands/memory-book";
 import {
   buildLogRows,
@@ -581,8 +582,8 @@ describe("decorateRow", () => {
       status: "active",
     });
     const retired = decorateRow({ ...active, status: "retired" });
-    expect(active.cardBg).toBe("#fffdf8");
-    expect(retired.cardBg).toBe("#f6f1e6");
+    expect(active.cardBg).toBe(tokens.color.memCardBg);
+    expect(retired.cardBg).toBe(tokens.color.memCardBgRetired);
   });
 
   it("uses episodic purple", () => {
@@ -594,7 +595,7 @@ describe("decorateRow", () => {
       why: null,
       status: "active",
     });
-    expect(d.typeColor).toBe("#9d86c2");
+    expect(d.typeColor).toBe(tokens.color.violet);
   });
 
   it("surfaces reaffirmCount from recall_count (and defaults to 0 when absent)", () => {
@@ -661,11 +662,11 @@ describe("decorateRow", () => {
   it("sets streamBadge from stream field: known streams get label+color, null stream gets no badge, unknown stream gets no badge", () => {
     const userRow = decorateRow({ id: "u", ts: "2026-06-24T00:00:00.000Z", type: "semantic", text: "t", why: null, status: "active", stream: "user" });
     expect(userRow.streamBadge).toBe("✍️ you typed");
-    expect(userRow.streamBadgeColor).toBe("#9d86c2");
+    expect(userRow.streamBadgeColor).toBe(tokens.color.violet);
 
     const commitRow = decorateRow({ id: "c", ts: "2026-06-24T00:00:00.000Z", type: "semantic", text: "t", why: null, status: "active", stream: "commit" });
     expect(commitRow.streamBadge).toBe("🤖 from commits");
-    expect(commitRow.streamBadgeColor).toBe("#7a9a5e");
+    expect(commitRow.streamBadgeColor).toBe(tokens.color.moss);
 
     const nullRow = decorateRow({ id: "n", ts: "2026-06-24T00:00:00.000Z", type: "semantic", text: "t", why: null, status: "active", stream: null });
     expect(nullRow.streamBadge).toBeNull();
@@ -1968,6 +1969,66 @@ describe("setFactKind / cycleFactKind (re-tag)", () => {
     data.cycleFactKind({ id: "a", kind: null });
     await new Promise((r) => setTimeout(r, 0));
     expect(posted).toEqual(["profile", "style", "style"]);
+  });
+});
+
+describe("setPinned (pin/unpin toggle)", () => {
+  const origFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+  });
+  const seed: MemoryEventClient = {
+    id: "f-1",
+    ts: "2026-06-25T10:00:00.000Z",
+    type: "semantic",
+    text: "prefers concise answers",
+    why: null,
+    status: "active",
+    pinned: false,
+  };
+
+  it("flips pinned on 200 (gated on success, mirrors setFactKind)", async () => {
+    globalThis.fetch = (async () =>
+      new Response(null, { status: 200 })) as unknown as typeof fetch;
+    const data = makeMemoryBookData();
+    data.memories = [{ ...seed }];
+    await data.setPinned("f-1", true);
+    expect(data.memories[0].pinned).toBe(true);
+  });
+
+  it("leaves pinned unchanged on non-ok response", async () => {
+    globalThis.fetch = (async () =>
+      new Response(null, { status: 500 })) as unknown as typeof fetch;
+    const data = makeMemoryBookData();
+    data.memories = [{ ...seed }];
+    await data.setPinned("f-1", true);
+    expect(data.memories[0].pinned).toBe(false);
+  });
+
+  it("leaves pinned unchanged when fetch throws", async () => {
+    globalThis.fetch = (async () => {
+      throw new Error("network down");
+    }) as unknown as typeof fetch;
+    const data = makeMemoryBookData();
+    data.memories = [{ ...seed }];
+    await data.setPinned("f-1", true);
+    expect(data.memories[0].pinned).toBe(false);
+  });
+
+  it("posts the correct endpoint + body for both pin and unpin", async () => {
+    const calls: Array<{ url: string; body: string }> = [];
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      calls.push({ url, body: init.body as string });
+      return new Response(null, { status: 200 });
+    }) as unknown as typeof fetch;
+    const data = makeMemoryBookData();
+    data.memories = [{ ...seed }];
+    await data.setPinned("f-1", true);
+    await data.setPinned("f-1", false);
+    expect(calls[0].url).toBe("/api/facts/f-1/pin");
+    expect(JSON.parse(calls[0].body)).toEqual({ pinned: true });
+    expect(calls[1].url).toBe("/api/facts/f-1/pin");
+    expect(JSON.parse(calls[1].body)).toEqual({ pinned: false });
   });
 });
 

@@ -40,10 +40,10 @@ interface TileSpec {
 }
 
 const TILES: readonly TileSpec[] = [
-  { key: "mood",   label: "mood",   stroke: tokens.color.terra, fill: `${tokens.color.terra}33` },
-  { key: "hunger", label: "hunger", stroke: tokens.color.amber, fill: `${tokens.color.amber}33` },
-  { key: "energy", label: "energy", stroke: tokens.color.moss,  fill: `${tokens.color.moss}33`  },
-  { key: "bond",   label: "bond",   stroke: tokens.color.sky,   fill: `${tokens.color.sky}33`   },
+  { key: "mood",   label: "mood",   stroke: tokens.color.terra, fill: `color-mix(in srgb, ${tokens.color.terra} 20%, transparent)` },
+  { key: "hunger", label: "hunger", stroke: tokens.color.amber, fill: `color-mix(in srgb, ${tokens.color.amber} 20%, transparent)` },
+  { key: "energy", label: "energy", stroke: tokens.color.moss,  fill: `color-mix(in srgb, ${tokens.color.moss} 20%, transparent)`  },
+  { key: "bond",   label: "bond",   stroke: tokens.color.sky,   fill: `color-mix(in srgb, ${tokens.color.sky} 20%, transparent)`   },
 ];
 
 export function VitalsPanel(props: VitalsPanelProps) {

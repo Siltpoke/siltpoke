@@ -74,16 +74,31 @@ jobs:
       - name: Validate manifest versions match tag
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
-          PLUGIN_V=$(jq -r '.version' .claude-plugin/plugin.json)
-          MARKET_V=$(jq -r '.version' .claude-plugin/marketplace.json)
-          if [ "$PLUGIN_V" != "$VERSION" ]; then
-            echo "::error::plugin.json version ($PLUGIN_V) != tag ($VERSION)"
-            exit 1
-          fi
-          if [ "$MARKET_V" != "$VERSION" ]; then
-            echo "::error::marketplace.json version ($MARKET_V) != tag ($VERSION)"
-            exit 1
-          fi
+          # Every manifest that ships in the public snapshot and carries a
+          # version a user can read. Checking only the two `.claude-plugin`
+          # files let `.codex-plugin/plugin.json` ship a release behind, since
+          # `codex plugin marketplace add` reads that file and no gate looked
+          # at it. `jq -e` also fails when the path is absent, which is how the
+          # marketplace read silently produced `null` for every tag.
+          fail=0
+          check_version() {
+            path="$1"; expr="$2"
+            actual=$(jq -er "$expr" "$path") || {
+              echo "::error::$path: no version at $expr"
+              fail=1
+              return
+            }
+            if [ "$actual" != "$VERSION" ]; then
+              echo "::error::$path version ($actual) != tag ($VERSION)"
+              fail=1
+            fi
+          }
+          check_version .claude-plugin/plugin.json '.version'
+          check_version .claude-plugin/marketplace.json '.plugins[0].version'
+          check_version .antigravity-plugin/plugin.json '.version'
+          check_version .codex-plugin/plugin.json '.version'
+          check_version package.json '.version'
+          [ "$fail" -eq 0 ] || exit 1
 
       - name: Publish release
         env:

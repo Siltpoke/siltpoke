@@ -11,6 +11,7 @@
  * blocks, remainder grayed.
  */
 import { tokens } from "../tokens/tokens";
+import { PanelHeader, panelCardStyle } from "./panel-card";
 
 export interface StatsPanelStats {
   hp: number;
@@ -94,49 +95,18 @@ export function StatsPanel(props: StatsPanelProps) {
   const xpPercent = Math.round(xpFraction * 100);
 
   return (
-    <div
-      class="stats-panel"
-      style={{
-        border: `1px solid ${tokens.color.edge}`,
-        borderRadius: tokens.radius.sm,
-        background: tokens.color.paper,
-        padding: "10px 12px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-      }}
-    >
-      {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <span
-          style={{
-            fontFamily: tokens.font.mono,
-            fontSize: 10,
-            color: tokens.color.ink3,
-            letterSpacing: "0.08em",
-            textTransform: "uppercase",
-            fontWeight: 500,
-          }}
-        >
-          STATS
-        </span>
-        <span
-          class="stats-panel__now"
-          style={{
-            fontFamily: tokens.font.mono,
-            fontSize: 10,
-            color: tokens.color.ink3,
-          }}
-        >
-          now
-        </span>
-      </div>
+    <div class="stats-panel" style={{ ...panelCardStyle, gap: 8 }}>
+      <PanelHeader
+        label="STATS"
+        right={
+          <span
+            class="stats-panel__now"
+            style={{ fontFamily: tokens.font.mono, fontSize: 10, color: tokens.color.ink3 }}
+          >
+            now
+          </span>
+        }
+      />
 
       {/* XP bar — moved above stat rows so level progress is the first thing
           the eye lands on after the STATS header. */}

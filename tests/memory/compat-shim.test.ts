@@ -454,7 +454,10 @@ describe("shim end-to-end with pre-split callers", () => {
 
     const r = await appendLearnedRule(home, {
       id: "lr-1",
-      rule: "test rule",
+      // Realistic imperative rule (passes the write-time garbage filter — has
+      // an action verb + >= 4 words). Content is incidental here; this test
+      // exercises shim write-through, not garbage filtering.
+      rule: "Always run the test suite before committing changes.",
       category: "test",
       created_at: "2026-05-16T00:00:00Z",
       applied_count: 0,

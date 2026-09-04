@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * extractTranscriptTurns — parse a Claude Code transcript JSONL and return an
+ * extractTranscriptTurns — parse a session transcript JSONL and return an
  * ordered list of {role, text, ts} turns.
  *
  * Used by handle-stop.ts to wire real transcript turns into runCritic() so
@@ -9,10 +9,7 @@
  *
  */
 
-import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import type { TranscriptEvent } from "./context";
-import { extractAssistantText, extractUserText } from "./context";
+import { extractAssistantText, extractUserText, readEvents } from "./context";
 import type { TranscriptTurn } from "../critic/intent/capture";
 
 export type { TranscriptTurn };
@@ -20,29 +17,14 @@ export type { TranscriptTurn };
 export async function extractTranscriptTurns(
   transcriptPath: string,
 ): Promise<TranscriptTurn[]> {
-  if (!existsSync(transcriptPath)) return [];
-
-  let raw: string;
-  try {
-    raw = await readFile(transcriptPath, "utf8");
-  } catch {
-    return [];
-  }
+  // readEvents handles missing/unreadable files (returns []) and normalizes
+  // Codex rollout envelopes into the Claude TranscriptEvent shape, so this
+  // loop sees one uniform format.
+  const events = await readEvents(transcriptPath);
 
   const turns: TranscriptTurn[] = [];
 
-  for (const line of raw.split("\n")) {
-    if (!line.trim()) continue;
-
-    let ev: TranscriptEvent;
-    try {
-      ev = JSON.parse(line) as TranscriptEvent;
-    } catch {
-      continue;
-    }
-
-    if (!ev || typeof ev !== "object") continue;
-
+  for (const ev of events) {
     // Resolve role from multiple possible locations in the transcript format.
     const role =
       (typeof ev.role === "string" && ev.role) ||

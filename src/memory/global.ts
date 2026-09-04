@@ -45,6 +45,7 @@ export function emptyGlobal(now: Date = new Date()): GlobalMemory {
       curiosity: 0,
     },
     user_profile: { name: "", communication_style: "neutral" },
+    facts: [],
   };
 }
 

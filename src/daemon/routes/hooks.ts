@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 import type { Hono } from "hono";
-import { claimMarker, completeMarker, markerKey } from "../marker";
-import { isAuthorized } from "../auth";
 import type { HookEvent } from "../../router/router";
+import { isAuthorized } from "../auth";
+import { claimMarker, completeMarker, deriveStopMarkerKey } from "../marker";
 
 export interface HooksRouteDeps {
   markerDir: string;
@@ -13,7 +13,6 @@ export interface HooksRouteDeps {
 
 interface StopPayload extends HookEvent {
   session_id: string;
-  stop_event_timestamp_ms: number;
 }
 
 export function mountHooksRoute(app: Hono, deps: HooksRouteDeps): void {
@@ -22,17 +21,44 @@ export function mountHooksRoute(app: Hono, deps: HooksRouteDeps): void {
       return c.json({ error: "unauthorized" }, 401);
     }
     const event = (await c.req.json()) as StopPayload;
-    const key = markerKey({
-      session_id: event.session_id,
-      stop_event_timestamp_ms: event.stop_event_timestamp_ms,
-    });
-    if (!claimMarker(deps.markerDir, key)) {
-      // Duplicate delivery is the dedupe working (http fast-path and the
-      // on-stop.ts fallback race for the same marker by design). Non-2xx here
-      // surfaces as a red "Stop hook error" in Claude Code, so answer 200.
+
+    // Detached review — runs the Brain call after the HTTP response returns.
+    const reviewDetached = (): void => {
+      void (async () => {
+        try {
+          await deps.handleStopHook(event);
+        } catch {
+          // the hook pipeline logs its own fatals; never surface here
+        }
+      })();
+    };
+
+    // Same key derivation as on-stop.ts (session_id + transcript-content hash),
+    // so the curl fast-path (this route) and the on-stop.ts command fallback —
+    // which Claude Code fires for the SAME Stop event — race for the SAME
+    // marker and dedupe against each other by design.
+    const key = deriveStopMarkerKey(event);
+    if (key === null) {
+      // No usable transcript to key on: fail soft — review, cannot dedupe.
+      reviewDetached();
+      return c.json({ ok: true, undeduped: true }, 202);
+    }
+
+    let claimed: boolean;
+    try {
+      claimed = claimMarker(deps.markerDir, key);
+    } catch {
+      // Marker subsystem error (e.g. unwritable dir): fail soft — never let a
+      // broken dedupe layer drop a real review.
+      reviewDetached();
+      return c.json({ ok: true, undeduped: true, key }, 202);
+    }
+    if (!claimed) {
+      // Duplicate delivery is the dedupe working. Non-2xx here surfaces as a
+      // red "Stop hook error" in Claude Code, so answer 200.
       return c.json({ ok: true, duplicate: true, key }, 200);
     }
-    // Detach the Brain call so the HTTP response returns immediately.
+
     void (async () => {
       try {
         await deps.handleStopHook(event);

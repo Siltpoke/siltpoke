@@ -12,6 +12,7 @@ const sampleResult = {
   counters: {
     files_walked: 49,
     files_cached: 293,
+    parse_degraded: 0,
     nodes: { file: 340, function: 612, class: 421, module: 0, symbol: 443 },
     edges: { imports: 891, calls: 0, contains: 783 },
     skipped: { tree_sitter_failed: 3, too_large: 1, not_a_source_file: 12, file_cap: 0 },
@@ -66,5 +67,40 @@ describe("formatters", () => {
     expect(parsed.project_root).toBe("/tmp/proj");
     expect(parsed.proj_hash).toBe("abc123def456");
     expect(parsed.counters.nodes.function).toBe(612);
+  });
+});
+
+describe("formatHuman — parse degradation is surfaced", () => {
+  test("reports partially-parsed files when there are any", () => {
+    // parse_degraded (7) is deliberately DIFFERENT from
+    // skipped.tree_sitter_failed (0) here. With both set to the same number a
+    // wrong-field substitution renders the right text by coincidence and the
+    // test passes anyway — the two counters are near-always different in real
+    // repos (hard parse failures are typically 0).
+    const out = formatHuman({
+      ...sampleResult,
+      counters: {
+        ...sampleResult.counters,
+        parse_degraded: 7,
+        skipped: { ...sampleResult.counters.skipped, tree_sitter_failed: 0 },
+      },
+    });
+
+    expect(out).toContain("7 files only partially parsed");
+  });
+
+  test("says nothing about degradation when there is none", () => {
+    // tree_sitter_failed stays non-zero: a gate reading the wrong counter
+    // would render the line here.
+    const out = formatHuman({
+      ...sampleResult,
+      counters: {
+        ...sampleResult.counters,
+        parse_degraded: 0,
+        skipped: { ...sampleResult.counters.skipped, tree_sitter_failed: 4 },
+      },
+    });
+
+    expect(out).not.toContain("partially parsed");
   });
 });

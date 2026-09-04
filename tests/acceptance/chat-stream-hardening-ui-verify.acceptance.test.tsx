@@ -96,16 +96,38 @@ function freshHome(): { home: string; idx: ChatIndex } {
 
 type StreamFactory = (opts: StreamChatOptions) => AsyncGenerator<StreamEvent, void, void>;
 
+// POST /api/chat is secret-gated (daemon-hardening security audit, finding
+// 2). The island factories under test read the secret from the DOM
+// (`document.querySelector("[data-secret]")` / the FloatingChat panel root),
+// which this pure-factory harness never mounts — so fetchVia injects the
+// header directly at the fetch-bridging seam instead, the same way a real
+// SSR-hydrated page would carry it end-to-end.
+const TEST_SECRET = "test-secret";
+
+const ELIGIBLE_PROJECT = async () => ({
+  project_id: null,
+  proj_hash: null,
+  project_root: null,
+  display_name: null,
+  source: "explicit" as const,
+});
+
 function appWith(home: string, idx: ChatIndex, streamFactory: StreamFactory): Hono {
   const app = new Hono();
-  mountChatRoutes(app, { homeBase: home, index: idx, streamFactory });
+  mountChatRoutes(app, { homeBase: home, resolveProject: ELIGIBLE_PROJECT, index: idx, streamFactory, secret: TEST_SECRET });
   return app;
 }
 
 /** Bridge the island's injected fetch into the in-process Hono app. */
 function fetchVia(app: Hono): typeof fetch {
-  return ((input: RequestInfo | URL, init?: RequestInit) =>
-    app.request(input instanceof Request ? input : String(input), init)) as typeof fetch;
+  return ((input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    // The island may already set this header to "" (this pure-factory
+    // harness never calls init(), so the DOM-read secret defaults empty) —
+    // override on ANY falsy value, not just absence.
+    if (!headers.get("X-Siltpoke-Secret")) headers.set("X-Siltpoke-Secret", TEST_SECRET);
+    return app.request(input instanceof Request ? input : String(input), { ...init, headers });
+  }) as typeof fetch;
 }
 
 interface FakeProcOpts {
@@ -327,9 +349,13 @@ describe("SSR markup three-way branch (L3)", () => {
     // stylesheet targeted them); these assertions are on the style-branch
     // condition instead.
     // (Hono JSX escapes single quotes to &#39; in emitted attributes)
+    // Task 10b migrated the branch's literal hex to `bubbleFail`/`bubbleFailEdge`
+    // (var(--color-X) strings) — the assertion below moved with it; the
+    // shape being verified (a failed turn gets a distinct background,
+    // not the plain assistant bubble) is unchanged.
     expect(html).toContain("msg.status === &#39;failed&#39;");
     expect(html).toContain("alignSelf: &#39;stretch&#39;");
-    expect(html).toContain("background: &#39;#f7ede4&#39;");
+    expect(html).toContain("background: &#39;var(--color-bubbleFail)&#39;");
     // cancelled → quiet centered marker branch (style, not class)
     expect(html).toContain("alignSelf: &#39;center&#39;");
     expect(html).toContain("msg.status === &#39;cancelled&#39;");
@@ -345,9 +371,15 @@ describe("SSR markup three-way branch (L3)", () => {
     // three-way conditional present
     expect(html).toContain("m.status === &#39;failed&#39;");
     expect(html).toContain("m.status === &#39;cancelled&#39;");
-    // failed card style: full-width + bordered card (≠ white bubble)
+    // failed card style: full-width + bordered card (≠ white bubble).
+    // Task 10b migrated FloatingChat's own (harder-red) failed-turn wash
+    // from a bare `rgba(176,60,20,X)` literal to `color-mix(…,
+    // var(--color-bubbleFailUrgent) X%, transparent)` — an exact rewrite
+    // (color-mix-with-transparent === rgba alpha compositing), not a value
+    // change. The assertion moved with it; the shape (full-width + bordered,
+    // not the plain assistant bubble) is unchanged.
     expect(html).toContain("align-self:stretch");
-    expect(html).toContain("border:1px solid rgba(176,60,20,0.18)");
+    expect(html).toContain("border:1px solid color-mix(in srgb, var(--color-bubbleFailUrgent) 18%, transparent)");
     // markdown rendering is GATED OFF for status entries (no renderMd of copy)
     expect(html).toContain("m.role === &#39;assistant&#39; &amp;&amp; !m.status");
     // glyph + plain-text copy rendering

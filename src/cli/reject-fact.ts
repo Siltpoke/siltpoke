@@ -26,20 +26,19 @@
  *   3  CLI flag error (missing id)
  */
 
-import { join } from "node:path";
 import { readMemory, writeMemory } from "../memory/memory";
-import type { CoreMemory } from "../memory/memory";
 import { retireFactCore } from "../memory/transitions";
+import {
+  defaultOutput,
+  loadMemoryOrReport,
+  parseSingleFactIdArg,
+  runFactCliMain,
+  writeMemoryOrReport,
+  type OutputFn,
+  type ParsedFactIdArgs,
+} from "./fact-cli-shared";
 
-// ---------------------------------------------------------------------------
-// Output helper
-// ---------------------------------------------------------------------------
-
-export type OutputFn = (msg: string) => void;
-
-const defaultOutput: OutputFn = (msg: string) => {
-  process.stdout.write(`${msg}\n`);
-};
+export type { OutputFn };
 
 // ---------------------------------------------------------------------------
 // Types
@@ -61,25 +60,8 @@ export type RejectFactOpts = {
 // Arg parsing
 // ---------------------------------------------------------------------------
 
-type ParsedArgs =
-  | { ok: true; id: string }
-  | { ok: false; message: string };
-
-export function parseRejectFactArgs(argv: string[]): ParsedArgs {
-  const positional: string[] = [];
-
-  for (const arg of argv) {
-    if (arg.startsWith("--")) {
-      return { ok: false, message: `unknown flag: ${arg}` };
-    }
-    positional.push(arg);
-  }
-
-  if (positional.length === 0) {
-    return { ok: false, message: "missing fact id — usage: siltpoke reject <fact-id>" };
-  }
-
-  return { ok: true, id: positional[0]! };
+export function parseRejectFactArgs(argv: string[]): ParsedFactIdArgs {
+  return parseSingleFactIdArg(argv, "reject");
 }
 
 // ---------------------------------------------------------------------------
@@ -100,21 +82,10 @@ export async function runRejectFact(opts: RejectFactOpts): Promise<number> {
 
   const { id } = parsed;
 
-  // Load memory
-  let memory: CoreMemory | null;
-  try {
-    memory = await readFn(opts.homeBase);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    out(`siltpoke reject: read failed: ${msg}`);
-    return 1;
-  }
-
-  // Empty memory → fact-not-found (preserves existing behavior when no file).
-  if (!memory) {
-    out(`siltpoke reject: fact not found: ${id}`);
-    return 1;
-  }
+  // Load memory (read error or empty store both report "fact not found").
+  const loaded = await loadMemoryOrReport(readFn, opts.homeBase, "reject", id, out);
+  if (!loaded.ok) return loaded.exitCode;
+  const { memory } = loaded;
 
   const existing = memory.facts.find((f) => f.id === id);
   if (!existing) {
@@ -140,13 +111,8 @@ export async function runRejectFact(opts: RejectFactOpts): Promise<number> {
     return 1;
   }
 
-  try {
-    await writeFn(opts.homeBase, result.memory);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    out(`siltpoke reject: write failed: ${msg}`);
-    return 1;
-  }
+  const writeErr = await writeMemoryOrReport(writeFn, opts.homeBase, result.memory, "reject", out);
+  if (writeErr !== null) return writeErr;
 
   out(`rejected fact ${id}: ${result.fact.text}`);
   return 0;
@@ -157,8 +123,5 @@ export async function runRejectFact(opts: RejectFactOpts): Promise<number> {
 // ---------------------------------------------------------------------------
 
 if (import.meta.main) {
-  const rawArgs = process.argv.slice(2);
-  const homeBase = join(process.env.HOME ?? "", ".siltpoke");
-  const code = await runRejectFact({ argv: rawArgs, homeBase });
-  process.exit(code);
+  await runFactCliMain(runRejectFact);
 }

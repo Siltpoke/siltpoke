@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Jiaqi Duan
 import { readFile, } from "node:fs/promises";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { existsSync } from "node:fs";
+import { siltpokeRoot } from "../../installer/paths";
 
 export interface BiasAuditDelta {
   sampleSize: number;
@@ -68,7 +68,7 @@ export async function computeBiasAuditDelta(opts: {
 } = {}): Promise<BiasAuditDelta> {
   const threshold = opts.alertThreshold ?? 0.15;
   const now = opts.now ?? new Date();
-  const auditDir = opts.auditDir ?? join(homedir(), ".siltpoke", "bias-audit");
+  const auditDir = opts.auditDir ?? join(siltpokeRoot(), "bias-audit");
 
   if (!existsSync(auditDir)) {
     return { sampleSize: 0, severityDisagreementPct: 0, categoryDisagreementPct: 0, alert: false };

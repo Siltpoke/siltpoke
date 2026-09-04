@@ -96,6 +96,33 @@ export function replaceFact(
   return { ...memory, facts: updatedFacts };
 }
 
+// Every transition below starts with "find the fact, 404-equivalent if
+// missing" — the exact same findFact + not_found-error shape. Narrow on the
+// `ok` key at the call site: `if ("ok" in found) return found;`.
+function requireFact(
+  memory: CoreMemory,
+  id: string,
+): { idx: number; fact: Fact } | { ok: false; error: { kind: "not_found"; id: string } } {
+  const found = findFact(memory, id);
+  return found ?? { ok: false, error: { kind: "not_found", id } };
+}
+
+// keepFactCore (retire_proposed -> active) and reactivateFactCore
+// (retired -> active) are both a "revival" — a reconfirmation that resets the
+// decay clock and stamps the same "reactivated" event. reactivateFactCore
+// additionally clears retired_reason (there isn't one to clear on a
+// retire_proposed fact), passed via `extra`.
+function reviveFact(fact: Fact, ts: string, extra: Partial<Fact> = {}): Fact {
+  return {
+    ...fact,
+    status: "active",
+    last_seen_at: ts,
+    last_confirmed_at: ts,
+    events: [...fact.events, { action: "reactivated", at: ts, reason: null }],
+    ...extra,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Transitions
 // ---------------------------------------------------------------------------
@@ -185,11 +212,8 @@ export function restateFactCore(
   id: string,
   now: NowFn = defaultNow,
 ): TransitionResult {
-  const found = findFact(memory, id);
-  if (!found) {
-    return { ok: false, error: { kind: "not_found", id } };
-  }
-
+  const found = requireFact(memory, id);
+  if ("ok" in found) return found;
   const { idx, fact } = found;
 
   // Pending → restate is an approval.
@@ -230,11 +254,8 @@ export function approveFactCore(
   id: string,
   now: NowFn = defaultNow,
 ): TransitionResult {
-  const found = findFact(memory, id);
-  if (!found) {
-    return { ok: false, error: { kind: "not_found", id } };
-  }
-
+  const found = requireFact(memory, id);
+  if ("ok" in found) return found;
   const { idx, fact } = found;
 
   if (fact.status !== "pending") {
@@ -306,11 +327,8 @@ export function retireFactCore(
   id: string,
   _now: NowFn = defaultNow,
 ): TransitionResult {
-  const found = findFact(memory, id);
-  if (!found) {
-    return { ok: false, error: { kind: "not_found", id } };
-  }
-
+  const found = requireFact(memory, id);
+  if ("ok" in found) return found;
   const { idx, fact } = found;
 
   // Idempotent: same input memory reference signals caller to skip writeMemory.
@@ -355,11 +373,8 @@ export function confirmRetireFactCore(
   id: string,
   _now: NowFn = defaultNow,
 ): TransitionResult {
-  const found = findFact(memory, id);
-  if (!found) {
-    return { ok: false, error: { kind: "not_found", id } };
-  }
-
+  const found = requireFact(memory, id);
+  if ("ok" in found) return found;
   const { idx, fact } = found;
 
   if (fact.status !== "retire_proposed") {
@@ -390,11 +405,8 @@ export function keepFactCore(
   id: string,
   now: NowFn = defaultNow,
 ): TransitionResult {
-  const found = findFact(memory, id);
-  if (!found) {
-    return { ok: false, error: { kind: "not_found", id } };
-  }
-
+  const found = requireFact(memory, id);
+  if ("ok" in found) return found;
   const { idx, fact } = found;
 
   if (fact.status !== "retire_proposed") {
@@ -403,14 +415,7 @@ export function keepFactCore(
 
   // Keep/revive is a RECONFIRMATION — stamp last_confirmed_at
   // so the revived fact's staleness clock resets, same as approveFactCore.
-  const ts = now();
-  const updatedFact: Fact = {
-    ...fact,
-    status: "active",
-    last_seen_at: ts,
-    last_confirmed_at: ts,
-    events: [...fact.events, { action: "reactivated", at: ts, reason: null }],
-  };
+  const updatedFact = reviveFact(fact, now());
   const updatedMemory = replaceFact(memory, idx, updatedFact);
   return { ok: true, memory: updatedMemory, fact: updatedFact };
 }
@@ -431,11 +436,8 @@ export function reactivateFactCore(
   id: string,
   now: NowFn = defaultNow,
 ): TransitionResult {
-  const found = findFact(memory, id);
-  if (!found) {
-    return { ok: false, error: { kind: "not_found", id } };
-  }
-
+  const found = requireFact(memory, id);
+  if ("ok" in found) return found;
   const { idx, fact } = found;
 
   if (fact.status !== "retired") {
@@ -445,15 +447,7 @@ export function reactivateFactCore(
     };
   }
 
-  const ts = now();
-  const updatedFact: Fact = {
-    ...fact,
-    status: "active",
-    retired_reason: null,
-    last_seen_at: ts,
-    last_confirmed_at: ts,
-    events: [...fact.events, { action: "reactivated", at: ts, reason: null }],
-  };
+  const updatedFact = reviveFact(fact, now(), { retired_reason: null });
   const updatedMemory = replaceFact(memory, idx, updatedFact);
   return { ok: true, memory: updatedMemory, fact: updatedFact };
 }
@@ -471,11 +465,8 @@ export function setFactPinnedCore(
   pinned: boolean,
   _now: NowFn = defaultNow,
 ): TransitionResult {
-  const found = findFact(memory, id);
-  if (!found) {
-    return { ok: false, error: { kind: "not_found", id } };
-  }
-
+  const found = requireFact(memory, id);
+  if ("ok" in found) return found;
   const { idx, fact } = found;
 
   if (fact.status === "retired") {
@@ -501,11 +492,8 @@ export function setFactKindCore(
   kind: "style" | "profile",
   _now: NowFn = defaultNow,
 ): TransitionResult {
-  const found = findFact(memory, id);
-  if (!found) {
-    return { ok: false, error: { kind: "not_found", id } };
-  }
-
+  const found = requireFact(memory, id);
+  if ("ok" in found) return found;
   const { idx, fact } = found;
 
   if (fact.kind === kind) {
@@ -518,14 +506,14 @@ export function setFactKindCore(
 }
 
 /**
- * Real-time chat capture (memory work) — persist an explicit "记住 X" fact
+ * Real-time chat capture (memory work) — persist an explicit  fact
  * told to the pet in chat. Mirrors the `/remember` active-trust path (pushFact)
  * but lands here in the pure core for consistency with the other transitions.
  *
  * New fact: status="active", learned_from.stream="chat", kind=null,
  * pinned=false, stability="durable", confidence=1.0, all clocks = now,
  * events=[created]. (Differs from /remember, which is pinned+permanent — a chat
- * "记住" is a durable working-fact, correctable later on /memory.)
+ *  is a durable working-fact, correctable later on /memory.)
  *
  * Dedupe: if an existing ACTIVE fact has normalized-equal text (trim +
  * lowercase, COMPARE only — stored text is never mutated), no duplicate is
@@ -538,7 +526,7 @@ export function setFactKindCore(
  * restateFactCore stamps on an active-fact reconfirmation), tagged
  * reason:"chat_repeat" to mark the dedupe origin.
  *
- * Precondition: `text` must be non-empty. Trigger-only "记住" with no
+ * Precondition: `text` must be non-empty. Trigger-only  with no
  * content is the CALLER's no-op-with-feedback responsibility (chat.ts guards
  * payload === "" before calling); empty text reaching here is a programmer
  * error, signalled by `throw` — deliberately kept OUT of the ok/error
@@ -633,7 +621,7 @@ export interface BatchCaptureResult {
  * truthful capture ack (SAVED vs ALREADY KNOWN) from these flags.
  *
  * Each item's optional `entities` (extracted by `extractDurableFacts`, or absent
- * for the explicit "记住 X" path which has no extractor) thread through to
+ * for the explicit  path which has no extractor) thread through to
  * `captureChatFactCore` so a fresh fact carries the entities it was extracted with.
  *
  * Pure: input `memory` is never mutated (each transition shallow-copies).

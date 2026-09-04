@@ -3,10 +3,10 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { homedir } from "node:os";
 import type { FewShotIndexEntry } from "./types";
+import { siltpokeRoot } from "../installer/paths";
 
-const DEFAULT_PATH = join(homedir(), ".siltpoke", "few-shot-index.json");
+const DEFAULT_PATH = join(siltpokeRoot(), "few-shot-index.json");
 
 export async function loadIndex(path = DEFAULT_PATH): Promise<FewShotIndexEntry[]> {
   if (!existsSync(path)) return [];

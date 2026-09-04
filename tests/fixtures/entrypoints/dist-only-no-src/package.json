@@ -1,0 +1,7 @@
+{
+  "name": "dist-only-no-src",
+  "version": "1.0.0",
+  "bin": {
+    "dist-only-no-src": "dist/x.js"
+  }
+}

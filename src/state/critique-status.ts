@@ -7,6 +7,28 @@ import { join } from "node:path";
 export type CritiqueStatus = "pending" | "forwarded" | "dismissed" | "acked";
 
 const STATUS_LINE = /^status:\s*(\S+)\s*$/m;
+const CRITIQUE_ID_LINE = /^critique_id:\s*(\S+)\s*$/m;
+
+/**
+ * The critique's OWN id, read from its frontmatter.
+ *
+ * Needed because callers address a critique by `<id> | "latest"`, and "latest"
+ * is a lookup sentinel, not an identity. Writing the sentinel into a record —
+ * as mark-forwarded did into `preference-log.jsonl` — produces a row that
+ * cannot be joined back to any critique, and `/siltpoke-last` invokes
+ * `mark-forwarded` with no argument, so EVERY forward from the shipped path
+ * carried it. Resolve through this before recording an id anywhere.
+ */
+export async function readCritiqueId(
+  critiquePath: string,
+): Promise<string | null> {
+  try {
+    const raw = await readFile(critiquePath, "utf8");
+    return raw.match(CRITIQUE_ID_LINE)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export async function readStatus(
   critiquePath: string,

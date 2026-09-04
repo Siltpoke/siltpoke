@@ -73,7 +73,10 @@ describe("Chat screen SSR", () => {
     const html = render();
     // AppChrome 'siltpoked' top bar dropped; sidebar footer
     // now carries the daemon identity.
-    expect(html).toContain("daemon");
+    // Was `toContain("daemon")`, standing in for "the footer rendered".
+    // That line is gone (a hardcoded port beside an always-green dot),
+    // so anchor on the footer itself — the thing the test is about.
+    expect(html).toContain("sidebar-footer");
   });
 
   // --- CANONICAL_NAV wiring ---

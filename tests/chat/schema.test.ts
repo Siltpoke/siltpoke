@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import { chatMessageSchema, parseChatMessage } from "../../src/chat/schema";
+import { chatAnchorSchema } from "../../src/memory/memory";
 
 const validBase = {
   id: "m-abc12345",
@@ -132,4 +133,37 @@ test("rejects error_message longer than 300 chars (never a raw stderr blob)", ()
       error_message: "x".repeat(301),
     }),
   ).toThrow();
+});
+
+// ── critique anchor variant (slice 1) ──────────────────────────────────
+
+describe("chatAnchorSchema — critique variant", () => {
+  it("defaults kind to 'node' and critique_id to null for a legacy node anchor", () => {
+    const parsed = chatAnchorSchema.parse({
+      node_id: "function:src/a.ts:foo",
+      proj_hash: "abc123abc123",
+      node_name: "foo",
+      node_type: "function",
+      fingerprint: "deadbeef",
+      pinned_at: "2026-07-12T00:00:00.000Z",
+    });
+    expect(parsed.kind).toBe("node");
+    expect(parsed.critique_id).toBeNull();
+  });
+
+  it("accepts a critique anchor (kind=critique, critique_id set, fingerprint null)", () => {
+    const parsed = chatAnchorSchema.parse({
+      node_id: "c-1a2b",
+      critique_id: "c-1a2b",
+      kind: "critique",
+      proj_hash: "abc123abc123",
+      node_name: "critique c-1a2b",
+      node_type: "critique",
+      fingerprint: null,
+      pinned_at: "2026-07-12T00:00:00.000Z",
+    });
+    expect(parsed.kind).toBe("critique");
+    expect(parsed.critique_id).toBe("c-1a2b");
+    expect(parsed.fingerprint).toBeNull();
+  });
 });

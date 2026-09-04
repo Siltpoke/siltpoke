@@ -1,0 +1,24 @@
+{
+  "mood": "happy",
+  "pose": "base",
+  "bubble_short": "Math is finally mathing!",
+  "bubble_long": "Nice catch! Your add function was secretly subtracting, but this fix puts everything right in the world.",
+  "critique_for_claude": "The diff correctly resolves a logical error where the `add` function was performing subtraction. The change replaces the `-` operator with the `+` operator, aligning the implementation with the function's intended behavior.",
+  "severity": "info",
+  "confidence": "high",
+  "xp_earned_events": [
+    {
+      "type": "bugfix",
+      "amount": 10
+    }
+  ],
+  "evidence": [
+    {
+      "tool": "git-diff",
+      "file": "src/utils/add.ts",
+      "line": 2,
+      "snippet": "return a + b;"
+    }
+  ],
+  "reasoning": "The function is named `add` but was previously subtracting `b` from `a`. The fix is straightforward, correct, and carries no risk."
+}

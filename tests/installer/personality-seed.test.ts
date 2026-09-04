@@ -17,7 +17,7 @@ import {
   applyMatchMode,
   dialPolarity,
   QUIZ_LIKERT_ITEMS,
-  QUIZ_FINALE,
+  QUIZ_FINALES,
   type QuizAnswers,
 } from "../../src/installer/personality-seed";
 import { BrainError } from "../../src/brain/brain";
@@ -190,58 +190,67 @@ function neutralAnswers(): QuizAnswers {
       itemIndex: i,
       score: 3 as const,
     })),
-    finale: { letter: "b" as const }, // mild option
+    finales: ["b", "a", "b"] as const, // mild, desirability-mixed picks
   };
 }
 
-test("scoreQuiz: all neutral Likert + mild finale stays near 5/5/5/5/5", () => {
+test("scoreQuiz: all neutral Likert + mild finales stays near 5/5/5/5/5", () => {
   const dials = scoreQuiz(neutralAnswers());
-  // every dial should be 4-6 (neutral mid; finale 'b' nudges patience +1, snark -1)
+  // every dial should stay within 3-7 of the neutral mid — no Likert push,
+  // only the modest ±1..±2 finale nudges.
   for (const k of ["snark", "patience", "rigor", "chattiness", "curiosity"] as const) {
     expect(dials[k]).toBeGreaterThanOrEqual(3);
     expect(dials[k]).toBeLessThanOrEqual(7);
   }
 });
 
-test("scoreQuiz: max-snark answers push snark high + patience low", () => {
+test("scoreQuiz: deterministic dials for a fixed positive-keyed answer set", () => {
+  // All items are positively keyed now — strong-agree on snark item pushes
+  // snark up, strong-disagree on patience item pushes patience down.
   const dials = scoreQuiz({
     likert: [
-      { itemIndex: 0, score: 5 }, // 'sharp than sweet' → snark+ only
-      { itemIndex: 1, score: 1 }, // 'let small things slide' strongly disagree → patience-
-      { itemIndex: 2, score: 3 },
-      { itemIndex: 3, score: 3 },
-      { itemIndex: 4, score: 3 },
+      { itemIndex: 0, score: 5 }, // snark+2  → +2
+      { itemIndex: 1, score: 1 }, // patience+2 keyed, disagree → -2
+      { itemIndex: 2, score: 3 }, // rigor neutral
+      { itemIndex: 3, score: 3 }, // chattiness neutral
+      { itemIndex: 4, score: 5 }, // curiosity+2 → +2 (positively keyed)
     ],
-    finale: { letter: "a" }, // haiku roast → snark+, rigor+, chattiness+
+    finales: ["a", "a", "a"],
+    // s1 a: snark+2
+    // s2 a: chattiness-2
+    // s3 a: curiosity-2
   });
-  expect(dials.snark).toBeGreaterThan(6);
-  expect(dials.patience).toBeLessThan(5);
+  expect(dials).toEqual({
+    snark: 9,       // 5 +2 +2 = 9
+    patience: 3,    // 5 -2 = 3
+    rigor: 5,       // 5 (neutral) = 5
+    chattiness: 3,  // 5 -2 = 3
+    curiosity: 5,   // 5 +2 -2 = 5
+  });
 });
 
-test("scoreQuiz: reverse-scored item flips its sign", () => {
-  // Item 4 (curiosity:+2, reverse=true) — "I stop looking once I find a way".
-  // Strongly agree (5) with reverse=true → flips → curiosity decreases.
-  const withAgree = scoreQuiz({
+test("scoreQuiz: curiosity item is positively keyed (agree → curiosity up)", () => {
+  // Was the lone reverse-scored item; now positive. Strong-agree must RAISE
+  // curiosity relative to strong-disagree.
+  const base = (score: 1 | 2 | 3 | 4 | 5): QuizAnswers => ({
     likert: [
       { itemIndex: 0, score: 3 },
       { itemIndex: 1, score: 3 },
       { itemIndex: 2, score: 3 },
       { itemIndex: 3, score: 3 },
-      { itemIndex: 4, score: 5 },
+      { itemIndex: 4, score },
     ],
-    finale: { letter: "b" },
+    finales: ["b", "b", "b"],
   });
-  const withDisagree = scoreQuiz({
-    likert: [
-      { itemIndex: 0, score: 3 },
-      { itemIndex: 1, score: 3 },
-      { itemIndex: 2, score: 3 },
-      { itemIndex: 3, score: 3 },
-      { itemIndex: 4, score: 1 },
-    ],
-    finale: { letter: "b" },
-  });
-  expect(withAgree.curiosity).toBeLessThan(withDisagree.curiosity);
+  const withAgree = scoreQuiz(base(5));
+  const withDisagree = scoreQuiz(base(1));
+  expect(withAgree.curiosity).toBeGreaterThan(withDisagree.curiosity);
+});
+
+test("QUIZ_LIKERT_ITEMS: no item is reverse-scored", () => {
+  for (const item of QUIZ_LIKERT_ITEMS) {
+    expect(item.reverse).toBeUndefined();
+  }
 });
 
 test("scoreQuiz: clips to [0, 10] range", () => {
@@ -251,7 +260,7 @@ test("scoreQuiz: clips to [0, 10] range", () => {
       itemIndex: i,
       score: 5 as const,
     })),
-    finale: { letter: "c" },
+    finales: ["c", "a", "a"],
   });
   for (const k of ["snark", "patience", "rigor", "chattiness", "curiosity"] as const) {
     expect(dials[k]).toBeGreaterThanOrEqual(0);
@@ -322,7 +331,7 @@ test("generateSoulFromQuiz: happy path returns soul + rationale", async () => {
         soul: "Calm cat with no strong opinions.",
         rationale: {
           snark: "Neutral on 'right vs nice'.",
-          patience: "Picked option b (polite sticky note).",
+          patience: "Picked option b (gently talk you through it).",
         },
       } as unknown as never,
       usage: {
@@ -362,9 +371,23 @@ test("QUIZ_LIKERT_ITEMS: 5 items, all have text + impact", () => {
   }
 });
 
-test("QUIZ_FINALE: 4 options, each lettered a/b/c/d", () => {
-  expect(QUIZ_FINALE.options).toHaveLength(4);
-  expect(QUIZ_FINALE.options.map((o) => o.letter)).toEqual(["a", "b", "c", "d"]);
+test("QUIZ_FINALES: 3 scenarios; first has 4 options a-d, each has ≥2 lettered options", () => {
+  expect(QUIZ_FINALES).toHaveLength(3);
+  expect(QUIZ_FINALES[0]!.options.map((o) => o.letter)).toEqual([
+    "a", "b", "c", "d",
+  ]);
+  const letters = ["a", "b", "c", "d"] as const;
+  for (const scenario of QUIZ_FINALES) {
+    expect(scenario.text.length).toBeGreaterThan(0);
+    expect(scenario.options.length).toBeGreaterThanOrEqual(2);
+    // Letters are a distinct prefix of a/b/c/d, and every option moves ≥1 dial.
+    expect(scenario.options.map((o) => o.letter)).toEqual(
+      letters.slice(0, scenario.options.length),
+    );
+    for (const o of scenario.options) {
+      expect(Object.keys(o.impact).length).toBeGreaterThan(0);
+    }
+  }
 });
 
 // ---------- matchMode ----------
@@ -426,7 +449,7 @@ test("scoreQuiz: complement mode flips snark direction", () => {
       { itemIndex: 3, score: 3 },
       { itemIndex: 4, score: 3 },
     ],
-    finale: { letter: "b" },
+    finales: ["b", "b", "a"],
   };
   const mirror = scoreQuiz(answers, "mirror");
   const complement = scoreQuiz(answers, "complement");
@@ -435,21 +458,52 @@ test("scoreQuiz: complement mode flips snark direction", () => {
 });
 
 test("scoreQuiz: hybrid flips task but keeps vibe", () => {
-  // User strongly disagrees with "I stop looking once I find a way" (reverse-
-  // scored curiosity item → mirror pushes curiosity UP because they keep
-  // looking for alternatives).
+  // User strongly agrees with the curiosity item (positively keyed now → mirror
+  // pushes curiosity UP because they want alternatives surfaced).
   const answers: QuizAnswers = {
     likert: [
       { itemIndex: 0, score: 5 }, // snark+ (vibe)
       { itemIndex: 1, score: 3 },
       { itemIndex: 2, score: 3 },
       { itemIndex: 3, score: 3 },
-      { itemIndex: 4, score: 1 }, // reverse → user values curiosity → mirror pushes curiosity up
+      { itemIndex: 4, score: 5 }, // curiosity+ (task)
     ],
-    finale: { letter: "b" },
+    finales: ["b", "b", "b"], // s3 b: curiosity+ (reinforces item4, no cancel)
   };
   const mirror = scoreQuiz(answers, "mirror");
   const hybrid = scoreQuiz(answers, "hybrid");
   expect(hybrid.snark).toBe(mirror.snark); // vibe → mirror in both
   expect(hybrid.curiosity).not.toBe(mirror.curiosity); // task → flipped in hybrid
+});
+
+test("scoreQuiz: complement yields deterministic dials that differ from mirror", () => {
+  // Strong-agree on all five (positively keyed) items + finale a/a/a. Proves
+  // matchMode is actually applied: complement flips every dial's contribution.
+  const answers: QuizAnswers = {
+    likert: [
+      { itemIndex: 0, score: 5 }, // snark+2
+      { itemIndex: 1, score: 5 }, // patience+2
+      { itemIndex: 2, score: 5 }, // rigor+2
+      { itemIndex: 3, score: 5 }, // chattiness+2
+      { itemIndex: 4, score: 5 }, // curiosity+2
+    ],
+    finales: ["a", "a", "a"], // s1 snark+2, s2 chattiness-2, s3 curiosity-2
+  };
+  const mirror = scoreQuiz(answers, "mirror");
+  const complement = scoreQuiz(answers, "complement");
+  expect(mirror).toEqual({
+    snark: 9,      // 5 +2 +2
+    patience: 7,   // 5 +2
+    rigor: 7,      // 5 +2
+    chattiness: 5, // 5 +2 -2
+    curiosity: 5,  // 5 +2 -2
+  });
+  expect(complement).toEqual({
+    snark: 1,      // 5 -2 -2
+    patience: 3,   // 5 -2
+    rigor: 3,      // 5 -2
+    chattiness: 5, // 5 -2 +2
+    curiosity: 5,  // 5 -2 +2
+  });
+  expect(complement).not.toEqual(mirror);
 });

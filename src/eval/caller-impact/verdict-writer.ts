@@ -9,14 +9,51 @@ import {
   wilsonInterval,
 } from "./stats";
 
+/**
+ * Provider provenance for a verdict run (track #7 T5, AC12) — which reviewer
+ * backend produced the arm calls this verdict scored, and what model it
+ * actually served. Recorded so the release-gate protocol (an internal design note
+ * 2026-07-07-brain-provider-release-gate.md) can tell "this exact verdict
+ * covers codex@<servedModel>" from "this is a claude verdict" — certification
+ * is per-provider, and a served-model change invalidates a prior verdict.
+ * `servedModel: null` = the provider call never surfaced one (see codex.ts's
+ * provenance caveat — config.toml fallback can itself be absent).
+ */
+export interface VerdictProvenance {
+  provider: string;
+  servedModel: string | null;
+  /** ISO timestamp of when the run producing this verdict finished. */
+  ts: string;
+}
+
 export interface VerdictReport {
   results: ArmResults;
   verdict: Verdict;
   body: string;
+  /** Present only when the caller (run-eval.ts) supplied one — absent for the
+   * default claude path, matching "byte-identical when unspecified" (AC1's
+   * ethos, extended to the eval CLI). */
+  provenance?: VerdictProvenance;
 }
 
 function pct(x: number): string {
   return `${(x * 100).toFixed(1)}%`;
+}
+
+/** Render the "## Provider" section when provenance was supplied — omitted
+ * entirely for the default (unset/claude) eval run, so existing verdict.md
+ * bodies for claude runs are unchanged byte-for-byte. */
+function provenanceLines(provenance: VerdictProvenance | undefined): string[] {
+  if (provenance === undefined) return [];
+  const servedModel = provenance.servedModel ?? "(unknown)";
+  return [
+    "## Provider",
+    "",
+    `- provider: ${provenance.provider}`,
+    `- servedModel: ${servedModel}`,
+    `- run completed: ${provenance.ts}`,
+    "",
+  ];
 }
 
 /**
@@ -28,6 +65,7 @@ function pct(x: number): string {
 export function writeVerdictMd(
   results: ArmResults,
   discordantFloor = 6,
+  provenance?: VerdictProvenance,
 ): VerdictReport {
   if (!results.ok) {
     const body = [
@@ -37,6 +75,7 @@ export function writeVerdictMd(
       "",
       "No arms were run. Re-freeze the example set and recompute the manifest hash before retrying.",
       "",
+      ...provenanceLines(provenance),
     ].join("\n");
     return {
       results,
@@ -45,6 +84,7 @@ export function writeVerdictMd(
         rationale: "aborted: frozen-set guard failed",
       },
       body,
+      ...(provenance !== undefined ? { provenance } : {}),
     };
   }
 
@@ -128,6 +168,12 @@ export function writeVerdictMd(
     "- Verdict semantics are pre-registered; `underpowered` (discordant < floor) is reported honestly and never massaged into a loss.",
   );
   lines.push("");
+  lines.push(...provenanceLines(provenance));
 
-  return { results, verdict: v, body: lines.join("\n") };
+  return {
+    results,
+    verdict: v,
+    body: lines.join("\n"),
+    ...(provenance !== undefined ? { provenance } : {}),
+  };
 }

@@ -1,0 +1,4 @@
+======== STOP HOOK FIRED @ 22:06:20Z | stdin_len=492 ========
+--- STDIN (verbatim) ---
+{"artifactDirectoryPath":"/Users/v/.gemini/antigravity-cli/brain/cfde924e-7cb4-46c5-9332-09fca3130f0d","conversationId":"cfde924e-7cb4-46c5-9332-09fca3130f0d","error":"","executionNum":0,"fullyIdle":true,"modelName":"gemini-3.5-flash-low","terminationReason":"NO_TOOL_CALL","transcriptPath":"/Users/v/.gemini/antigravity-cli/brain/cfde924e-7cb4-46c5-9332-09fca3130f0d/.system_generated/logs/transcript_full.jsonl","workspacePaths":["/Users/v/agy-t1-scratch"]}
+

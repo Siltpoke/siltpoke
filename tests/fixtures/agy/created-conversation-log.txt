@@ -1,0 +1,5 @@
+I0710 20:38:15.980076  5949 server.go:861] Created conversation d0acc450-de71-4463-9d56-17b1370ec793
+I0710 20:38:15.980190  5949 server.go:2212] GetConversationDetail: found conversation d0acc450-de71-4463-9d56-17b1370ec793 (active=true)
+I0710 20:38:15.981559  5949 conversation_manager.go:520] Streaming conversation d0acc450-de71-4463-9d56-17b1370ec793
+I0710 20:38:15.981894  5949 printmode.go:191] Print mode: conversation=d0acc450-de71-4463-9d56-17b1370ec793, sending message
+I0710 20:38:18.006083  5949 server.go:910] Stream goroutine exited for d0acc450-de71-4463-9d56-17b1370ec793, sending completion signal

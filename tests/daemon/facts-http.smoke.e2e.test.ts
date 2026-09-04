@@ -17,8 +17,11 @@ import {
   stopDaemon,
   type DaemonHandle,
 } from "../../src/daemon/server";
+import { resetNavAvailability } from "../../src/web/routes/nav";
 import { writeMemory, emptyMemory } from "../../src/memory/memory";
 import type { CoreMemory, Fact } from "../../src/memory/memory";
+import { ensureProject } from "../../src/memory/project";
+import { computeProjHash } from "../../src/repo-graph/proj-hash";
 
 const SECRET = "smoke-secret-deadbeef";
 
@@ -53,6 +56,16 @@ function makeMemory(facts: Fact[]): CoreMemory {
 async function boot(facts: Fact[]) {
   const dir = mkdtempSync(join(tmpdir(), "facts-http-smoke-"));
   await writeMemory(dir, makeMemory(facts));
+  // Write-eligibility guard (Task 11): facts writes are only accepted for an
+  // INTENTIONAL project resolution (explicit ?repo= or the sticky pin) — a
+  // fresh homeBase with no registered project would resolve "none" and 409.
+  // Register `dir` itself as an active project so `?repo=<projHash>` on the
+  // write requests below resolves to "explicit" (see matchLive in
+  // src/memory/active-project.ts). Facts still land in the GLOBAL store
+  // regardless (writeMemory(..., GLOBAL_ONLY)) — this only satisfies the
+  // request-intentionality gate.
+  await ensureProject(dir, dir);
+  const projHash = computeProjHash(dir);
   const handle = await startDaemon({
     port: 0,
     hostname: "127.0.0.1",
@@ -62,7 +75,7 @@ async function boot(facts: Fact[]) {
     secret: SECRET,
     homeBase: dir,
   });
-  return { handle, baseUrl: `http://127.0.0.1:${handle.server.port}`, dir };
+  return { handle, baseUrl: `http://127.0.0.1:${handle.server.port}`, dir, projHash };
 }
 
 const headers = (override?: Record<string, string>) => ({
@@ -82,6 +95,7 @@ describe("facts HTTP smoke (real port + real disk)", () => {
       }
     }
     handle = null;
+    resetNavAvailability();
   });
 
   test("auth: 401 without secret + 401 with wrong secret + 200 with right secret", async () => {
@@ -135,7 +149,7 @@ describe("facts HTTP smoke (real port + real disk)", () => {
     const b = await boot([makeFact({ id: "f-1", status: "pending" })]);
     handle = b.handle;
 
-    const first = await fetch(`${b.baseUrl}/api/facts/f-1/approve`, {
+    const first = await fetch(`${b.baseUrl}/api/facts/f-1/approve?repo=${b.projHash}`, {
       method: "POST",
       headers: headers(),
     });
@@ -143,7 +157,7 @@ describe("facts HTTP smoke (real port + real disk)", () => {
     const firstBody = (await first.json()) as { fact: Fact };
     expect(firstBody.fact.status).toBe("active");
 
-    const second = await fetch(`${b.baseUrl}/api/facts/f-1/approve`, {
+    const second = await fetch(`${b.baseUrl}/api/facts/f-1/approve?repo=${b.projHash}`, {
       method: "POST",
       headers: headers(),
     });
@@ -155,7 +169,7 @@ describe("facts HTTP smoke (real port + real disk)", () => {
     expect(secondBody.error).toBe("not_pending");
     expect(secondBody.current_status).toBe("active");
 
-    const missing = await fetch(`${b.baseUrl}/api/facts/nope/approve`, {
+    const missing = await fetch(`${b.baseUrl}/api/facts/nope/approve?repo=${b.projHash}`, {
       method: "POST",
       headers: headers(),
     });
@@ -166,7 +180,7 @@ describe("facts HTTP smoke (real port + real disk)", () => {
     const b = await boot([makeFact({ id: "f-1", status: "pending" })]);
     handle = b.handle;
 
-    const first = await fetch(`${b.baseUrl}/api/facts/f-1/retire`, {
+    const first = await fetch(`${b.baseUrl}/api/facts/f-1/retire?repo=${b.projHash}`, {
       method: "POST",
       headers: headers(),
     });
@@ -176,7 +190,7 @@ describe("facts HTTP smoke (real port + real disk)", () => {
     expect(firstBody.fact.retired_reason).toBe("user_rejected");
 
     // Idempotent second retire — still 200, same retired_reason
-    const second = await fetch(`${b.baseUrl}/api/facts/f-1/retire`, {
+    const second = await fetch(`${b.baseUrl}/api/facts/f-1/retire?repo=${b.projHash}`, {
       method: "POST",
       headers: headers(),
     });
@@ -190,7 +204,7 @@ describe("facts HTTP smoke (real port + real disk)", () => {
     const b = await boot([makeFact({ id: "f-1", status: "active" })]);
     handle = b.handle;
 
-    const r = await fetch(`${b.baseUrl}/api/facts/f-1/retire`, {
+    const r = await fetch(`${b.baseUrl}/api/facts/f-1/retire?repo=${b.projHash}`, {
       method: "POST",
       headers: headers(),
     });

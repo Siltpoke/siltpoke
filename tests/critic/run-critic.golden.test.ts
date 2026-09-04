@@ -257,7 +257,10 @@ test("golden: runCritic NORMAL accepted path is stable", async () => {
   diffOrCapture(snapshot, "runCritic-NORMAL_accepted.json");
 });
 
-test("golden: runCritic NORMAL rejected path is stable", async () => {
+// Renamed from "NORMAL rejected path" on 2026-08-19 — the fabricated citation
+// is now dropped and the review persisted, so the golden records a WRITE where
+// it used to record a refusal. The fixture is re-captured, not edited by hand.
+test("golden: runCritic NORMAL unverified-evidence path is stable", async () => {
   let writeCalled = false;
   const FABRICATED = "this snippet was hallucinated by the LLM!";
   const rejected = brainOut({
@@ -296,11 +299,11 @@ test("golden: runCritic NORMAL rejected path is stable", async () => {
   };
 
   const result = await runCritic(makeOpts(), deps);
-  expect(writeCalled).toBe(false);
+  expect(writeCalled).toBe(true);
   const snapshot = JSON.stringify(
     { result: stripTiming(result), writeCalled },
     null,
     2,
   );
-  diffOrCapture(snapshot, "runCritic-NORMAL_rejected.json");
+  diffOrCapture(snapshot, "runCritic-NORMAL_unverified.json");
 });

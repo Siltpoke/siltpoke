@@ -4,20 +4,21 @@
 import { mkdir, writeFile, readdir, rm, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { Database } from "bun:sqlite";
 import { Tracer } from "../observability/tracer";
 import { TraceStore } from "../observability/storage";
 import { buildRepoMemoryIndex } from "../repo-memory/index-builder";
 import { buildFewShotIndex } from "../few-shot/build-index";
+import { siltpokeRoot } from "../installer/paths";
 
 const argv = process.argv.slice(2);
 const flagClear = argv.includes("--clear");
 const flagSkipBuild = argv.includes("--skip-build");
 
 // Resolve HOME lazily so SILTPOKE_HOME env can be set before calling main()
+// (siltpokeRoot() itself reads process.env at call time, so laziness holds).
 function getHome(): string {
-  return process.env.SILTPOKE_HOME ?? join(homedir(), ".siltpoke");
+  return siltpokeRoot();
 }
 
 const today = new Date().toISOString().slice(0, 10);

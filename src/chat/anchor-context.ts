@@ -209,7 +209,7 @@ export async function assembleAnchorContext(input: {
 /**
  * Disk shell — load the project's repo-graph from storage, then assemble.
  * `no_graph` when the project hasn't been indexed (parallels explain's
- * pre-check; the chat route surfaces "run /siltpoke-index first").
+ * pre-check; the chat route surfaces the Code Map indexing hint).
  */
 export async function resolveAnchorContext(input: {
   target: AnchorTarget;
@@ -222,14 +222,14 @@ export async function resolveAnchorContext(input: {
   if (!existsSync(join(graphStorageDir, "meta.json"))) {
     return {
       kind: "no_graph",
-      message: "No repo-graph found. Run `/siltpoke-index` first to build the structural index.",
+      message: "No repo-graph found. Open Code Map and pick this repo to build the structural index.",
     };
   }
   const meta = await readMeta(graphStorageDir);
   if (!meta || meta.schemaVersion !== 1) {
     return {
       kind: "no_graph",
-      message: "Repo-graph meta.json missing or unsupported. Run `/siltpoke-index --force`.",
+      message: "Repo-graph meta.json missing or unsupported. Re-index this repo from Code Map.",
     };
   }
 

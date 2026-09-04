@@ -1,17 +1,31 @@
 /**
- * Doctor daemon-staleness check.
+ * Doctor daemon checks (staleness / alive / autostart).
  *
- * Tests the pure state→row mapping for all 4 cases (current / behind /
+ * Staleness: pure state→row mapping for all 4 cases (current / behind /
  * unknown / daemon-down) plus the async fetch wrapper's graceful-skip on
  * fetch failure / non-200 / malformed payload. No live daemon — fetch is
- * stubbed via the injectable fetchFn. Implementation:
- * src/cli/doctor-daemon-check.ts.
+ * stubbed via the injectable fetchFn.
+ *
+ * Alive (track #6 T5, AC11; opt-in semantics from the daemon-opt-in slice):
+ * /api/ping probe — up → pass; down + daemon.enabled=false (the default) →
+ * ◦ info "daemon: off (opt-in...)", never fails; down + daemon.enabled=true
+ * → ✗ genuine fail (the user opted in and it should be reachable).
+ *
+ * Autostart (track #6 T5, AC11): plist/unit presence — info-only in every
+ * state (installed / not installed / unsupported platform), never fails.
+ *
+ * Implementation: src/cli/doctor-daemon-check.ts.
  */
-import { test, expect, describe } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
-  mapDaemonHealthToCheck,
+  checkAutostart,
+  checkDaemonAlive,
   checkDaemonStaleness,
   type DaemonHealth,
+  mapDaemonHealthToCheck,
 } from "../../src/cli/doctor-daemon-check";
 
 // Build a Response stub the wrapper consumes (res.ok + res.json()).
@@ -160,6 +174,129 @@ describe("doctor daemon-staleness — fetch wrapper", () => {
         jsonResponse({ success: true, data: { state: "broken_state", bootSha: "z", commitsBehind: 0 } }),
     });
     expect(r.detail).toBe("skipped (daemon down)");
+  });
+});
+
+// ── daemon-alive check (/api/ping probe, warn-only) ─────────────────────────
+
+describe("doctor daemon-alive — /api/ping probe", () => {
+  const OFF_DETAIL = "daemon: off (opt-in — open /siltpoke-dashboard to enable)";
+  const ENABLED_UNREACHABLE_DETAIL =
+    "daemon.enabled is true but /api/ping is unreachable — try /siltpoke-restart-daemon";
+
+  test("daemon up (200 on /api/ping) → ✓ pass, no detail", async () => {
+    const r = await checkDaemonAlive({
+      fetchFn: async () => ({ ok: true } as Response),
+    });
+    expect(r.name).toBe("daemon alive (/api/ping)");
+    expect(r.pass).toBe(true);
+    expect(r.status).toBe("pass");
+    expect(r.detail).toBeNull();
+  });
+
+  test("down + daemon.enabled=false (default) → ◦ info 'daemon: off (opt-in...)', pass stays true", async () => {
+    const r = await checkDaemonAlive({
+      fetchFn: async () => {
+        throw new Error("ECONNREFUSED");
+      },
+      loadDaemonConfigFn: async () => ({ enabled: false }),
+    });
+    expect(r.pass).toBe(true);
+    expect(r.status).toBe("info");
+    expect(r.detail).toBe(OFF_DETAIL);
+  });
+
+  test("non-200 response + daemon.enabled=false → ◦ info 'daemon: off (opt-in...)' (never a red fail)", async () => {
+    const r = await checkDaemonAlive({
+      fetchFn: async () => ({ ok: false } as Response),
+      loadDaemonConfigFn: async () => ({ enabled: false }),
+    });
+    expect(r.pass).toBe(true);
+    expect(r.status).toBe("info");
+    expect(r.detail).toBe(OFF_DETAIL);
+  });
+
+  test("down + daemon.enabled=true → ✗ genuine fail (opted in but unreachable)", async () => {
+    const r = await checkDaemonAlive({
+      fetchFn: async () => {
+        throw new Error("ECONNREFUSED");
+      },
+      loadDaemonConfigFn: async () => ({ enabled: true }),
+    });
+    expect(r.pass).toBe(false);
+    expect(r.detail).toBe(ENABLED_UNREACHABLE_DETAIL);
+  });
+
+  test("probes the injectable ping URL", async () => {
+    const seen: string[] = [];
+    await checkDaemonAlive({
+      daemonPingUrl: "http://127.0.0.1:1/api/ping",
+      fetchFn: async (input) => {
+        seen.push(String(input));
+        return { ok: true } as Response;
+      },
+    });
+    expect(seen).toEqual(["http://127.0.0.1:1/api/ping"]);
+  });
+});
+
+// ── autostart check (plist/unit presence, info-only) ────────────────────────
+
+describe("doctor autostart — plist/unit presence", () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "siltpoke-doctor-autostart-"));
+  });
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const NOT_INSTALLED_DETAIL = "not installed — run `/siltpoke-setup`";
+
+  test("darwin, plist present → ✓ pass 'installed'", () => {
+    const plist = join(tmp, "io.siltpoke.daemon.plist");
+    writeFileSync(plist, "<plist/>");
+    const r = checkAutostart({ platform: "darwin", autostartPath: plist });
+    expect(r.name).toBe("daemon autostart configured");
+    expect(r.pass).toBe(true);
+    expect(r.status).toBe("pass");
+    expect(r.detail).toBe(`installed (${plist})`);
+  });
+
+  test("darwin, plist absent → ◦ info 'not installed' with setup hint (never fails)", () => {
+    const r = checkAutostart({
+      platform: "darwin",
+      autostartPath: join(tmp, "io.siltpoke.daemon.plist"),
+    });
+    expect(r.pass).toBe(true);
+    expect(r.status).toBe("info");
+    expect(r.detail).toBe(NOT_INSTALLED_DETAIL);
+  });
+
+  test("linux, unit present → ✓ pass 'installed'", () => {
+    const unit = join(tmp, "siltpoked.service");
+    writeFileSync(unit, "[Unit]");
+    const r = checkAutostart({ platform: "linux", autostartPath: unit });
+    expect(r.pass).toBe(true);
+    expect(r.status).toBe("pass");
+    expect(r.detail).toBe(`installed (${unit})`);
+  });
+
+  test("linux, unit absent → ◦ info 'not installed'", () => {
+    const r = checkAutostart({
+      platform: "linux",
+      autostartPath: join(tmp, "siltpoked.service"),
+    });
+    expect(r.pass).toBe(true);
+    expect(r.status).toBe("info");
+    expect(r.detail).toBe(NOT_INSTALLED_DETAIL);
+  });
+
+  test("unsupported platform (win32) → ◦ info skip note", () => {
+    const r = checkAutostart({ platform: "win32" });
+    expect(r.pass).toBe(true);
+    expect(r.status).toBe("info");
+    expect(r.detail).toBe("skipped (autostart unsupported on win32)");
   });
 });
 

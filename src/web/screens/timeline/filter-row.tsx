@@ -40,14 +40,6 @@ import { tokens } from "../../tokens/tokens";
 import { ProjectSelect } from "../critic/filter-bar";
 import { type FilterState, filterHref } from "../critic/helpers";
 
-/**
- * Reference-exact values with no token equivalent (ground truth: the
- * decoded design companion). Kept local — the timeline filter row is the
- * only surface on this design revision so far.
- */
-const SEG_EDGE = "#e2d6bb"; // container/select border (lighter than tokens.color.edge)
-const SEG_ACTIVE_TEXT = "#f7f2e4"; // cream text on the active ink block
-
 const BASE_PATH = "/timeline";
 
 /**
@@ -57,7 +49,7 @@ const BASE_PATH = "/timeline";
  * data-group/data-key/data-active contract so tests + selectors carry over.
  */
 function SegItem({ group, label, active, href, dataKey }: {
-  group: "status" | "kind" | "range";
+  group: "status" | "kind" | "range" | "family";
   label: string;
   active: boolean;
   href: string;
@@ -74,7 +66,7 @@ function SegItem({ group, label, active, href, dataKey }: {
         fontFamily: tokens.font.mono,
         fontSize: 11,
         fontWeight: active ? 600 : 400,
-        color: active ? SEG_ACTIVE_TEXT : tokens.color.ink3,
+        color: active ? tokens.color.cream : tokens.color.ink3,
         background: active ? tokens.color.ink : "transparent",
         border: "none",
         borderRadius: 6,
@@ -92,12 +84,12 @@ function SegItem({ group, label, active, href, dataKey }: {
 
 /**
  * One bordered segment container of flat SegItems — the status segment's
- * exact box (border SEG_EDGE, radius 8, pad 2, gap 4), reused for kind and
+ * exact box (border tokens.color.edge, radius 8, pad 2, gap 4), reused for kind and
  * range (dropdowns flattened, every option visible). Items navigate via
  * filterHref, which preserves all other active filters.
  */
 function FilterSeg({ group, items }: {
-  group: "status" | "kind" | "range";
+  group: "status" | "kind" | "range" | "family";
   items: Array<{ label: string; active: boolean; href: string; dataKey: string }>;
 }) {
   return (
@@ -108,7 +100,7 @@ function FilterSeg({ group, items }: {
         display: "flex",
         alignItems: "center",
         gap: 4,
-        border: `1px solid ${SEG_EDGE}`,
+        border: `1px solid ${tokens.color.edge}`,
         borderRadius: tokens.radius.md,
         padding: 2,
         background: tokens.color.cream,
@@ -124,7 +116,7 @@ function FilterSeg({ group, items }: {
 
 /** Right-aligned inline search (GET form, preserves the other filters). */
 function SearchForm({ telemetry }: { telemetry: CriticTelemetry }) {
-  const { activeStatus, activeKind, activeRange, activeSort, activeProject, activeQuery } =
+  const { activeStatus, activeKind, activeRange, activeSort, activeProject, activeQuery, activeFamily } =
     telemetry;
   return (
     <form
@@ -145,6 +137,7 @@ function SearchForm({ telemetry }: { telemetry: CriticTelemetry }) {
       {activeRange !== "all" && <input type="hidden" name="range" value={activeRange} />}
       {activeSort !== "newest" && <input type="hidden" name="sort" value={activeSort} />}
       {activeProject && <input type="hidden" name="project" value={activeProject} />}
+      {activeFamily && <input type="hidden" name="family" value={activeFamily} />}
       <input
         type="search"
         name="q"
@@ -161,7 +154,7 @@ function SearchForm({ telemetry }: { telemetry: CriticTelemetry }) {
           height: 28,
           padding: "0 30px 0 10px",
           borderRadius: tokens.radius.md,
-          border: `1px solid ${SEG_EDGE}`,
+          border: `1px solid ${tokens.color.edge}`,
           background: tokens.color.cream,
           color: tokens.color.ink,
           width: 190,
@@ -180,15 +173,15 @@ function SearchForm({ telemetry }: { telemetry: CriticTelemetry }) {
         aria-hidden="true"
         style={{ position: "absolute", right: 10, pointerEvents: "none" }}
       >
-        <circle cx="11" cy="11" r="7" stroke="#a89878" stroke-width="2" />
-        <line x1="16.2" y1="16.2" x2="21" y2="21" stroke="#a89878" stroke-width="2" stroke-linecap="round" />
+        <circle cx="11" cy="11" r="7" style={{ stroke: tokens.color.ink3 }} stroke-width="2" />
+        <line x1="16.2" y1="16.2" x2="21" y2="21" style={{ stroke: tokens.color.ink3 }} stroke-width="2" stroke-linecap="round" />
       </svg>
     </form>
   );
 }
 
 export function TimelineFilterRow({ telemetry }: { telemetry: CriticTelemetry }) {
-  const { projects, activeProject, activeStatus, activeKind, activeRange, activeSort, activeQuery, homeBasename } =
+  const { projects, activeProject, activeStatus, activeKind, activeRange, activeSort, activeQuery, activeFamily, homeBasename } =
     telemetry;
   const active: FilterState = {
     project: activeProject,
@@ -197,6 +190,7 @@ export function TimelineFilterRow({ telemetry }: { telemetry: CriticTelemetry })
     range: activeRange,
     sort: activeSort,
     query: activeQuery,
+    family: activeFamily ?? null,
   };
   const href = (patch: Partial<FilterState>) => filterHref(active, patch, BASE_PATH);
 
@@ -244,6 +238,20 @@ export function TimelineFilterRow({ telemetry }: { telemetry: CriticTelemetry })
           { label: "all time", active: activeRange === "all", href: href({ range: "all" }), dataKey: "all" },
         ]}
       />
+      {/* Builder-family segment (Brain select v2) — filter runs by which CLI
+          built the reviewed code. */}
+      <FilterSeg
+        group="family"
+        items={[
+          { label: "all families", active: activeFamily == null, href: href({ family: null }), dataKey: "all" },
+          ...(["claude", "codex", "agy", "qoder", "codebuddy"] as const).map((f) => ({
+            label: f,
+            active: activeFamily === f,
+            href: href({ family: f }),
+            dataKey: f,
+          })),
+        ]}
+      />
       {/* Spacer … then search + project, right-aligned as one group. */}
       <div
         class="critic-filter-trailing"
@@ -259,6 +267,7 @@ export function TimelineFilterRow({ telemetry }: { telemetry: CriticTelemetry })
             activeRange={activeRange}
             activeSort={activeSort}
             activeQuery={activeQuery}
+            activeFamily={activeFamily}
             homeBasename={homeBasename}
             basePath={BASE_PATH}
           />

@@ -30,6 +30,7 @@ import type { BrainOutput } from "../../src/brain/schema";
 import type { CallBrainOptions, BrainCallResult } from "../../src/brain/brain";
 import type { RunCriticDeps } from "../../src/critic/run-critic";
 import { getTodayTelemetry } from "../../src/state/critic-counters";
+import { commitAll, makeGitRepo } from "../_shared/git-fixture";
 
 // ---------------------------------------------------------------------------
 // Tool availability probes (top-level await — valid in Bun ESM test files)
@@ -159,6 +160,11 @@ function makeStopEvent(
   transcriptPath: string,
   cwd: string,
 ): HookEvent {
+  // The ⏱ review-unit gate asks git whether a unit of work closed, so a cwd
+  // git knows nothing about is answered with `not_a_git_repo` before anything
+  // else in this test can run. A real user's cwd is a repo; this makes the
+  // fixture one too. See tests/_shared/git-fixture.ts.
+  makeGitRepo(cwd);
   return {
     hook_event_name: "Stop",
     session_id: sessionId,
@@ -226,6 +232,10 @@ describe("Smoke: NORMAL accepted — tsc error injected", () => {
             SILTPOKE_TOOL_AUGMENTED: "1",
           },
           m112Deps,
+          // T5 fired-path side effects (menu-bar refresh + osascript notify)
+          // are real spawnSync calls on darwin — stub so this fired-path smoke
+          // test never shells out to open/osascript on a dev Mac.
+          menubarDeps: { exec: () => {} },
         },
       );
 
@@ -313,6 +323,9 @@ describe("Smoke: PASSIVE_BUBBLE — clean refactor", () => {
             SILTPOKE_TOOL_AUGMENTED: "1",
           },
           m112Deps,
+          // T5 fired-path side effects — stub so this PASSIVE_BUBBLE smoke
+          // test never shells out to open/osascript on a dev Mac.
+          menubarDeps: { exec: () => {} },
         },
       );
 
@@ -396,9 +409,9 @@ describe("Smoke: HARD_SUPPRESS — no git, no changed files", () => {
 // Scenario 4: NORMAL rejected (guard) — fabricated snippet
 // ---------------------------------------------------------------------------
 
-describe("Smoke: NORMAL rejected — guard rejects fabricated snippet", () => {
+describe("Smoke: NORMAL with a fabricated snippet — citation dropped, review kept", () => {
   test(
-    "flag ON + tsc error in raw + Brain returns fabricated snippet → guard rejects, no critique",
+    "flag ON + tsc error in raw + Brain returns fabricated snippet → critique written, marked unconfirmed",
     async () => {
       const transcriptPath = makeTranscriptWithEdit(tmpHome, join(tmpHome, "src/foo.ts"));
 
@@ -480,8 +493,16 @@ describe("Smoke: NORMAL rejected — guard rejects fabricated snippet", () => {
         },
       );
 
-      // Guard rejected — no critique written
-      expect(writeCalled).toBe(false);
+      // Written, not discarded — that is the change. The row carries the
+      // caveat instead of the review carrying a death sentence.
+      expect(writeCalled).toBe(true);
+
+      const raw = readFileSync(join(tmpHome, ".siltpoke", "brain-calls.jsonl"), "utf8");
+      const rows = raw.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
+      const row = rows[rows.length - 1]!;
+      expect(row.m112_accepted).toBe(true);
+      expect(row.m112_evidence_label).toBe("none_verified");
+      expect(row.m112_evidence_unverified).toBe(1);
     },
   );
 });
@@ -492,7 +513,7 @@ describe("Smoke: NORMAL rejected — guard rejects fabricated snippet", () => {
 
 describe("Smoke: Telemetry counters", () => {
   test(
-    "after running HARD_SUPPRESS + NORMAL rejected scenarios, telemetry JSON has counters",
+    "after running HARD_SUPPRESS + unverified-evidence scenarios, telemetry JSON has counters",
     async () => {
       // Pre-create telemetry dir so fire-and-forget writes can complete.
       // handleStopHook uses homeBase = join(env.HOME, ".siltpoke").
@@ -536,6 +557,12 @@ describe("Smoke: Telemetry counters", () => {
 
       // Run a NORMAL rejected scenario inline
       const transcriptPath2 = makeTranscriptWithEdit(tmpHome, join(projectDir, "file2.ts"));
+
+      // Second scenario, second unit of work. Under the ⏱ review-unit axis a
+      // turn that closes no unit is skipped at `no_new_commit`, so without this
+      // the reject scenario below never runs and its counter stays 0 — which
+      // reads as "the telemetry is broken" rather than "the turn was skipped".
+      commitAll(projectDir, "second scenario's work");
 
       const m112DepsReject: RunCriticDeps = {
         runToolsFn: async () => ({
@@ -614,9 +641,9 @@ describe("Smoke: Telemetry counters", () => {
 
       // Basic structure checks — counters are non-negative integers
       expect(typeof telemetry.hardSuppressCount).toBe("number");
-      expect(typeof telemetry.normalRejectedCount).toBe("number");
+      expect(typeof telemetry.normalUnverifiedCount).toBe("number");
       expect(telemetry.hardSuppressCount).toBeGreaterThanOrEqual(0);
-      expect(telemetry.normalRejectedCount).toBeGreaterThanOrEqual(0);
+      expect(telemetry.normalUnverifiedCount).toBeGreaterThanOrEqual(0);
 
       // At least one HARD_SUPPRESS should have been recorded
       expect(telemetry.hardSuppressCount).toBeGreaterThanOrEqual(1);
@@ -628,8 +655,9 @@ describe("Smoke: Telemetry counters", () => {
       expect(telemetry.toolStatusCounts["git-diff"]).toBeDefined();
       expect(telemetry.toolStatusCounts.ripgrep).toBeDefined();
 
-      // At least one normalRejectedCount from the guard-reject scenario
-      expect(telemetry.normalRejectedCount).toBeGreaterThanOrEqual(1);
+      // At least one review reached the user carrying an unverified citation —
+      // the scenario that used to be a guard-reject (the review discarded).
+      expect(telemetry.normalUnverifiedCount).toBeGreaterThanOrEqual(1);
     },
   );
 

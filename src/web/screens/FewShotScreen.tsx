@@ -176,7 +176,7 @@ export function FewShotScreen({
                 fontFamily: tokens.font.mono,
                 fontSize: 12,
                 background: tokens.color.sky,
-                color: tokens.color.ink,
+                color: tokens.color.onSky,
                 border: "none",
                 borderRadius: tokens.radius.sm,
                 cursor: "pointer",

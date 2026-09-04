@@ -85,6 +85,149 @@ interface ParseResult {
 }
 
 /**
+ * Whether a frontmatter line belongs to an open block-array (`evidence:` /
+ * `changed_files:`) — indented, or a `-`-prefixed list item.
+ */
+function isBlockArrayLine(line: string, trimmed: string): boolean {
+  return line.startsWith("  ") || trimmed.startsWith("-");
+}
+
+/**
+ * Detects a `evidence:` / `changed_files:` / `xp_earned_events:` key line,
+ * which (re)sets which block-array (if any) subsequent indented lines
+ * belong to. Returns null when `trimmed` isn't one of those three keys.
+ */
+function detectBlockKeyTransition(
+  trimmed: string,
+): { inEvidence: boolean; inChangedFiles: boolean } | null {
+  if (/^evidence\s*:/.test(trimmed)) return { inEvidence: true, inChangedFiles: false };
+  if (/^changed_files\s*:/.test(trimmed)) return { inEvidence: false, inChangedFiles: true };
+  // xp_earned_events is a known block-list key we don't collect, but still
+  // closes any evidence/changed_files block that was open.
+  if (/^xp_earned_events\s*:/.test(trimmed)) return { inEvidence: false, inChangedFiles: false };
+  return null;
+}
+
+interface BlockCaptureResult {
+  /** true => the line was pushed into `target`; caller should `continue`. */
+  consumed: boolean;
+  /** New value for the caller's in-block flag (only meaningful when !consumed). */
+  stillOpen: boolean;
+}
+
+/**
+ * Try to consume a line into an open block-array. Mirrors the identical
+ * inEvidence / inChangedFiles handling that used to be duplicated inline in
+ * parseFrontmatter for each of the two block arrays.
+ */
+function captureBlockArrayLine(
+  line: string,
+  trimmed: string,
+  target: string[],
+): BlockCaptureResult {
+  if (isBlockArrayLine(line, trimmed)) {
+    target.push(line);
+    return { consumed: true, stillOpen: true };
+  }
+  if (trimmed.length > 0 && !line.startsWith(" ")) {
+    return { consumed: false, stillOpen: false };
+  }
+  return { consumed: false, stillOpen: true };
+}
+
+/**
+ * Wraps captureBlockArrayLine with the "only when this block is actually
+ * open" guard that used to be an inline `if (inEvidence) {...}` /
+ * `if (inChangedFiles) {...}` in parseFrontmatter (identical for both).
+ * When `isOpen` is false, this is a no-op passthrough.
+ */
+function updateBlockCapture(
+  line: string,
+  trimmed: string,
+  isOpen: boolean,
+  target: string[],
+): { consumed: boolean; isOpen: boolean } {
+  if (!isOpen) return { consumed: false, isOpen: false };
+  const captured = captureBlockArrayLine(line, trimmed, target);
+  return { consumed: captured.consumed, isOpen: captured.consumed ? true : captured.stillOpen };
+}
+
+/**
+ * Parse a `key: value` line, including the YAML block-scalar header form
+ * (`key: |` / `key: |-` / `key: >` ...). Mutates `fm` in place. Returns the
+ * index the caller's for-loop should resume from (`i` unchanged for a plain
+ * `key: value` line or a non-matching line; the block scalar's `endIndex`
+ * when a block scalar body was consumed).
+ */
+function parseKeyValueLine(
+  lines: string[],
+  i: number,
+  trimmed: string,
+  fm: Record<string, string>,
+): number {
+  const colonIdx = trimmed.indexOf(":");
+  if (colonIdx <= 0) return i;
+
+  const key = trimmed.slice(0, colonIdx).trim();
+  const val = trimmed.slice(colonIdx + 1).trim();
+
+  // YAML block scalar: collect subsequent indented lines as multi-line value.
+  if (val === "|" || val === "|-" || val === "|+" || val === ">" || val === ">-" || val === ">+") {
+    const folded = val.startsWith(">");
+    const { value, endIndex } = parseBlockScalar(lines, i, folded);
+    fm[key] = value;
+    return endIndex;
+  }
+
+  fm[key] = val;
+  return i;
+}
+
+/**
+ * YAML block scalar body: collect subsequent indented lines as a multi-line
+ * value, starting right after the `key: |` / `key: |-` / `key: >` header at
+ * `lines[startIdx]`. Supports `|` (literal), `|-` (strip trailing nl), `|+`
+ * (keep), `>` (folded). Frontmatter terminates at `---` or the first
+ * non-indented non-empty line.
+ *
+ * Returns the joined value plus the index of the last line consumed —
+ * callers resume their own loop from `endIndex` (mirrors the original
+ * inline `while` loop's mutation of the enclosing `for` loop's `i`).
+ */
+function parseBlockScalar(
+  lines: string[],
+  startIdx: number,
+  folded: boolean,
+): { value: string; endIndex: number } {
+  const blockLines: string[] = [];
+  let baseIndent = -1;
+  let i = startIdx;
+  while (i + 1 < lines.length) {
+    const next = lines[i + 1] ?? "";
+    const nextTrim = next.trim();
+    if (nextTrim === "---") break;
+    if (next === "") {
+      // Empty line — preserved inside the block unless block already ended.
+      blockLines.push("");
+      i++;
+      continue;
+    }
+    // Measure leading spaces.
+    const leading = next.length - next.trimStart().length;
+    if (leading === 0) break;
+    if (baseIndent === -1) baseIndent = leading;
+    if (leading < baseIndent) break;
+    blockLines.push(next.slice(baseIndent));
+    i++;
+  }
+  // Trim trailing empty lines (YAML clip behavior for `|` and `>`).
+  while (blockLines.length > 0 && blockLines[blockLines.length - 1] === "") {
+    blockLines.pop();
+  }
+  return { value: folded ? blockLines.join(" ") : blockLines.join("\n"), endIndex: i };
+}
+
+/**
  * Parse YAML-ish frontmatter block.
  * Handles flat `key: value` pairs, flow-style arrays `[a, b]`, two block
  * arrays we care about (`evidence:` and `changed_files:`), and YAML
@@ -110,86 +253,26 @@ function parseFrontmatter(raw: string): ParseResult {
     if (trimmed === "---") break;  // end of frontmatter
 
     // Detect block array keys (possibly with empty inline value)
-    if (/^evidence\s*:/.test(trimmed)) {
-      inEvidence = true;
-      inChangedFiles = false;
-      continue;
-    }
-    if (/^changed_files\s*:/.test(trimmed)) {
-      inChangedFiles = true;
-      inEvidence = false;
-      continue;
-    }
-    // Skip other known block-list keys
-    if (/^xp_earned_events\s*:/.test(trimmed)) {
-      inEvidence = false;
-      inChangedFiles = false;
+    const transition = detectBlockKeyTransition(trimmed);
+    if (transition) {
+      inEvidence = transition.inEvidence;
+      inChangedFiles = transition.inChangedFiles;
       continue;
     }
 
     // Collect block array lines (indented or dash-prefixed)
-    if (inEvidence) {
-      if (line.startsWith("  ") || trimmed.startsWith("-")) {
-        evidenceLines.push(line);
-        continue;
-      }
-      if (trimmed.length > 0 && !line.startsWith(" ")) {
-        inEvidence = false;
-        // Fall through to parse as key: value
-      }
-    }
-    if (inChangedFiles) {
-      if (line.startsWith("  ") || trimmed.startsWith("-")) {
-        changedFilesLines.push(line);
-        continue;
-      }
-      if (trimmed.length > 0 && !line.startsWith(" ")) {
-        inChangedFiles = false;
-        // Fall through to parse as key: value
-      }
-    }
+    const evidenceUpdate = updateBlockCapture(line, trimmed, inEvidence, evidenceLines);
+    inEvidence = evidenceUpdate.isOpen;
+    if (evidenceUpdate.consumed) continue;
+    // Fall through to parse as key: value
+
+    const changedUpdate = updateBlockCapture(line, trimmed, inChangedFiles, changedFilesLines);
+    inChangedFiles = changedUpdate.isOpen;
+    if (changedUpdate.consumed) continue;
+    // Fall through to parse as key: value
 
     // Simple key: value (or block scalar header `key: |` / `key: |-` / `key: >`)
-    const colonIdx = trimmed.indexOf(":");
-    if (colonIdx > 0) {
-      const key = trimmed.slice(0, colonIdx).trim();
-      const val = trimmed.slice(colonIdx + 1).trim();
-
-      // YAML block scalar: collect subsequent indented lines as multi-line value.
-      // Supports `|` (literal), `|-` (strip trailing nl), `|+` (keep), `>` (folded).
-      // Frontmatter terminates at `---` or the first non-indented non-empty line.
-      if (val === "|" || val === "|-" || val === "|+" || val === ">" || val === ">-" || val === ">+") {
-        const folded = val.startsWith(">");
-        const blockLines: string[] = [];
-        let baseIndent = -1;
-        while (i + 1 < lines.length) {
-          const next = lines[i + 1] ?? "";
-          const nextTrim = next.trim();
-          if (nextTrim === "---") break;
-          if (next === "") {
-            // Empty line — preserved inside the block unless block already ended.
-            blockLines.push("");
-            i++;
-            continue;
-          }
-          // Measure leading spaces.
-          const leading = next.length - next.trimStart().length;
-          if (leading === 0) break;
-          if (baseIndent === -1) baseIndent = leading;
-          if (leading < baseIndent) break;
-          blockLines.push(next.slice(baseIndent));
-          i++;
-        }
-        // Trim trailing empty lines (YAML clip behavior for `|` and `>`).
-        while (blockLines.length > 0 && blockLines[blockLines.length - 1] === "") {
-          blockLines.pop();
-        }
-        fm[key] = folded ? blockLines.join(" ") : blockLines.join("\n");
-        continue;
-      }
-
-      fm[key] = val;
-    }
+    i = parseKeyValueLine(lines, i, trimmed, fm);
   }
 
   return { fm, evidenceLines, changedFilesLines };

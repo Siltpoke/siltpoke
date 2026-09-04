@@ -1,0 +1,6 @@
+{
+  "name": "siltpoke",
+  "version": "1.0.0",
+  "description": "Local-first coding companion for CLI agents. Hooks into Codex turns, records reviews, and exposes Siltpoke dashboard workflows.",
+  "skills": "./skills/"
+}

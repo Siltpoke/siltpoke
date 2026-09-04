@@ -39,9 +39,12 @@ import {
   type RepoEntry,
 } from "../../repo-graph/repo-registry";
 import { resolveRepoGraphLocation } from "../../repo-graph/proj-hash";
+import { resolveRequestProject } from "../../daemon/project-context";
+import { siltpokeRoot } from "../../installer/paths";
 import { readFingerprints, readGraph, readMeta } from "../../repo-graph/store";
 import { computeFileFunctions, computeRepoFingerprint, readArchModel } from "../../explain/arch-cache";
 import { emptyGraph } from "../../repo-graph/types";
+import { createPageCache, type PageCache } from "./repo-graph-cache";
 import {
   type BootBuild,
   computeStaleness,
@@ -69,6 +72,14 @@ export interface RepoGraphWebRouteDeps {
    * the CSRF token that the read-only GETs don't need.
    */
   secret?: string;
+  /**
+   * Rendered-page cache. Defaults to a process-wide singleton (correct for the
+   * daemon). Injectable so each test mounts an ISOLATED cache — the singleton
+   * is shared across the whole test process, and two mounts with the same
+   * projHash + version would otherwise serve one render to the other, masking a
+   * test's own regression coverage (see authored-c4.test.ts).
+   */
+  pageCache?: PageCache;
 }
 
 async function readClaudeMd(projectRoot: string | null): Promise<string | null> {
@@ -145,34 +156,90 @@ function buildProjection({ graph, overlay, meta, activeProjHash, projectRoot }: 
   };
 }
 
+/**
+ * Default (no `?repo=`) resolution: prefer the daemon's shared per-request
+ * resolver (fixes the launchd frozen-cwd bug — `cwd` is "/" in production, so
+ * computeProjHash(cwd) never matches a real repo), falling back to the OLD
+ * cwd-based resolution + repos[0] when the resolver has no pinned/recent
+ * project (keeps direct-cwd callers — e.g. tests that seed a fixture AT
+ * `cwd` and expect it resolved without a `?repo=` — working unchanged).
+ */
+async function resolveDefaultProjHash(repos: RepoEntry[], cwd: string, home?: string): Promise<string> {
+  const proj = await resolveRequestProject(home ?? siltpokeRoot(), undefined);
+  if (proj.proj_hash && repos.some((r) => r.proj_hash === proj.proj_hash)) {
+    return proj.proj_hash;
+  }
+  const cwdHash = resolveRepoGraphLocation(cwd, { home }).proj_hash;
+  const cwdIsIndexed = repos.some((r) => r.proj_hash === cwdHash);
+  // `!` safe: this branch requires !cwdIsIndexed AND repos.length > 0.
+  return cwdIsIndexed || repos.length === 0 ? cwdHash : repos[0]!.proj_hash;
+}
+
+// Process-local rendered-page cache (one entry per project, keyed by the render
+// version, short TTL for the request-live bits). A daemon restart drops it —
+// correct, since a restart is the only way the bundle/render logic changes.
+// Tests inject their own via deps.pageCache. See repo-graph-cache.ts.
+const defaultPageCache = createPageCache();
+
 /** SSR handler for GET /repo-graph — resolve repo, load graph, render shell. */
 async function renderRepoGraphPage(c: Context, deps: RepoGraphWebRouteDeps) {
+  const pageCache = deps.pageCache ?? defaultPageCache;
   const { cwd, home, secret } = deps;
   const repos: RepoEntry[] = await enumerateRepos({ home });
-  // Default/dead-hash resolution against the SAME ordered list the picker
-  // shows (enumerateRepos carries the single shared comparator — recency
-  // first). Three cases when the requested hash is not in the indexed list:
-  //   ?repo=<dead>  + repos exist → 302 to clean /repo-graph (URL must not
-  //                                 keep a dead hash — share/refresh honesty);
-  //   no param, dead cwd + repos  → fall back to repos[0] (the list top the
-  //                                 user actually sees in the dropdown);
-  //   repos empty                 → keep the requested hash; the existing
-  //                                 "No graph indexed → /siltpoke-index" empty
-  //                                 state renders (unchanged behavior).
+  // Resolution against the SAME ordered list the picker shows (enumerateRepos
+  // carries the single shared comparator — recency first):
+  //   ?repo=<dead> → the linked repo isn't in the indexed registry (renamed /
+  //                  forgotten / never indexed / stale share link) → render
+  //                  the stale banner instead of silently 302-ing to repos[0]
+  //                  (honesty: the URL you followed is dead, don't paper over
+  //                  it). Checked against repos (repo-graph's OWN registry),
+  //                  not the daemon's shared active-project resolver — an
+  //                  indexed-but-session-inactive repo must still open.
+  //   no param     → resolveDefaultProjHash (see above).
   const queryRepo = c.req.query("repo");
-  const requestedHash = queryRepo ?? resolveRepoGraphLocation(cwd, { home }).proj_hash;
-  const requestedIsIndexed = repos.some((r) => r.proj_hash === requestedHash);
-  if (queryRepo !== undefined && !requestedIsIndexed && repos.length > 0) {
-    return c.redirect("/repo-graph", 302);
+  if (queryRepo !== undefined && !repos.some((r) => r.proj_hash === queryRepo)) {
+    return c.html(
+      <Layout title="code map · siltpoke" secret={secret}>
+        <div class="p-6 text-sm text-neutral-500">
+          This project no longer exists. It may have been renamed, moved, or forgotten — pick another repo from the menu.
+        </div>
+      </Layout>,
+    );
   }
-  const activeProjHash =
-    // `!` safe: this branch requires !requestedIsIndexed AND repos.length > 0.
-    requestedIsIndexed || repos.length === 0 ? requestedHash : repos[0]!.proj_hash;
+  const activeProjHash = queryRepo !== undefined ? queryRepo : await resolveDefaultProjHash(repos, cwd, home);
   const { storageDir, projectRoot } = await resolveActiveRepo(activeProjHash, repos, cwd, home);
 
-  const graph = storageDir ? await readGraph(storageDir) : emptyGraph();
+  // Read the cheap render inputs first so the cache VERSION key is known BEFORE
+  // the expensive graph parse + projection compute + JSX serialize below. On a
+  // hit, skip the graph read + aggregate + projection + ~55ms serialize.
+  //
+  // The version folds the inputs that change often + should reflect FAST:
+  // `last_indexed_ts` (the index) and hashes of the two file-driven, index-
+  // independent inputs — the CLAUDE.md §Architecture overlay and the target
+  // repo's authored `.siltpoke/arch-c4.json` — so a re-index or a doc edit
+  // invalidates instantly.
+  //
+  // DELIBERATELY only TTL-bounded (NOT in the key — at most `ttlMs` stale, ~5s):
+  //   - the git-staleness banner (HEAD vs boot) — advisory;
+  //   - `repoEntries` (the picker list) — another repo indexed/forgotten shows
+  //     in THIS project's picker within the TTL;
+  //   - `generatedModel`/`fileFunctions` (readArchModel is keyed on fingerprint
+  //     + last_indexed_ts, so a C4 "Re-generate" that does NOT re-index isn't in
+  //     the key) — a regenerate reflects within the TTL / on the next refresh.
+  // All three are rare and/or advisory; a few seconds of drift is the trade for
+  // turning a ~120ms render into a map lookup.
   const meta = storageDir ? await readMeta(storageDir) : null;
   const claudeMd = await readClaudeMd(projectRoot);
+  const authored = await loadAuthoredC4(projectRoot);
+  const cacheVersion = meta
+    ? `${meta.last_indexed_ts}|${Bun.hash(claudeMd ?? "")}|${Bun.hash(JSON.stringify(authored))}`
+    : null;
+  if (cacheVersion) {
+    const cached = pageCache.get(activeProjHash, cacheVersion, Date.now());
+    if (cached) return c.html(cached);
+  }
+
+  const graph = storageDir ? await readGraph(storageDir) : emptyGraph();
   const overlay = claudeMd ? parseArchitectureSection(claudeMd) : null;
   const aggregated: AggregatedGraph = aggregateBySuperGroup(graph, overlay, meta?.anchorMap);
 
@@ -190,14 +257,16 @@ async function renderRepoGraphPage(c: Context, deps: RepoGraphWebRouteDeps) {
   let fileFunctions: Record<string, number> | null = null;
   if (storageDir && meta) {
     const fingerprints = await readFingerprints(storageDir);
-    generatedModel = await readArchModel(storageDir, computeRepoFingerprint(fingerprints), meta.last_indexed_ts);
+    generatedModel = await readArchModel(
+      storageDir,
+      computeRepoFingerprint(fingerprints),
+      meta.last_indexed_ts,
+      typeof meta.project_root === "string" ? meta.project_root : null,
+    );
     if (generatedModel) fileFunctions = computeFileFunctions(graph, generatedModel.model.nodes);
   }
 
-  // Authored model loads from the TARGET repo's
-  // `.siltpoke/arch-c4.json` (Zod-validated; detection = file present, never a
-  // repo-name check). Invalid file → null model + a visible fail-soft banner.
-  const authored = await loadAuthoredC4(projectRoot);
+  // (authored `.siltpoke/arch-c4.json` was read above — it feeds the cache key.)
 
   // Daemon-staleness strip — mirrors /api/daemon-health
   // in-process. bootSha is the cached boot value; commitsBehind is derived per
@@ -220,8 +289,14 @@ async function renderRepoGraphPage(c: Context, deps: RepoGraphWebRouteDeps) {
 
   // The repoGraph island is plain vanilla (cytoscape dropped) and
   // ships in the main client bundle (index.ts) — no lazy chunk, no preload.
-  return c.html(
-    <Layout title="code map · siltpoke">
+  // Render to a string so the result can be memoized (byte-identical to what
+  // c.html(<jsx/>) would emit — Layout has no doctype, just <html>).
+  // NOTE: this whole tree must stay SYNCHRONOUS. If any async JSX component is
+  // ever added under <Layout>, hono's JSXNode.toString() returns a Promise and
+  // String() throws (Cannot convert object to primitive) — switch back to
+  // c.html(<jsx/>) (and cache the awaited string) if that ever happens.
+  const html = String(
+    <Layout title="code map · siltpoke" secret={secret}>
       <RepoGraph
         projection={projection}
         repoEntries={repos}
@@ -248,6 +323,8 @@ async function renderRepoGraphPage(c: Context, deps: RepoGraphWebRouteDeps) {
       />
     </Layout>,
   );
+  if (cacheVersion) pageCache.set(activeProjHash, cacheVersion, html, Date.now());
+  return c.html(html);
 }
 
 export function mountRepoGraphWebRoutes(app: Hono, deps: RepoGraphWebRouteDeps): void {

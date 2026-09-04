@@ -18,7 +18,12 @@ function PhoneFrame({ children }: PhoneFrameProps) {
         padding: 8,
         background: tokens.color.ink,
         borderRadius: 32,
-        boxShadow: "0 12px 30px rgba(0,0,0,.18)",
+        // The phone frame's own "resting on the page" drop shadow -> the
+        // most prominent (only) shadow in this file, role-matched to
+        // tokens.shadow.lg (not ink-derived — the ink-polarity rule: a
+        // shadow simulates fixed physical depth and must stay near-black in
+        // both themes).
+        boxShadow: tokens.shadow.lg,
         display: "flex",
         flexDirection: "column",
       }}

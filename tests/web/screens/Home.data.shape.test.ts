@@ -1,6 +1,6 @@
 /**
  * Tests for Home.data.ts — getHomeData() shape comprehensive + navMeta /
- * meta / xp / critiques / statuslinePreview.
+ * meta / xp / statuslinePreview.
  *
  * peeled from Home.data.test.ts so each file stays under
  * the 400 LOC warn threshold. Companion files:
@@ -40,9 +40,6 @@ describe("getHomeData shape + meta", () => {
     expect("stats" in data).toBe(true);
     expect("xp" in data).toBe(true);
     expect("facts" in data).toBe(true);
-    expect("critiques" in data).toBe(true);
-    expect("pendingCritiqueCount" in data).toBe(true);
-    expect("latestCritique" in data).toBe(true);
     expect("topbarBadges" in data).toBe(true);
     expect("meta" in data).toBe(true);
     expect("together" in data).toBe(true);
@@ -112,15 +109,6 @@ describe("getHomeData shape + meta", () => {
     expect(data.xp.xpToNext).toBe(500);
     expect(data.xp.level).toBe(3);
     expect(data.xp.nextLevel).toBe(4);
-  });
-
-  test("critiques are empty — no real critique store in Wave 1.5b", async () => {
-    writeHomeFixtures(tmp, {});
-    const data = await getHomeData({ basePath: tmp, now: NOW });
-    // Real data path: no MOCK_CRITIQUES imported. CritiqueInbox shows empty state.
-    expect(data.critiques).toEqual([]);
-    expect(data.pendingCritiqueCount).toBe(0);
-    expect(data.latestCritique).toBeNull();
   });
 
   test("statuslinePreview is a multi-line string containing level info", async () => {

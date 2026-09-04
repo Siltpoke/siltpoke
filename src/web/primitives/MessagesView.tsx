@@ -33,9 +33,9 @@ const ROLE_COLOR: Record<string, string> = {
 
 const ROLE_BG: Record<string, string> = {
   system: tokens.color.paper,
-  user: "#eaf4fb",
-  assistant: "#eef6e9",
-  tool: "#fdf5e8",
+  user: tokens.color.roleBgUser,
+  assistant: tokens.color.roleBgAssistant,
+  tool: tokens.color.roleBgTool,
 };
 
 function roleColor(role: string): string {
