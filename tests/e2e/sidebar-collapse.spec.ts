@@ -53,7 +53,7 @@ test("sidebar collapse toggles width + label visibility", async ({ page }) => {
  * evidence for the bug was that all five behaved identically.
  */
 test("narrow window: the sidebar becomes the rail, and takes its dead toggle with it", async ({ page }) => {
-  for (const route of ["/", "/knowledge"]) {
+  for (const route of ["/", "/timeline"]) {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(route);
     const sidebar = page.locator("[data-sidebar]").first();
