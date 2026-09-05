@@ -8,9 +8,7 @@
     "scripts/*.ts",
     "tests/**/*.test.ts",
     "tests/**/*.test.tsx",
-    "tests/e2e/*.spec.ts",
-    "tests/knowledge/fixtures/run-render-cache-bundle-build.ts",
-    "tests/knowledge/fixtures/render-cache-bundle-entry.ts"
+    "tests/e2e/*.spec.ts"
   ],
   "project": [
     "src/**/*.{ts,tsx}",
@@ -20,8 +18,7 @@
   "ignore": [
     "local_cache/**",
     ".playwright-tmp/**",
-    "**/*.preview.tsx",
-    "tests/eval/repo-graph-state/fixture-repo/**"
+    "**/*.preview.tsx"
   ],
   "ignoreDependencies": [
     "@types/*"

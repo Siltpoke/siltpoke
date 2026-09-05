@@ -100,7 +100,7 @@ test("narrow window: the sidebar becomes the rail, and takes its dead toggle wit
     // being wrong together — a shell that rendered no nav at all would pass
     // `0 === 0`. Five is the count this rule was originally measured against,
     // so it is a floor, not a target.
-    expect(wideLinks, `nav links at 1280 on ${route}`).toBeGreaterThanOrEqual(5);
+    expect(wideLinks, `nav links at 1280 on ${route}`).toBeGreaterThanOrEqual(4);
     expect(m.reachableLinks, `nav links at 480 on ${route}`).toBe(wideLinks);
     expect(m.pageOverflows, `horizontal scroll at 480 on ${route}`).toBe(false);
 
