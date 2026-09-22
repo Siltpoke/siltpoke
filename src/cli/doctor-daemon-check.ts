@@ -38,7 +38,7 @@ import { loadDaemonConfig } from "../config/daemon-config";
 import { defaultPlistPath } from "../installer/launchd";
 import { siltpokeRoot } from "../installer/paths";
 import { defaultUnitPath } from "../installer/systemd";
-import type { CheckResult, DoctorOptions } from "./doctor";
+import { type CheckResult, type DoctorOptions, detectDoctorHost, setupAdviceFor } from "./doctor";
 
 /**
  * Both doctor probes must aim at the port the daemon actually listens on, not a
@@ -277,6 +277,12 @@ export function checkAutostart(opts: DoctorOptions = {}): CheckResult {
     name: AUTOSTART_CHECK_NAME,
     pass: true,
     status: "info",
-    detail: "not installed — run `/siltpoke-setup`",
+    // Host-aware, like every other row that tells a user to set Siltpoke up.
+    // This one said "run `/siltpoke-setup`" to everybody — a command only
+    // Claude Code has — which is exactly what defect [16] fixed elsewhere.
+    // It went unseen locally because the row only prints when autostart is
+    // ABSENT, and it is present on the dev machine; a clean Linux CI runner
+    // printed it and the [16] invariant test went red (2026-09-22).
+    detail: `not installed — ${setupAdviceFor(detectDoctorHost(opts))}`,
   };
 }

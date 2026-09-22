@@ -187,7 +187,10 @@ describe("doctor autostart — plist/unit presence", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  const NOT_INSTALLED_DETAIL = "not installed — run `/siltpoke-setup`";
+  // A Claude Code host, so the advice is the slash command; under agy or
+  // codex this row now says that host's own path instead (it used to hand
+  // every host `/siltpoke-setup`, which a clean Linux CI runner caught).
+  const NOT_INSTALLED_DETAIL = "not installed — Run `/siltpoke-setup`";
 
   test("darwin, plist present → ✓ pass 'installed'", () => {
     const plist = join(tmp, "io.siltpoke.daemon.plist");

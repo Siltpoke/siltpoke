@@ -16007,7 +16007,7 @@ function checkAutostart(opts = {}) {
     name: AUTOSTART_CHECK_NAME,
     pass: true,
     status: "info",
-    detail: "not installed \u2014 run `/siltpoke-setup`"
+    detail: `not installed \u2014 ${setupAdviceFor(detectDoctorHost(opts))}`
   };
 }
 

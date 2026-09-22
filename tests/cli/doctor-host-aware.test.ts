@@ -42,6 +42,7 @@ function agyHome(): {
   siltpokeHome: string;
   agyHooksJsonPath: string;
   codexConfigPath: string;
+  autostartPath: string;
 } {
   const agyHooks = join(root, "gemini", "config", "hooks.json");
   mkdirSync(join(root, "gemini", "config"), { recursive: true });
@@ -58,6 +59,13 @@ function agyHome(): {
     agyHooksJsonPath: agyHooks,
     // Pinned so the probe cannot read the real ~/.codex of whoever runs this.
     codexConfigPath: join(root, "no-codex", "config.toml"),
+    // Pinned ABSENT for the same reason, and it is load-bearing: the autostart
+    // row only prints its setup advice when the boot artifact is missing, so
+    // on a machine that HAS one (any dev box that ran setup) this fixture
+    // never reached the branch. That is how a `/siltpoke-setup` hint shipped
+    // to agy users and was caught by a clean Linux CI runner rather than here
+    // (2026-09-22).
+    autostartPath: join(root, "no-autostart", "siltpoke.plist"),
   };
 }
 
