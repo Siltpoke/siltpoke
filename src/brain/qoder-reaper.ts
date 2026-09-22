@@ -61,38 +61,27 @@
  * into the review path — the reaper failing must never break or slow a review.
  * See src/brain/providers/ccfork-reviewer.ts for the call-site wiring.
  */
-import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
-import { atomicWrite } from "../utils/atomic-write";
+import { existsSync, readdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { resolveQoderHome, siltpokeRoot } from "../installer/paths";
+import {
+  DEFAULT_KEEP_LAST,
+  DEFAULT_MIN_AGE_MS,
+  STRICT_UUID_RE as SESSION_ID_RE,
+  appendSessionId,
+  dropReapedFromRegistry,
+  isWithin,
+  readRegistry,
+  type ReviewerSessionRecord,
+  selectReapable,
+} from "./reviewer-session-registry";
 
 /** One entry in the siltpoke-owned registry — the ONLY safe source of truth
- * for "siltpoke created this qoder session". */
-export interface QoderReviewerSessionRecord {
-  id: string;
-  recordedAt: number;
-}
+ * for "siltpoke created this qoder session". The registry mechanics are shared
+ * with the other hosts' reapers; see reviewer-session-registry.ts. */
+export type QoderReviewerSessionRecord = ReviewerSessionRecord;
 
 const REGISTRY_FILENAME = "qoder-reviewer-sessions.json";
-
-/** Default retention — keep this many most-recent siltpoke-made sessions
- * before reaping the rest. Small on purpose: each session is a few KB
- * (`.jsonl` transcript + a tiny state dir), and siltpoke has no need to look
- * back further than a handful of recent reviewer calls. */
-const DEFAULT_KEEP_LAST = 10;
-
-/** Default minimum age (ms) before a recorded session is eligible for reaping
- * — a second guardrail on top of unambiguous per-call attribution. 24h: a
- * session just-recorded (and, worst case, just-misattributed) is essentially
- * never >24h old, so it stays out of the reap set long enough for a human to
- * notice anything wrong. */
-const DEFAULT_MIN_AGE_MS = 24 * 60 * 60 * 1000;
-
-/** UUID shape qoder mints for its session ids — used only as a defensive
- * sanity gate on ids pulled from the registry before any path is built, so a
- * malformed/hostile registry entry can never widen the basename we match. */
-const SESSION_ID_RE =
-  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 function defaultRegistryPath(homeBase?: string): string {
   return join(homeBase ?? siltpokeRoot(), REGISTRY_FILENAME);
@@ -100,42 +89,6 @@ function defaultRegistryPath(homeBase?: string): string {
 
 function defaultProjectsDir(qoderHome?: string): string {
   return join(qoderHome ?? resolveQoderHome(), "projects");
-}
-
-/** Reads a JSON file and returns `undefined` on ANY failure (missing file,
- * bad permissions, malformed JSON) — callers treat `undefined` as "nothing to
- * do", never as an error to propagate. */
-function readJsonBestEffort(path: string): unknown {
-  try {
-    if (!existsSync(path)) return undefined;
-    const raw = readFileSync(path, "utf8");
-    return JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-}
-
-function readRegistry(registryPath: string): QoderReviewerSessionRecord[] {
-  const parsed = readJsonBestEffort(registryPath);
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter(
-    (entry): entry is QoderReviewerSessionRecord =>
-      typeof entry === "object" &&
-      entry !== null &&
-      typeof (entry as { id?: unknown }).id === "string" &&
-      typeof (entry as { recordedAt?: unknown }).recordedAt === "number",
-  );
-}
-
-function writeRegistryBestEffort(
-  registryPath: string,
-  records: QoderReviewerSessionRecord[],
-): void {
-  try {
-    atomicWrite(registryPath, JSON.stringify(records, null, 2));
-  } catch {
-    // best-effort — a failed registry write never throws into the review path
-  }
 }
 
 /**
@@ -197,16 +150,9 @@ export function recordQoderSession(opts?: {
     const id = extractQoderSessionId(stdout);
     if (!id) return;
 
-    const registryPath = defaultRegistryPath(opts?.homeBase);
-    const existing = readRegistry(registryPath);
-    // Dedupe against the newest entry only: qoder mints a fresh session id per
-    // `-p` call, so back-to-back duplicates aren't expected — this only guards
-    // against double-recording the same call.
-    if (existing.length > 0 && existing[existing.length - 1]?.id === id) {
-      return;
-    }
-    const updated = [...existing, { id, recordedAt: Date.now() }];
-    writeRegistryBestEffort(registryPath, updated);
+    // qoder mints a fresh session id per `-p` call, so the shared append's
+    // dedupe-against-newest only guards against recording one call twice.
+    appendSessionId(defaultRegistryPath(opts?.homeBase), id);
   } catch {
     // best-effort — never throws into the review path
   }
@@ -232,12 +178,6 @@ function deleteSessionBestEffort(projectsDir: string, id: string): void {
     return; // projects dir missing/unreadable — nothing to do
   }
 
-  const projectsRoot = resolve(projectsDir);
-  const withinProjects = (candidate: string): boolean => {
-    const r = resolve(candidate);
-    return r === projectsRoot || r.startsWith(projectsRoot + sep);
-  };
-
   for (const child of children) {
     for (const target of [
       join(projectsDir, child, `${id}.jsonl`),
@@ -245,7 +185,7 @@ function deleteSessionBestEffort(projectsDir: string, id: string): void {
     ]) {
       try {
         // Containment assertion — belt-and-suspenders on the UUID gate above.
-        if (!withinProjects(target)) continue;
+        if (!isWithin(projectsDir, target)) continue;
         if (existsSync(target)) {
           rmSync(target, { recursive: true, force: true });
         }
@@ -290,32 +230,12 @@ export function reapQoderSessions(opts?: {
     const now = opts?.now ?? Date.now();
 
     const registry = readRegistry(registryPath);
-    if (registry.length <= keepLast) return;
-
-    // Oldest-first by recordedAt so the slice drops the oldest and keeps the
-    // newest `keepLast`.
-    const sorted = [...registry].sort((a, b) => a.recordedAt - b.recordedAt);
-    const beyondKeep = sorted.slice(0, sorted.length - keepLast);
-
-    // Second guardrail: only beyond-keep entries older than the min-age
-    // threshold are actually reaped. Younger ones are retained (kept in the
-    // registry too) so a just-misattributed id can never be deleted before it
-    // ages past the gate.
-    const ageCutoff = now - olderThanMs;
-    const toReap = beyondKeep.filter((r) => r.recordedAt < ageCutoff);
+    const toReap = selectReapable(registry, { keepLast, olderThanMs, now });
 
     for (const record of toReap) {
       deleteSessionBestEffort(projectsDir, record.id);
     }
-
-    const reapedIds = new Set(toReap.map((r) => r.id));
-    // Only rewrite if we actually removed something (avoid churn + preserve
-    // ordering for the untouched majority). Survivors = the keepLast-newest,
-    // plus any beyond-keep entry still too young to reap.
-    if (reapedIds.size > 0) {
-      const survivors = registry.filter((r) => !reapedIds.has(r.id));
-      writeRegistryBestEffort(registryPath, survivors);
-    }
+    dropReapedFromRegistry(registryPath, registry, toReap);
   } catch {
     // best-effort — never throws into the review path
   }

@@ -16549,13 +16549,8 @@ var FAMILY_ACCEPTS_MODEL = {
   codex: false
 };
 
-// src/brain/agy-reaper.ts
+// src/brain/reviewer-session-registry.ts
 var DEFAULT_MIN_AGE_MS = 24 * 60 * 60 * 1000;
-var UUID_RE = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/;
-var STRICT_UUID_RE = new RegExp(`^${UUID_RE.source}$`);
-
-// src/brain/qoder-reaper.ts
-var DEFAULT_MIN_AGE_MS2 = 24 * 60 * 60 * 1000;
 
 // src/brain/providers/codex.ts
 import { homedir as homedir3, tmpdir } from "os";
