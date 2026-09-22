@@ -115,10 +115,13 @@ describe("plugin-cli dispatcher", () => {
     expect(c.out()).toContain("off-by-one");
   });
 
-  test("last on an empty project reports not-found, still exit 0", async () => {
+  test("last on an empty project says there are none YET, still exit 0", async () => {
+    // It used to say "not found", which reads like a broken install on the one
+    // surface a brand-new user reaches first (audit defect `[5c]`).
     const c = captureIo();
     expect(await runPluginCli(["last"], c.io)).toBe(0);
-    expect(c.out().toLowerCase()).toContain("not found");
+    expect(c.out().toLowerCase()).toContain("no reviews yet");
+    expect(c.out().toLowerCase()).not.toContain("not found");
   });
 
   test("mute writes the marker; unmute clears it", async () => {

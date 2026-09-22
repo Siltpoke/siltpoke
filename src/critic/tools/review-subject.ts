@@ -85,7 +85,7 @@ function extractMessage(headerLines: string[]): string {
  */
 export function splitRecentCommitsLog(
   stdout: string,
-): { subject: ReviewSubject | null; diffOnly: string } {
+): { subject: ReviewSubject | null; diffOnly: string; windowHasMerge: boolean } {
   const lines = stdout.split("\n");
 
   // Locate every commit header at column 0.
@@ -93,7 +93,22 @@ export function splitRecentCommitsLog(
   for (let i = 0; i < lines.length; i++) {
     if (COMMIT_HEADER_RE.test(lines[i]!)) headerIdx.push(i);
   }
-  if (headerIdx.length === 0) return { subject: null, diffOnly: stdout };
+  if (headerIdx.length === 0) return { subject: null, diffOnly: stdout, windowHasMerge: false };
+
+  // Whether ANY commit in this window is a merge.
+  //
+  // Read here because the headers are already in hand: under `--pretty=medium`
+  // a merge prints a `Merge: <sha> <sha>` line, which `HEADER_META_RE` above
+  // already recognises. Costs no extra git call.
+  //
+  // Why a caller wants it: under plain `-p`, git emits no patch for a merge, so
+  // the merge is skipped below — and then the newest diff-bearing block in the
+  // window belongs to an ancestor on ONE side of it, whose `+` side line numbers
+  // are relative to that side's parent rather than to the file at HEAD. A window
+  // with a merge in it cannot support "the first block for a file is the most
+  // recent change to it", which is the whole basis for deriving a line number
+  // on this path.
+  const windowHasMerge = lines.some((l) => l.startsWith("Merge: "));
 
   // Only commits that actually put a diff on the table can be spoken about. A
   // merge under plain `-p`, and an empty commit, emit a header and no diff — and
@@ -120,7 +135,7 @@ export function splitRecentCommitsLog(
   // rather than emit a subject block over an empty diff — there are no hunks to
   // misattribute, so there is nothing for this function to protect.
   const newest = diffBearing[0];
-  if (newest === undefined) return { subject: null, diffOnly: stdout };
+  if (newest === undefined) return { subject: null, diffOnly: stdout, windowHasMerge };
 
   return {
     subject: {
@@ -131,6 +146,7 @@ export function splitRecentCommitsLog(
       backgroundCommits: diffBearing.length - 1,
     },
     diffOnly: diffBearing.map((d) => d.diff).join("\n"),
+    windowHasMerge,
   };
 }
 

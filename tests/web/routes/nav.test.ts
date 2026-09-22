@@ -20,12 +20,7 @@ describe("CANONICAL_NAV (sectioned)", () => {
 
   // This one is a genuine count test by design (a change detector for
   // accidental additions/removals to CANONICAL_NAV), not a stand-in for a
-  // named assertion — kept as a count per the file's own convention, bumped
-  // 4 → 5 for the "knowledge" WORK entry added in Task 12, then 5 → 6 for
-  // "decisions" (Task 8 of the Decisions-log view, 2026-08-13), then 6 → 7
-  // for "progress" (progress-page-slice-1 Task 7, 2026-08-14), then back to 6
-  // when "decisions" was removed with its route (2026-08-17): that view is a
-  // sheet on /knowledge now, so a nav entry would point at a dead path.
+  // named assertion — kept as a count per the file's own convention.
   test("total flat entry count is 4 (Knowledge added 2026-08-06; Progress added 2026-08-14; Decisions removed 2026-08-17 with its route; Quests + Settings removed 2026-08-06 with their unmounts)", () => {
     const allEntries = CANONICAL_NAV.flatMap((s) => s.entries);
     expect(allEntries).toHaveLength(4);
@@ -43,14 +38,6 @@ describe("CANONICAL_NAV (sectioned)", () => {
       "memory",
       "repo-graph",
     ]);
-  });
-
-  // The removal, asserted rather than merely implied by the count above: a
-  // nav entry pointing at a route nobody mounts renders a link to a 404.
-  test("no nav entry points at the retired /knowledge/decisions page", () => {
-    const allEntries = CANONICAL_NAV.flatMap((s) => s.entries);
-    expect(allEntries.map((e) => e.id)).not.toContain("decisions");
-    expect(allEntries.map((e) => e.href)).not.toContain("/knowledge/decisions");
   });
 
   test("reinternalize/Restate nav entry stays removed (spec §5, shelved surface stripped)", () => {

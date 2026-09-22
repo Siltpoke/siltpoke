@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * The write core for `seen.json` (slice ③, spec R5/R7/R13) — the ONLY module
+ * The write core for `seen.json` (spec R5/R7/R13) — the ONLY module
  * allowed to mutate the user-seen watermark post-seed. Two mutators:
  *
  *   - `advanceSeenFile` — advance ONE file's watermark entry to its current
@@ -142,7 +142,7 @@ function asFileFingerprint(value: unknown): FileFingerprint | undefined {
  * Canonicalize an arbitrary raw `{key: FileFingerprint-shaped}` record,
  * dropping (not throwing on) any root-escaping key and any malformed
  * per-entry value. Shared by `canonicalizeCurrentFiles` (the `current` side)
- * and, as of the slice ③ fast-follow, `advanceSeenFile` (the on-disk
+ * and, as of a later fast-follow, `advanceSeenFile` (the on-disk
  * `seen.files` side) — `readSeen` (`store.ts`) validates only the TOP-LEVEL
  * `SeenWatermark` shape (`ast_sig_version`/`baseline_sha`/`files`/
  * `unknown_baseline` present with the right primitive types); it does NOT
@@ -174,7 +174,7 @@ function canonicalizeFilesRecord(
 
 /**
  * Canonicalize every key of `current.files` (C6 — no shallow assign; a
- * slice-② `Fingerprints` key isn't guaranteed canonical). Guards `current`
+ * `Fingerprints` key isn't guaranteed canonical). Guards `current`
  * itself being null/undefined/wrong-shape (C7) — never assumes the caller
  * validated it; an empty/not-indexed `current` simply yields `{}` here
  * rather than crashing.
@@ -220,13 +220,13 @@ async function backupSeenIfPresent(storageDir: string): Promise<void> {
  *      op).
  *   3. Looked up against the (now known non-empty) canonicalized
  *      `current.files` (C6) — a non-canonical `current` key (carried over
- *      from slice-② `Fingerprints`, which doesn't guarantee canonical keys)
+ *      from `Fingerprints`, which doesn't guarantee canonical keys)
  *      must not make a present file look deleted and get wrongly removed.
  *   4. Present in `current` → write its fingerprint into `seen.files[key]`.
  *      Genuinely absent from a POPULATED `current` (a real deletion — the
  *      file existed in the index before but doesn't anymore) → REMOVE the
  *      key from `seen.files`.
- *   4b. Fast-follow (slice ③, 2026-07-27): the on-disk `seen.files` is
+ *   4b. Fast-follow (2026-07-27): the on-disk `seen.files` is
  *      re-canonicalized too, exactly like `current.files` — `readSeen` only
  *      validates the top-level `SeenWatermark` shape, not that each existing
  *      key is already canonical, so an overwrite/delete keyed only by the
@@ -258,7 +258,7 @@ export async function advanceSeenFile(
   const fp = canonicalCurrent[key];
 
   const seen = await readSeen(storageDir);
-  // Fast-follow (slice ③): canonicalize the ON-DISK `seen.files` keys too,
+  // Fast-follow: canonicalize the ON-DISK `seen.files` keys too,
   // symmetric with `current` above and with `markAllSeen`/`classifyAll`
   // (both of which already canonicalize the seen side). Spreading the raw
   // `seen.files` here would be asymmetric: a raw non-canonical key could sit

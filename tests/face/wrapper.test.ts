@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFileSync, existsSync as fsExists } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseAgentFlag, runWrapper } from "../../src/face/wrapper.ts";
+import { bubbleTimeStamp, parseAgentFlag, runWrapper } from "../../src/face/wrapper.ts";
 import { getSpecies } from "../../src/face/species.ts";
 
 let tempBase: string;
@@ -478,8 +478,41 @@ describe("runWrapper --agent option", () => {
   });
 });
 
-test("tasklist: appends 📋 segment when cwd has .claude/tasklist.md", async () => {
+test("tasklist: OFF by default — a parseable tasklist.md renders nothing", async () => {
+  // Reversed 2026-09-17. The segment used to render unconditionally and had no
+  // off switch; it pinned one stale `n/m ▶ <old step>` line under every turn,
+  // which reads as current work. Requested off three times before this existed.
   writeFileSync(join(tempBase, "inner.txt"), "echo 'x'");
+  const cwd = mkdtempSync(join(tmpdir(), "siltpoke-cwd-"));
+  try {
+    mkdirSync(join(cwd, ".claude"), { recursive: true });
+    writeFileSync(join(cwd, ".claude", "tasklist.md"), "- [x] a\n- [/] go");
+    const result = await runWrapper({ basePath: tempBase, cwd, termWidth: 200 });
+    expect(result).not.toContain("📋");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("tasklist: an OLD config.json (no showTasklist key) stays OFF", async () => {
+  // The grandfathering trap: a config written before this key existed must
+  // not keep the old unconditional behaviour.
+  writeFileSync(join(tempBase, "inner.txt"), "echo 'x'");
+  writeFileSync(join(tempBase, "config.json"), JSON.stringify({ species: "slime" }));
+  const cwd = mkdtempSync(join(tmpdir(), "siltpoke-cwd-"));
+  try {
+    mkdirSync(join(cwd, ".claude"), { recursive: true });
+    writeFileSync(join(cwd, ".claude", "tasklist.md"), "- [x] a\n- [/] go");
+    const result = await runWrapper({ basePath: tempBase, cwd, termWidth: 200 });
+    expect(result).not.toContain("📋");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("tasklist: appends 📋 segment when showTasklist is opted in", async () => {
+  writeFileSync(join(tempBase, "inner.txt"), "echo 'x'");
+  writeFileSync(join(tempBase, "config.json"), JSON.stringify({ showTasklist: true }));
   const cwd = mkdtempSync(join(tmpdir(), "siltpoke-cwd-"));
   try {
     mkdirSync(join(cwd, ".claude"), { recursive: true });
@@ -513,7 +546,10 @@ test("tasklist: no cwd → no segment, no crash", async () => {
 
 test("tasklist: shows in minimal mode with no bubble (past the early return)", async () => {
   writeFileSync(join(tempBase, "inner.txt"), "echo 'x'");
-  writeFileSync(join(tempBase, "config.json"), JSON.stringify({ minimalMode: true }));
+  writeFileSync(
+    join(tempBase, "config.json"),
+    JSON.stringify({ minimalMode: true, showTasklist: true }),
+  );
   const cwd = mkdtempSync(join(tmpdir(), "siltpoke-cwd-"));
   try {
     mkdirSync(join(cwd, ".claude"), { recursive: true });
@@ -537,4 +573,69 @@ describe("parseAgentFlag (CLI entry helper)", () => {
   test("returns undefined when --agent has no following value", () => {
     expect(parseAgentFlag(["bun", "wrapper.ts", "--agent"])).toBeUndefined();
   });
+});
+
+// ── Bubble timestamp ─────────────────────────────────────────────────────────
+// The bubble only clears at 30 minutes (DEFAULT_STALE_MS), so for half an hour
+// a review of earlier work looks exactly like a review of the turn you just
+// finished. Reported from real use: a reader cannot tell which change the
+// review is about, and assumes it is the one they just made.
+
+test("bubble carries the time it was said", async () => {
+  writeFileSync(join(tempBase, "inner.txt"), "echo 'x'");
+  // "Now", not a fixed clock time: the bubble is hidden once state is older
+  // than DEFAULT_STALE_MS (30 min), so a hardcoded hour makes this test pass
+  // or fail depending on when it runs.
+  const at = new Date();
+  const h24 = at.getHours();
+  const hh = String(h24 % 12 === 0 ? 12 : h24 % 12);
+  const mm = String(at.getMinutes()).padStart(2, "0");
+  const ap = h24 < 12 ? "AM" : "PM";
+  writeFileSync(
+    join(tempBase, "state.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      mood: "happy",
+      pose: "base",
+      bubble_short: "looks fine to me",
+      severity: "info",
+      confidence: "high",
+      last_updated_ms: at.getTime(),
+      last_session_id: "s",
+    }),
+  );
+  const result = await runWrapper({ basePath: tempBase, termWidth: 200 });
+  expect(result).toContain(`[${hh}:${mm} ${ap}]: "looks fine to me"`);
+});
+
+test("a config-default bubble (no state) carries NO time — there is none to claim", async () => {
+  // The fallback line comes from config.json, not from a review. Stamping it
+  // would attach a moment to a sentence nobody said at that moment.
+  writeFileSync(join(tempBase, "inner.txt"), "echo 'x'");
+  writeFileSync(
+    join(tempBase, "config.json"),
+    JSON.stringify({ species: "cat", bubble: "hello from config" }),
+  );
+  const result = await runWrapper({ basePath: tempBase, termWidth: 200 });
+  expect(result).toContain('"hello from config"');
+  expect(result).not.toMatch(/\[\d{1,2}:\d\d (AM|PM)]:/);
+});
+
+test("bubbleTimeStamp: 12-hour with AM/PM, and empty for anything unusable", () => {
+  const at = (h: number, m: number): number => {
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    return d.getTime();
+  };
+  expect(bubbleTimeStamp(at(9, 5))).toBe("[9:05 AM]: ");
+  expect(bubbleTimeStamp(at(13, 44))).toBe("[1:44 PM]: ");
+  // The two the modulo gets wrong: 0 % 12 and 12 % 12 are both 0.
+  expect(bubbleTimeStamp(at(0, 15))).toBe("[12:15 AM]: ");
+  expect(bubbleTimeStamp(at(12, 15))).toBe("[12:15 PM]: ");
+  // Boundaries either side of noon and midnight.
+  expect(bubbleTimeStamp(at(11, 59))).toBe("[11:59 AM]: ");
+  expect(bubbleTimeStamp(at(23, 59))).toBe("[11:59 PM]: ");
+  expect(bubbleTimeStamp(undefined)).toBe("");
+  expect(bubbleTimeStamp(0)).toBe("");
+  expect(bubbleTimeStamp(Number.NaN)).toBe("");
 });

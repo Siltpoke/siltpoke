@@ -24,6 +24,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { FailureClass } from "../brain/failure-classify";
 import { atomicWrite } from "../utils/atomic-write";
+import { loadBudgetConfigSync } from "./budget-config";
+import { dayKey } from "./usage";
 
 export interface BrainFailureRecord {
   class: FailureClass;
@@ -69,8 +71,19 @@ export const QUOTA_CALL_DAILY_CAP = 50;
 const SIGNAL_AGE_OUT_MS = 24 * 60 * 60 * 1000;
 const MIN = 60_000;
 
-function dayOf(now: Date): string {
-  return now.toISOString().slice(0, 10);
+/**
+ * The day a cap is keyed on. This was `now.toISOString().slice(0, 10)` — a UTC
+ * day — while the token budget keyed on a LOCAL day shifted by `budget.resetAt`
+ * (usage.ts `dayKey`). Both were called "per day"; in US Pacific the call cap
+ * rolled over mid-afternoon, and editing `resetAt` moved only the other one
+ * (spec brain-select-four-gaps §3.4). Now there is one boundary.
+ *
+ * Callers pass `resetAtMinutes` explicitly; the `try*` wrappers read it from
+ * the same config.json the budget does. Default 0 = plain local midnight, used
+ * by the pure transitions when no config is in hand.
+ */
+function dayOf(now: Date, resetAtMinutes = 0): string {
+  return dayKey(now, resetAtMinutes);
 }
 
 export function freshBrainHealth(): BrainHealth {
@@ -320,15 +333,23 @@ export function isBreakerOpen(health: BrainHealth, now: Date): BreakerStatus {
 
 // ── Daily outer-retry budget (cap 5/day) ─────────────────────────────────────
 
-export function canOuterRetry(health: BrainHealth, now: Date): boolean {
-  const today = dayOf(now);
+export function canOuterRetry(
+  health: BrainHealth,
+  now: Date,
+  resetAtMinutes = 0,
+): boolean {
+  const today = dayOf(now, resetAtMinutes);
   const used =
     health.retry_budget.date === today ? health.retry_budget.outer_retries_used : 0;
   return used < OUTER_RETRY_DAILY_CAP;
 }
 
-export function consumeOuterRetry(health: BrainHealth, now: Date): BrainHealth {
-  const today = dayOf(now);
+export function consumeOuterRetry(
+  health: BrainHealth,
+  now: Date,
+  resetAtMinutes = 0,
+): BrainHealth {
+  const today = dayOf(now, resetAtMinutes);
   const used =
     health.retry_budget.date === today ? health.retry_budget.outer_retries_used : 0;
   return {
@@ -345,9 +366,10 @@ export function consumeOuterRetry(health: BrainHealth, now: Date): BrainHealth {
  * outer retry beyond the 5/day cap (bounded cost: a single Brain call).
  */
 export function tryConsumeOuterRetry(basePath: string, now: Date): boolean {
+  const { resetAtMinutes } = loadBudgetConfigSync(basePath);
   const fresh = readBrainHealth(basePath);
-  if (!canOuterRetry(fresh, now)) return false;
-  writeBrainHealth(basePath, consumeOuterRetry(fresh, now));
+  if (!canOuterRetry(fresh, now, resetAtMinutes)) return false;
+  writeBrainHealth(basePath, consumeOuterRetry(fresh, now, resetAtMinutes));
   return true;
 }
 
@@ -360,8 +382,9 @@ export function canConsumeQuotaCall(
   providerName: string,
   now: Date,
   cap: number = QUOTA_CALL_DAILY_CAP,
+  resetAtMinutes = 0,
 ): boolean {
-  const today = dayOf(now);
+  const today = dayOf(now, resetAtMinutes);
   const entry = health.quota_calls_today[providerName];
   const used = entry?.date === today ? entry.count : 0;
   return used < cap;
@@ -371,8 +394,9 @@ export function consumeQuotaCall(
   health: BrainHealth,
   providerName: string,
   now: Date,
+  resetAtMinutes = 0,
 ): BrainHealth {
-  const today = dayOf(now);
+  const today = dayOf(now, resetAtMinutes);
   const entry = health.quota_calls_today[providerName];
   const used = entry?.date === today ? entry.count : 0;
   return {
@@ -399,9 +423,10 @@ export function tryConsumeQuotaCall(
   now: Date,
   cap: number = QUOTA_CALL_DAILY_CAP,
 ): boolean {
+  const { resetAtMinutes } = loadBudgetConfigSync(basePath);
   const fresh = readBrainHealth(basePath);
-  if (!canConsumeQuotaCall(fresh, providerName, now, cap)) return false;
-  writeBrainHealth(basePath, consumeQuotaCall(fresh, providerName, now));
+  if (!canConsumeQuotaCall(fresh, providerName, now, cap, resetAtMinutes)) return false;
+  writeBrainHealth(basePath, consumeQuotaCall(fresh, providerName, now, resetAtMinutes));
   return true;
 }
 

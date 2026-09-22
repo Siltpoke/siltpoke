@@ -146,6 +146,31 @@ describe("divider visibility pairs with the button", () => {
     expect(divider!.hidden).toBe(false);
   });
 
+  // Regression guard: a second element carrying .pagehead-divider breaks
+  // Playwright strict mode in tests/e2e/arch-toggle-regenerate-screenshots.spec.ts
+  // (`.pagehead-divider` resolves to 2 elements) AND lets the extra divider
+  // intercept a later toggle click. Any future pagehead cluster that wants its
+  // own hairline must give it a distinct class — this assertion catches the dup
+  // at the unit level without needing the E2E. (A quiz cluster once did exactly
+  // this; the cluster is gone, the invariant is not.)
+  test("EXACTLY ONE .pagehead-divider in the rendered pagehead", async () => {
+    installFetchMock([
+      ["/arch/task", () => Promise.resolve(jsonResponse({ data: { task: null } }))],
+      ["/arch/estimate", () => Promise.resolve(jsonResponse({ success: true, data: { estUsd: 0.15 } }))],
+    ]);
+
+    const root = await mountRepoGraph();
+
+    const pagehead = root.querySelector<HTMLElement>(".pagehead");
+    expect(pagehead).not.toBeNull(); // anti-vacuous
+
+    // Anti-vacuous: the divider's neighbour must actually be rendered, so a
+    // count of 1 cannot come from a pagehead that dropped the cluster entirely.
+    expect(pagehead!.querySelector("#rg-arch-gen")).not.toBeNull();
+
+    const dividers = pagehead!.querySelectorAll(".pagehead-divider");
+    expect(dividers.length).toBe(1);
+  });
 });
 
 // ── Grounded chip relocated to TOOLBAR ───────────────────────────────────────

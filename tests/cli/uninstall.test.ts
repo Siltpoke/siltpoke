@@ -80,6 +80,16 @@ afterEach(() => {
 const noopAutostart = async () =>
   ({ status: "skipped", platform: "test" }) as const;
 
+/** The real local-model setup spawns `ollama pull` for a ~4.7 GB model.
+ *  runInstall used to skip it only when `CI === "true"`, and this file's env is
+ *  a bare `{ HOME: tmp }` that inherits nothing — so the calls below that got
+ *  far enough pulled and loaded that model for real. This file accounted for
+ *  all 8 `ollama` subprocesses a full suite run spawned (measured 2026-09-18
+ *  against a stand-in server on :11434); the freshInstall() path is the one
+ *  that reaches it, while the `user_aborted` call returns earlier and passes
+ *  the no-op for consistency, not because it ever pulled. */
+const noopOllama = async () => ({ enabled: false }) as const;
+
 async function freshInstall(): Promise<void> {
   writeFileSync(
     join(claudeHome, "settings.json"),
@@ -102,6 +112,7 @@ async function freshInstall(): Promise<void> {
     // convention already used by every other interactive runInstall() call.
     io: fakeIO(["1", "yes", "Mochi", "cat", "en"]),
     installAutostartFn: noopAutostart,
+    setupOllamaFn: noopOllama,
   });
 }
 
@@ -223,6 +234,7 @@ test("install: refuses to back up settings.json that already points at a differe
     // this test exists to verify never even runs.
     io: fakeIO(["1", "yes"]),
     installAutostartFn: noopAutostart,
+    setupOllamaFn: noopOllama,
   });
   expect(r.status).toBe("user_aborted");
   // No backup created

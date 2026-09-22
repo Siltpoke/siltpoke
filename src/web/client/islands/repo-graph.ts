@@ -2595,7 +2595,7 @@ function bootRepoGraph(root: HTMLElement): void {
       note = '<span class="warn">↻ code changed</span> · cached copy was cleared';
     } else {
       label = "Generate explanation";
-      note = '<span class="muted">not generated yet · runs /siltpoke-explain</span>';
+      note = '<span class="muted">not generated yet · the button runs it</span>';
     }
     const act = scope.state === "valid" ? "open" : "gen";
     return `<a class="btn primary" id="rg-expl-btn" data-act="${act}">${label} <span class="arrow">→</span></a><div class="p-note">${note}</div>`;
@@ -2712,7 +2712,6 @@ function bootRepoGraph(root: HTMLElement): void {
 
   interface ExplanationData {
     target: string;
-    route: string;
     title: string;
     grounded: number;
     fresh: boolean;
@@ -2728,12 +2727,17 @@ function bootRepoGraph(root: HTMLElement): void {
 
   // `fresh` is the CLIENT's action verdict (generate → true, open-cache →
   // false) — deterministic regardless of the API flag (also fixed server-side).
+  //
+  // The three modal headers below read "Explain", not `/siltpoke-explain`. That
+  // command has not shipped since #279; printing it in the header taught users
+  // a command their host would reject, and there is no CLI equivalent to point
+  // them at — the button that opened this modal IS the entry point.
   function renderModal(d: ExplanationData, fresh: boolean): void {
     if (!exModal) return;
     const depends: Neighbor[] = d.dependsOn.map((x) => ({ id: x.id, w: x.weight }));
     const used: Neighbor[] = d.usedBy.map((x) => ({ id: x.id, w: x.weight }));
     exModal.innerHTML =
-      `<div class="ex-head"><div class="ex-route"><span>/siltpoke-explain</span><span class="rt">${esc(d.target)}</span><button class="xx" id="rg-ex-close">×</button></div>` +
+      `<div class="ex-head"><div class="ex-route"><span>Explain</span><span class="rt">${esc(d.target)}</span><button class="xx" id="rg-ex-close">×</button></div>` +
       `<div class="ex-title">${esc(d.title)}</div>` +
       `<span class="ex-guard"><span class="gck"></span>evidence-guard · ${Math.round((d.grounded ?? 0) * 100)}% grounded · ${fresh ? "freshly generated" : "from cache"}</span></div>` +
       `<div class="ex-body"><p class="ex-lead">${esc(d.lead)}</p>` +
@@ -2751,7 +2755,7 @@ function bootRepoGraph(root: HTMLElement): void {
 
   function modalShell(title: string, route: string, bodyHtml: string): string {
     return (
-      `<div class="ex-head"><div class="ex-route"><span>/siltpoke-explain</span><span class="rt">${esc(route)}</span><button class="xx" id="rg-ex-close">×</button></div>` +
+      `<div class="ex-head"><div class="ex-route"><span>Explain</span><span class="rt">${esc(route)}</span><button class="xx" id="rg-ex-close">×</button></div>` +
       `<div class="ex-title">${esc(title)}</div></div><div class="ex-body">${bodyHtml}</div>`
     );
   }
@@ -2835,7 +2839,7 @@ function bootRepoGraph(root: HTMLElement): void {
     const inb = inbound(sub.id);
     const guard = `module overview · structural · ${sources.length} source file${sources.length === 1 ? "" : "s"}`;
     exModal.innerHTML =
-      `<div class="ex-head"><div class="ex-route"><span>/siltpoke-explain</span><span class="rt">${esc(route)}</span><button class="xx" id="rg-ex-close">×</button></div>` +
+      `<div class="ex-head"><div class="ex-route"><span>Explain</span><span class="rt">${esc(route)}</span><button class="xx" id="rg-ex-close">×</button></div>` +
       `<div class="ex-title">${esc(route)}</div>` +
       `<span class="ex-guard"><span class="gck"></span>${esc(guard)}</span></div>` +
       `<div class="ex-body"><p class="ex-lead">${esc(sub.purpose || "—")}</p>` +
@@ -4392,10 +4396,15 @@ function bootRepoGraph(root: HTMLElement): void {
         `<p>Building the structural index — tree-sitter parse → graph + fingerprints. The graph appears here when it's ready.</p>` +
         `<div class="re-cmd">${r.files} files</div>`;
     } else {
+      // No command chip here. `/siltpoke-index` has not existed since #279 cut
+      // the command surface, and the chip both named a dead command and looked
+      // clickable while being inert text. The real entry is "+ Index a repo" in
+      // this page's repo picker, which POSTs /api/repo-graph/index. The SSR
+      // sibling in screens/RepoGraph.tsx was fixed the same way.
       repoEmpty.innerHTML =
         `<h3>${esc(r.name)} isn't indexed yet</h3>` +
-        `<p>Run the indexer to generate a code map for this project.</p>` +
-        `<div class="re-cmd">/siltpoke-index ${esc(r.path)}</div>`;
+        `<p>Open the repo selector above and choose “+ Index a repo” to build its code map.</p>` +
+        `<div class="re-cmd">${esc(r.path)}</div>`;
     }
     repoEmpty.classList.add("show");
   }

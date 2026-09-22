@@ -36,9 +36,8 @@ import { type ExtractedFact, extractDurableFacts } from "../../memory/extract-fa
 import type { ChatAnchor, CoreMemory, ProjectScope } from "../../memory/memory";
 import { GLOBAL_ONLY, NODE_ANCHOR_DEFAULTS, newId } from "../../memory/memory";
 import { buildUserContextBlock, readActiveFacts } from "../../memory/recall";
-import { type QuizSessionState, type QuizTurnPlan, quizFallbackVerbalization } from "../../quiz/index";
-import { readIndexStaleness } from "../../repo-graph/index-health";
-import type { ModuleGraph } from "../../repo-graph/module-graph";
+import { readIndexStalenessAt } from "../../repo-graph/index-health";
+import type { IndexLocation } from "../../repo-graph/repo-registry";
 import { type StalenessVerdict, stalenessVerdict } from "../../repo-graph/staleness-verdict";
 import { readFingerprints } from "../../repo-graph/store";
 import { ledgerBrainCall as ledgerBrainCallReal } from "../../state/usage";
@@ -49,13 +48,6 @@ import {
   type ChatCaptureResult,
   runChatCapture,
 } from "./chat-capture-runner";
-import {
-  QUIZ_COMPLETE_LINE,
-  type QuizBlockedSignal,
-  type QuizUnavailableSignal,
-  runQuizTurn,
-} from "./chat-quiz";
-import { generateValidatedVerbalization } from "./chat-quiz-emit";
 import {
   buildTranscript,
   formatSseEvent,
@@ -113,28 +105,6 @@ export interface ChatRouteDeps {
    */
   getGraphStorageDir?: (projHash: string) => Promise<string | null>;
   /**
-   * Quiz mode (Task 4) — resolve a proj_hash to its module graph
-   * (readGraph → deriveModuleGraph). Absent, or the project isn't indexed →
-   * null, which the quiz branch surfaces as a `quiz_unavailable` blocked
-   * signal rather than silently falling through to free-text chat (an
-   * ungrounded quiz would be worse than an honest "can't quiz yet" — same
-   * discipline as the critique_gone signal). Bound in server.ts.
-   */
-  loadModuleGraph?: (projHash: string) => Promise<ModuleGraph | null>;
-  /**
-   * Quiz mode (Task 4) — read/write the per-session quiz sidecar
-   * (`chats/<id>.quiz.json`). Defaults, in production, to
-   * `src/quiz/session.ts`'s `readQuizState`/`writeQuizState` bound to
-   * `homeBase` (server.ts). A continuation turn is detected by `read`
-   * returning non-null even when the request carries no `quiz` opener
-   * field. Absent → quiz mode never activates (test compat / graceful
-   * degrade — the route behaves exactly as before).
-   */
-  quizStore?: {
-    read: (sessionId: string) => Promise<QuizSessionState | null>;
-    write: (sessionId: string, s: QuizSessionState) => Promise<void>;
-  };
-  /**
    * Read the user-fact store so active facts can
    * be injected into the chat system prompt (so the pet "knows" the user). Mirrors
    * the /memory page's read path (resolveProjectRoot(daemon cwd) → the same store
@@ -155,6 +125,13 @@ export interface ChatRouteDeps {
    */
   resolveProjectRootByHash?: (projHash: string) => Promise<string | null>;
   /**
+   * proj_hash → the index's stored location, for the staleness verdict.
+   * Separate from `resolveProjectRootByHash` on purpose: that one scopes Memory
+   * (which walks up to the repo); this one must not — a sub-folder index lives
+   * under its own hash (spec 2026-09-14). Absent → no staleness surfaced.
+   */
+  resolveIndexLocationByHash?: (projHash: string) => Promise<IndexLocation | null>;
+  /**
    * Episode recall — inject synthesized episode narratives into the
    * chat system prompt (rollback seam, siltpoke's optional-field idiom, NOT an
    * env flag). Defaults to ON in the live daemon; a mount can pass `false` to
@@ -174,7 +151,7 @@ export interface ChatRouteDeps {
   ) => Promise<PageContext | null>;
   /**
    * memory work (real-time chat capture) — persist a fact when the user
-   * tells the pet  in chat. Mirrors the optional `readMemory` signature
+   * tells the pet "记住 X" in chat. Mirrors the optional `readMemory` signature
    * (same store the facts route writes to). Absent → capture disabled: no fact
    * is written AND the capture-honesty framing is NOT injected (back-compat —
    * a mount with neither readMemory nor writeMemory behaves exactly as before).
@@ -185,7 +162,7 @@ export interface ChatRouteDeps {
   writeMemory?: (homeBase: string, memory: CoreMemory, projectCwd?: ProjectScope) => Promise<void>;
   /**
    * Conversational auto-capture (memory work) — distill durable user-facts
-   * from a plain chat message (no explicit  marker) via one ledgered Haiku
+   * from a plain chat message (no explicit "记住" marker) via one ledgered Haiku
    * call. Injected so route tests stub it deterministically without spawning the
    * `claude` CLI; production defaults to the real `extractDurableFacts`. Only
    * called on the `!intent.hit` path AND after `looksLikeFactStatement` passes
@@ -259,9 +236,8 @@ export interface ChatRouteDeps {
   /**
    * Test/injection seam for the honest usage ledger (`ledgerBrainCall`,
    * src/state/usage.ts). Defaults to the real import — production callers
-   * leave this unset. Lets tests assert the ledger fired (or, for a quiz
-   * wrap-up/dedupe turn that made NO real Brain call, assert it did NOT
-   * fire) without touching the real usage-events.jsonl file.
+   * leave this unset. Lets tests assert the ledger fired without touching
+   * the real usage-events.jsonl file.
    */
   ledgerBrainCall?: typeof ledgerBrainCallReal;
 }
@@ -364,15 +340,6 @@ interface ChatRequestBody {
    * Absent: pre-flight stale check runs normally (may block with a signal).
    */
   anchor_decision?: "freeze" | "continue";
-  /**
-   * Quiz mode opener (Task 4) — present only on the FIRST turn of a quiz
-   * conversation; the Code Map's scope picker sends this. `scope_module_id`
-   * bounds the quiz to a module subtree, or `null` for the whole repo.
-   * Absent on every continuation turn (mirrors `anchor`'s pin-once
-   * discipline) — continuation is instead detected via `quizStore.read`
-   * returning a non-null sidecar for this session.
-   */
-  quiz?: { proj_hash: string; scope_module_id: string | null };
 }
 
 interface SearchRequestBody {
@@ -497,61 +464,6 @@ async function reduceStreamEvents(
   return { assistantText, assistantId, assistantModel, usage, sawUsage, sawStop, failure };
 }
 
-/**
- * Quiz mode (Task 6) — wraps an already-validated verbalization (the
- * `text` returned by `generateValidatedVerbalization`) as a synthetic
- * `StreamEvent` sequence so a buffered verdict turn flows through the
- * SAME `reduceStreamEvents` → persistence/ledger pipeline as a real
- * streamed reply, instead of a bespoke second code path. The client only
- * ever sees this one content_block_delta — the raw (possibly caving)
- * Brain tokens `generateValidatedVerbalization` drained internally never
- * reach the wire.
- *
- * `usage` MUST be the REAL usage `generateValidatedVerbalization` summed
- * across its 1-2 actual Brain calls (fix, review round 1) — this stream's
- * own `message_start`/`content_block_delta`/`message_stop` are synthetic,
- * but the turn they represent made a real, billable Brain call, and
- * `reduceStreamEvents`/`ledgerBrainCall` read usage straight off this
- * `message_stop` event. A hardcoded 0/0 here would silently under-report
- * spend for every buffered verdict turn — a cost-honesty violation.
- */
-/**
- * Quiz mode (Task 7) — usage for a synthetic reply that made NO real Brain
- * call: both the deterministic wrap-up text (`buildWrapup`, score-free by
- * construction — see src/quiz/wrapup.ts) and the fixed dedupe complete-line
- * are engine/route-composed strings, never a `claude -p` completion. Cost
- * stays honestly zero (mirrors `reduceStreamEvents`/`ledgerBrainCall`'s
- * presence-gated usage discipline elsewhere in this file — this is a
- * present-but-zero usage object, not a fabricated non-zero one).
- */
-const ZERO_QUIZ_USAGE: StreamUsage = { input_tokens: 0, output_tokens: 0 };
-
-/**
- * Quiz verdict/abstain turns can chain up to 2 sequential `claude -p` Brain
- * calls (`generateValidatedVerbalization`'s validate + fallback-retry path,
- * chat-quiz-emit.ts) inside ONE HTTP turn — on a loaded user machine that can
- * exceed `DEFAULT_TIMEOUT_MS` (60s, chat-stream.ts) well before either call is
- * actually stuck, surfacing as a false "backend timeout" instead of a real
- * failure. 150s gives headroom for 2 real calls + retry latency on a loaded
- * machine without masking a genuinely hung process. Applied ONLY to quiz
- * Brain-call sites below — normal (non-quiz) chat keeps the 60s default.
- */
-const QUIZ_TURN_TIMEOUT_MS = 150_000;
-
-async function* singleTextStream(
-  text: string,
-  model: string,
-  usage: StreamUsage,
-): AsyncGenerator<StreamEvent, void, void> {
-  yield { type: "message_start", message_id: "", model };
-  yield { type: "content_block_delta", text };
-  yield {
-    type: "message_stop",
-    usage,
-    full_text: text,
-  };
-}
-
 /** Runtime guard: a well-formed anchor = string proj_hash + a valid target
  * (string node_id, OR string name + string path). Keeps non-string/object
  * values from reaching resolveAnchor + downstream path joins. */
@@ -571,18 +483,6 @@ function isValidCritiqueAnchor(
   if (typeof a !== "object" || a === null) return false;
   const o = a as Record<string, unknown>;
   return typeof o.proj_hash === "string" && typeof o.critique_id === "string";
-}
-
-/** Runtime guard: a well-formed quiz opener = string proj_hash + a
- * string-or-null scope_module_id. Keeps non-string/object values off the
- * gateScope + loadModuleGraph call sites. */
-function isValidQuizOpener(
-  q: unknown,
-): q is { proj_hash: string; scope_module_id: string | null } {
-  if (typeof q !== "object" || q === null) return false;
-  const o = q as Record<string, unknown>;
-  if (typeof o.proj_hash !== "string") return false;
-  return o.scope_module_id === null || typeof o.scope_module_id === "string";
 }
 
 export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
@@ -608,15 +508,7 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     } catch {
       return c.json({ error: "invalid_json" }, 400);
     }
-    // Quiz opener (Task 4): validated BEFORE the message check below — an
-    // opener turn legitimately carries an EMPTY message (the assistant asks
-    // the first question; the user hasn't answered anything yet), so the
-    // message check is relaxed only when a well-formed `quiz` field is
-    // present.
-    if (body.quiz !== undefined && !isValidQuizOpener(body.quiz)) {
-      return c.json({ error: "invalid_quiz" }, 400);
-    }
-    if (typeof body.message !== "string" || (!body.message && !body.quiz)) {
+    if (typeof body.message !== "string" || !body.message) {
       return c.json({ error: "missing_message" }, 400);
     }
     // Validate session_id BEFORE it touches the filesystem — it's a path
@@ -915,19 +807,19 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     // resolves to ZERO anchors is exactly when this warning matters most —
     // gating on "anchor resolved successfully" would silently drop it (the
     // zero-anchor blindspot, R10). Un-anchored sends, critique-anchored
-    // sends, and mounts without `resolveProjectRootByHash` (test compat)
+    // sends, and mounts without `resolveIndexLocationByHash` (test compat)
     // never set repoGraphQueriedProjHash / never resolve a project_root, so
     // `staleness` stays undefined and nothing extra is surfaced — this path
     // is unaffected. Fail-open: any read error here is additive-context-only
     // and must never block or fail the chat send.
     let staleness: StalenessVerdict | undefined;
-    if (repoGraphQueriedProjHash && deps.resolveProjectRootByHash) {
+    if (repoGraphQueriedProjHash && deps.resolveIndexLocationByHash) {
       try {
-        const projectRoot = await deps.resolveProjectRootByHash(repoGraphQueriedProjHash);
-        if (projectRoot) {
+        const location = await deps.resolveIndexLocationByHash(repoGraphQueriedProjHash);
+        if (location) {
           const rgCfg = await loadRepoGraphConfig(deps.homeBase);
           staleness = stalenessVerdict(
-            await readIndexStaleness({ cwd: projectRoot, home: deps.homeBase }),
+            await readIndexStalenessAt({ ...location, home: deps.homeBase }),
             rgCfg.staleness_warn_pct,
           );
         }
@@ -937,59 +829,6 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     }
     // ── end index-staleness verdict ───────────────────────────────────────
 
-    // ── Quiz mode (Task 4/6) ────────────────────────────────────────────
-    // Active when this turn carries the opener's `body.quiz` field, OR
-    // (continuation) a quiz sidecar already exists for this session
-    // (`quizStore.read` non-null). A blocked gate/missing-index returns a
-    // terminal JSON signal HERE — before the user message is appended, the
-    // FTS index is touched, or anything else is persisted (INV2, Task 6):
-    // mirrors the node_gone/stale/critique_gone pre-flight signals above,
-    // which all return before append too. Task 4 originally ran this check
-    // AFTER the append (right before system-prompt assembly); moved up here
-    // for Task 6 so a continuation turn whose module graph can't load
-    // (`quiz_unavailable`) doesn't silently persist the user's message /
-    // index it / feed it to chat capture before bailing out.
-    let quizPromptOverride: string | undefined;
-    let quizPlan: QuizTurnPlan | undefined;
-    // Task 7 — set only on the dedupe path (a continuation whose loaded
-    // state already had `wrappedUp === true` on entry). `quizPlan` stays
-    // undefined for this turn on purpose: no engine call ran, so there is
-    // nothing to persist and the existing `quizPlan && deps.quizStore`
-    // write-gate below naturally skips the write (state does NOT advance).
-    let quizComplete = false;
-    if (deps.loadModuleGraph && (body.quiz || deps.quizStore)) {
-      const existingQuizState = body.quiz
-        ? null
-        : deps.quizStore
-          ? await deps.quizStore.read(sessionId)
-          : null;
-      if (body.quiz || existingQuizState) {
-        const quizResult = await runQuizTurn(
-          {
-            userMessage: body.message,
-            opener: body.quiz ?? null,
-            existingState: existingQuizState,
-          },
-          {
-            homeBase: deps.homeBase,
-            loadModuleGraph: deps.loadModuleGraph,
-            resolveProjectRootByHash: deps.resolveProjectRootByHash,
-          },
-        );
-        if (quizResult.kind === "blocked") {
-          const signal: QuizBlockedSignal | QuizUnavailableSignal = quizResult.signal;
-          return c.json(signal, 200);
-        }
-        if (quizResult.kind === "complete") {
-          quizComplete = true;
-        } else {
-          quizPromptOverride = quizResult.quizPrompt;
-          quizPlan = quizResult.plan;
-        }
-      }
-    }
-    // ── end quiz mode ────────────────────────────────────────────────────
-
     const userMessage: ChatMessage = chatMessageSchema.parse({
       id: newId("m"),
       session_id: sessionId,
@@ -997,22 +836,12 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
       content: body.message,
       ts: now().toISOString(),
     });
-    // Quiz opener (Task 4): the opener's `message` is a protocol trigger, not
-    // real user content — it's always "" (the assistant asks the first
-    // question; the user hasn't answered anything yet). Persisting an empty
-    // user turn would put a phantom blank bubble in both the JSONL
-    // transcript and the FTS index forever, so it's skipped for exactly this
-    // case. A continuation turn (no `body.quiz`, non-empty message) persists
-    // normally, same as every other chat send.
-    const isEmptyQuizOpener = body.quiz !== undefined && body.message === "";
-    if (!isEmptyQuizOpener) {
-      await appendMessage(deps.homeBase, sessionId, userMessage);
-      insertMessage(deps.index, userMessage);
-    }
+    await appendMessage(deps.homeBase, sessionId, userMessage);
+    insertMessage(deps.index, userMessage);
 
     // ── Real-time chat capture (memory work) ─────────────────────────────
     //
-    // Capture (explicit  OR a conversational fact statement) is detected +
+    // Capture (explicit "记住 X" OR a conversational fact statement) is detected +
     // persisted in runChatCapture BEFORE composing the system prompt, so this very
     // turn can truthfully acknowledge the save via the injected marker. Routing is
     // deterministic (no LLM — security rule); the write is best-effort and must
@@ -1103,10 +932,8 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     const history = await readSession(deps.homeBase, sessionId);
     // `.slice(0, -1)` drops the just-appended user turn readSession reads
     // back (buildTranscript appends `userMessage.content` itself, avoiding
-    // duplication). The quiz-opener skip above means there IS no
-    // just-appended row to drop for that one case — slicing anyway would
-    // wrongly discard the real last historical turn.
-    const historyMinusLatest = isEmptyQuizOpener ? history : history.slice(0, -1);
+    // duplication).
+    const historyMinusLatest = history.slice(0, -1);
     const transcript = buildTranscript(historyMinusLatest, userMessage.content);
 
     // Inject the frozen anchor context (if this conversation is pinned) as the
@@ -1119,11 +946,7 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     // Precedence: node > page > none, extracted into composeBaseSystemPrompt
     // (src/chat/compose-base-context.ts) — see that module for the fail-open
     // try/catch (page assembly is additive context only, never blocks the reply).
-    // Quiz mode (Task 4/6): `quizPromptOverride`/`quizPlan` were computed
-    // earlier — see the "Quiz mode" block right after the index-staleness
-    // verdict, above (moved there for Task 6's INV2 fix).
     const baseSystemPrompt = await composeBaseSystemPrompt({
-      quizPrompt: quizPromptOverride,
       anchorCtx,
       pageId,
       homeBase: deps.homeBase,
@@ -1246,84 +1069,12 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
           model: replyModel,
         });
 
-        // Quiz mode (Task 6) — a verdict turn (`plan.buffered === true`,
-        // i.e. `plan.priorVerdict !== null`) is NEVER streamed raw: the
-        // Brain's own prose is a known anti-sycophancy risk (it may cave/
-        // praise a wrong answer). Instead run it through the validate →
-        // retry → deterministic-fallback backstop
-        // (`generateValidatedVerbalization`, chat-quiz-emit.ts) to
-        // completion FIRST, then feed the validated result through the
-        // exact same reduceStreamEvents pipeline as a normal reply (via
-        // `singleTextStream`) — the client only ever receives the
-        // validated text as a single content_block_delta. A non-buffered
-        // turn (opener / plain question / free-text chat) keeps the
-        // existing raw streaming path unchanged.
-        //
-        // `quizNoBrainCall` (fix, post-review polish) — true for the two
-        // synthetic-text branches below (dedupe complete-line, wrap-up
-        // text) that make NO real Brain call: `singleTextStream` still
-        // emits a `message_stop` event (so `reduceStreamEvents` reduces a
-        // normal terminal state), which sets `red.sawUsage = true` even
-        // though the usage object is the ZERO_QUIZ_USAGE placeholder —
-        // `sawUsage` is presence-of-message_stop, not presence-of-a-
-        // real-call. Left ungated, the ledger call below fires a phantom
-        // $0 `ledgerBrainCall` row for a turn `ledgerBrainCall`'s own
-        // doc-invariant (src/state/usage.ts) says must be a real, charged
-        // call. Computed here (not re-derived at the ledger site) so it
-        // reads as one fact next to the branch that makes it true.
-        const quizNoBrainCall = quizComplete || quizPlan?.phase === "wrapup";
-        let stream: AsyncGenerator<StreamEvent, void, void>;
-        if (quizComplete) {
-          // Task 7 dedupe — a continuation on an already-`wrappedUp` session.
-          // No Brain call, no re-run of buildWrapup: just the fixed,
-          // score-free closing line (never a second wrap-up).
-          stream = singleTextStream(QUIZ_COMPLETE_LINE, replyModel, ZERO_QUIZ_USAGE);
-        } else if (quizPlan?.phase === "wrapup") {
-          // Task 7 — the turn that CROSSES into wrap-up. `wrapText` is
-          // deterministic and score-free (buildWrapup, src/quiz/wrapup.ts)
-          // and is NOT a buffered verdict turn (no priorVerdict) — it never
-          // goes through `generateValidatedVerbalization`; emit it directly
-          // via the same synthetic single-event stream as a buffered turn,
-          // so persistence/ledger below stay on one pipeline.
-          // `wrapText` is always set when phase === "wrapup" (engine
-          // invariant — see prepareQuizTurn's wrapup branch in
-          // src/quiz/orchestrate.ts); the `?? ""` is defensive TS narrowing
-          // only, never expected to fire.
-          stream = singleTextStream(quizPlan.wrapText ?? "", replyModel, ZERO_QUIZ_USAGE);
-        } else if (quizPlan?.buffered && quizPlan.priorVerdict) {
-          const validated = await generateValidatedVerbalization({
-            streamFactory,
-            baseOpts: {
-              transcript,
-              systemPrompt: quizPlan.systemPrompt,
-              // `replyModel` (not raw `body.model`) — the emitted
-              // message_start/ledger below both report `replyModel`, so the
-              // Brain call actually made must run on the SAME resolved
-              // model, not silently diverge when body.model is undefined
-              // (fix, review round 1).
-              model: replyModel,
-              signal: turnAbort.signal,
-              // Buffered verdict turn — up to 2 sequential Brain calls
-              // inside this one await; see QUIZ_TURN_TIMEOUT_MS comment.
-              timeoutMs: QUIZ_TURN_TIMEOUT_MS,
-            },
-            verdict: quizPlan.priorVerdict.verdict,
-            fallback: quizFallbackVerbalization(quizPlan.priorVerdict),
-          });
-          stream = singleTextStream(validated.text, replyModel, validated.usage);
-        } else {
-          stream = streamFactory({
-            transcript,
-            model: body.model,
-            systemPrompt,
-            signal: turnAbort.signal,
-            // Shared with normal (non-quiz) chat — only widen the timeout
-            // for a quiz turn (opener/question); normal chat keeps the 60s
-            // default (chat-stream.ts DEFAULT_TIMEOUT_MS). See
-            // QUIZ_TURN_TIMEOUT_MS comment above.
-            timeoutMs: quizPlan ? QUIZ_TURN_TIMEOUT_MS : undefined,
-          });
-        }
+        const stream = streamFactory({
+          transcript,
+          model: body.model,
+          systemPrompt,
+          signal: turnAbort.signal,
+        });
         // Index-staleness — a distinct SSE event (not a `StreamEvent`
         // variant: that type is scoped to the `claude -p` wire translation
         // in chat-stream.ts, orthogonal to this route's own repo-graph
@@ -1377,14 +1128,6 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
           }
         }
 
-        // Quiz mode (Task 6) — persist the turn's advanced state AFTER the
-        // turn actually completed (not before — see chat-quiz.ts's file
-        // header): an aborted/failed turn must not silently advance the
-        // quiz overlay/target for a reply the user never actually received.
-        if (quizPlan && deps.quizStore && !cancelled && failure === null) {
-          await deps.quizStore.write(sessionId, quizPlan.nextState);
-        }
-
         // Persistence branches — cancelled beats failed beats success: an
         // abort can also surface as a reducer throw (enqueue on a cancelled
         // controller), and that must never re-classify a user stop as a
@@ -1433,15 +1176,7 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
         // cost is derived from the model via computeCost. Gated on usage
         // PRESENCE: a killed/failed call with no usage ledgers nothing; usage
         // that arrived before a kill IS ledgered (it was paid for).
-        //
-        // `!quizNoBrainCall` (fix, post-review polish) — the dedupe
-        // complete-line and the wrap-up text both set `red.sawUsage = true`
-        // via their synthetic `message_stop` (see `quizNoBrainCall`'s
-        // comment above), but made no real Brain call and must not ledger a
-        // phantom $0 row. A buffered verdict turn (real Brain calls inside
-        // `generateValidatedVerbalization`) and a normal question turn are
-        // NOT `quizNoBrainCall` and keep ledgering exactly as before.
-        if (red.sawUsage && !quizNoBrainCall) {
+        if (red.sawUsage) {
           const ledger = deps.ledgerBrainCall ?? ledgerBrainCallReal;
           await ledger(deps.homeBase, {
             kind: "chat",

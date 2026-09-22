@@ -10,10 +10,11 @@
  * model wins; else the family/role default; else undefined = the CLI's own
  * account default, e.g. qoder rejects a literal "default" so we omit --model).
  */
+
+import { DEFAULT_MODEL } from "./brain";
 import type { BrainConfig, BrainRole, ProviderFamily } from "./brain-config";
 import { FAMILIES } from "./brain-config";
-import { DEFAULT_MODEL } from "./brain";
-import { makeClaudeProvider, type ReviewerBrainProvider } from "./provider";
+import { FAMILY_ACCEPTS_MODEL, makeClaudeProvider, type ReviewerBrainProvider } from "./provider";
 import { makeAgyProvider } from "./providers/agy";
 import { makeCodeBuddyProvider, makeQoderProvider } from "./providers/ccfork-reviewer";
 import { makeCodexProvider } from "./providers/codex";
@@ -41,12 +42,22 @@ export function familyModelDefault(family: ProviderFamily, role: BrainRole): str
   return role === "review" ? DEFAULT_MODEL : CLAUDE_PINNED;
 }
 
-/** Whether a family lets the USER pick the review model. Only claude (USD,
- * pinnable via `claude -p --model`). The quota CLIs (codex/agy/qoder/codebuddy)
- * serve an auth-fixed model that is not selectable — so the select surface must
- * NOT offer a model for them (Brain select v2). */
+/**
+ * Whether a family lets the USER pick the review model — DERIVED from the
+ * provider that family resolves to, never a second list (spec
+ * 2026-09-12-brain-select-four-gaps §3.1 / AC3).
+ *
+ * This used to read `family === "claude"`, justified as "the quota CLIs serve an
+ * auth-fixed model". That is true of codex alone: agy and both CC-forks
+ * (qoder / codebuddy) push `--model` into their argv, so siltpoke could always
+ * pick their model and three surfaces were refusing to let anyone say so, while
+ * a fourth accepted a model for codex that the spawn argv never carried.
+ * Reads `FAMILY_ACCEPTS_MODEL` — the same record each provider's `meta` is built
+ * from — rather than constructing a provider, because doctor's display path
+ * reaches this and must not spawn adapter factories (see resolveRoleMeta).
+ */
 export function familySupportsModelChoice(family: ProviderFamily): boolean {
-  return family === "claude";
+  return FAMILY_ACCEPTS_MODEL[family];
 }
 
 /** Curated claude review-model options for the select surface (Brain select
@@ -60,7 +71,7 @@ export const CLAUDE_REVIEW_MODELS: readonly string[] = [
 
 /** 1-indexed line of `export function familyBinary` below — the re-checkable anchor for
  * injected reviewer-external evidence (schema requires a line). Guarded by a drift test. */
-export const FAMILY_BINARY_ANCHOR_LINE = 106; // ← set to the real line; the drift test enforces it
+export const FAMILY_BINARY_ANCHOR_LINE = 117; // ← set to the real line; the drift test enforces it
 
 export interface ReviewerExternal {
   family: ProviderFamily;
@@ -119,12 +130,25 @@ export function providerForFamily(family: ProviderFamily): ReviewerBrainProvider
   return makeClaudeProvider();
 }
 
+/**
+ * A configured model only survives when the family's argv can carry it. Config
+ * written before 2026-09-12 can hold a codex model — `runBrainSet` accepted one
+ * with no check at all — and codex's spawn argv has no `-m`, so passing it on
+ * would let `servedModel` and every display below report a model the process
+ * never saw. The writers now refuse such a pin; this drops the ones already on
+ * disk (spec brain-select-four-gaps §3.1). The parser keeps it verbatim: it
+ * cannot ask the registry without an import cycle.
+ */
+function sendableModel(family: ProviderFamily, model: string | undefined): string | undefined {
+  return familySupportsModelChoice(family) ? model : undefined;
+}
+
 export function resolveRole(config: BrainConfig, role: BrainRole): ResolvedRole {
   const rc = config.roles[role];
   return {
     family: rc.provider,
     provider: providerForFamily(rc.provider),
-    model: rc.model ?? familyModelDefault(rc.provider, role),
+    model: sendableModel(rc.provider, rc.model) ?? familyModelDefault(rc.provider, role),
   };
 }
 
@@ -137,5 +161,8 @@ export interface ResolvedRoleMeta {
  * (doctor's display path must not eagerly spawn adapter factories). */
 export function resolveRoleMeta(config: BrainConfig, role: BrainRole): ResolvedRoleMeta {
   const rc = config.roles[role];
-  return { family: rc.provider, model: rc.model ?? familyModelDefault(rc.provider, role) };
+  return {
+    family: rc.provider,
+    model: sendableModel(rc.provider, rc.model) ?? familyModelDefault(rc.provider, role),
+  };
 }

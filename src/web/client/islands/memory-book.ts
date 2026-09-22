@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * memory-book — Alpine island for the /memory  screen.
+ * memory-book — Alpine island for the /memory "记忆之书" screen.
  *
  * Three views:
  *   - timeline (时间流): date-grouped stream of every durable memory, primary.
  *   - byType (按类型): 2×2 gradient cards → modal drill-down + NL composer.
  *   - entity (实体): groups via the shared groupByEntity (src/memory/entity.ts).
  *
- * The composer () has two paths. (1) Deterministic forget fast-path (NO
- * LLM):  keyword-matches one existing semantic fact; ✓确认 performs the
+ * The composer ("改记忆") has two paths. (1) Deterministic forget fast-path (NO
+ * LLM): "忘掉 X" keyword-matches one existing semantic fact; ✓确认 performs the
  * real POST /api/facts/:id/retire (soft delete). (2) NL path: any other text
  * → POST /api/facts/parse (one haiku call, budget/quiet-hours gated, NEVER
  * writes) → an add/restate/contradict proposal the user must confirm (confirmAdd
@@ -399,7 +399,7 @@ export function makeMemoryBookData(): MemoryBookData {
      * ($0, no LLM): a pure retire is matched synchronously by buildProposal.
      * Any OTHER text is sent to POST /api/facts/parse for an LLM-classified
      * proposal (add / restate / contradict). The parse call is gated — a
-     * budget/quiet-hours pause surfaces an honest  toast, never a write.
+     * budget/quiet-hours pause surfaces an honest "已暂停" toast, never a write.
      */
     async sendChat(): Promise<void> {
       // Guard against double-submit while a parse call is in flight (the Enter

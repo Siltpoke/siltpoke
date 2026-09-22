@@ -25,6 +25,7 @@ export type IndexPathReject =
   | "unreadable";
 
 export type IndexPathResult =
+  /** `realPath` = the folder picked; it is what gets indexed and what `projHash` is computed from. */
   | { ok: true; realPath: string; projHash: string }
   | { ok: false; reason: IndexPathReject };
 
@@ -132,6 +133,6 @@ export function validateIndexPath(
   // is a narrow window before the caller spawns with it as cwd in which a local
   // attacker with write access could swap the dir for a symlink. The caller
   // (the indexing endpoint) MUST (a) require the daemon secret so only the authed user can
-  // trigger this, and (b) pass THIS `realPath` (not the raw input) to the spawn.
+  // trigger this, and (b) spawn at THIS `realPath` with `--root realPath` (not the raw input).
   return { ok: true, realPath, projHash: computeProjHash(realPath) };
 }

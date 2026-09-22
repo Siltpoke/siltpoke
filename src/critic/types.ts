@@ -209,7 +209,7 @@ export type RunCriticDeps = {
   callerImpact?: CallerImpactDeps;
   /**
    * Reverse-deps seams (ripgrep + resolver + listFiles) — critic
-   * disk-awareness slice ①. Stubbed in tests.
+   * disk-awareness. Stubbed in tests.
    */
   reverseDeps?: ImportersDeps;
   /**

@@ -11,6 +11,7 @@
       "severity": "medium",
       "confidence": "high",
       "xp_earned_events": [],
+      "findings": [],
       "evidence": [
         {
           "tool": "tsc",
@@ -42,7 +43,8 @@
     "providerMeta": {
       "name": "claude",
       "billing": "usd",
-      "genAiSystem": "anthropic"
+      "genAiSystem": "anthropic",
+      "acceptsModel": true
     },
     "memoryFunnel": {
       "rules_in_store": 0,
@@ -71,6 +73,7 @@
       "severity": "medium",
       "confidence": "high",
       "xp_earned_events": [],
+      "findings": [],
       "evidence": [
         {
           "tool": "tsc",
@@ -92,7 +95,15 @@
           "snippet": "let x: string = badValue;"
         }
       ],
-      "unverified": []
+      "unverified": [],
+      "verifiedFindings": [],
+      "unverifiedFindings": [],
+      "rangeAgreement": {
+        "code_silent": 0,
+        "model_silent": 0,
+        "agree": 0,
+        "disagree": 0
+      }
     }
   }
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * `attachWhy` — slice ④ task 6. Pure unit tests over the injected `lookup`
+ * `attachWhy` — task 6. Pure unit tests over the injected `lookup`
  * override (no real git-blame/transcript I/O here — that's `why-lookup`'s
  * own test suite; this file only covers the attach/fan-out/degrade layer).
  */

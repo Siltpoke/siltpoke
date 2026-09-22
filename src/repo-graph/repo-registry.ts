@@ -42,6 +42,8 @@ export interface RepoEntry {
   /** ISO 8601 of last successful build; null when never completed. */
   last_indexed_ts: string | null;
   status: RepoStatus;
+  /** Enclosing repo root when this index is a folder inside it (meta.repo_root); absent/null otherwise. */
+  repo_root?: string | null;
 }
 
 interface MaybeMeta {
@@ -49,6 +51,7 @@ interface MaybeMeta {
   project_root?: unknown;
   last_indexed_ts?: unknown;
   building?: unknown;
+  repo_root?: unknown;
 }
 
 function deriveStatus(meta: MaybeMeta | null): RepoStatus {
@@ -100,6 +103,30 @@ export async function resolveRepoByHash(
   };
 }
 
+/** Where a stored index lives — its own root and storage dir, never re-derived. */
+export interface IndexLocation {
+  project_root: string;
+  storage_dir: string;
+}
+
+/**
+ * Build the chat staleness dep: proj_hash → the index's own stored
+ * location (`project_root` + `storage_dir`), never re-derived. Must NOT walk
+ * up from `project_root` to an enclosing repo — a sub-folder index lives
+ * under its own hash with its own `storage_dir`, and a staleness read has to
+ * hit that folder's storage, not the repo's (spec 2026-09-14 §4.3). Delegates
+ * to `resolveRepoByHash`, which already refuses malformed hashes and returns
+ * null for an unknown one.
+ */
+export function makeIndexLocationResolver(
+  home: string,
+): (projHash: string) => Promise<IndexLocation | null> {
+  return async (projHash: string) => {
+    const loc = await resolveRepoByHash(projHash, { home });
+    return loc?.project_root ? { project_root: loc.project_root, storage_dir: loc.storage_dir } : null;
+  };
+}
+
 export async function enumerateRepos(opts: { home?: string } = {}): Promise<RepoEntry[]> {
   const home = opts.home ?? siltpokeRoot();
   const root = join(home, "repo-memory");
@@ -133,6 +160,7 @@ export async function enumerateRepos(opts: { home?: string } = {}): Promise<Repo
           ? meta.last_indexed_ts
           : null,
       status: deriveStatus(meta),
+      repo_root: typeof meta?.repo_root === "string" ? meta.repo_root : null,
     });
   }
   // Deterministic order — the SINGLE comparator shared by every consumer (the

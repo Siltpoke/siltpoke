@@ -21,19 +21,28 @@ const sampleResult = {
 
 describe("parseArgs", () => {
   test("--force flag", () => {
-    expect(parseArgs(["--force"])).toEqual({ force: true, json: false, progress: false });
+    expect(parseArgs(["--force"])).toEqual({ force: true, json: false, progress: false, root: null });
   });
   test("--json flag", () => {
-    expect(parseArgs(["--json"])).toEqual({ force: false, json: true, progress: false });
+    expect(parseArgs(["--json"])).toEqual({ force: false, json: true, progress: false, root: null });
   });
   test("both flags", () => {
-    expect(parseArgs(["--force", "--json"])).toEqual({ force: true, json: true, progress: false });
+    expect(parseArgs(["--force", "--json"])).toEqual({ force: true, json: true, progress: false, root: null });
   });
   test("no flags", () => {
-    expect(parseArgs([])).toEqual({ force: false, json: false, progress: false });
+    expect(parseArgs([])).toEqual({ force: false, json: false, progress: false, root: null });
   });
   test("--progress flag", () => {
-    expect(parseArgs(["--progress"])).toEqual({ force: false, json: false, progress: true });
+    expect(parseArgs(["--progress"])).toEqual({ force: false, json: false, progress: true, root: null });
+  });
+  test("--root <dir> \u2192 root", () => {
+    expect(parseArgs(["--progress", "--root", "/a/b"])).toEqual({ force: false, json: false, progress: true, root: "/a/b" });
+  });
+  test("--root followed by another flag has no value \u2192 root null", () => {
+    expect(parseArgs(["--root", "--json"]).root).toBeNull();
+  });
+  test("--root \"\" (empty string value) \u2192 root null, same as no value given", () => {
+    expect(parseArgs(["--root", ""]).root).toBeNull();
   });
 });
 

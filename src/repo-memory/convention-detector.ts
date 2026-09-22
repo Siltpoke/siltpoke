@@ -71,6 +71,9 @@ function checkFileAgainstConvention(
         severity: "med",
         file: filePath,
         line: 1,
+        // NO `snippet_is_source` ON PURPOSE — this is the FILE NAME, not a line read
+        // out of the file. It is short, single-line and inside the citation band, so
+        // provenance is the only thing that keeps it uncitable.
         snippet: name,
         message: `File name "${name}" violates house convention: file names should use kebab-case (confidence: ${(convention.confidence * 100).toFixed(0)}%).`,
         suggested_fix: `Rename to ${name.replace(/([A-Z])/g, (m) => `-${m.toLowerCase()}`).replace(/^-/, "")}.`,

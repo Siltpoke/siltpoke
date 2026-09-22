@@ -20,8 +20,10 @@ import {
   tryConsumeQuotaCall,
   brainUnhealthySignal,
   QUOTA_CALL_DAILY_CAP,
+  tryConsumeOuterRetry,
   type BrainHealth,
 } from "../../src/state/brain-health";
+import { dayKey } from "../../src/state/usage";
 
 let tmp: string;
 beforeEach(() => {
@@ -284,7 +286,7 @@ test("quota-call cap resets on date rollover (codex)", () => {
 test("tryConsumeQuotaCall re-reads fresh and persists the consumed slot", () => {
   expect(tryConsumeQuotaCall(tmp, "codex", T0)).toBe(true);
   expect(readBrainHealth(tmp).quota_calls_today.codex).toEqual({
-    date: T0.toISOString().slice(0, 10),
+    date: dayKey(T0, 0),
     count: 1,
   });
 });
@@ -292,7 +294,7 @@ test("tryConsumeQuotaCall re-reads fresh and persists the consumed slot", () => 
 test("tryConsumeQuotaCall refuses once the cap is already exhausted (fresh re-read, not caller's stale snapshot)", () => {
   writeBrainHealth(tmp, {
     ...freshBrainHealth(),
-    quota_calls_today: { codex: { date: T0.toISOString().slice(0, 10), count: 50 } },
+    quota_calls_today: { codex: { date: dayKey(T0, 0), count: 50 } },
   });
   expect(tryConsumeQuotaCall(tmp, "codex", T0)).toBe(false);
   // Refusal must not further increment the persisted count.
@@ -436,4 +438,39 @@ test("signal clears automatically on next success (no user ack)", () => {
   let h = fail(fail(freshBrainHealth(), "resource"), "resource");
   h = recordSuccess(h, iso(plusMin(T0, 5)));
   expect(brainUnhealthySignal(h, plusMin(T0, 6)).show).toBe(false);
+});
+
+// ── AC8 (spec brain-select-four-gaps §3.4): one day boundary, not two ────────
+// The quota-call cap keyed on `now.toISOString().slice(0,10)` — a UTC day —
+// while the token budget keyed on a LOCAL day shifted by `budget.resetAt`.
+// Both were called "per day", they rolled over at different moments, and
+// changing resetAt moved only one of them.
+
+test("the quota-call day key is the SAME key the token budget uses (resetAt honored)", () => {
+  writeFileSync(join(tmp, "config.json"), JSON.stringify({ budget: { resetAt: "04:00" } }));
+  // A local moment after midnight but before the 04:00 reset: it still belongs
+  // to the PREVIOUS budget day. Built from local parts so the assertion does
+  // not depend on the machine's timezone.
+  const now = new Date(2026, 5, 11, 2, 30, 0);
+  const expected = dayKey(now, 240);
+
+  // Control: the chosen moment must actually be shifted by resetAt, or this
+  // test would pass against a key that ignores resetAt entirely.
+  expect(expected).not.toBe(dayKey(now, 0));
+
+  expect(tryConsumeQuotaCall(tmp, "codex", now)).toBe(true);
+  expect(readBrainHealth(tmp).quota_calls_today.codex).toEqual({
+    date: expected,
+    count: 1,
+  });
+});
+
+test("the outer-retry day key follows the same boundary", () => {
+  writeFileSync(join(tmp, "config.json"), JSON.stringify({ budget: { resetAt: "04:00" } }));
+  const now = new Date(2026, 5, 11, 2, 30, 0);
+  const expected = dayKey(now, 240);
+  expect(expected).not.toBe(dayKey(now, 0));
+
+  expect(tryConsumeOuterRetry(tmp, now)).toBe(true);
+  expect(readBrainHealth(tmp).retry_budget.date).toBe(expected);
 });

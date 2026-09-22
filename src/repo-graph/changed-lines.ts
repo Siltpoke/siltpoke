@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * `changedLineRanges` — slice ④ task 8 (line-range refinement, spec §11
+ * `changedLineRanges` — task 8 (line-range refinement, spec §11
  * un-deferred). Parses `git diff --unified=0 <baselineSha>..HEAD -- <file>`
  * hunk headers into CURRENT-file line ranges, so `why-lookup.ts` can blame
  * only the lines that changed since the user's watermark instead of the

@@ -79,6 +79,7 @@ function makeBrainOutput(overrides?: Partial<BrainOutput>): BrainOutput {
     severity: "medium",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [
       {
         tool: "tsc",
@@ -396,6 +397,7 @@ describe("runReview — NORMAL accepted (happy path)", () => {
     const lines: string[] = [];
 
     const brainOutput = makeBrainOutput({
+      findings: [],
       evidence: [{ tool: "tsc", file: "src/foo.ts", line: 10, snippet: REAL_SNIPPET }],
     });
 
@@ -413,6 +415,54 @@ describe("runReview — NORMAL accepted (happy path)", () => {
     const evidenceLine = lines.find((l) => l.includes("tsc") && l.includes("src/foo.ts"));
     expect(evidenceLine).toBeDefined();
   });
+
+  // --- Defect [15]: an empty critique must SAY it is empty, here too.
+  //
+  // The old code skipped the whole section when there was nothing to forward,
+  // which is the same "cannot tell quiet from dead" ambiguity the markdown side
+  // had. These two tests exist because the fix shipped with no assertion at all
+  // covering this file: deleting the `else` branch stayed green.
+
+  async function runWithCritique(text: string, severity: BrainOutput["severity"]) {
+    await initGitRepo(cwd, true);
+    const lines: string[] = [];
+    await runReview({
+      cwd,
+      homeBase,
+      output: (msg) => lines.push(msg),
+      deps: {
+        runToolsFn: makeNormalToolsFn(),
+        callBrainFn: makeBrainFn(
+          makeBrainOutput({ critique_for_claude: text, severity }),
+        ),
+        writeCritiqueFn: async (bp, _i) => ({ id: "c-x", path: join(bp, "c-x.md") }),
+      },
+    });
+    return lines.join("\n");
+  }
+
+  test("empty critique at info prints the clean-review sentence, not silence", async () => {
+    const out = await runWithCritique("", "info");
+    expect(out).toContain("no actionable concerns");
+    expect(out).not.toContain("malfunction");
+    // The header only belongs over an actual critique.
+    expect(out).not.toContain("for Claude:");
+  });
+
+  test("empty critique at a graded severity is called a malfunction", async () => {
+    const out = await runWithCritique("", "medium");
+    expect(out).toContain("malfunction");
+    expect(out).toContain("medium");
+    expect(out).not.toContain("no actionable concerns");
+  });
+
+  test("a non-empty critique still prints under the `for Claude:` header", async () => {
+    const out = await runWithCritique("queries.py:47 — wrong JOIN type", "medium");
+    expect(out).toContain("for Claude:");
+    expect(out).toContain("queries.py:47 — wrong JOIN type");
+    expect(out).not.toContain("no actionable concerns");
+    expect(out).not.toContain("malfunction");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -429,6 +479,7 @@ describe("runReview — PASSIVE_BUBBLE", () => {
       bubble_short: "Clean refactor, looks tidy.",
       bubble_long: "",
       critique_for_claude: "",
+      findings: [],
       evidence: [],
     });
 
@@ -516,6 +567,7 @@ describe("runReview — unverified evidence", () => {
 
     // Brain emits a fabricated snippet not in any tool raw output
     const fabricatedOutput = makeBrainOutput({
+      findings: [],
       evidence: [
         {
           tool: "tsc",

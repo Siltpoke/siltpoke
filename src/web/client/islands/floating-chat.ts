@@ -314,32 +314,6 @@ interface Conversation {
    */
   critiqueAnchor?: { proj_hash: string; critique_id: string } | null;
   /**
-   * The Code Map "Quiz me on this" opener this conversation is anchored to
-   * (Task 10). Same mutual-exclusion discipline as `critiqueAnchor`: a
-   * conversation is pinned to a graph node OR a critique OR a quiz opener,
-   * never more than one — only `openQuizChat()` sets it. Rides the wire as
-   * `body.quiz` on the FIRST send only (gated by `pinSent`, same as
-   * `anchor`/`critiqueAnchor`); continuations carry just `session_id` and
-   * the server's `quizStore` sidecar takes over from there.
-   */
-  quizAnchor?: { proj_hash: string; scope_module_id: string | null } | null;
-  /**
-   * Fix (post-review polish) — set when the quiz pre-flight gate rejected a
-   * send on THIS conversation (`blocked: "quiz_blocked"` or
-   * `"quiz_unavailable"`, src/daemon/routes/chat-quiz.ts). Unlike
-   * `terminalCta`, a `quiz_blocked`/`quiz_unavailable` signal does NOT make
-   * the conversation permanently read-only — the stale condition (dirty
-   * index / scope gone / never indexed) can resolve after a re-index, and
-   * the user should be able to retry the SAME scope. But it DOES leave the
-   * conv non-terminal with zero messages, which used to make
-   * `openQuizChat`'s dedupe (`terminalCta == null` match) re-focus the dead
-   * panel on re-click instead of firing a fresh opener POST — this flag is
-   * the retry-eligibility signal that excludes a blocked conv from that
-   * dedupe match. Never cleared (a fresh re-click spawns a brand-new
-   * conversation rather than reusing this one — see `openQuizChat`).
-   */
-  quizBlocked?: boolean;
-  /**
    * The server-authoritative anchor node_id for desync detection.
    * Set from the session list for rehydrated convs (where `anchor` is null by
    * structural invariant). For locally-created convs, derived from `anchor` on
@@ -408,11 +382,8 @@ export interface TerminalCtaState {
  * dismiss so the user can retry when the block lifts).
  */
 export interface BlockedCta {
-  /** Which condition caused the block. `"quiz_blocked"`/`"quiz_unavailable"`
-   * (Task 10) surface the quiz-mode pre-flight gate (stale index / scope
-   * gone / dirty tree / never indexed) — see `send()`'s blocked-signal
-   * handling and `src/daemon/routes/chat-quiz.ts`. */
-  reason: "budget" | "quiet_hours" | "quiz_blocked" | "quiz_unavailable";
+  /** Which condition caused the block. */
+  reason: "budget" | "quiet_hours";
   /** Human-readable message shown to the user. */
   message: string;
 }
@@ -617,14 +588,6 @@ export interface FloatingChatData {
    * the repo-graph surface entirely).
    */
   openCritiqueChat(args: { critiqueId: string; projHash: string }): void;
-  /**
-   * Open the panel and start a NEW conversation in quiz mode (the Code
-   * Map "Quiz me on this" trigger — Task 10). Mirrors `openCritiqueChat`:
-   * a fresh conversation pinned to the quiz opener, `quiz` rides ONLY the
-   * first `send()` (gated by `pinSent`), the AI asks first (`message: ""`).
-   * `scopeModuleId` of `null` means whole-repo scope.
-   */
-  openQuizChat(args: { projHash: string; scopeModuleId: string | null }): void;
   setActive(id: string): void;
   send(anchorDecision?: "freeze" | "continue"): Promise<void>;
   /**
@@ -861,25 +824,6 @@ function anchorRefFrom(v: ViewedNode): { proj_hash: string } & (
  * the PATCH URL (defense-in-depth; the server also validates). */
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
-/**
- * PURE request-body builder for the Code Map "Quiz me on this" opener
- * (Task 10). Reads `data-proj-hash` + `data-scope-module-id` off the
- * clicked `[data-siltpoke-quiz]` button (Task 9's DOM contract in
- * `src/web/screens/RepoGraph.tsx`) and normalizes an empty/absent scope to
- * `null` (whole repo) — this is exactly the shape the opener POST sends as
- * `body.quiz` (`ChatRequestBody.quiz` in `src/daemon/routes/chat.ts`).
- * Takes a minimal structural type (not `Element`) so it's testable with a
- * plain object, no DOM required.
- */
-export function buildQuizOpenerBody(el: { getAttribute(n: string): string | null }): {
-  proj_hash: string;
-  scope_module_id: string | null;
-} {
-  const projHash = el.getAttribute("data-proj-hash") ?? "";
-  const scope = el.getAttribute("data-scope-module-id");
-  return { proj_hash: projHash, scope_module_id: scope ? scope : null };
-}
-
 export function makeFloatingChatData(
   fetchFn: typeof fetch = fetch,
   deps: {
@@ -1047,35 +991,10 @@ export function makeFloatingChatData(
           return true;
         };
 
-        // Code Map "Quiz me on this" trigger (Task 10) — a sibling
-        // delegated target, same document-level pattern (survives hx-boost
-        // cloneNode morph on /repo-graph navigation).
-        const handleQuizTarget = (target: HTMLElement): boolean => {
-          const btn = target.closest<HTMLElement>("[data-siltpoke-quiz]");
-          if (!btn) return false;
-          // The scope <select> (Task 9's data-siltpoke-quiz-scope) is a
-          // SIBLING of the button, not an ancestor — read its CURRENT value
-          // at click time and mirror it onto the button's
-          // data-scope-module-id (the attribute buildQuizOpenerBody reads)
-          // so a scope change is honored without a page reload.
-          const scopeSelect = document.querySelector<HTMLSelectElement>("[data-siltpoke-quiz-scope]");
-          if (scopeSelect) btn.setAttribute("data-scope-module-id", scopeSelect.value);
-          const { proj_hash: projHash, scope_module_id: scopeModuleId } = buildQuizOpenerBody(btn);
-          // Empty-repo guard (carried from Task 9's report): an empty
-          // proj_hash means no graph is indexed for this repo — never POST
-          // a quiz opener with an empty proj_hash. Graceful no-op (the
-          // button itself is the only surface here; Task 9 deliberately
-          // left it unconditionally rendered).
-          if (!projHash) return true;
-          (this as FloatingChatData).openQuizChat({ projHash, scopeModuleId });
-          return true;
-        };
-
         document.addEventListener("click", (e: MouseEvent) => {
           const target = e.target as HTMLElement;
           handleRecallTarget(target);
           handleCritiqueChatTarget(target);
-          handleQuizTarget(target);
         });
 
         // Keyboard accessibility (a11y): chip entries are <div role="button"
@@ -1443,103 +1362,6 @@ export function makeFloatingChatData(
       void (this as FloatingChatData).refreshContextPreview();
     },
 
-    /** Code Map "Quiz me on this" trigger (Task 10) — see interface doc.
-     * Mirrors `openCritiqueChat` above, plus one addition: the AI asks
-     * first, so this fires the opener turn immediately (empty draft;
-     * `send()`'s `isQuizOpenerTurn` allowance lets `message: ""` through
-     * for exactly this one turn). */
-    openQuizChat({ projHash, scopeModuleId }: { projHash: string; scopeModuleId: string | null }) {
-      // Dedupe (mirrors openCritiqueChat's MINOR 6): a second click on the
-      // SAME proj_hash+scope re-focuses the conversation already created
-      // for it instead of spawning a duplicate. Excludes a TERMINAL match
-      // (e.g. quiz_unavailable resolved to node_gone-style terminal state
-      // some other way) so the button never becomes a silent no-op.
-      //
-      // `!c.quizBlocked` (fix, post-review polish) — a `quiz_blocked`/
-      // `quiz_unavailable` pre-flight rejection leaves the conv non-terminal
-      // (no `terminalCta`) by design (the condition can resolve after a
-      // re-index), so it used to still satisfy this predicate: a re-click on
-      // the SAME scope after re-indexing just re-focused the dead blocked
-      // panel (a context-preview refresh only) instead of firing a fresh
-      // opener POST against the now-fresh index — the user appeared stuck.
-      // Excluding a blocked conv here makes it fall through to the
-      // fresh-conversation branch below, which fires `send()` again.
-      //
-      // Retry-eligibility for a dead TURN (fix, follow-up) — a backend
-      // TIMEOUT/failure or a user-cancelled turn also leaves the conv
-      // non-terminal (no `terminalCta`, not `quizBlocked` — that flag is
-      // pre-flight-gate-only) with its LAST message carrying
-      // `status: "failed"` / `"cancelled"` (see `_appendMsg` call sites in
-      // `send()` — `makeFailedEntry()` / the abort branch). Un-excluded, that
-      // dead panel matched this predicate forever: re-clicking "Quiz me on
-      // this" (even from a brand-new "+" conversation, since this scan covers
-      // ALL conversations) just re-focused the same timed-out panel with
-      // nothing to retry from (the opener turn already consumed the only
-      // send). Checking the last message's `status` (not `quizBlocked`, a
-      // different signal for a different rejection point) makes a dead-turn
-      // quiz conv retry-eligible the same way a blocked one already is, while
-      // a HEALTHY active quiz conv (last message status absent/ok, or zero
-      // messages before its opener lands) still dedupes normally.
-      const existing = (this as FloatingChatData).conversations.find((c) => {
-        const lastMsg = c.messages[c.messages.length - 1];
-        return (
-          c.quizAnchor?.proj_hash === projHash &&
-          c.quizAnchor?.scope_module_id === scopeModuleId &&
-          c.terminalCta == null &&
-          !c.quizBlocked &&
-          lastMsg?.status !== "failed" &&
-          lastMsg?.status !== "cancelled"
-        );
-      });
-      if (existing) {
-        this.activeId = existing.id;
-        this.open = true;
-        void (this as FloatingChatData).refreshContextPreview();
-        return;
-      }
-      const id = `c${++this._seq}`;
-      const conv: Conversation = {
-        id,
-        serverSessionId: null,
-        anchor: null,
-        anchorNodeId: null,
-        quizAnchor: { proj_hash: projHash, scope_module_id: scopeModuleId },
-        label: scopeModuleId || "this repo",
-        pin: scopeModuleId ? `quiz · ${scopeModuleId}` : "quiz · whole repo",
-        badge: "quiz",
-        pinSent: false,
-        createdAt: new Date().toISOString(),
-        messages: [],
-      };
-      this.conversations = [...this.conversations, conv];
-      this.activeId = id;
-      this.open = true;
-      void (this as FloatingChatData).refreshContextPreview();
-      // Retry-eligibility (fix, post-review polish, pairs with the
-      // `!c.quizBlocked` dedupe exclusion above): `send()` hard-guards on
-      // `this.blockedCta !== null` (a GLOBAL, not per-conversation, notice —
-      // budget/quiet_hours/quiz_blocked/quiz_unavailable all funnel through
-      // the same field) and never auto-clears it. Without this, a prior
-      // quiz_blocked/quiz_unavailable notice would silently no-op THIS
-      // brand-new conversation's opener send() too — the fresh conv gets
-      // created, but the retry POST never fires, still leaving the user
-      // stuck. Only clear it when the STANDING notice is itself quiz-scoped
-      // (never clobber a genuine budget/quiet-hours block for an unrelated
-      // reason — those must keep gating every send, quiz or not).
-      const standing = (this as FloatingChatData).blockedCta;
-      if (standing?.reason === "quiz_blocked" || standing?.reason === "quiz_unavailable") {
-        this.blockedCta = null;
-      }
-      // AI asks first: fire the opener turn now with an EMPTY draft. The
-      // composer's draft is a single shared field (not per-conversation) —
-      // clear it first so any stray unsent text left over from a different
-      // conversation can never accidentally ride as this opener's message;
-      // the quiz engine produces the FIRST question server-side, no user
-      // text required (see send()'s isQuizOpenerTurn allowance).
-      this.draft = "";
-      void (this as FloatingChatData).send();
-    },
-
     setActive(id: string) {
       if (this.conversations.some((c) => c.id === id)) this.activeId = id;
     },
@@ -1622,15 +1444,7 @@ export function makeFloatingChatData(
     async send(anchorDecision?: "freeze" | "continue") {
       const conv = this.active();
       const text = this.draft.trim();
-      // Quiz opener turn (Task 10): the AI asks first, so an EMPTY message
-      // is allowed for exactly one turn — the first send of a quiz-anchored
-      // conversation (gated by `pinSent`, same pin-once discipline as
-      // `anchor`/`critiqueAnchor`). Mirrors the server's relaxed validation
-      // (chat.ts: `!body.message && !body.quiz` is the only case that skips
-      // the `missing_message` 400). Every other path still requires
-      // non-empty text.
-      const isQuizOpenerTurn = !!(conv && conv.quizAnchor && !conv.pinSent);
-      if (!conv || (!text && !isQuizOpenerTurn) || this.streaming) return;
+      if (!conv || !text || this.streaming) return;
 
       // While the desync CTA is showing, the composer must be locked.
       if (this.desyncCta !== null) return;
@@ -1675,11 +1489,7 @@ export function makeFloatingChatData(
       // a conversation mid-stream never misroutes the reply or shows its dots.
       const convId = conv.id;
 
-      // The quiz opener turn has no user text to show — the transcript
-      // starts with the AI's question, not an empty user bubble.
-      if (text !== "") {
-        this._appendMsg(convId, { role: "user", text });
-      }
+      this._appendMsg(convId, { role: "user", text });
       this.draft = "";
       this.error = null;
       this.streaming = true;
@@ -1711,16 +1521,13 @@ export function makeFloatingChatData(
       // aligned with what the user is looking at when they send.
       const body: Record<string, unknown> = { message: text, page: this.pageProvider() };
       if (conv.serverSessionId) body.session_id = conv.serverSessionId;
-      // critique_anchor, quiz, and anchor are siblings on the wire — mutually
+      // critique_anchor and anchor are siblings on the wire — mutually
       // exclusive BY CONSTRUCTION (an `if`/`else if` chain, not independent
-      // `if`s): a conversation is created pinned to a critique OR a quiz
-      // opener OR a graph node, never more than one, so at most one of
-      // these branches can ever fire for a given conv — see the
-      // Conversation.critiqueAnchor/quizAnchor doc comments.
+      // `if`s): a conversation is created pinned to a critique OR a graph
+      // node, never both, so at most one of these branches can ever fire for
+      // a given conv — see the Conversation.critiqueAnchor doc comment.
       if (conv.critiqueAnchor && !conv.pinSent) {
         body.critique_anchor = conv.critiqueAnchor;
-      } else if (conv.quizAnchor && !conv.pinSent) {
-        body.quiz = conv.quizAnchor;
       } else if (conv.anchor && !conv.pinSent) {
         body.anchor = { ...conv.anchor.target, proj_hash: conv.anchor.projHash };
       }
@@ -1762,8 +1569,6 @@ export function makeFloatingChatData(
             node_name?: string;
             used_pct?: number;
             critique_id?: string;
-            /** `QuizBlockedSignal.message` (chat-quiz.ts) — human-readable
-             * gate rejection reason. Absent on `quiz_unavailable`. */
             message?: string;
           };
           if (signal.blocked === "node_gone") {
@@ -1819,39 +1624,6 @@ export function makeFloatingChatData(
             };
             return;
           }
-          if (signal.blocked === "quiz_blocked") {
-            // Quiz pre-flight scope gate rejected this turn (stale index /
-            // scope gone / dirty tree — src/daemon/routes/chat-quiz.ts's
-            // QuizBlockedSignal). It always carries a human-readable
-            // `message`. Restore the draft (harmless no-op on the opener
-            // turn, where `text` is "").
-            //
-            // `quizBlocked: true` (fix, post-review polish) — this leaves
-            // the conv non-terminal (no `terminalCta`), which used to make
-            // openQuizChat's dedupe re-focus this dead panel on a re-click
-            // instead of retrying against a freshly re-indexed project. See
-            // `quizBlocked`'s doc on the Conversation interface.
-            this.draft = text;
-            this._patchConv(convId, { quizBlocked: true });
-            this.blockedCta = {
-              reason: "quiz_blocked",
-              message: signal.message || "Quiz mode is unavailable for this scope right now.",
-            };
-            return;
-          }
-          if (signal.blocked === "quiz_unavailable") {
-            // No module graph could be loaded for this project (never
-            // indexed) — QuizUnavailableSignal carries no `message` field,
-            // so this is fixed copy. Same retry-eligibility marker as
-            // quiz_blocked above (re-indexing the project resolves this).
-            this.draft = text;
-            this._patchConv(convId, { quizBlocked: true });
-            this.blockedCta = {
-              reason: "quiz_unavailable",
-              message: "This project hasn't been indexed yet — quiz mode needs an index first.",
-            };
-            return;
-          }
           return;
         }
 
@@ -1866,9 +1638,7 @@ export function makeFloatingChatData(
         // The first user message becomes the history-dropdown title (mirrors the
         // server's creation-only session.summary). Set it locally on the first
         // send so the title shows immediately, without waiting for a reload to
-        // rehydrate it from the server. Guard → once only (first message), AND
-        // never to an empty string (the quiz opener turn's `text` is "" — leave
-        // `title` unset so the dropdown falls back to `label` instead).
+        // rehydrate it from the server. Guard → once only (first message).
         if (!conv.title && text) metaPatch.title = text;
 
         // After the first successful send of a pinned conv, the server has

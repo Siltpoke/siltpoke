@@ -4,7 +4,7 @@ import { z } from "zod";
 
 // Evidence item schema.
 export const evidenceItemSchema = z.object({
-  tool: z.enum(["tsc", "eslint", "git-diff", "ripgrep"]),
+  tool: z.enum(["tsc", "eslint", "git-diff", "ripgrep", "rubric"]),
   file: z.string().min(1),
   line: z.number().int().positive().optional(),
   snippet: z.string().min(10).max(240),
@@ -64,11 +64,107 @@ export const categoryEnum = z.enum([
  */
 export const refutationCheckedEnum = z.enum(["yes", "no", "not-possible-from-the-diff"]);
 
+/**
+ * One discrete finding.
+ *
+ * FIVE FIELDS, AND THE COUNT IS THE POINT. Everything else a finding carries by
+ * the time a reader sees it — its `id`, and in later slices its line range, its
+ * provenance tier and its identity hash — is derived by code AFTER this parses.
+ * None of it may be declared here, because `z.toJSONSchema(brainOutputSchema)`
+ * is handed to OpenAI strict mode (`providers/codex.ts`), where every declared
+ * property becomes one the model MUST emit. A derived field declared here is a
+ * field the model authors, which is the same failure
+ * `stripSystemAuthoredFields` exists to stop for `truncated`/`repaired`: an
+ * honesty signal the subject can forge is worse than no signal, because it is
+ * believed.
+ *
+ * `quote` shares `SNIPPET_CAP` and the same `truncStr` path as
+ * `evidenceItemSchema.snippet` deliberately. The guard recognises a trimmed
+ * quote by the `…` this layer leaves behind (`evidence-guard.ts` `quotedText`);
+ * a quote shortened any other way can never match the corpus, so it would land
+ * as an unverifiable citation for a reason that is ours, not the model's.
+ */
+export const modelFindingSchema = z.object({
+  title: z.string().min(1).max(120),
+  body: z.string().min(1).max(600),
+  severity: severityEnum,
+  file: z.string().min(1),
+  quote: z.string().min(10).max(240),
+  /**
+   * Where the model THINKS this quote sits in the file. A hint, and nothing a
+   * renderer ever reads.
+   *
+   * Named `claimed_` and not `start_line` on purpose. Code derives its own
+   * range in the guard and that one is what gets persisted; if both were called
+   * `start_line`, forgetting to strip the model's copy once would put a number
+   * the reviewer wrote for itself in front of a reader with nothing to say so,
+   * and nothing anywhere would go red. Under these names a leak is a visibly
+   * wrong key.
+   *
+   * Optional, which under the provider's strict schema means a null-union that
+   * `stripNulls` removes before zod sees it — the same shape
+   * `evidenceItemSchema.line` has been running in since it was written
+   * (`providers/codex.ts`, pinned by `tests/brain/providers/codex.test.ts`).
+   * NOT `.nullable()`: that one `stripNulls` swallows silently.
+   */
+  claimed_start_line: z.number().int().positive().optional(),
+  claimed_end_line: z.number().int().positive().optional(),
+});
+
+/** What the model authors, hints included. */
+export type ModelFinding = z.infer<typeof modelFindingSchema>;
+
+/**
+ * What a finding looks like ON DISK — which is not the same contract as what
+ * the model must emit, and the two stopped being conflated.
+ *
+ * The zod schema above answers one question: which keys does the provider
+ * require of the model. This type answers a different one: which keys can a
+ * `.json` sidecar hold. Four of them are written by code after the model is
+ * done, and none may be declared in zod — anything declared there is handed to
+ * the provider's strict schema and becomes a key the model must fill, which for
+ * `quote_tier` would mean the reviewer grading its own provenance.
+ *
+ * An earlier rule said the opposite ("a field present at runtime but absent
+ * from the schema is a type that lies"), and it was right about `id`: an id is the
+ * array position, so re-deriving it at render costs nothing and storing it buys
+ * nothing. It does not hold for the rest. A tier or a line range needs the
+ * citation corpus to compute, and rendering happens in the daemon, reading a
+ * sidecar that may be weeks old, with no corpus anywhere. Not persisting them
+ * means the dashboard can never show them.
+ *
+ * EVERY ADDED FIELD IS OPTIONAL, and that is honesty rather than convenience:
+ * a critique written before this slice genuinely has none of them, and
+ * `loadSidecar` hands those files back unvalidated. A required field here would
+ * be a type that lies in the other direction.
+ */
+export type PersistedFinding = ModelFinding & {
+  id?: string;
+  /** Absent means the guard never checked this finding — NOT that it is weak. */
+  quote_tier?: "strong" | "weak";
+  range_source?: "hunk" | "unanchored" | "stale_block" | "not_located" | "unchecked";
+  start_line?: number;
+  end_line?: number;
+};
+
+/**
+ * A finding on its way out: the guard's own range and tier attached, and the
+ * model's two hints GONE.
+ *
+ * The `Omit` is load-bearing, not tidiness. `Q3` requires the model's guess to
+ * be telemetry and never something a renderer can read, and the write path is
+ * `JSON.stringify` of the whole output (`state/critique.ts`) — so the only
+ * moment the hints can be removed is before that, and this type is what says
+ * they were. A `Finding` still satisfies `PersistedFinding`, so nothing
+ * downstream needs to know which one it holds.
+ */
+export type Finding = Omit<PersistedFinding, "claimed_start_line" | "claimed_end_line"> & {
+  id: string;
+};
+
 export const brainOutputSchema = z.object({
   mood: moodEnum,
   pose: poseEnum,
-  bubble_short: z.string().min(1).max(200),
-  bubble_long: z.string().max(2000),
   critique_for_claude: z.string(),
   severity: severityEnum,
   confidence: confidenceEnum,
@@ -83,13 +179,35 @@ export const brainOutputSchema = z.object({
   // Zod 4 chain semantics: .max(5) constrains explicit input arrays; .default([])
   // fires only when the field is absent — orders are independent, both apply.
   evidence: z.array(evidenceItemSchema).max(5).default([]),
+
+  /**
+   * The discrete findings. Additive and defaulted, so every critique already on
+   * disk still parses (AC9).
+   *
+   * NO `.max()` HERE, AND THAT IS DELIBERATE. A `.max()` on the declaration
+   * REJECTS — it fails the parse and takes the whole review with it, which is
+   * exactly the `evidence: too_big` incident recorded below: a diff carrying
+   * seven planted defects failed 3 of 3, twice, four weeks apart. The ceiling
+   * is applied in `coerceBrainOutputShape`, which TRIMS instead, and reports
+   * what it cut in `truncated.findings`.
+   */
+  findings: z.array(modelFindingSchema).default([]),
+
+  // ── The bubble sits AFTER `findings`, and the order is load-bearing ────────
+  // Zod preserves declaration order, `z.toJSONSchema` preserves Zod's, and the
+  // strict schema handed to the provider preserves that — so this is the order
+  // the model generates in. The bubble is a REACTION to the findings; written
+  // before them it is a reaction to nothing, and the findings then have to
+  // agree with a verdict that was already committed to.
+  bubble_short: z.string().min(1).max(200),
+  bubble_long: z.string().max(2000),
   // Brain explains WHY it chose this severity + whether it wrote a
   // critique. Surfaced on the /history expand panel so the user can see the
   // model's decision trace, not just the final bubble. Optional + bounded
   // so older entries (and test fixtures) without this field still parse.
   reasoning: z.string().max(800).optional(),
 
-  // The three semantic fields (P1, see docs/prompt-change-log.md).
+  // The three semantic fields (P1).
   //
   // All optional for the same reason `reasoning` above is: every critique file
   // already on disk was written before they existed, and those files are read
@@ -143,7 +261,21 @@ export const brainOutputSchema = z.object({
   repaired: z.array(z.string()).optional(),
 });
 
-export type BrainOutput = z.infer<typeof brainOutputSchema>;
+export type BrainOutput = Omit<z.infer<typeof brainOutputSchema>, "findings"> & {
+  /**
+   * WIDENED AT THE TYPE LEVEL ONLY — the zod schema above is untouched, and
+   * `z.toJSONSchema` therefore hands the provider exactly the keys it always
+   * did.
+   *
+   * Without this, the fields the guard derives are invisible where they are
+   * needed: `buildFindingsSection` takes a `BrainOutput` and reads
+   * `out.findings`, so a tier computed in the guard would typecheck into the
+   * object and then be unreachable at the only place that renders it. The two
+   * shortcuts are both wrong — a cast is a type that lies, and declaring the
+   * fields in zod lets the model author its own provenance.
+   */
+  findings: PersistedFinding[];
+};
 
 /**
  * Caps declared by `brainOutputSchema` above, kept beside the coercion so a cap
@@ -156,7 +288,21 @@ const STRING_CAPS = {
   what_would_refute: 200,
 } as const;
 const EVIDENCE_CAP = 5;
-const SNIPPET_CAP = 240;
+/**
+ * The findings ceiling. Five, not the three the prompt asks for: the prompt
+ * number steers the model, this number is the wall, and they are deliberately
+ * different so that a model returning four is trimmed at the prompt's intent
+ * rather than cut at the wall. Overflow is reported in `truncated.findings`.
+ */
+const FINDINGS_CAP = 5;
+const FINDING_TITLE_CAP = 120;
+const FINDING_BODY_CAP = 600;
+/**
+ * Exported because the evidence guard has to recognise the shape this layer
+ * leaves behind: a snippet cut to exactly this length, ending in `…`. The `…`
+ * is siltpoke's, not the reviewer's, and the corpus never contains it.
+ */
+export const SNIPPET_CAP = 240;
 
 function truncStr(v: string, max: number): string {
   return v.length <= max ? v : `${v.slice(0, max - 1)}\u2026`;
@@ -354,6 +500,76 @@ function coerceBrainOutputShape(raw: unknown): unknown {
     if (malformed > 0) truncated.evidence_malformed = malformed;
     if (survivors.length > EVIDENCE_CAP) truncated.evidence = survivors.length - EVIDENCE_CAP;
     if (droppedSnippetChars > 0) truncated.evidence_snippets = droppedSnippetChars;
+  }
+
+  // Findings get the SAME three steps in the SAME order, for the same reason the
+  // block above spells out. This is a sibling of that defence, not a new one —
+  // the failure it guards (a cap that rejects instead of trimming) has fired in
+  // this file twice, and the second time was four weeks after the first.
+  //
+  //   1. trim  — `title` / `body` / `quote` shortened, so length alone never
+  //              disqualifies a finding;
+  //   2. drop  — what still fails its own schema goes, one item at a time;
+  //   3. cap   — the ceiling applies to what is LEFT.
+  //
+  // `quote` is trimmed through `truncStr` at `SNIPPET_CAP`, the same path and
+  // the same cap the evidence snippets use, because the guard identifies a
+  // trimmed citation by the `…` this leaves behind.
+  if (Array.isArray(o.findings)) {
+    const items: unknown[] = o.findings;
+    let claimedMalformed = 0;
+    const trimmed = items.map((item) => {
+      if (item === null || typeof item !== "object") return item;
+      const it = { ...(item as Record<string, unknown>) };
+      if (typeof it.title === "string" && it.title.length > FINDING_TITLE_CAP) {
+        it.title = truncStr(it.title, FINDING_TITLE_CAP);
+      }
+      if (typeof it.body === "string" && it.body.length > FINDING_BODY_CAP) {
+        it.body = truncStr(it.body, FINDING_BODY_CAP);
+      }
+      if (typeof it.quote === "string" && it.quote.length > SNIPPET_CAP) {
+        it.quote = truncStr(it.quote, SNIPPET_CAP);
+      }
+      // A BAD HINT MUST NOT COST THE FINDING.
+      //
+      // The loop below drops any item `modelFindingSchema` refuses, whole. So a
+      // model answering `"42"`, `3.5`, `-1` or `0` for a line it was only ever
+      // asked to GUESS at would take a real finding down with it — the
+      // reviewer's most valuable output destroyed by its least valuable field.
+      // Scrubbing here, before the parse, keeps the finding and loses only the
+      // guess. `0` is the quiet one: it looks like a line number and is refused
+      // by `.positive()`, because a file's first line is 1.
+      for (const key of ["claimed_start_line", "claimed_end_line"] as const) {
+        const v = it[key];
+        if (v === undefined) continue;
+        if (typeof v !== "number" || !Number.isInteger(v) || v < 1) {
+          // COUNTED, not silently dropped. The agreement tally downstream can
+          // only see a missing hint, and would read a scrubbed `"41"` as the
+          // reviewer declining to guess — which turns the one number this slice
+          // measures into something that cannot be attributed. This counter is
+          // what tells the two apart.
+          claimedMalformed += 1;
+          delete it[key];
+        }
+      }
+      return it;
+    });
+
+    const survivors: unknown[] = [];
+    for (const [index, item] of trimmed.entries()) {
+      const verdict = modelFindingSchema.safeParse(item);
+      if (verdict.success) {
+        survivors.push(item);
+        continue;
+      }
+      repaired.push(`findings.${index}: ${describeFirstIssue(verdict.error, item)}`);
+    }
+    const malformed = trimmed.length - survivors.length;
+
+    next.findings = survivors.slice(0, FINDINGS_CAP);
+    if (malformed > 0) truncated.findings_malformed = malformed;
+    if (claimedMalformed > 0) truncated.claimed_line_malformed = claimedMalformed;
+    if (survivors.length > FINDINGS_CAP) truncated.findings = survivors.length - FINDINGS_CAP;
   }
 
   if (!poseEnum.safeParse(o.pose).success) {

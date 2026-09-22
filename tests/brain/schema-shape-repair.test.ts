@@ -317,3 +317,70 @@ describe("silence still means nothing happened", () => {
     expect(out.repaired).toBeUndefined();
   });
 });
+
+/**
+ * The same principle one field deeper: the model's line-number HINT is the
+ * least valuable thing a finding carries, and before this it could destroy the
+ * most valuable. `modelFindingSchema.safeParse` drops a refused item whole, so
+ * an ill-typed guess took the finding with it.
+ */
+describe("a malformed line-number hint drops the hint, not the finding", () => {
+  const finding = (over: Record<string, unknown> = {}) => ({
+    title: "off-by-one in the retry loop",
+    body: "the loop runs one iteration past the cap, so the last retry is never counted",
+    severity: "high" as const,
+    file: "src/retry.ts",
+    quote: "for (let i = 0; i <= maxRetries; i++) {",
+    ...over,
+  });
+
+  // `0` is deliberately in this list and is the one worth naming: it looks like
+  // a line number to a reader and is refused by `.positive()`, because a file's
+  // first line is 1. It is the quietest of the four.
+  for (const bad of ['"42"', "3.5", "-1", "0"] as const) {
+    test(`claimed_start_line = ${bad}: the hint goes, the finding stays`, () => {
+      const out = parseBrainOutput({
+        ...base,
+        evidence: [],
+        findings: [finding({ claimed_start_line: JSON.parse(bad) as unknown })],
+      });
+      expect(out.findings).toHaveLength(1);
+      expect(out.findings[0]!.title).toBe("off-by-one in the retry loop");
+      expect(out.findings[0]).not.toHaveProperty("claimed_start_line");
+      // Not a malformed FINDING — nothing was dropped, so that counter stays
+      // clear. But the bad hint IS counted: without it, the agreement tally
+      // downstream reads a scrubbed `"41"` as the reviewer declining to guess,
+      // and the one number this slice measures cannot be attributed.
+      expect(out.truncated?.findings_malformed).toBeUndefined();
+      expect(out.truncated?.claimed_line_malformed).toBe(1);
+    });
+  }
+
+  test("a well-formed hint is kept as the model wrote it", () => {
+    const out = parseBrainOutput({
+      ...base,
+      evidence: [],
+      findings: [finding({ claimed_start_line: 17, claimed_end_line: 19 })],
+    });
+    expect(out.findings[0]!.claimed_start_line).toBe(17);
+    expect(out.findings[0]!.claimed_end_line).toBe(19);
+    expect(out.truncated?.claimed_line_malformed).toBeUndefined();
+  });
+
+  test("a bad end line does not take a good start line with it", () => {
+    const out = parseBrainOutput({
+      ...base,
+      evidence: [],
+      findings: [finding({ claimed_start_line: 17, claimed_end_line: -4 })],
+    });
+    expect(out.findings).toHaveLength(1);
+    expect(out.findings[0]!.claimed_start_line).toBe(17);
+    expect(out.findings[0]).not.toHaveProperty("claimed_end_line");
+  });
+
+  test("no hint at all is the ordinary case and changes nothing", () => {
+    const out = parseBrainOutput({ ...base, evidence: [], findings: [finding()] });
+    expect(out.findings).toHaveLength(1);
+    expect(out.findings[0]).not.toHaveProperty("claimed_start_line");
+  });
+});

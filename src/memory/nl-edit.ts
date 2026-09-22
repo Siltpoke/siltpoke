@@ -3,7 +3,7 @@
 /**
  * Natural-language memory-edit intent parser.
  *
- * The /memory composer sends free text (). This module makes a
+ * The /memory composer sends free text ("记得我喜欢粉红色"). This module makes a
  * single Brain call (haiku) that extracts an atomic candidate claim and
  * classifies it against the user's current ACTIVE facts:
  *   - "add"       — net-new; no existing fact matches or contradicts.

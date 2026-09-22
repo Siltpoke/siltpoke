@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseBrainConfig } from "../../src/brain/brain-config";
+import { FAMILIES, parseBrainConfig } from "../../src/brain/brain-config";
 import { loadReviewerProvider } from "../../src/brain/provider-select";
 import { CLAUDE_REVIEW_MODELS, familyBinary, familyModelDefault, familySupportsModelChoice, providerForFamily, resolveRole, resolveRoleMeta } from "../../src/brain/registry";
 
@@ -70,11 +70,26 @@ describe("resolveRole", () => {
   });
 
   test("explicit config model overrides the family default", () => {
-    const c = parseBrainConfig(JSON.stringify({ brain: { roles: { chat: { provider: "codex", model: "gpt-5.5" } } } }));
+    const c = parseBrainConfig(JSON.stringify({ brain: { roles: { chat: { provider: "agy", model: "gemini-3-pro" } } } }));
+    const r = resolveRole(c, "chat");
+    expect(r.family).toBe("agy");
+    expect(r.provider.meta.name).toBe("agy");
+    expect(r.model).toBe("gemini-3-pro");
+  });
+
+  // Spec brain-select-four-gaps §3.1: config written before the writers started
+  // refusing it can still name a codex model, and codex's argv has no -m — so
+  // resolveRole drops it rather than reporting a model the process never gets.
+  // Every role resolves through the same provider object, so this holds for
+  // chat/extract too, not just review.
+  test("a codex model in config is dropped at resolve, on every role", () => {
+    const c = parseBrainConfig(
+      JSON.stringify({ brain: { roles: { chat: { provider: "codex", model: "gpt-5.5" } } } }),
+    );
     const r = resolveRole(c, "chat");
     expect(r.family).toBe("codex");
     expect(r.provider.meta.name).toBe("codex");
-    expect(r.model).toBe("gpt-5.5");
+    expect(r.model).toBeUndefined();
   });
 
   test("ccfork provider with no model -> undefined model (omit --model)", () => {
@@ -125,10 +140,33 @@ describe("loadReviewerProvider — back-compat seam over the registry", () => {
 });
 
 describe("familySupportsModelChoice + CLAUDE_REVIEW_MODELS (Brain select v2 T1)", () => {
-  test("only claude supports model choice", () => {
-    expect(familySupportsModelChoice("claude")).toBe(true);
-    for (const f of ["codex", "agy", "qoder", "codebuddy"] as const) {
-      expect(familySupportsModelChoice(f)).toBe(false);
+  // Spec 2026-09-12-brain-select-four-gaps §2.6: the old "only claude" answer was
+  // wrong for three of the four non-claude families. agy, qoder and codebuddy all
+  // push `--model` into their argv; codex's spawn array has no `-m` at all, so a
+  // model set for codex was silently ignored.
+  test("a family supports model choice exactly when its argv carries one", () => {
+    expect(familySupportsModelChoice("claude")).toBe(true); // brain.ts --model
+    expect(familySupportsModelChoice("agy")).toBe(true); // providers/agy.ts --model
+    expect(familySupportsModelChoice("qoder")).toBe(true); // ccfork buildArgv --model
+    expect(familySupportsModelChoice("codebuddy")).toBe(true); // ccfork buildArgv --model
+    expect(familySupportsModelChoice("codex")).toBe(false); // providers/codex.ts: no -m
+  });
+
+  // A WIRING check, and only that: both sides trace back to FAMILY_ACCEPTS_MODEL,
+  // so this fails when a provider's meta stops referencing the shared record —
+  // it CANNOT catch a declaration that is simply wrong about its own argv.
+  // (An earlier version of this comment claimed it could; a mutation setting
+  // codex's entry to `true` left this test green.) The capability-vs-reality
+  // check is `tests/brain/reviewer-model-plumbing.test.ts`, "every family's
+  // declared model capability matches the argv it really builds", which walks
+  // the same registry and probes each provider's actual spawn argv. Omitting an
+  // entry outright is caught earlier still, by the `satisfies` in provider.ts.
+  test("every family's provider meta reads the shared capability record", () => {
+    expect(FAMILIES.length).toBeGreaterThan(0);
+    for (const family of FAMILIES) {
+      const declared = providerForFamily(family).meta.acceptsModel;
+      expect(typeof declared).toBe("boolean");
+      expect(familySupportsModelChoice(family)).toBe(declared);
     }
   });
   test("CLAUDE_REVIEW_MODELS leads with the haiku default and is non-empty", () => {

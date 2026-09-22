@@ -107,7 +107,7 @@ export interface MemoryLogInput {
 
 /**
  * Short human-readable source summary for an event fragment → the row's `why`
- * ( line). Each source is `<kind> <ref>` (ref truncated to 8 chars, the
+ * ("为什么" line). Each source is `<kind> <ref>` (ref truncated to 8 chars, the
  * length of a short commit sha). Returns null when there are no sources (the
  * schema requires ≥1, so this is defensive only).
  */
@@ -122,7 +122,7 @@ function eventFragmentWhy(fragment: EventFragment): string | null {
 
 /**
  * Short human-readable label for a synthesized episode → the row's `why`
- * ( line). Distinguishes an episode-narrative row (this cluster is a
+ * ("为什么" line). Distinguishes an episode-narrative row (this cluster is a
  * SYNTHESIS over N event fragments, not a single event) from an individual
  * event-fragment row's `eventFragmentWhy` source citation. Format:
  * "episode · 3 events on 2026-07-01".

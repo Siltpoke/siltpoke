@@ -226,7 +226,7 @@ function parseBaselineFile(file: string, sessionId: string): ResolvedBaseline | 
  *
  * WHAT WAS MEASURED (2026-09-01, siltpoke), and nothing beyond it. Session
  * `05fffe58-9e6a-413b-b962-54221fd361f1`:
- *   - SessionStart's `input.cwd` was `~/Projects/ai-agents/siltpoke` — the
+ *   - SessionStart's `input.cwd` was `~/Projects/workspace/siltpoke` — the
  *     multi-repo parent, which holds four repos and is itself NOT a git repo.
  *     Evidence: that is where the per-session record landed, and it carries
  *     `head_sha: null` because `git rev-parse HEAD` fails there. Three more

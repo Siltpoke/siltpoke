@@ -45,11 +45,53 @@ export function buildDiffSummarySection(summary: DiffSummary): string {
   return blocks.join("\n");
 }
 
+/**
+ * How many triggers this section shows. Exported as one constant because the
+ * section and its citation corpus MUST cap at the same place: a corpus longer
+ * than the section would certify a line the reviewer was never shown.
+ */
+const RUBRIC_SECTION_CAP = 20;
+
+/** Bounds copied from `evidenceItemSchema.snippet` (src/brain/schema.ts). */
+const CITABLE_MIN_LEN = 10;
+const CITABLE_MAX_LEN = 240;
+
+/**
+ * The trigger's own source line when the reviewer could legally cite it, else
+ * `null`. Three independent reasons to refuse, each named rather than merged:
+ *
+ * 1. NOT SOURCE — the rule synthesized the string (`snippet_is_source` absent).
+ *    Offering it would let siltpoke's own prose pass a check whose whole job is
+ *    to ask whether a tool really said this. Absent means refused, so a rule
+ *    added later is uncitable until its author marks it.
+ * 2. MULTI-LINE — `god-file` cites `src.slice(0, 200)`, which spans several
+ *    lines and is usually cut mid-token. It would wreck the one-bullet-per-
+ *    finding shape and hands the reviewer an arbitrary fragment as "evidence".
+ * 3. OUTSIDE THE BAND — under `min(10)` the evidence item is dropped at parse,
+ *    over `max(240)` it is truncated with an ellipsis, and the truncated form
+ *    then fails the verbatim check anyway. A worse offer than no offer.
+ *
+ * A refused trigger still appears in the section — the finding is real — it
+ * just carries no `code:` line.
+ *
+ * Trimmed because the rendered line and the corpus entry must be the same
+ * bytes, and the rendered one cannot keep leading indentation.
+ */
+export function citableRubricSnippet(trigger: RubricTrigger): string | null {
+  if (trigger.snippet_is_source !== true) return null;
+  if (trigger.snippet.includes("\n")) return null;
+  const trimmed = trigger.snippet.trim();
+  if (trimmed.length < CITABLE_MIN_LEN || trimmed.length > CITABLE_MAX_LEN) return null;
+  return trimmed;
+}
+
 export function buildRubricEvidenceSection(triggers: RubricTrigger[]): string {
-  const capped = triggers.slice(0, 20);
-  const lines = capped.map(
-    (t) => `- [${t.severity.toUpperCase()}] \`${t.file}:${t.line}\` — ${t.rule_id}: ${t.message}`,
-  );
+  const capped = triggers.slice(0, RUBRIC_SECTION_CAP);
+  const lines = capped.flatMap((t) => {
+    const head = `- [${t.severity.toUpperCase()}] \`${t.file}:${t.line}\` — ${t.rule_id}: ${t.message}`;
+    const code = citableRubricSnippet(t);
+    return code === null ? [head] : [head, `  code: ${code}`];
+  });
   return [
     "## Rubric evidence",
     "",
@@ -59,6 +101,28 @@ export function buildRubricEvidenceSection(triggers: RubricTrigger[]): string {
     "",
     "Incorporate these observations into your critique where relevant. Do NOT hallucinate additional findings.",
   ].join("\n");
+}
+
+/**
+ * The source lines behind this section, for the evidence guard's corpus.
+ *
+ * Same role as the caller-impact and reverse-deps token lists in normal.ts: the
+ * text is read off disk by a deterministic rule engine, so quoting it verbatim
+ * is not a fabrication and the guard should say so. Without this the section is
+ * unciteable by construction — every snippet in it is checked against a corpus
+ * built from four tools the rubric is not one of.
+ *
+ * The rule MESSAGES are deliberately absent, for the reason the Haiku diff
+ * summary is absent: siltpoke's own prose must not pass a check that exists to
+ * ask whether a tool really said this.
+ */
+export function rubricEvidenceCitationTokens(triggers: RubricTrigger[]): string[] {
+  const out: string[] = [];
+  for (const t of triggers.slice(0, RUBRIC_SECTION_CAP)) {
+    const code = citableRubricSnippet(t);
+    if (code !== null) out.push(code);
+  }
+  return out;
 }
 
 /**

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * Task 4 (index-staleness-surfacing slice ②) — dashboard staleness endpoint:
+ * Task 4 (index-staleness surfacing) — dashboard staleness endpoint:
  *
  *   GET /api/repo-graph/staleness?repo=<projHash> → { success, data: StalenessVerdict }
  *
@@ -14,13 +14,28 @@
  * resolution, config load) actually lines up end to end.
  */
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { mountRepoGraphRoutes } from "../../src/daemon/routes/repo-graph";
 import { runIndexBuild } from "../../src/repo-graph/builder";
 import { computeProjHash } from "../../src/repo-graph/proj-hash";
+
+/** A git repo with a 5-file sub-folder indexed ON ITS OWN (the repo root has
+ * no index), then one sub-folder file edited → 1/5 = 20% = "stale". A reader
+ * that walks the sub-folder up to the repo finds no index at all. */
+async function staleSubfolderIndex(): Promise<{ home: string; repo: string; sub: string; hash: string; storageDir: string }> {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "sp-home-")));
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), "sp-repo-")));
+  const sub = join(repo, "pkg");
+  mkdirSync(join(repo, ".git"), { recursive: true });
+  mkdirSync(join(sub, "src"), { recursive: true });
+  for (const n of ["a", "b", "c", "d", "e"]) writeFileSync(join(sub, "src", `${n}.ts`), `export const ${n} = 1;\n`);
+  const built = await runIndexBuild({ cwd: repo, root: sub, force: true, home });
+  writeFileSync(join(sub, "src", "a.ts"), "export const a = 999;\n");
+  return { home, repo, sub, hash: built.proj_hash, storageDir: built.storage_dir };
+}
 
 /** Seed `n` indexed files, build the real index, then edit exactly one of
  *  them so `content_changed === 1` — the caller picks `n` to land on either
@@ -102,5 +117,15 @@ describe("GET /api/repo-graph/staleness", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("unknown_repo");
+  });
+
+  test("a sub-folder index: the badge reads that index, not the repo above it", async () => {
+    const { home, repo, hash } = await staleSubfolderIndex();
+    const app = new Hono();
+    mountRepoGraphRoutes(app, { cwd: repo, home });
+    const res = await app.request(`/api/repo-graph/staleness?repo=${hash}`);
+    const body = (await res.json()) as { data: { level: string; counts: { content_changed: number } } };
+    expect(body.data.level).toBe("stale");
+    expect(body.data.counts.content_changed).toBe(1);
   });
 });

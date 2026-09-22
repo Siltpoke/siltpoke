@@ -183,7 +183,13 @@ describe("GET /explain (list page)", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("No explanations yet");
-    expect(html).toContain("/siltpoke-explain");
+    // Audit defect [14]: this used to assert the copy names `/siltpoke-explain`
+    // — pinning the defect in place. That command has not shipped since #279,
+    // so the empty state must point at the only entry a user has, and must NOT
+    // name the dead command.
+    expect(html).toContain("Code Map");
+    expect(html).toContain('href="/repo-graph"');
+    expect(html).not.toContain("/siltpoke-explain");
   });
 
   test("populated dir lists entries newest first", async () => {

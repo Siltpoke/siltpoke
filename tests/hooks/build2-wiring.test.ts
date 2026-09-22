@@ -91,6 +91,7 @@ function makeFakeBrainOutput(overrides?: Partial<BrainOutput>): BrainOutput {
     severity: "medium",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [],
     ...overrides,
   };
@@ -158,6 +159,7 @@ describe("Build-2 wiring — enqueue on the live tool-augmented Stop-hook path",
           bubble_short: "Type error found",
           severity: "medium",
           confidence: "high",
+          findings: [],
           evidence: [
             {
               tool: "tsc",

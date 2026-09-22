@@ -26,9 +26,10 @@
  * Storage isolated per-test via `SILTPOKE_HOME` env override.
  */
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { readProject, resolveProjectRoot } from "../../src/memory/project";
 
 const REPO_ROOT = resolve(__dirname, "..", "..");
 const CLI_PATH = join(REPO_ROOT, "src", "cli", "index-repo.ts");
@@ -317,5 +318,59 @@ describe("synthetic performance gates", () => {
 
     const graphBytes = readFileSync(join(envelope.storage_dir, "graph.json")).byteLength;
     expect(graphBytes).toBeLessThan(5 * 1024 * 1024);
+  });
+});
+
+describe("--root indexes exactly that folder", () => {
+  test("a folder inside a repo: graph holds only that folder, and Memory still registers the repo", async () => {
+    const repo = realpathSync(projectRoot);
+    mkdirSync(join(repo, ".git"));
+    seed("TypeScript/app.ts", "export function update(): number { return 1; }\n");
+    seed("root.ts", "export const outside = 2;\n");
+    const sub = join(repo, "TypeScript");
+
+    const { envelope } = await runJson(["--root", sub], repo, siltpokeHome);
+    expect(envelope.project_root).toBe(sub);
+    expect(envelope.counters.files_walked).toBe(1);
+
+    // Decision [3]: the sub-folder index is Code Map only. Memory keeps walking
+    // up, so exactly one project is registered and it is the repo.
+    const project = await readProject(siltpokeHome, resolveProjectRoot(repo).project_id);
+    expect(project?.project_root).toBe(repo);
+    expect(readdirSync(join(siltpokeHome, "projects"))).toHaveLength(1);
+  });
+
+  test("--root with no value exits 2 instead of silently indexing cwd", async () => {
+    const r = await runCli(["--root"], projectRoot, siltpokeHome);
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("--root needs a directory");
+  });
+
+  // final-review issue 2: --root is realpath-canonicalized + validated as an
+  // existing directory before it reaches runIndexBuild — a relative value, an
+  // absolute-but-nonexistent value, and an empty value must each be handled,
+  // never passed through verbatim (a relative "TypeScript" would otherwise
+  // hash differently than the same folder reached absolutely, and a typo'd
+  // path would silently walk up via resolveProjectRoot to "." instead of
+  // refusing).
+  test("--root given as a RELATIVE path resolves to its realpath, not the literal string", async () => {
+    const repo = realpathSync(projectRoot);
+    mkdirSync(join(repo, ".git"));
+    seed("TypeScript/app.ts", "export function update(): number { return 1; }\n");
+
+    const { envelope } = await runJson(["--root", "TypeScript"], repo, siltpokeHome);
+    expect(envelope.project_root).toBe(realpathSync(join(repo, "TypeScript")));
+  });
+
+  test("--root pointing at a nonexistent directory exits 2 with a clear message", async () => {
+    const r = await runCli(["--root", "/definitely/not/here"], projectRoot, siltpokeHome);
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("--root must be an existing directory");
+  });
+
+  test("--root \"\" exits 2 via the missing-value guard", async () => {
+    const r = await runCli(["--root", ""], projectRoot, siltpokeHome);
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("--root needs a directory");
   });
 });

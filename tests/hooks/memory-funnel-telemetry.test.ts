@@ -50,6 +50,7 @@ function fakeBrainOutput(): BrainOutput {
     xp_earned_events: [],
     // The evidence guard requires a verbatim substring of the tool corpus; an
     // unbacked critique is rejected before the NORMAL row is written.
+    findings: [],
     evidence: [{ tool: "tsc", file: "src/dummy.ts", line: 5, snippet: REAL_SNIPPET }],
     reasoning: "test fixture",
   };
@@ -460,6 +461,7 @@ test("NORMAL rows with unverified evidence carry the funnel too", async () => {
         callBrainFn: async (): Promise<BrainCallResult> => ({
           output: {
             ...fakeBrainOutput(),
+            findings: [],
             evidence: [{ tool: "tsc", file: "src/dummy.ts", line: 5, snippet: "THIS TEXT IS NOWHERE IN THE CORPUS" }],
           },
           usage: noopUsage,

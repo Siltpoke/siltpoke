@@ -199,26 +199,39 @@ describe("parseBrainConfig — review_by_builder (Brain select v2 T1)", () => {
     expect(c.roles.review.provider).toBe("claude");
   });
 
-  test("② model honored only when the resolved reviewer is claude", () => {
+  // Until 2026-09-12 this parser dropped any model whose reviewer was not
+  // claude, which silently threw away legitimate agy / qoder / codebuddy pins.
+  // Whether a family's argv can carry a model is the registry's fact, and this
+  // module cannot ask for it without an import cycle — so the parser now records
+  // what was configured, and resolveRole applies the capability filter
+  // (spec brain-select-four-gaps §3.1). Both halves are asserted: here, and in
+  // tests/brain/registry.test.ts "a codex model in config is dropped at resolve".
+  test("② the parser records the configured model verbatim, whatever the reviewer", () => {
     const claudeReviewer = cfg(
       { brain: { review_by_builder: { codex: { provider: "claude", model: "claude-sonnet-4-6" } } } },
       "codex",
     );
     expect(claudeReviewer.roles.review).toEqual({ provider: "claude", model: "claude-sonnet-4-6" });
 
-    // quota reviewer (agy) with a model → model DROPPED (auth-fixed, silent no-op)
-    const quotaReviewer = cfg(
-      { brain: { review_by_builder: { codex: { provider: "agy", model: "whatever" } } } },
+    // agy's argv DOES carry --model, so this pin is legitimate and survives.
+    const agyReviewer = cfg(
+      { brain: { review_by_builder: { codex: { provider: "agy", model: "gemini-3-pro" } } } },
       "codex",
     );
-    expect(quotaReviewer.roles.review).toEqual({ provider: "agy" });
-    expect("model" in quotaReviewer.roles.review).toBe(false);
+    expect(agyReviewer.roles.review).toEqual({ provider: "agy", model: "gemini-3-pro" });
+
+    // codex cannot receive one; the parser still records it, resolveRole drops it.
+    const codexReviewer = cfg(
+      { brain: { review_by_builder: { agy: { provider: "codex", model: "gpt-5.5" } } } },
+      "agy",
+    );
+    expect(codexReviewer.roles.review).toEqual({ provider: "codex", model: "gpt-5.5" });
   });
 
-  test("② absent provider → same-family default (the builder reviews itself), model still claude-gated", () => {
-    // builder=codex, entry has only a model → provider defaults to hostFamily (codex, quota) → model dropped
-    const c = cfg({ brain: { review_by_builder: { codex: { model: "x" } } } }, "codex");
-    expect(c.roles.review).toEqual({ provider: "codex" });
+  test("② absent provider → same-family default (the builder reviews itself)", () => {
+    // builder=agy, entry has only a model → provider defaults to hostFamily (agy)
+    const c = cfg({ brain: { review_by_builder: { agy: { model: "gemini-3-pro" } } } }, "agy");
+    expect(c.roles.review).toEqual({ provider: "agy", model: "gemini-3-pro" });
   });
 
   test("③ global roles.review pin beats review_by_builder", () => {

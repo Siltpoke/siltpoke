@@ -154,12 +154,15 @@ test("DROP #1: verbose brain.roles.review.model beats the reviewer_model shortha
     JSON.stringify({
       reviewer_provider: "agy",
       reviewer_model: "gemini-3-pro",
-      brain: { roles: { review: { provider: "codex", model: "gpt-5.5" } } },
+      // qoder, not codex: this test is about PRECEDENCE, and codex's model is
+      // stripped at resolve (its argv has no -m), which would make the model
+      // assertion vacuous rather than wrong.
+      brain: { roles: { review: { provider: "qoder", model: "qwen3-max" } } },
     }),
   );
   const resolved = await loadReviewerProvider(tmp);
-  expect(resolved.provider.meta.name).toBe("codex");
-  expect(resolved.model).toBe("gpt-5.5");
+  expect(resolved.provider.meta.name).toBe("qoder");
+  expect(resolved.model).toBe("qwen3-max");
 });
 
 test("DROP #1: no reviewer_model -> claude default carries the family/role default model (not undefined)", async () => {

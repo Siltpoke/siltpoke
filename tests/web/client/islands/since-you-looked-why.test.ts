@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * since-you-looked WHY cell tests (slice ④, task 6). The panel is
+ * since-you-looked WHY cell tests (task 6). The panel is
  * client-rendered (Alpine island, imperative DOM) — there is no SSR delta
  * row to test, so this is the display-side coverage for the `why:
  * WhyAnchor` the real `GET /seen` route now attaches per delta

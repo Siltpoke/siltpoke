@@ -66,7 +66,7 @@ export interface RunCodexStopHookOptions {
 export async function runCodexStopHook(opts: RunCodexStopHookOptions): Promise<void> {
   const normalized = normalizeCodexStop(opts.rawJson);
 
-  // Slice ④ task 3 — record commit→session WHY index. codex-stop.ts already
+  // Task 3 — record commit→session WHY index. codex-stop.ts already
   // fully awaits the whole review pipeline below (no fast-return constraint
   // like agy's — see agy-stop.ts's file header), so this can safely await.
   // It is redundant with handle-stop.ts's own host-aware maybeRecordWhy call

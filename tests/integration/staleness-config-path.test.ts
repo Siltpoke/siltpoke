@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * Task 9 (index-staleness-surfacing slice ②) — config-path E2E, R7.
+ * Task 9 (index-staleness surfacing) — config-path E2E, R7.
  *
  * Every other staleness test in this slice injects the threshold directly
  * into `stalenessVerdict(s, warnPct)` or exercises a surface with the

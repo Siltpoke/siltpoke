@@ -10,7 +10,7 @@ export const TTL_DAYS = 2;
 const pendingAnchorSchema = z.object({
   file: z.string().min(1),
   line: z.number().int().positive().optional(),
-  tool: z.enum(["tsc", "eslint", "git-diff", "ripgrep"]),
+  tool: z.enum(["tsc", "eslint", "git-diff", "ripgrep", "rubric"]),
   fingerprint: z.string(),
 });
 

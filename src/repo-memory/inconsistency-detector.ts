@@ -85,7 +85,12 @@ async function checkFile(
         severity: "low",
         file: filePath,
         line: 1,
+        // Real file bytes, so the provenance is honest — but it is an arbitrary
+        // 200-char slice spanning several lines, so `citableRubricSnippet` refuses
+        // it anyway (same shape as god-file). Marked for what it IS, not for what
+        // survives the citability checks.
         snippet: source.slice(0, 200),
+        snippet_is_source: true,
         message: `Export style inconsistency: new file uses \`export default\` but ${tsFiles.length} similar file(s) in ${dir} appear to use named \`export const\` style.`,
         suggested_fix: "Use named exports (export const myRule = ...) to match established convention in this directory.",
       };

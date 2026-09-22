@@ -87,7 +87,7 @@ describe("doctor — project roots", () => {
     // `siltpoke-cli relocate` answers "unknown subcommand". A remedy line
     // naming it would send the reader down a path that does not exist —
     // the exact failure shape this repo has already shipped twice
-    // (doctor's Stop-hook remedy, and the close-gate's scope-narrowing hint).
+    // (doctor's Stop-hook remedy, and the scope-narrowing hint beside it).
     // Re-admit the mention only in the same change that wires the subcommand.
     writeProject(env.siltpokeHome, "bbbb8888", join(env.tmp, "gone"), "alpha");
     const r = checkProjectRoots({ siltpokeHome: env.siltpokeHome });

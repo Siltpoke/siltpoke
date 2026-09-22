@@ -87,8 +87,8 @@ function SignalSourcesRow({ sources }: { sources: readonly string[] }) {
  * What the four counters above are.
  *
  * Added because the panel showed `ack 0 · dismiss 0 · forward 0 · feedback 0`
- * and nothing else — four bare words and four zeros (the maintainer, 2026-08-19:
- * ). Block C, one section up,
+ * and nothing else — four bare words and four zeros. The ask (2026-08-19) was
+ * for it to explain itself the way the rubric checklist does. Block C, one section up,
  * lists its rules by name, so a reader sees WHAT was checked even when nothing
  * fired; this panel gave no vocabulary at all, and a `0` with no vocabulary
  * reads as "no data" when it means "you have never done this".
@@ -277,8 +277,8 @@ function FewShotPanel({ critiqueId }: { critiqueId: string }) {
  * `if (!v2) return <note>` had been taking it down too, so a row without a
  * sidecar rendered the absence sentence and nothing else.
  *
- * Found by opening the page (the maintainer, 2026-08-19: "这个地方 没有东西诶 这也是
- * 正常的吗"). Half of it was normal and half was not, which is exactly why it
+ * Found by opening the page and asking whether an empty block was normal
+ * (2026-08-19). Half of it was normal and half was not, which is exactly why it
  * needed a human looking rather than a passing test — and Block C, one section
  * up, already degraded the honest way: it keeps rendering the rubric checklist
  * with dots beside every rule. Two sibling blocks, two different degrade

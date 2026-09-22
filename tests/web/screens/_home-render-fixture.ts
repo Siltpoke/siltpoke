@@ -4,6 +4,7 @@
  * critiques [], navMeta real.
  */
 import type { HomeData } from "../../../src/web/screens/Home";
+import { deriveMoodFromProgression, wellFedFromHunger } from "../../../src/web/screens/Home.data";
 
 export const HOME_RENDER_FIXTURE: HomeData = {
   pet: {
@@ -162,3 +163,35 @@ export const HOME_RENDER_FIXTURE: HomeData = {
   },
   brainHealth: { show: false, line: "", detail: "" },
 };
+
+/**
+ * A copy of the fixture at a given hunger, with every value that depends on
+ * hunger re-derived rather than re-typed.
+ *
+ * Audit defect [3] was two hand-written answers to "is it fed?" that drifted
+ * apart. A test that overrides `stats.hunger` and leaves `topbarBadges.wellFed`
+ * at whatever the literal above happens to say rebuilds that same split inside
+ * the fixture — which is how the old pill test came to assert a state the
+ * screen could not actually be in.
+ */
+export function homeFixtureAtHunger(hunger: number): HomeData {
+  const wellFed = wellFedFromHunger(hunger);
+  return {
+    ...HOME_RENDER_FIXTURE,
+    stats: { ...HOME_RENDER_FIXTURE.stats, hunger },
+    topbarBadges: { ...HOME_RENDER_FIXTURE.topbarBadges, wellFed },
+    // pet.mood is wellFed-dependent too. The first version of this helper left
+    // it at the base fixture's hardcoded "happy" while claiming to re-derive
+    // everything hunger touches — holding one field by hand while a sibling
+    // drifts, which is the very mistake the helper exists to prevent.
+    pet: {
+      ...HOME_RENDER_FIXTURE.pet,
+      mood: deriveMoodFromProgression(HOME_RENDER_FIXTURE.progression.streak_days, wellFed),
+    },
+    vitalsValues: {
+      ...HOME_RENDER_FIXTURE.vitalsValues,
+      mood: deriveMoodFromProgression(HOME_RENDER_FIXTURE.progression.streak_days, wellFed),
+      hunger: wellFed ? "fed" : "hungry",
+    },
+  };
+}

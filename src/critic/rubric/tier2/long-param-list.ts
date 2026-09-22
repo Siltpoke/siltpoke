@@ -160,6 +160,7 @@ export const longParamListRule: RubricRule = {
           file,
           line: startLine + 1,
           snippet,
+          snippet_is_source: true,
           message: `Function '${name}' has ${effectiveCount} params (threshold ${PARAM_THRESHOLD}). Too many params increase call-site complexity and reduce testability.`,
           suggested_fix:
             "Group related params into a config/options object. Consider the parameter object refactoring pattern.",

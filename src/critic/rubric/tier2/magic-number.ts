@@ -115,6 +115,7 @@ export const magicNumberRule: RubricRule = {
           file,
           line: v.line,
           snippet: v.snippet,
+          snippet_is_source: true,
           message: `Magic number ${v.value} found. Unnamed literals obscure intent and make refactoring brittle.`,
           suggested_fix:
             "Extract the value into a named constant: `const DESCRIPTIVE_NAME = ${v.value}`.",

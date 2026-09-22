@@ -229,6 +229,7 @@ function absenceOf(raw: RawCall, skipped: boolean): AuditAbsenceKind {
  */
 const EVIDENCE_LABELS: ReadonlySet<string> = new Set([
   "not_checked",
+  "not_checked_budget",
   "verified",
   "no_evidence",
   "partly_unverified",

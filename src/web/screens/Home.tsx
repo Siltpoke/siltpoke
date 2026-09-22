@@ -167,7 +167,11 @@ export function Home({ data, view = "dashboard", shellName = "blush", resolvedPr
                   quiet hours
                 </Pill>
               )}
-              {data.stats.hunger > 4 && (
+              {/* Goes through the shared predicate, never a second inline
+                  `hunger > 4`. Audit defect [3] was exactly two expressions
+                  answering one question; re-inlining the comparison here would
+                  rebuild it. */}
+              {data.topbarBadges.wellFed && (
                 <Pill
                   bg={`color-mix(in srgb, ${tokens.color.moss} 13%, transparent)`}
                   color={tokens.color.moss}

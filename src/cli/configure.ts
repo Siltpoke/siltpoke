@@ -23,6 +23,10 @@ import { backupSettings } from "../installer/backup";
 import { archetypeOf } from "../installer/personality-seed";
 import { siltpokeRoot } from "../installer/paths";
 import { swapStatusLine } from "../installer/settings-mutator";
+import {
+  buildStatuslineCommand,
+  type StatuslineInterpreterDeps,
+} from "../installer/statusline-interpreter";
 import { resolvePluginRoot, writeDaemonShim, writeShim } from "../installer/shim";
 import { atomicWrite } from "../utils/atomic-write";
 import {
@@ -50,8 +54,48 @@ export {
 /** Seams so tests never reach the real launchctl/systemctl. */
 export interface ConfigureDeps {
   installAutostart?: () => Promise<AutostartDispatchResult>;
+  /**
+   * Platform / binary-lookup seams for the statusLine interpreter (defect [10]).
+   * Tests drive the win32 branch from macOS through these.
+   */
+  statuslineInterpreter?: StatuslineInterpreterDeps;
   /** Warning sink. Defaults to stderr. */
   warn?: (msg: string) => void;
+  /** Success-summary sink. Defaults to stdout. Only `runConfigureCli` uses it. */
+  out?: (msg: string) => void;
+}
+
+/**
+ * What `configure` actually did — as opposed to what it was asked to do.
+ *
+ * The distinction is the point. Statusline wiring and autostart are each
+ * allowed to fail without taking the pet down (the config is already on disk
+ * and usable), so a summary built from `ConfigureOptions` would tell the user
+ * a statusline is installed when it is not. Audit defect `[5d]`.
+ */
+export interface ConfigureResult {
+  name: string;
+  species: string;
+  /** Absolute path of the pet config that was written. */
+  configPath: string;
+  /** `skipped` = not requested. `failed` = requested, and the wiring threw. */
+  statusline: "installed" | "failed" | "skipped";
+  /**
+   * A discriminated outcome, NOT the dispatcher's raw status.
+   *
+   * `installAutostartForPlatform` returns `status: "skipped"` on any platform
+   * that is neither darwin nor linux — Windows today. Passing that straight
+   * through collided with the "the user never asked" case, and the summary
+   * then told a Windows user who DID ask for the daemon that it was simply
+   * "off (opt-in)". That is the very confusion this type exists to prevent,
+   * reappearing in the other direction.
+   */
+  autostart:
+    | "not-requested"
+    | "installed"
+    /** Requested, but the dispatcher declined — unsupported platform, missing module. */
+    | { declined: string }
+    | "failed";
 }
 
 /**
@@ -244,11 +288,45 @@ async function writeConfig(dir: string, opts: ConfigureOptions): Promise<void> {
  * No settings.json, or nothing to change (fresh machine, or a re-run where the
  * sweep already happened and statusLine is untouched) ⇒ no backup, no write.
  */
+/**
+ * Point `statusLine.command` at our shim, preserving whatever was there before
+ * so the wrapper can chain to it.
+ *
+ * Defect [10]: this used to write `sh <shim>` on every platform. Windows has no
+ * bare `sh`, so the command could never start — silently, because a statusLine
+ * command that fails to spawn renders nothing rather than an error.
+ */
+async function swapInStatusline(
+  settings: Settings,
+  home: string,
+  siltpokeDir: string,
+  warn: (msg: string) => void,
+  interpreterDeps: StatuslineInterpreterDeps,
+): Promise<Settings> {
+  const shimPath = await writeShim(home);
+  const statusline = buildStatuslineCommand(shimPath, interpreterDeps);
+  if (!statusline.resolved) {
+    warn(`warning: ${statusline.reason}`);
+  }
+  const swapped = swapStatusLine(settings, statusline.command);
+  const old = swapped.oldStatusLineCommand;
+  // Self-reference guard (the bug install.ts guards): on a re-run the current
+  // statusLine is ALREADY our wrapper. Writing that into inner.txt makes the
+  // wrapper call itself — fork bomb. Leave the prior good inner.txt alone.
+  const isSelf =
+    old !== null && (old.includes("siltpoke") || old.includes("face/wrapper"));
+  if (old && !isSelf) {
+    atomicWrite(join(siltpokeDir, "inner.txt"), old);
+  }
+  return swapped.next as Settings;
+}
+
 async function wireSettings(
   home: string,
   siltpokeDir: string,
   wantStatusline: boolean,
   warn: (msg: string) => void,
+  interpreterDeps: StatuslineInterpreterDeps = {},
 ): Promise<void> {
   const claudeHome = join(home, ".claude");
   const settingsPath = join(claudeHome, "settings.json");
@@ -279,19 +357,7 @@ async function wireSettings(
   const sweptSomething = JSON.stringify(next) !== JSON.stringify(current);
 
   if (wantStatusline) {
-    const shimPath = await writeShim(home);
-    const swapped = swapStatusLine(next, `sh ${shimPath}`);
-    next = swapped.next as Settings;
-    const old = swapped.oldStatusLineCommand;
-    // Self-reference guard (the bug install.ts guards): on a re-run the current
-    // statusLine is ALREADY our wrapper. Writing that into inner.txt makes the
-    // wrapper call itself — fork bomb. Leave the prior good inner.txt alone.
-    const isSelf =
-      old !== null &&
-      (old.includes("siltpoke") || old.includes("face/wrapper"));
-    if (old && !isSelf) {
-      atomicWrite(join(siltpokeDir, "inner.txt"), old);
-    }
+    next = await swapInStatusline(next, home, siltpokeDir, warn, interpreterDeps);
   } else if (!sweptSomething) {
     return; // nothing to write — don't touch the user's file for nothing
   }
@@ -311,7 +377,7 @@ export async function configure(
   opts: ConfigureOptions,
   home: string,
   deps: ConfigureDeps = {},
-): Promise<void> {
+): Promise<ConfigureResult> {
   const warn = deps.warn ?? ((msg: string) => process.stderr.write(`${msg}\n`));
   // Honors SILTPOKE_HOME from process.env (relocates when set), else falls
   // back to the injected `home` param as HOME — preserves the test seam
@@ -331,11 +397,23 @@ export async function configure(
   // 2. settings.json: legacy Stop-hook sweep (always) + statusLine (opt-in).
   //    A failure here must not take the pet down with it — the config is
   //    already on disk and usable; the user's own settings.json is backed up.
+  let statusline: ConfigureResult["statusline"] = opts.statusline
+    ? "installed"
+    : "skipped";
   try {
-    await wireSettings(home, siltpokeDir, opts.statusline, warn);
+    await wireSettings(
+      home,
+      siltpokeDir,
+      opts.statusline,
+      warn,
+      deps.statuslineInterpreter,
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     warn(`warning: settings.json wiring failed (${msg}); the pet is installed either way`);
+    // Only downgrade what was actually asked for: a skipped statusline that
+    // hit an unrelated sweep failure is still `skipped`, not `failed`.
+    if (opts.statusline) statusline = "failed";
   }
 
   // 3. Daemon autostart (opt-in).
@@ -352,6 +430,7 @@ export async function configure(
   //
   //    When we DO write it, it must land BEFORE the unit is rendered —
   //    installAutostartForPlatform points the unit at it.
+  let autostart: ConfigureResult["autostart"] = "not-requested";
   if (opts.daemon) {
     if (resolvePluginRoot(home) !== null) {
       await writeDaemonShim(home);
@@ -366,6 +445,7 @@ export async function configure(
       });
     try {
       const result = await install();
+      autostart = result.status === "installed" ? "installed" : { declined: result.status };
       if (result.status !== "installed") {
         warn(`warning: daemon autostart ${result.status} (platform=${result.platform})`);
       }
@@ -374,25 +454,85 @@ export async function configure(
       // config + statusline are already written and usable.
       const msg = err instanceof Error ? err.message : String(err);
       warn(`warning: daemon autostart failed (${msg}); the pet is installed either way`);
+      autostart = "failed";
     }
   }
+
+  return {
+    name: opts.name,
+    species: opts.species,
+    configPath: join(siltpokeDir, "config.json"),
+    statusline,
+    autostart,
+  };
 }
 
-if (import.meta.main) {
-  const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
-  if (home.length === 0) {
-    process.stderr.write("siltpoke-configure: HOME is not set\n");
-    process.exit(2);
+/**
+ * The success summary, one line per thing the user can check.
+ *
+ * WHY IT EXISTS — the kernel used to print NOTHING on success (audit defect
+ * `[5d]`). `/siltpoke-setup` runs it and then has to tell the user what
+ * happened, and its only evidence was an exit code plus the answers file
+ * having vanished. Every line here reports the RESULT, never the request, so a
+ * statusline that failed to wire is never announced as installed.
+ */
+export function summarize(r: ConfigureResult): string[] {
+  const lines = [`siltpoke: created "${r.name}" (${r.species}) — ${r.configPath}`];
+  if (r.statusline === "installed") {
+    lines.push("siltpoke: statusline installed — your pet shows up in Claude Code");
+  } else if (r.statusline === "failed") {
+    lines.push(
+      "siltpoke: statusline NOT installed (see the warning above) — the pet itself is fine",
+    );
+  } else {
+    lines.push("siltpoke: statusline left off (you asked for it off)");
   }
-  const argv = process.argv.slice(2);
+  if (r.autostart === "not-requested") {
+    lines.push(
+      "siltpoke: background daemon off (opt-in — open /siltpoke-dashboard to start it)",
+    );
+  } else if (r.autostart === "installed") {
+    lines.push("siltpoke: daemon autostart installed");
+  } else if (r.autostart === "failed") {
+    lines.push("siltpoke: daemon autostart FAILED (see the warning above)");
+  } else {
+    // Asked for, and the platform said no. Never phrased as "off (opt-in)":
+    // the user DID opt in, and telling them otherwise hides the whole event.
+    lines.push(
+      `siltpoke: daemon autostart NOT installed — ${r.autostart.declined} on this platform (see the warning above)`,
+    );
+  }
+  return lines;
+}
+
+/**
+ * The whole CLI, as a function — argv in, exit code out.
+ *
+ * `import.meta.main` below is a two-line shell around this. Lifting it out is
+ * what makes the summary above testable at all: the printing, the exit codes
+ * and the answers-file deletion are the behaviour users actually get, and an
+ * `import.meta.main` block cannot be imported by a test.
+ */
+export async function runConfigureCli(
+  argv: string[],
+  home: string,
+  deps: ConfigureDeps = {},
+): Promise<number> {
+  const out = deps.out ?? ((s: string) => process.stdout.write(`${s}\n`));
+  const warn = deps.warn ?? ((s: string) => process.stderr.write(`${s}\n`));
+  if (home.length === 0) {
+    warn("siltpoke-configure: HOME is not set");
+    return 2;
+  }
   const answers = answersFilePath(argv);
+  let result: ConfigureResult;
   try {
     const opts = answers !== null ? await readAnswersFile(answers, argv) : parseArgs(argv);
-    await configure(opts, home);
+    result = await configure(opts, home, { ...deps, warn });
   } catch (err) {
     if (err instanceof ConfigureInputError) {
-      process.stderr.write(`siltpoke-configure: ${err.message}\n`);
-      process.exit(2);
+      warn(`siltpoke-configure: ${err.message}`);
+      return 2;
     }
     throw err;
   }
@@ -400,4 +540,11 @@ if (import.meta.main) {
   // is scratch — leaving it behind would make the next setup run's failure look
   // like a success (a stale file the model forgot to rewrite still parses).
   if (answers !== null) await rm(answers, { force: true });
+  for (const line of summarize(result)) out(line);
+  return 0;
+}
+
+if (import.meta.main) {
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  process.exit(await runConfigureCli(process.argv.slice(2), home));
 }

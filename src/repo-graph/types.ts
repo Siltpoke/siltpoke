@@ -121,7 +121,7 @@ export interface Fingerprints {
 }
 
 /**
- * User-seen watermark (slice ③) — tracks which files/signatures the USER has
+ * User-seen watermark — tracks which files/signatures the USER has
  * already reviewed, distinct from `Fingerprints` (which tracks the repo-graph
  * index's own incremental-rebuild cache). Persisted as `seen.json`.
  */
@@ -252,6 +252,19 @@ export interface RepoGraphMeta {
    * (resolution degrades to tier-1–3, byte-identical to before this field).
    */
   anchorMap?: AnchorMap;
+  /**
+   * The enclosing repo root (marker > git) when this index's root is a folder
+   * INSIDE that repo. Absent when the root is the repo root itself, sits in no
+   * repo, or the index predates sub-folder indexing — readers treat undefined
+   * as "the index root is the repo".
+   */
+  repo_root?: string;
+  /**
+   * Imports that certainly point outside the indexed root (not drawn). Absent
+   * on indexes built before 2026-09-14 — readers MUST treat undefined as
+   * "unknown" and show nothing, never as a count of 0.
+   */
+  imports_outside_root?: { count: number; examples: string[] };
 }
 
 export function emptyCounters(): RepoGraphMetaCounters {

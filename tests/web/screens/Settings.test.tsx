@@ -18,14 +18,17 @@ const VIEW: BrainView = {
     { role: "review", family: "qoder", model: "qoder-turbo", source: "pinned here" },
     { role: "extract", family: "claude", model: "claude-haiku-4-5-20251001", source: "default" },
   ],
+  // reviewerSupportsModel now follows each CLI's real argv: only codex cannot be
+  // given a model (spec brain-select-four-gaps §2.6).
   reviewByBuilder: [
-    { builder: "claude", reviewer: "claude", model: "claude-haiku-4-5", configured: false, reviewerSupportsModel: true },
-    { builder: "codex", reviewer: "codex", configured: false, reviewerSupportsModel: false },
-    { builder: "agy", reviewer: "agy", configured: false, reviewerSupportsModel: false },
-    { builder: "qoder", reviewer: "qoder", configured: false, reviewerSupportsModel: false },
-    { builder: "codebuddy", reviewer: "codebuddy", configured: false, reviewerSupportsModel: false },
+    { builder: "claude", reviewer: "claude", model: "claude-haiku-4-5", configured: false, reviewerSupportsModel: true, overriddenByGlobalPin: false },
+    { builder: "codex", reviewer: "codex", configured: false, reviewerSupportsModel: false, overriddenByGlobalPin: false },
+    { builder: "agy", reviewer: "agy", configured: false, reviewerSupportsModel: true, overriddenByGlobalPin: false },
+    { builder: "qoder", reviewer: "qoder", configured: false, reviewerSupportsModel: true, overriddenByGlobalPin: false },
+    { builder: "codebuddy", reviewer: "codebuddy", configured: false, reviewerSupportsModel: true, overriddenByGlobalPin: false },
   ],
   claudeModels: ["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-8"],
+  modelCapableFamilies: ["claude", "agy", "qoder", "codebuddy"],
 };
 
 describe("SettingsScreen", () => {
@@ -129,5 +132,81 @@ describe("SettingsScreen — directly-selectable role rows (Brain select v2.2)",
     // the family gate for the role-row model select
     expect(html).toContain("x-show=\"family === &#39;claude&#39;\"");
     expect(html).toContain("set in ");
+  });
+
+  // Spec brain-select-four-gaps §3.1 / §3.2 — the dashboard half.
+  test("every family whose CLI takes a model is named in the served capability list", () => {
+    const html = String(<SettingsScreen view={VIEW} secret={SECRET} />);
+    // Served, not hardcoded in the page: both islands read this attribute rather
+    // than each carrying their own `family === "claude"` literal.
+    expect(html).toContain('data-model-capable="claude,agy,qoder,codebuddy"');
+    // and a free-text model box exists for the non-claude ones
+    expect(html).toContain('x-show="family !== &#39;claude&#39; &amp;&amp; acceptsModel()"');
+    expect(html).toContain('x-show="reviewer !== &#39;claude&#39; &amp;&amp; acceptsModel()"');
+  });
+
+  test("a role can be returned to following the building agent", () => {
+    const html = String(<SettingsScreen view={VIEW} secret={SECRET} />);
+    expect(html).toContain("(follow the building agent)");
+  });
+
+  // Found in review: data-pinned was `source === "pinned here"`, so a review
+  // pinned through `reviewer_provider` or the env var rendered as UNPINNED. The
+  // select then opened on "(follow the building agent)" and an untouched Save
+  // sent a DELETE that removed a key that pin never used — success reported, pin
+  // untouched. Every explicit pin must mark the row.
+  test("every explicit pin marks the row, not just a brain.roles entry", () => {
+    for (const source of ["pinned here", "reviewer_provider", "env override"]) {
+      const view = {
+        ...VIEW,
+        roles: VIEW.roles.map((r) => (r.role === "review" ? { ...r, source } : r)),
+      };
+      const html = String(<SettingsScreen view={view} secret={SECRET} />);
+      expect(html).toContain('data-role="review" data-family="qoder" data-model="qoder-turbo" data-pinned="1"');
+    }
+  });
+
+  test("a role that merely falls back is NOT marked pinned", () => {
+    for (const source of ["default", "follows builder"]) {
+      const view = {
+        ...VIEW,
+        roles: VIEW.roles.map((r) => (r.role === "review" ? { ...r, source } : r)),
+      };
+      const html = String(<SettingsScreen view={view} secret={SECRET} />);
+      expect(html).toContain('data-role="review" data-family="qoder" data-model="qoder-turbo" data-pinned=""');
+    }
+  });
+
+  // The first version of this test set `overriddenByGlobalPin: true` on rows
+  // that were all `configured: false` and asserted the badge appeared — locking
+  // in the very defect review found: a pin with ZERO per-builder rules marked
+  // all five untouched rows as overridden. A row nobody configured cannot be
+  // overridden, so the badge belongs only on a configured one.
+  test("the overridden badge appears on a CONFIGURED row and nowhere else", () => {
+    const plain = String(<SettingsScreen view={VIEW} secret={SECRET} />);
+    expect(plain).not.toContain("overridden");
+
+    // Pinned, but nothing was ever configured → no badge anywhere.
+    const pinnedNothingConfigured = {
+      ...VIEW,
+      reviewByBuilder: VIEW.reviewByBuilder.map((r) => ({
+        ...r,
+        configured: false,
+        overriddenByGlobalPin: false,
+      })),
+    };
+    expect(String(<SettingsScreen view={pinnedNothingConfigured} secret={SECRET} />)).not.toContain(
+      "overridden",
+    );
+
+    // One configured rule, suppressed by the pin → exactly one badge.
+    const oneOverridden = {
+      ...VIEW,
+      reviewByBuilder: VIEW.reviewByBuilder.map((r, i) =>
+        i === 0 ? { ...r, configured: true, overriddenByGlobalPin: true } : r,
+      ),
+    };
+    const html = String(<SettingsScreen view={oneOverridden} secret={SECRET} />);
+    expect(html.match(/overridden/g) ?? []).toHaveLength(1);
   });
 });

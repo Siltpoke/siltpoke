@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * Slice ③ Task 3 — seed `seen.json` at index time (spec §4, C2/C9 from the
+ * Task 3 — seed `seen.json` at index time (spec §4, C2/C9 from the
  * plan's cross-family review).
  *
  * Real `runIndexBuild` + real fixtures throughout — no mocking of the
@@ -61,7 +61,7 @@ describe("seen seed", () => {
       await runIndexBuild({ cwd: dir, force: true, home }); // creates fingerprints + seeds seen.json
       const { storage_dir } = resolveRepoGraphLocation(dir, { home });
 
-      // Simulate a slice-②-era index: delete seen.json, keep fingerprints,
+      // Simulate a pre-watermark-era index: delete seen.json, keep fingerprints,
       // re-index WITHOUT --force (the "up to date, no early return" path
       // this test also exercises — buildInner has no short-circuit before
       // the seed hook, confirmed by reading builder.ts).

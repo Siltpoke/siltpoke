@@ -137,6 +137,10 @@ export function mountDashboardRoutes(
 
   app.get("/api/ping", (c) =>
     c.json({
+      // `service` is what lets a second daemon tell siltpoked apart from any
+      // other server that happens to answer 200 on this port — see
+      // `isSiltpokedPing` in `src/daemon/server.ts` (audit defect `[5b]`).
+      service: "siltpoked",
       ok: true,
       mode: deps.projectCwd ? "project" : "global",
       pid: process.pid,

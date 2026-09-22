@@ -21,9 +21,9 @@
  * plan flagged that table as UNVERIFIED for gating (R3) and required it be
  * enumerated before being relied on. Enumerating it settles the question against
  * it: the table is `ts | tsx | js | jsx | py` and nothing else, so in this repo
- * alone it calls "not code" 72 `.json` files (every plugin manifest,
- * `.claude/close-gate.json`), 21 `.sh` files (`scripts/close-gate.sh`), 10
- * `.yml`/`.yaml` (every GitHub workflow, `docs/tracks.yaml`), 3 `.css`, 2
+ * alone it calls "not code" 72 `.json` files (every plugin manifest, every lint
+ * config), 21 `.sh` files (the installer and the hook entry points), 10
+ * `.yml`/`.yaml` (every GitHub workflow), 3 `.css`, 2
  * `.toml`, `.dependency-cruiser.cjs`, and `Makefile`. A turn that edits only
  * `.github/workflows/ci.yml` is a real change to how this project gates itself,
  * and under the literal D7 rule it would be filed as docs and skipped in

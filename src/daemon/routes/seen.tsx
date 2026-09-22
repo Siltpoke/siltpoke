@@ -2,13 +2,13 @@
 // Copyright (c) 2026 Jiaqi Duan
 /** @jsxImportSource hono/jsx */
 /**
- * `/api/repo-graph/seen*` daemon routes (slice ③, spec R5/R6/R7/R13/R15).
+ * `/api/repo-graph/seen*` daemon routes (spec R5/R6/R7/R13/R15).
  *
  *   GET  /api/repo-graph/seen?repo=<projHash>          delta + composed staleness
  *   POST /api/repo-graph/seen/advance   { repo, path }  secret-gated
  *   POST /api/repo-graph/seen/mark-all  { repo }        secret-gated
  *
- * Extracted out of `repo-graph.tsx` (fast-follow after slice ③ landed —
+ * Extracted out of `repo-graph.tsx` (fast-follow —
  * repo-graph.tsx was 2x the 800-LOC hard cap). These 3 handlers share ZERO
  * closure state with the rest of that file (no `activeIndexHash`/
  * `activeAbort`/`taskRegistry` lock), so the move is a pure verbatim
@@ -23,7 +23,7 @@
 import type { Hono } from "hono";
 import { loadRepoGraphConfig } from "../../config/repo-graph-config";
 import { siltpokeRoot } from "../../installer/paths";
-import { readIndexStaleness } from "../../repo-graph/index-health";
+import { readIndexStalenessAt } from "../../repo-graph/index-health";
 import { isValidProjHash, resolveRepoByHash } from "../../repo-graph/repo-registry";
 import { advanceSeenFile, markAllSeen, withHumanOrigin } from "../../repo-graph/seen-advance";
 import { classifyAll } from "../../repo-graph/seen-delta";
@@ -43,13 +43,13 @@ export function mountSeenRoutes(app: Hono, deps: SeenRouteDeps): void {
   const { home } = deps;
 
   // ── GET /api/repo-graph/seen ─────────────────────────────────────────────
-  // Slice ③ (R5/R6/R15): user-seen watermark delta + composed index-staleness
+  // R5/R6/R15 — user-seen watermark delta + composed index-staleness
   // verdict. Read-only (classifyAll + a fresh fingerprint re-hash for the
   // staleness side, no mutation) → no secret gate, matching the other read
   // GETs (/staleness, /repos, /arch). `repo` is required, same posture as
   // /staleness.
   //
-  // R15 composition: `staleness` is the SAME slice-② verdict `/staleness`
+  // R15 composition: `staleness` is the SAME verdict `/staleness`
   // returns — the surface never gets to say "0 changes" while the persisted
   // index itself has drifted from disk; the client renders both signals
   // side by side.
@@ -60,7 +60,7 @@ export function mountSeenRoutes(app: Hono, deps: SeenRouteDeps): void {
   // `classifyAll` — the client shows a "we don't know what you've seen"
   // banner instead of a false wall of "every file is new_to_you".
   //
-  // Slice ④ (task 6): each surviving delta gets a `why: WhyAnchor` attached
+  // Task 6: each surviving delta gets a `why: WhyAnchor` attached
   // via `attachWhy` (rung "U"/1/2/3 — see `../../repo-graph/why-lookup`), an
   // honest ANCHOR ("you asked: …" / "changed in session …") not a causal
   // claim. Skipped entirely when `deltas` is already `[]` (unknown baseline
@@ -81,7 +81,11 @@ export function mountSeenRoutes(app: Hono, deps: SeenRouteDeps): void {
     const current = await readFingerprints(resolved.storage_dir);
     const cfg = await loadRepoGraphConfig(home ?? siltpokeRoot());
     const staleness = stalenessVerdict(
-      await readIndexStaleness({ cwd: resolved.project_root, home: home ?? siltpokeRoot() }),
+      await readIndexStalenessAt({
+        project_root: resolved.project_root,
+        storage_dir: resolved.storage_dir,
+        home: home ?? siltpokeRoot(),
+      }),
       cfg.staleness_warn_pct,
     );
     const deltas = seen.unknown_baseline ? [] : classifyAll(seen, current);

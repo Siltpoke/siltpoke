@@ -9,9 +9,9 @@
  * `osascript` process) here must never take the pet review down with it,
  * same discipline as appendJsonLine's swallow-and-continue.
  */
-import { existsSync } from "node:fs";
+import { existsSync as realExistsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { join } from "node:path";
+import { anyInstalledShimPath, probeExec } from "../installer/menubar-setup";
 
 export interface MenubarSideEffectDeps {
   /** Defaults to `process.platform`. Test seam — never shell out in tests. */
@@ -19,9 +19,9 @@ export interface MenubarSideEffectDeps {
   /** Defaults to a real `spawnSync` wrapped in try/catch. Test seam. */
   exec?: (cmd: string, args: string[]) => void;
   /**
-   * Defaults to a real `existsSync` check of the SwiftBar plugin shim path
-   * (`~/Library/Application Support/SwiftBar/plugins/siltpoke.1m.sh`, using
-   * `process.env.HOME`). Test seam. Only `notifyReview` gates on this —
+   * Defaults to `defaultShimExists` — the SwiftBar plugin shim, looked up in
+   * the default folder first and then in SwiftBar's configured
+   * `PluginDirectory`. Test seam. Only `notifyReview` gates on this —
    * notifications should only fire for users who actually installed the
    * menu-bar plugin.
    */
@@ -34,17 +34,39 @@ const NOTIFICATION_COMMENT_MAX_LEN = 120;
 // the try/catch below still swallows whatever spawnSync reports.
 const EXEC_TIMEOUT_MS = 3000;
 
-function defaultShimExists(): boolean {
-  const home = process.env.HOME ?? "";
-  const shimPath = join(
-    home,
-    "Library",
-    "Application Support",
-    "SwiftBar",
-    "plugins",
-    "siltpoke.1m.sh",
-  );
-  return existsSync(shimPath);
+/**
+ * Did this user opt into the menu-bar pet — in EITHER folder?
+ *
+ * Previously this rebuilt the DEFAULT plugin path by hand while `install`
+ * wrote into SwiftBar's configured folder, so anyone who had pointed SwiftBar
+ * elsewhere installed the pet and then silently received no notifications.
+ *
+ * Consent is the only question here, deliberately NOT "which copy does
+ * SwiftBar render" — this runs on the Stop hook's fired path, and the cheap
+ * check is the right one for a gate. Cost, stated plainly rather than implied:
+ * zero subprocesses for a pet installed in the default folder, and one bounded
+ * `defaults read` for everyone else — which includes the majority who never
+ * installed it. At 0.00–0.01s per call that is a wasted spawn, not a stall.
+ *
+ * Non-throwing by construction AND by catch: the review must survive a broken
+ * lookup, same swallow-and-continue discipline as every other side effect in
+ * this file.
+ *
+ * Exported for unit test; every parameter defaults to the real thing.
+ */
+export function defaultShimExists(deps: {
+  home?: string;
+  existsSync?: (p: string) => boolean;
+  exec?: (cmd: string, args: string[]) => { status: number; stdout: string };
+} = {}): boolean {
+  const home = deps.home ?? process.env.HOME ?? "";
+  const existsSync = deps.existsSync ?? realExistsSync;
+  const exec = deps.exec ?? probeExec;
+  try {
+    return anyInstalledShimPath(exec, home, existsSync) !== null;
+  } catch {
+    return false;
+  }
 }
 
 function defaultExec(cmd: string, args: string[]): void {

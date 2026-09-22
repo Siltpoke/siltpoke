@@ -62,6 +62,12 @@ export type ToolOutputSection = {
    * NOT normalized, NOT trimmed: verbatim bytes from each tool's raw field.
    */
   evidenceCorpus: string;
+  /**
+   * Files present in the diff whose hunks the budget cut entirely, so the
+   * corpus holds nothing about them. The evidence guard needs this to tell
+   * "siltpoke dropped this file" apart from "siltpoke never had it".
+   */
+  budgetCutFiles: Set<string>;
 };
 
 // ---------------------------------------------------------------------------
@@ -162,7 +168,21 @@ function scopeDiffRawToFiles(raw: string, shown: ReadonlySet<string>): string {
 function formatGitDiffBlock(
   parsed: GitDiffHunk[],
   linterFiles: readonly string[],
-): { shown: string; citable: string; shownFiles: Set<string>; coverage: DiffCoverage | null } {
+): {
+  shown: string;
+  citable: string;
+  shownFiles: Set<string>;
+  /**
+   * Files whose hunks were ALL cut by the budget — present in the diff, absent
+   * from the corpus. Distinct from `shownFiles`: a file can appear in both when
+   * some of its hunks survived, and a file that was never in the diff at all
+   * (untracked) appears in neither. That third case is why this set exists —
+   * without it the evidence guard cannot tell "siltpoke dropped this" from
+   * "siltpoke never had this", and those are different things to tell a user.
+   */
+  budgetCutFiles: Set<string>;
+  coverage: DiffCoverage | null;
+} {
   const { kept: capped, omitted } = selectHunksForBudget(parsed, { linterFiles });
 
   // Group hunks by file for rendering
@@ -191,10 +211,19 @@ function formatGitDiffBlock(
     coverage = describeCoverage(capped.length, omitted);
   }
 
+  // ENTIRELY cut, not merely thinned: a file with one surviving hunk still has
+  // bytes in the corpus, so a citation into it can be checked and this set must
+  // not claim otherwise.
+  const shownFiles = new Set(byFile.keys());
+  const budgetCutFiles = new Set(
+    omitted.map((h) => h.file).filter((f) => !shownFiles.has(f)),
+  );
+
   return {
     shown: parts.join("\n"),
     citable,
-    shownFiles: new Set(byFile.keys()),
+    shownFiles,
+    budgetCutFiles,
     coverage,
   };
 }
@@ -318,6 +347,10 @@ export function buildToolOutputSection(
   // Files whose hunks actually reached the prompt — null while no git-diff
   // block was rendered, which leaves the raw corpus untouched.
   let shownDiffFiles: Set<string> | null = null;
+  // Files the budget cut ENTIRELY — see formatGitDiffBlock. Empty, not null,
+  // when no diff block rendered: "no file was cut" is true then, and a null
+  // would push the question onto every caller.
+  let budgetCutFiles = new Set<string>();
   let diffCoverage: DiffCoverage | null = null;
 
   for (const { name, result } of okResults) {
@@ -346,6 +379,7 @@ export function buildToolOutputSection(
       } else {
         const diffBlock = formatGitDiffBlock(r.parsed, linterFiles);
         shownDiffFiles = diffBlock.shownFiles;
+        budgetCutFiles = diffBlock.budgetCutFiles;
         diffCoverage = diffBlock.coverage;
         bodyParts.push(TOOL_SECTION_HEADERS[name]);
         bodyParts.push("");
@@ -404,7 +438,7 @@ export function buildToolOutputSection(
   }
   const evidenceCorpus = rawParts.join("\n--- corpus separator ---\n");
 
-  return { section, citationSection, evidenceCorpus, diffCoverage };
+  return { section, citationSection, evidenceCorpus, diffCoverage, budgetCutFiles };
 }
 
 // ---------------------------------------------------------------------------

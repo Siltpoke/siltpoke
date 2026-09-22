@@ -69,6 +69,7 @@ test("codex provider meta matches spec §1 (quota billing, openai gen_ai.system)
     name: "codex",
     billing: "quota",
     genAiSystem: "openai",
+    acceptsModel: false,
   });
 });
 

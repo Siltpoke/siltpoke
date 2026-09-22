@@ -14,7 +14,7 @@
  * callBrainText) is untouched; unmigrated consumers keep importing it
  * directly — that IS the allowlist mechanism (AC9).
  */
-import { callBrainText, DEFAULT_MODEL, type BrainCallResult, type BrainUsage, type CallBrainOptions } from "./brain";
+import { type BrainCallResult, type BrainUsage, type CallBrainOptions, callBrainText, DEFAULT_MODEL } from "./brain";
 import { brainOutputFromText } from "./parse-raw";
 
 export type BillingKind = "usd" | "quota";
@@ -23,7 +23,41 @@ export interface BrainProviderMeta {
   name: "claude" | "codex" | "agy" | "qoder" | "codebuddy";
   billing: BillingKind;
   genAiSystem: string; // "anthropic" | "openai" | "google" | "alibaba" | "tencent" — span truth (AC14)
+  /**
+   * Whether THIS provider's argv actually carries `opts.model` to the CLI.
+   * Declared here, beside the argv that does (or does not) push it, because a
+   * separate list went stale silently: `familySupportsModelChoice` hardcoded
+   * `family === "claude"` while agy/qoder/codebuddy had been pushing `--model`
+   * all along, and codex — which never passes `-m` — accepted a model into
+   * config that the process never saw (spec 2026-09-12-brain-select-four-gaps
+   * §2.6). Required, not optional: a sixth provider must answer it, and the
+   * registry test asserts every family in FAMILIES declares a boolean here.
+   */
+  acceptsModel: boolean;
 }
+
+/**
+ * Does this family's argv actually carry `opts.model` to the CLI?
+ *
+ * ONE declaration, read by each provider's `meta.acceptsModel` AND by the select
+ * surface (`familySupportsModelChoice`), so the answer cannot be true in one
+ * place and false in another — which is exactly what happened: the select
+ * surface hardcoded `family === "claude"` while agy and both CC-forks had been
+ * pushing `--model` all along, and codex accepted a model into config that its
+ * spawn argv never carried (spec 2026-09-12-brain-select-four-gaps §2.6).
+ *
+ * `satisfies Record<...>` makes a SIXTH provider a compile error here rather
+ * than a silent default. It cannot prove the declared answer matches the argv —
+ * only that an answer was given; the registry test pairs each provider's meta
+ * against this record, and each provider's own argv test pins the rest.
+ */
+export const FAMILY_ACCEPTS_MODEL = {
+  claude: true, // brain.ts argv --model
+  agy: true, // providers/agy.ts argv --model
+  qoder: true, // ccfork buildArgv --model
+  codebuddy: true, // ccfork buildArgv --model
+  codex: false, // providers/codex.ts spawn array has no -m at all
+} as const satisfies Record<BrainProviderMeta["name"], boolean>;
 
 export interface CallRawResult {
   text: string;
@@ -56,7 +90,12 @@ export function makeClaudeProvider(): ReviewerBrainProvider {
     return { text, usage, servedModel: opts.model ?? DEFAULT_MODEL };
   };
   return {
-    meta: { name: "claude", billing: "usd", genAiSystem: "anthropic" },
+    meta: {
+      name: "claude",
+      billing: "usd",
+      genAiSystem: "anthropic",
+      acceptsModel: FAMILY_ACCEPTS_MODEL.claude,
+    },
     callRaw,
     call: async (opts: CallBrainOptions): Promise<BrainCallResult & { servedModel?: string }> => {
       const raw = await callRaw(opts);

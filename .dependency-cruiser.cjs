@@ -48,8 +48,8 @@ module.exports = {
         "src/repo-graph/seen-advance.ts -- the module that owns " +
         "`withHumanOrigin`, the ONE exported way to mint the unforgeable " +
         "human-origin capability token that gates `advanceSeenFile`/" +
-        "`markAllSeen` (slice 3, R13; see seen-advance.ts's file header). " +
-        "(Fast-follow after slice ③ landed: the 3 seen handlers were " +
+        "`markAllSeen` (see seen-advance.ts's file header). " +
+        "(Fast-follow: the 3 seen handlers were " +
         "extracted out of repo-graph.tsx, which was 2x the 800-LOC hard " +
         "cap, into their own mount -- this rule's sole allowed importer " +
         "moved with them.) " +

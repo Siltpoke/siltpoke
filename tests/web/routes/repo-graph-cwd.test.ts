@@ -7,7 +7,7 @@
  * `?repo=` is given) computed a proj_hash for "/" that never matches a real
  * repo. This pins the replacement: the SSR route now prefers the shared
  * per-request resolver (`resolveRequestProject`) for its default, and renders
- * an honest "no longer exists" banner (not a silent 302 to repos[0]) when an
+ * an honest stale banner (not a silent 302 to repos[0]) when an
  * explicit `?repo=` doesn't match anything in the indexed registry.
  */
 import { test, expect } from "bun:test";
@@ -31,7 +31,7 @@ test("dead ?repo= renders stale banner, not a 302 fallthrough", async () => {
     mountRepoGraphWebRoutes(app, { cwd: "/", home });
     const res = await app.request("/repo-graph?repo=ffffffffffff", { redirect: "manual" });
     expect(res.status).not.toBe(302);
-    expect(await res.text()).toContain("no longer exists");
+    expect(await res.text()).toContain("No code map is indexed under this link");
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

@@ -123,12 +123,18 @@ function fsPayload(): Response {
  */
 async function runIndexToTerminal(
   events: ReadonlyArray<readonly [string, unknown]>,
-  opts: { onProgress?: (root: HTMLElement) => void; preselectUnindexed?: boolean } = {},
+  opts: {
+    onProgress?: (root: HTMLElement) => void;
+    preselectUnindexed?: boolean;
+    /** Replaces the canned body — for a stream the test holds open, so the
+     * progress state can be read before a terminal event overwrites it. */
+    response?: () => Response;
+  } = {},
 ): Promise<{ root: HTMLElement; world: HTMLElement; empty: HTMLElement }> {
   installFetchMock([
     ["/api/repo-graph/repos", () => Promise.resolve(reposPayload())],
     ["/api/fs/list", () => Promise.resolve(fsPayload())],
-    ["/api/repo-graph/index", () => Promise.resolve(sseResponse(events))],
+    ["/api/repo-graph/index", () => Promise.resolve(opts.response ? opts.response() : sseResponse(events))],
   ]);
 
   const root = await mountRepoGraph();

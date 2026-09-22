@@ -1,6 +1,6 @@
 /**
- * Tests for Home.data.ts pure helpers (pad7d, wellFedFromActions,
- * sinceLastDressed, factsCreatedToday, WELL_FED_THRESHOLD_MS).
+ * Tests for Home.data.ts pure helpers (pad7d, wellFedFromHunger,
+ * sinceLastDressed, factsCreatedToday, WELL_FED_HUNGER_THRESHOLD).
  *
  * No filesystem — pure-function tests only. Peeled out of Home.data.test.ts
  * in an earlier file split. Companion files:
@@ -14,12 +14,11 @@ import { test, expect, describe } from "bun:test";
 
 import {
   pad7d,
-  wellFedFromActions,
+  wellFedFromHunger,
   sinceLastDressed,
   factsCreatedToday,
-  WELL_FED_THRESHOLD_MS,
+  WELL_FED_HUNGER_THRESHOLD,
 } from "../../../src/web/screens/Home.data";
-import type { DailyActions } from "../../../src/state/progression";
 import type { Fact } from "../../../src/memory/memory";
 
 // ── pad7d ──────────────────────────────────────────────────────────────────
@@ -53,55 +52,45 @@ describe("pad7d", () => {
   });
 });
 
-// ── WELL_FED_THRESHOLD_MS ──────────────────────────────────────────────────
+// ── WELL_FED_HUNGER_THRESHOLD ──────────────────────────────────────────────
 
-describe("WELL_FED_THRESHOLD_MS", () => {
-  test("equals 6 hours in milliseconds", () => {
-    expect(WELL_FED_THRESHOLD_MS).toBe(6 * 60 * 60 * 1000);
+describe("WELL_FED_HUNGER_THRESHOLD", () => {
+  test("sits on the 0-10 hunger scale, not a duration", () => {
+    // Was 6 hours in milliseconds, for a last-fed timestamp the data model
+    // never had. Audit defect [3] replaced that stand-in with the hunger stat
+    // the simulation really maintains.
+    expect(WELL_FED_HUNGER_THRESHOLD).toBe(4);
+  });
+
+  test("a new pet starts ABOVE the threshold", () => {
+    // src/state/progression.ts seeds stats.hunger at 5. This is the case that
+    // produced the defect: the badge said well-fed, the mood said hungry. Both
+    // now read this one predicate, so a new pet reads well-fed on both.
+    expect(wellFedFromHunger(5)).toBe(true);
   });
 });
 
-// ── wellFedFromActions ─────────────────────────────────────────────────────
+// ── wellFedFromHunger ──────────────────────────────────────────────────────
 
-describe("wellFedFromActions", () => {
-  const now = new Date("2026-05-18T14:00:00Z");
-  const todayKey = "2026-05-18";
-  const yesterdayKey = "2026-05-17";
-
-  test("today.feed > 0 + now today → true", () => {
-    const daily: DailyActions[] = [
-      { day: todayKey, feed: 1, play: 0, pet: 0, tease: 0, clean: 0, sleep: 0 },
-    ];
-    expect(wellFedFromActions(daily, now)).toBe(true);
+describe("wellFedFromHunger", () => {
+  test("above the threshold → true", () => {
+    expect(wellFedFromHunger(10)).toBe(true);
+    expect(wellFedFromHunger(4.0001)).toBe(true);
   });
 
-  test("today.feed = 0 + now today → false", () => {
-    const daily: DailyActions[] = [
-      { day: todayKey, feed: 0, play: 2, pet: 1, tease: 0, clean: 0, sleep: 0 },
-    ];
-    expect(wellFedFromActions(daily, now)).toBe(false);
+  test("at the threshold → false (strictly greater, not >=)", () => {
+    expect(wellFedFromHunger(4)).toBe(false);
   });
 
-  test("yesterday-only feed entry → false (today threshold, no today entry)", () => {
-    const daily: DailyActions[] = [
-      { day: yesterdayKey, feed: 2, play: 1, pet: 0, tease: 0, clean: 0, sleep: 0 },
-    ];
-    expect(wellFedFromActions(daily, now)).toBe(false);
+  test("below the threshold → false", () => {
+    expect(wellFedFromHunger(0)).toBe(false);
+    expect(wellFedFromHunger(3.9999)).toBe(false);
   });
 
-  test("undefined daily_actions → false", () => {
-    expect(wellFedFromActions(undefined, now)).toBe(false);
-  });
-
-  test("empty daily_actions array → false", () => {
-    expect(wellFedFromActions([], now)).toBe(false);
-  });
-
-  test("today.feed = 2 (capped) → true", () => {
-    const daily: DailyActions[] = [
-      { day: todayKey, feed: 2, play: 0, pet: 0, tease: 0, clean: 0, sleep: 0 },
-    ];
-    expect(wellFedFromActions(daily, now)).toBe(true);
+  test("the sandbox value that exposed the defect resolves one way only", () => {
+    // The audit measured hunger 4.9166… on a fresh sandbox install while
+    // daily_actions was []. Under the old split that was well-fed AND hungry.
+    expect(wellFedFromHunger(4.9166666)).toBe(true);
   });
 });
 

@@ -17,15 +17,18 @@
  *   bun src/cli/menubar.ts remove
  */
 import { existsSync as realExistsSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
 import {
+  probeExec,
+  resolveObeyedShimPath,
   runMenubarSetup,
+  strandedShimPath,
+  SWIFTBAR_APP_PATH,
+  SWIFTBAR_DOWNLOAD_URL,
   type MenubarSetupDeps,
   type MenubarSetupResult,
+  type ProbeExec,
 } from "../installer/menubar-setup";
 import { realWizardIO, type WizardIO } from "../installer/wizard";
-
-const SHIM_RELATIVE_PATH = ["Library", "Application Support", "SwiftBar", "plugins", "siltpoke.1m.sh"];
 
 export interface MenubarCliDeps {
   home?: string;
@@ -45,8 +48,31 @@ export interface MenubarCliDeps {
   runMenubarSetupFn?: (deps: MenubarSetupDeps) => Promise<MenubarSetupResult>;
 }
 
-function shimPath(home: string): string {
-  return join(home, ...SHIM_RELATIVE_PATH);
+/**
+ * The shim path SwiftBar obeys, asked without writing anything.
+ *
+ * Delegates to the installer's own resolver rather than rebuilding a path
+ * here — a hand-built copy is exactly what made `install` and `status`
+ * disagree for anyone whose SwiftBar points at a custom plugin folder.
+ */
+function obeyedShimPath(deps: MenubarCliDeps): string {
+  const home = deps.home ?? process.env.HOME ?? "";
+  return resolveObeyedShimPath(deps.exec ?? probeExec, home);
+}
+
+/**
+ * `pgrep -x` exits 0 when a process matches and 1 when none does. It also
+ * exits 2 on a usage error and 3 on a fatal one, and those are NOT "the app
+ * is closed" — collapsing them into `false` is how `status` would end up
+ * telling someone to start an app that is already running. Anything other
+ * than a clean yes/no is reported as unknown.
+ */
+function swiftBarRunState(exec: ProbeExec): "running" | "stopped" | "unknown" {
+  const { status } = exec("pgrep", ["-x", "SwiftBar"]);
+  if (status === 0) {
+    return "running";
+  }
+  return status === 1 ? "stopped" : "unknown";
 }
 
 const USAGE = "usage: siltpoke-menubar <install|status|remove>\n";
@@ -77,20 +103,89 @@ async function handleInstall(deps: MenubarCliDeps, write: (s: string) => void): 
   return 0;
 }
 
+/**
+ * Answer "is the pet showing", not "does a file exist".
+ *
+ * The shim being on disk is a necessary condition, never a sufficient one:
+ * SwiftBar is what draws the menu bar, so with SwiftBar absent or merely not
+ * running, an installed shim shows the user nothing. Reporting a bare
+ * "installed" in that state is true and useless — it hands someone staring at
+ * an empty menu bar no next action. Each branch below names the one thing
+ * that is missing and what to do about it.
+ */
 function handleStatus(deps: MenubarCliDeps, write: (s: string) => void): number {
-  const home = deps.home ?? process.env.HOME ?? "";
+  const platform = deps.platform ?? process.platform;
+  if (platform !== "darwin") {
+    write("siltpoke-menubar: the menu-bar pet is macOS-only.\n");
+    return 0;
+  }
   const existsSync = deps.existsSync ?? realExistsSync;
-  const installed = existsSync(shimPath(home));
-  write(installed ? "menu-bar pet: installed\n" : "menu-bar pet: not installed\n");
+  const exec = deps.exec ?? probeExec;
+  const home = deps.home ?? process.env.HOME ?? "";
+
+  // Resolved ONCE: each call shells out to `defaults read`, and this function
+  // needs the answer in up to three places.
+  const obeyed = obeyedShimPath(deps);
+  if (!existsSync(obeyed)) {
+    const stranded = strandedShimPath(obeyed, home, existsSync);
+    if (stranded) {
+      // Installed, in a folder SwiftBar was later pointed away from. Saying
+      // "not installed" here sends someone to re-run an install that already
+      // succeeded; saying "installed" would repeat the bug this file fixes.
+      write(
+        `menu-bar pet: installed at ${stranded}, but SwiftBar is now reading ${obeyed} — the menu bar stays empty. Re-run install to put it where SwiftBar looks.\n`,
+      );
+      return 0;
+    }
+    write("menu-bar pet: not installed\n");
+    return 0;
+  }
+
+  const runState = swiftBarRunState(exec);
+  if (runState === "running") {
+    write("menu-bar pet: installed, SwiftBar running\n");
+    return 0;
+  }
+  if (runState === "unknown") {
+    write(
+      "menu-bar pet: installed, but I could not tell whether SwiftBar is running — check your menu bar.\n",
+    );
+    return 0;
+  }
+  if (!existsSync(SWIFTBAR_APP_PATH)) {
+    // Do NOT suggest starting an app that isn't there. The path is named
+    // rather than asserted absent, because SwiftBar can be installed outside
+    // /Applications and this check only ever looks there.
+    write(
+      `menu-bar pet: installed, but I cannot find SwiftBar at ${SWIFTBAR_APP_PATH} — nothing can draw the pet. If you don't have it:\n  ${SWIFTBAR_DOWNLOAD_URL}\n`,
+    );
+    return 0;
+  }
+  write(
+    "menu-bar pet: installed, but SwiftBar is not running — the menu bar stays empty until it starts. Start it with: open -a SwiftBar\n",
+  );
   return 0;
 }
 
 function handleRemove(deps: MenubarCliDeps, write: (s: string) => void): number {
-  const home = deps.home ?? process.env.HOME ?? "";
+  // Same platform guard `status` has: off macOS there is no SwiftBar pref to
+  // read, and `defaults` is not a command, so probing for it is pure waste.
+  const platform = deps.platform ?? process.platform;
+  if (platform !== "darwin") {
+    write("siltpoke-menubar: the menu-bar pet is macOS-only.\n");
+    return 0;
+  }
   const existsSync = deps.existsSync ?? realExistsSync;
+  const exec = deps.exec ?? probeExec;
+  const home = deps.home ?? process.env.HOME ?? "";
   const rm = deps.rm ?? ((p: string) => unlinkSync(p));
-  const path = shimPath(home);
-  if (!existsSync(path)) {
+
+  // Remove whichever copy is actually on disk — the one SwiftBar obeys first,
+  // and otherwise a copy stranded in the default folder. Deleting the obeyed
+  // path unconditionally would report success having removed nothing.
+  const obeyed = obeyedShimPath(deps);
+  const path = existsSync(obeyed) ? obeyed : strandedShimPath(obeyed, home, existsSync);
+  if (!path) {
     write("menu-bar pet: not installed (nothing to remove)\n");
     return 0;
   }

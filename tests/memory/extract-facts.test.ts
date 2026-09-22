@@ -304,7 +304,7 @@ describe("extractDurableFacts candidates (classification upgrade)", () => {
   // (K6 removed in a review-fix: it stubbed callBrainRaw to return {facts:[]}
   // and asserted [] — the stub encoded the answer, so it could never fail at
   // its checkpoint (anti-vacuous-assertion discipline). The gate-layer half of
-  //  lives in chat-capture C4; the EXTRACTOR-side behavior is
+  // "不对，13×7=91" lives in chat-capture C4; the EXTRACTOR-side behavior is
   // real-model territory and is verified by an eval set (pet-output
   // corrections category), not a unit stub.)
 

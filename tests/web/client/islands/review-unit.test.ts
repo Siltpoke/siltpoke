@@ -7,13 +7,12 @@
  * served at `/timeline` — not a hand-written `<div data-secret=…>`. A
  * hand-written fixture would keep passing after the screen stopped rendering
  * the island at all, which is exactly how #677's `<select>` stayed green on a
- * page nobody serves (memory `signal-decoupled-from-reality`).
+ * page nobody serves.
  *
  * Per-file DOM scope: registerDom in beforeAll, unregisterDom in afterAll —
  * never a bunfig preload (see `_dom-harness.ts`).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import type { CriticTelemetry } from "../../../../src/state/api";
 import { sanitizeConfigPatch } from "../../../../src/daemon/routes/dashboard";
 import type { ReviewUnitRowData } from "../../../../src/web/client/islands/review-unit";
 import { registerDom, unregisterDom } from "./_dom-harness";
@@ -23,39 +22,6 @@ import { registerDom, unregisterDom } from "./_dom-harness";
  * `document is not defined` (same reason the harness imports RepoGraph
  * dynamically). Populated in beforeAll. */
 let island: typeof import("../../../../src/web/client/islands/review-unit");
-
-const TELEMETRY: CriticTelemetry = {
-  recent: [],
-  breakdown: { total: 0, counts: {} },
-  budget: {
-    stage: "ok",
-    used_pct: 0,
-    remaining_tokens: 1_000_000,
-    config: {
-      dailyTokenLimit: 1_000_000,
-      perCallMaxInputTokens: 100_000,
-      softWarnAtPercent: 80,
-      hardStopAtPercent: 100,
-      softModeOverride: "on_demand",
-      resetAtMinutes: 0,
-    },
-    rollup: null,
-  },
-  quietConfig: { startMinutes: null, endMinutes: null },
-  gateState: { blocking: null, detail: "All gates open.", checks: [] },
-  projects: [],
-  activeProject: null,
-  activeStatus: null,
-  activeKind: null,
-  activeRange: "all",
-  activeSort: "newest",
-  preferenceStats: null,
-  activeQuery: null,
-  actionStats: { dismissed: 0, acked: 0, total: 0 },
-  homeBasename: "user",
-  totals: { tokens: 0, cost_usd: 0 },
-  totalInRange: null,
-} as unknown as CriticTelemetry;
 
 const SECRET = "s3cr3t";
 
@@ -67,8 +33,7 @@ interface Sent {
 
 /** Each call builds its OWN Response — a shared one is consumable exactly
  * once, and from the second test the island reads an empty body and the
- * failure presents as a bad assertion rather than a spent fixture
- * (memory `shared-response-in-fetch-mock-reads-empty`). */
+ * failure presents as a bad assertion rather than a spent fixture. */
 function installConfigMock(
   reply: (patch: Record<string, unknown>) => { status: number; body: unknown },
 ): Sent[] {
@@ -92,14 +57,23 @@ function installRawMock(make: () => Response | Promise<never>): void {
   globalThis.fetch = (async () => make()) as unknown as typeof fetch;
 }
 
-/** Mount the island on the real SERVED screen's own markup. */
+/**
+ * Mount the island on the control's OWN markup.
+ *
+ * It used to mount on TimelineScreen's output, because the screen served the
+ * control. Since 2026-09-21 the screen does not mount it (hidden on the maintainer's
+ * call; `tests/web/timeline-review-unit.test.tsx` asserts that absence). The
+ * island and the component both still exist and still work, so their write
+ * path is still covered — through the component that emits the markup rather
+ * than through a screen that no longer includes it.
+ */
 async function mount(reviewUnit: "commit" | "pr"): Promise<ReviewUnitRowData> {
-  const { TimelineScreen } = await import("../../../../src/web/screens/TimelineScreen");
-  document.body.innerHTML = String(
-    TimelineScreen({ telemetry: TELEMETRY, secret: SECRET, reviewUnit }),
+  const { ReviewUnitRow } = await import(
+    "../../../../src/web/screens/timeline/review-unit-row"
   );
+  document.body.innerHTML = String(ReviewUnitRow({ secret: SECRET, reviewUnit }));
   const el = document.querySelector<HTMLElement>('[x-data="reviewUnitRow"]');
-  if (!el) throw new Error("TimelineScreen rendered no [x-data=reviewUnitRow] island");
+  if (!el) throw new Error("ReviewUnitRow rendered no [x-data=reviewUnitRow] island");
   const row = island.makeReviewUnitRow();
   (row as unknown as { $el: HTMLElement }).$el = el;
   row.init();

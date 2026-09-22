@@ -30,6 +30,7 @@ import {
 } from "./failure-classify";
 import { makeClaudeProvider, type CallRawResult, type ReviewerBrainProvider } from "./provider";
 import { isClaudeFamilyModel } from "./agy-honesty";
+import { explainBrainFailure } from "./failure-reason";
 import {
   readBrainHealth,
   writeBrainHealth,
@@ -112,12 +113,27 @@ async function defaultBudgetOk(homeBase: string, now: Date): Promise<boolean> {
   }
 }
 
+/**
+ * What gets recorded as the failure's excerpt — and therefore what the
+ * dashboard banner, the statusline card and `/siltpoke-doctor` show the user.
+ *
+ * It used to be `spawnError + stderr + stdout` concatenated and tail-sliced.
+ * With `--output-format json` that tail lands in the MIDDLE of the JSON
+ * envelope, so the banner read
+ * `e:{"success","api_error_status":null,"result":"Not logged in …` — the real
+ * reason was in there, wearing its envelope. Audit defect `[4]`.
+ */
 function failureExcerpt(err: BrainError): string {
   const f = err.failure!;
-  const text = `${f.spawnError ?? ""}${f.stderr}${f.stdout}`.trim();
-  // Keep the TAIL — stderr/stdout are already tail-sliced upstream and error
-  // payloads end with the informative part (the head is boilerplate preamble).
-  return text.slice(-EXCERPT_MAX);
+  return explainBrainFailure(
+    {
+      exitCode: f.exitCode ?? null,
+      stderr: f.stderr,
+      stdout: f.stdout,
+      spawnError: f.spawnError,
+    },
+    EXCERPT_MAX,
+  );
 }
 
 /**

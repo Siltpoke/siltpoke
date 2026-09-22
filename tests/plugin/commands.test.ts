@@ -64,12 +64,27 @@ describe("plugin command files carry no machine-specific paths", () => {
   });
 });
 
-describe("the shipped command surface is exactly the 10 core commands", () => {
+describe("the shipped command surface is exactly the 11 core commands", () => {
   test("the .md files on disk match the manual's list, both ways", () => {
     const onDisk = commandFiles.map((f) => `/${f.replace(/\.md$/, "")}`).sort();
     const advertised = PLUGIN_COMMANDS.map((c) => c.name).sort();
     expect(onDisk).toEqual(advertised);
-    expect(onDisk).toHaveLength(10);
+    expect(onDisk).toHaveLength(11);
+  });
+
+  test("README's command list and count match the shipped surface", () => {
+    // The count edit shipped in three places and was missed in a fourth: the
+    // README still said "only 10" over a hand-written list that called itself
+    // "the whole set". Nothing guarded it, because this file only ever
+    // compared the .md files against PLUGIN_COMMANDS.
+    const readme = readFileSync("README.md", "utf8");
+    const n = PLUGIN_COMMANDS.length;
+    expect(readme).toContain(`there are only ${n} commands`);
+    for (const { name } of PLUGIN_COMMANDS) {
+      // Anchored at line start inside the fenced list, so a passing mention in
+      // prose elsewhere cannot stand in for a real row.
+      expect(readme).toMatch(new RegExp(`^${name}\\s`, "m"));
+    }
   });
 
   test("the culled commands are gone from the plugin (their src/cli code stays)", () => {

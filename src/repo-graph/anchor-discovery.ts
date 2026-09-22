@@ -193,6 +193,65 @@ function configFilesOnDisk(repoRoot: string): string[] {
   return out;
 }
 
+/** Re-base a `root`-relative-by-construction target (may contain `../`) to a clean `root`-relative dir prefix. */
+function rebaseToRoot(root: string, target: string): string {
+  const rel = posix.relative(root, posix.join(root, target));
+  return rel === "" ? "" : `${rel}/`;
+}
+
+/**
+ * Normalize an absolute POSIX dir path: collapse `.`/`..`/doubled slashes, and
+ * strip any trailing slash (except the filesystem root `/` itself). Both
+ * `parentConfigRules` inputs are put through this so the walk-up loop only
+ * ever manipulates clean paths — `posix.dirname` on an unclean path (a
+ * trailing or doubled slash) can skip a directory level or, worse, land back
+ * on the same string forever.
+ */
+function normalizeDir(p: string): string {
+  const n = posix.normalize(p);
+  return n.length > 1 && n.endsWith("/") ? n.slice(0, -1) : n;
+}
+
+/**
+ * Alias rules from the nearest tsconfig/jsconfig ABOVE `root`, searching up to
+ * and including `ceiling` (the enclosing repo root), never beyond it. Only
+ * meaningful when `root` is strictly inside `ceiling`. Every rule is scoped to
+ * the whole root (`scopeDir: ""`), and its targets are re-based to `root`, so a
+ * target outside the root starts with `../` — which `isOutsideImport` counts.
+ * `extends` is not followed (the in-root discovery does not follow it either).
+ *
+ * Two independent defenses against a malformed `root`/`ceiling` pair (a
+ * trailing slash, a doubled slash, `.`/`..` segments): both are normalized up
+ * front, AND the loop hard-stops the moment `posix.dirname` stops making
+ * progress (the filesystem root) or `dir` has walked shorter than `ceiling`
+ * — belt-and-braces so a pair this function has not been taught to clean up
+ * can never spin instead of just answering `[]`.
+ */
+export function parentConfigRules(root: string, ceiling: string): TsAliasRule[] {
+  const normRoot = normalizeDir(root);
+  const normCeiling = normalizeDir(ceiling);
+  if (!normRoot.startsWith(`${normCeiling}/`)) return [];
+  let dir = posix.dirname(normRoot);
+  for (;;) {
+    for (const name of ["tsconfig.json", "jsconfig.json"]) {
+      const abs = `${dir}/${name}`;
+      if (!existsSync(abs)) continue;
+      const parsed = parseJsonc(readFileSync(abs, "utf8"));
+      if (!parsed) continue;
+      const scopeFromRoot = `${posix.relative(normRoot, dir)}/`;
+      return tsAliasRulesFromConfig(scopeFromRoot, parsed).map((rule) => ({
+        scopeDir: "",
+        prefix: rule.prefix,
+        targets: rule.targets.map((t) => rebaseToRoot(normRoot, t)),
+      }));
+    }
+    if (dir === normCeiling) return [];
+    const parent = posix.dirname(dir);
+    if (parent === dir || parent.length < normCeiling.length) return [];
+    dir = parent;
+  }
+}
+
 /** Extract (src, dotted-target) absolute Python imports from the graph's raw edges. */
 function pythonImports(graph: RepoGraph): PyImport[] {
   const out: PyImport[] = [];
@@ -212,13 +271,18 @@ function pythonImports(graph: RepoGraph): PyImport[] {
  * disk access in this track). TS aliases come from the project's own configs;
  * Python roots are inferred structurally from the graph's imports.
  */
-export function discoverAnchorMap(repoRoot: string, graph: RepoGraph): AnchorMap {
+export function discoverAnchorMap(
+  repoRoot: string,
+  graph: RepoGraph,
+  opts: { ceiling?: string } = {},
+): AnchorMap {
   const filePaths = graph.nodes
     .filter((n) => n.type === "file")
     .map((n) => n.path);
 
   const tsAliases: TsAliasRule[] = [];
-  for (const cfgRel of configFilesOnDisk(repoRoot)) {
+  const configs = configFilesOnDisk(repoRoot);
+  for (const cfgRel of configs) {
     const abs = `${repoRoot}/${cfgRel}`;
     if (!existsSync(abs)) continue;
     const parsed = parseJsonc(readFileSync(abs, "utf8"));
@@ -226,6 +290,12 @@ export function discoverAnchorMap(repoRoot: string, graph: RepoGraph): AnchorMap
     const slash = cfgRel.lastIndexOf("/");
     const scopeDir = slash >= 0 ? cfgRel.slice(0, slash + 1) : "";
     tsAliases.push(...tsAliasRulesFromConfig(scopeDir, parsed));
+  }
+  // A sub-folder root with no config of its own borrows the nearest one above
+  // it (spec 2026-09-14 §5.2). A whole-repo index has no ceiling → unchanged.
+  const hasOwnRootConfig = configs.some((rel) => !rel.includes("/"));
+  if (!hasOwnRootConfig && opts.ceiling !== undefined) {
+    tsAliases.push(...parentConfigRules(repoRoot, opts.ceiling));
   }
 
   const pythonRoots = discoverPythonRoots(filePaths, pythonImports(graph));

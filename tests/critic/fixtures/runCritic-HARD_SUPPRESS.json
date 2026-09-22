@@ -13,7 +13,8 @@
     "providerMeta": {
       "name": "claude",
       "billing": "usd",
-      "genAiSystem": "anthropic"
+      "genAiSystem": "anthropic",
+      "acceptsModel": true
     }
   },
   "critiqueInput": null

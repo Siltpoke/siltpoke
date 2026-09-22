@@ -27,6 +27,8 @@ import { TraceStore } from "../../observability/storage";
 import { Layout } from "../../web/_shared/layout";
 import { CritiquePermalink } from "../../web/screens/CritiquePermalink";
 import type { BrainOutputV2 } from "../../brain/schema-v2";
+import type { BrainOutput, Finding, PersistedFinding } from "../../brain/schema";
+import { withFindingIds } from "../../critic/evidence-guard";
 import type { WaterfallSpan } from "../../web/primitives/TraceWaterfall";
 
 export interface CritiqueRouteDeps {
@@ -63,6 +65,53 @@ interface ParsedCritiqueFile {
   fm: Record<string, string>;
   critiqueBody: string;
   bubbleShort: string;
+}
+
+/**
+ * The fenced block belonging to the section that starts at `headingIdx`, or ""
+ * when that section has no fence.
+ *
+ * The two bounds are deliberately asymmetric, and each one is a bug that was
+ * actually hit:
+ *
+ * - The OPENING fence is searched only up to the next `## ` heading. A critique
+ *   with nothing to say now renders as a plain sentence and no fence at all
+ *   (`renderCritiqueSection` in src/state/critique.ts), and an unbounded search
+ *   walks straight on into `## Evidence` — whose snippets ARE fenced — and
+ *   reports a diff hunk as the critique the reviewer wrote.
+ *
+ * - The CLOSING fence is then searched WITHOUT that bound, because a `## ` line
+ *   inside a fence is content, not a heading, and reviewers write markdown
+ *   headings inside their critiques all the time. Bounding this half too blanked
+ *   a real 1,477-character critique in the archive
+ *   (`.siltpoke/critiques/archive/2026-09-01/c-1e0c.md`, whose body opens with
+ *   `## Output shape regression breaks fixed-position parsing`) — the same
+ *   "cannot tell empty from eaten" ambiguity this file's change exists to
+ *   remove, moved one layer down and made silent.
+ */
+function fencedBlockAfter(bodyLines: string[], headingIdx: number): string {
+  const nextHeadingIdx = bodyLines.findIndex(
+    (l, idx) => idx > headingIdx && l.trimStart().startsWith("## "),
+  );
+  const sectionEnd = nextHeadingIdx > headingIdx ? nextHeadingIdx : bodyLines.length;
+
+  let openFenceIdx = -1;
+  let fence = "";
+  for (let i = headingIdx + 1; i < sectionEnd; i++) {
+    const ln = (bodyLines[i] ?? "").trim();
+    if (ln.startsWith("`")) {
+      openFenceIdx = i;
+      fence = ln;
+      break;
+    }
+  }
+  if (openFenceIdx < 0) return "";
+
+  const closeFenceIdx = bodyLines.findIndex(
+    (l, idx) => idx > openFenceIdx && l.trim() === fence,
+  );
+  if (closeFenceIdx <= openFenceIdx) return "";
+  return bodyLines.slice(openFenceIdx + 1, closeFenceIdx).join("\n");
 }
 
 function parseCritiqueFile(raw: string): ParsedCritiqueFile {
@@ -105,43 +154,52 @@ function parseCritiqueFile(raw: string): ParsedCritiqueFile {
 
   // Extract critique_for_claude: content between the fenced block under
   // "## Critique (for Claude, if forwarded)"
-  let critiqueBody = "";
   const critiqueIdx = bodyLines.findIndex(l => l.includes("## Critique (for Claude"));
-  if (critiqueIdx >= 0) {
-    // Find opening fence
-    let openFenceIdx = -1;
-    let fence = "";
-    for (let i = critiqueIdx + 1; i < bodyLines.length; i++) {
-      const ln = (bodyLines[i] ?? "").trim();
-      if (ln.startsWith("`")) {
-        openFenceIdx = i;
-        fence = ln;
-        break;
-      }
-    }
-    if (openFenceIdx >= 0) {
-      const closeFenceIdx = bodyLines.findIndex(
-        (l, idx) => idx > openFenceIdx && l.trim() === fence
-      );
-      if (closeFenceIdx > openFenceIdx) {
-        critiqueBody = bodyLines
-          .slice(openFenceIdx + 1, closeFenceIdx)
-          .join("\n");
-      }
-    }
-  }
+  const critiqueBody = critiqueIdx < 0 ? "" : fencedBlockAfter(bodyLines, critiqueIdx);
 
   return { fm, critiqueBody, bubbleShort };
 }
 
 /**
- * Map a parsed critique file into a Partial<BrainOutputV2> shape.
- * v1 files lack intent/evidence/web_sources/reasoning — they get safe defaults.
+ * The same critique read as DATA, when the sidecar is there.
+ *
+ * `parseCritiqueFile` reconstructs a review by matching heading text and fence
+ * markers in rendered prose, and where that gives up it substitutes a constant.
+ * That is a parser whose contract is somebody else's wording, and the empty
+ * array it produces is indistinguishable from a review that cited nothing.
+ * `findings` would have inherited exactly that on its first day.
+ *
+ * So the sidecar is tried FIRST and the prose parse is the fallback. An absent
+ * sidecar means the critique is older than it — which is every critique already
+ * on disk, and those keep rendering exactly as they did (AC9).
  */
+async function loadSidecar(critiquePath: string): Promise<BrainOutput | null> {
+  try {
+    const raw = await readFile(critiquePath.replace(/\.md$/, ".json"), "utf8");
+    const parsed = JSON.parse(raw) as { brain_output?: unknown };
+    return (parsed.brain_output as BrainOutput | undefined) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What this route returns.
+ *
+ * Declared here rather than borrowed from `BrainOutputV2`: `findings` lives on
+ * the v1 output, the v2 schema is deliberately not wired into production, and
+ * widening it to satisfy a route would be wiring it by the back door.
+ */
+export type CritiquePayload = Partial<BrainOutputV2> & {
+  id: string;
+  findings: Finding[];
+};
+
 function toCritiqueShape(
   id: string,
   parsed: ParsedCritiqueFile,
-): Partial<BrainOutputV2> & { id: string } {
+  sidecar: BrainOutput | null,
+): CritiquePayload {
   const { fm, critiqueBody, bubbleShort } = parsed;
 
   const severity = (fm.severity ?? "") as BrainOutputV2["severity"];
@@ -156,13 +214,23 @@ function toCritiqueShape(
     confidence: confidence || undefined,
     mood: mood || undefined,
     pose: pose || undefined,
-    critique_for_claude: critiqueBody || undefined,
-    bubble_short: bubbleShort || undefined,
+    critique_for_claude: sidecar?.critique_for_claude || critiqueBody || undefined,
+    bubble_short: sidecar?.bubble_short || bubbleShort || undefined,
+    // `PersistedFinding`, not `ModelFinding`: a sidecar written by a current
+    // build carries the range and the tier the guard derived, and `loadSidecar` is a
+    // bare `JSON.parse` so they survive the round trip. Casting to the narrower
+    // type here would type them away on the one surface a human can look at
+    // them on. Ids are numbered over the array as persisted, which is the array
+    // the guard already filtered — see `withFindingIds`.
+    //
+    // An older sidecar has none of those fields, and gets none
+    // invented for it: no tier means no badge, not a weak one.
+    findings: withFindingIds((sidecar?.findings ?? []) as PersistedFinding[]),
     // v2 fields default to absence (card degrades gracefully)
     intent: undefined,
     evidence: [],
     web_sources: [],
-    reasoning: undefined,
+    reasoning: sidecar?.reasoning,
     category: undefined,
     suggested_fix: undefined,
   };
@@ -201,7 +269,7 @@ export function mountCritiqueRoutes(
     }
 
     const parsed = parseCritiqueFile(raw);
-    const critique = toCritiqueShape(id, parsed);
+    const critique = toCritiqueShape(id, parsed, await loadSidecar(critiquePath));
 
     // Linked trace IDs from TraceStore
     let traceIds: string[] = [];
@@ -252,7 +320,7 @@ export function mountCritiqueRoutes(
     }
 
     const parsed = parseCritiqueFile(raw);
-    const critique = toCritiqueShape(id, parsed);
+    const critique = toCritiqueShape(id, parsed, await loadSidecar(critiquePath));
 
     // Gather all spans for linked traces
     let spans: WaterfallSpan[] = [];

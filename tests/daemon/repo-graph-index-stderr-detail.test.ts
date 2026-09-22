@@ -18,9 +18,9 @@ import { indexerFailureLine } from "../../src/daemon/routes/repo-graph";
 describe("indexerFailureLine — the two shapes that actually occur", () => {
   test("missing-module: the single error line survives its trailing blank", () => {
     // Verbatim shape of the live failure this whole PR came from.
-    const tail = 'error: Module not found "/Users/v/Projects/ai-agents/siltpoke/cli/index-repo.ts"\n\n';
+    const tail = 'error: Module not found "/Users/v/Projects/workspace/siltpoke/cli/index-repo.ts"\n\n';
     expect(indexerFailureLine(tail)).toBe(
-      'error: Module not found "/Users/v/Projects/ai-agents/siltpoke/cli/index-repo.ts"',
+      'error: Module not found "/Users/v/Projects/workspace/siltpoke/cli/index-repo.ts"',
     );
   });
 

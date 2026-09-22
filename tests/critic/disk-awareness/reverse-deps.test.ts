@@ -90,6 +90,7 @@ const baseBrainOutput: BrainOutput = {
   severity: "medium",
   confidence: "high",
   xp_earned_events: [],
+  findings: [],
   evidence: [],
 };
 
@@ -109,6 +110,7 @@ describe("buildReverseDepsSection — evidence-guard integration [production-pat
     const out: BrainOutput = {
       ...baseBrainOutput,
       critique_for_claude: "Changing src/a/foo.ts affects its importer src/consumer.ts.",
+      findings: [],
       evidence: [{ tool: "ripgrep", file: "src/consumer.ts", snippet: "src/consumer.ts" }],
     };
 

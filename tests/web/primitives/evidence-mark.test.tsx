@@ -29,7 +29,14 @@ import { describe, expect, test } from "bun:test";
 import { EvidenceMark } from "../../../src/web/primitives/critique-audit/shared";
 import type { EvidenceLabel } from "../../../src/critic/evidence-guard";
 
-const SILENT_LABELS: Array<EvidenceLabel | null> = [null, "verified", "not_checked"];
+// `not_checked` LEFT this list on 2026-09-04 and that is the point of the
+// change: it used to be here because it was unreachable in production —
+// `guardCritique`'s one call site passes "NORMAL", so only the
+// PASSIVE_BUBBLE/HARD_SUPPRESS branch produced it and nothing ran that branch.
+// The empty-corpus fix made it reachable from NORMAL, at which point silence
+// meant a review with NOT ONE examined citation rendered exactly like a
+// fully-grounded one — the failure this component exists to prevent.
+const SILENT_LABELS: Array<EvidenceLabel | null> = [null, "verified"];
 
 describe("EvidenceMark", () => {
   test("a review that cited nothing says so, and says it without a count", () => {
@@ -83,6 +90,50 @@ describe("EvidenceMark", () => {
     // that fires on ordinary reviews, which is how a caveat stops being read.
     for (const label of SILENT_LABELS) {
       expect(String(<EvidenceMark label={label} unverifiedCount={0} />)).toBe("");
+    }
+  });
+
+  test("an unchecked review says so, and does not need a count to say it", () => {
+    // Its count is legitimately 0 — the items pass through as
+    // cited-but-unexamined, so nothing sits in `unverified` — which is why
+    // this branch has to return BEFORE the count gates below. Keying it on the
+    // count would have re-silenced it.
+    const html = String(<EvidenceMark label="not_checked" unverifiedCount={0} />);
+    expect(html).toContain('data-evidence-mark="not_checked"');
+    expect(html).toContain("unchecked");
+    expect(html).toContain("could not read the files");
+    // It must NOT read as a verdict on the reviewer: the findings may be right,
+    // nobody checked. That distinction is the whole reason for the label.
+    expect(html).toContain("may still be right");
+    expect(html).not.toContain("dropped");
+  });
+
+  test("the budget case says WHY, and does not claim the files were unreadable", () => {
+    // The two unchecked labels are not interchangeable. Siltpoke DID read this
+    // diff and dropped part of it — the user can act on that (make a smaller
+    // change) in a way they cannot act on an unreadable file. A first draft
+    // printed the unreadable sentence for both, which is false for the case
+    // this repo measures at 39.1% of source-carrying diffs.
+    const html = String(<EvidenceMark label="not_checked_budget" unverifiedCount={0} />);
+    expect(html).toContain('data-evidence-mark="not_checked_budget"');
+    expect(html).toContain("too large");
+    expect(html).toContain("the part it skipped");
+    expect(html).not.toContain("could not read the files");
+    // Still not a verdict on the reviewer.
+    expect(html).toContain("may still be right");
+  });
+
+  test("NEITHER unchecked label is silent — the failure TypeScript cannot catch", () => {
+    // Both are members of one union, so a consumer written as
+    // `=== "not_checked"` keeps compiling and quietly stops being true when the
+    // second label arrives. That is exactly how `not_checked` itself went
+    // unnoticed here: it sat in SILENT_LABELS while unreachable in production,
+    // and the moment it became reachable a wholly-unexamined review rendered
+    // like a grounded one. Enumerated so adding a third cannot repeat it.
+    for (const label of ["not_checked", "not_checked_budget"] as const) {
+      const html = String(<EvidenceMark label={label} unverifiedCount={0} />);
+      expect(html).not.toBe("");
+      expect(html).toContain("unchecked");
     }
   });
 

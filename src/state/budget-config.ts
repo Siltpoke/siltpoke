@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
+
+import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { DailyRollup } from "./usage";
 
@@ -49,11 +50,10 @@ function parseResetAt(value: unknown, fallback: number): number {
   return h * 60 + m;
 }
 
-export async function loadBudgetConfig(basePath: string): Promise<BudgetConfig> {
-  const configPath = join(basePath, "config.json");
-  if (!existsSync(configPath)) return DEFAULT_BUDGET_CONFIG;
+/** The whole parse, shared by the async and sync loaders so the two can never
+ * disagree about what a config file means. */
+function parseBudgetConfig(raw: string): BudgetConfig {
   try {
-    const raw = await readFile(configPath, "utf8");
     const parsed = JSON.parse(raw) as { budget?: Record<string, unknown> };
     const b = parsed?.budget ?? {};
     const softOverride =
@@ -80,6 +80,32 @@ export async function loadBudgetConfig(basePath: string): Promise<BudgetConfig> 
       softModeOverride: softOverride,
       resetAtMinutes: parseResetAt(b.resetAt, DEFAULT_BUDGET_CONFIG.resetAtMinutes),
     };
+  } catch {
+    return DEFAULT_BUDGET_CONFIG;
+  }
+}
+
+export async function loadBudgetConfig(basePath: string): Promise<BudgetConfig> {
+  const configPath = join(basePath, "config.json");
+  if (!existsSync(configPath)) return DEFAULT_BUDGET_CONFIG;
+  try {
+    return parseBudgetConfig(await readFile(configPath, "utf8"));
+  } catch {
+    return DEFAULT_BUDGET_CONFIG;
+  }
+}
+
+/**
+ * Sync twin of loadBudgetConfig, for callers on a synchronous path that still
+ * need the day boundary — brain-health's daily caps run inside the pre-spawn
+ * brake and cannot await. Same parser, so the two loaders cannot drift
+ * (spec brain-select-four-gaps §3.4).
+ */
+export function loadBudgetConfigSync(basePath: string): BudgetConfig {
+  const configPath = join(basePath, "config.json");
+  if (!existsSync(configPath)) return DEFAULT_BUDGET_CONFIG;
+  try {
+    return parseBudgetConfig(readFileSync(configPath, "utf8"));
   } catch {
     return DEFAULT_BUDGET_CONFIG;
   }

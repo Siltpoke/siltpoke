@@ -135,7 +135,7 @@ test("rejects error_message longer than 300 chars (never a raw stderr blob)", ()
   ).toThrow();
 });
 
-// ── critique anchor variant (slice 1) ──────────────────────────────────
+// ── critique anchor variant ──────────────────────────────────
 
 describe("chatAnchorSchema — critique variant", () => {
   it("defaults kind to 'node' and critique_id to null for a legacy node anchor", () => {

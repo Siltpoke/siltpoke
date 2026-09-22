@@ -128,6 +128,24 @@ describe("POST /index — SSE feed + spawn contract", () => {
     expect(seen!.realPath).toBe(proj); // canonical, not "/proj/./"
   });
 
+  test("a folder inside a repo → runner gets THAT folder, and done names the folder's hash", async () => {
+    mkdirSync(join(proj, ".git"), { recursive: true });
+    const sub = join(proj, "TypeScript");
+    mkdirSync(sub);
+    let seen: { realPath: string; projHash: string } | null = null;
+    const spy: IndexRunner = async (args) => {
+      seen = { realPath: args.realPath, projHash: args.projHash };
+      return { exitCode: 0, timedOut: false, aborted: false };
+    };
+    const events = await readSSE(await postIndex(makeApp(spy), { path: sub }));
+    expect(seen!.realPath).toBe(sub);
+    expect(seen!.projHash).toBe(computeProjHash(sub));
+    const started = events.find((e) => e.event === "started")!.data as Record<string, unknown>;
+    expect(started).toEqual({ hash: computeProjHash(sub), name: "TypeScript" });
+    expect("requestedSubdir" in started).toBe(false);
+    expect(events.at(-1)).toEqual({ event: "done", data: { hash: computeProjHash(sub) } });
+  });
+
   // Maintenance round #2: a successful index is the re-attach point for a
   // paid arch-model stashed by a prior forget (removeRepoIndex preservation).
   test("done path restores a preserved paid arch-model into the fresh index dir", async () => {
@@ -374,7 +392,7 @@ describe("index SSE carries the child's failure detail", () => {
   };
 
   test("non-zero exit → error event carries the last stderr line as `detail`", async () => {
-    const raw = 'error: Module not found "/Users/v/ai-agents/siltpoke/cli/index-repo.ts"\n\n';
+    const raw = 'error: Module not found "/Users/v/workspace/siltpoke/cli/index-repo.ts"\n\n';
     const res = await postIndex(makeApp(failWithStderr(raw)), { path: proj });
     const events = await readSSE(res);
     const err = events.find((e) => e.event === "error");
@@ -382,7 +400,7 @@ describe("index SSE carries the child's failure detail", () => {
     const data = err!.data as { message?: string; detail?: string };
     expect(data.message).toBe("index_failed");
     // The blank trailing line must not win, and the text must arrive intact.
-    expect(data.detail).toBe('error: Module not found "/Users/v/ai-agents/siltpoke/cli/index-repo.ts"');
+    expect(data.detail).toBe('error: Module not found "/Users/v/workspace/siltpoke/cli/index-repo.ts"');
   });
 
   test("no stderr → no `detail` key invented", async () => {

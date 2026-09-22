@@ -21,6 +21,7 @@
 import { Dashboard } from "../shells/Dashboard";
 import { CANONICAL_NAV } from "../routes/nav";
 import type { ArchitectureProjection } from "../../repo-graph/project-architecture";
+import { repoDisplayName } from "../../repo-graph/repo-label";
 import type { RepoEntry } from "../../repo-graph/repo-registry";
 
 export interface RepoGraphScreenProps {
@@ -36,6 +37,10 @@ export interface RepoGraphScreenProps {
    */
   stalenessBanner: string | null;
   stats: { files: number; symbols: number; edges: number };
+  /** Imports that point outside the indexed root. null/undefined = unknown (older index) → render nothing. */
+  outsideImports?: { count: number; examples: string[] } | null;
+  /** Wording of the suffix: a sub-folder index says "folder", a repo index "repo". */
+  outsideScope?: "folder" | "repo";
   /** Daemon secret, embedded for the island's mutating index POSTs. */
   secret?: string;
   /** The cached LLM-derived model (raw ArchModelDoc — the
@@ -63,17 +68,8 @@ export interface RepoGraphScreenProps {
   authoredInvalid?: boolean;
 }
 
-function shortName(entry: RepoEntry | undefined, fallback: string): string {
-  if (!entry) return fallback;
-  if (entry.project_root) {
-    const parts = entry.project_root.split("/").filter(Boolean);
-    return parts[parts.length - 1] ?? entry.proj_hash;
-  }
-  return entry.proj_hash;
-}
-
 export function RepoGraph(props: RepoGraphScreenProps) {
-  const { projection, repoEntries, currentProjHash, stalenessBanner, stats, secret, generatedModel, authoredModel, authoredInvalid } = props;
+  const { projection, repoEntries, currentProjHash, stalenessBanner, stats, outsideImports, outsideScope, secret, generatedModel, authoredModel, authoredInvalid } = props;
 
   const initialPayload = JSON.stringify({
     projection,
@@ -94,7 +90,7 @@ export function RepoGraph(props: RepoGraphScreenProps) {
   // picker button. (Non-empty lists always resolve currentRepo: the
   // bare URL falls back to repos[0] and a dead ?repo= 302s away.)
   const repoLabel =
-    repoEntries.length === 0 ? "No repo indexed" : shortName(currentRepo, currentProjHash || "repo");
+    repoEntries.length === 0 ? "No repo indexed" : currentRepo ? repoDisplayName(currentRepo) : currentProjHash || "repo";
   const hasGraph = projection.subdirs.length > 0;
 
   return (
@@ -231,7 +227,7 @@ export function RepoGraph(props: RepoGraphScreenProps) {
                to 0 (not content-based) whenever overflow isn't visible — so
                WITHOUT flex-shrink:0 this was the one pagehead child the
                browser was free to squeeze below its own text width once the
-               quiz controls widened the row, silently clipping the
+               pagehead row grew wider, silently clipping the
                Auto/Generated buttons while their JS-reported bounding rects
                stayed full-size. Playwright then hit-tested the clip point and
                found the ancestor (.src-chip / .pagehead) instead of the
@@ -240,8 +236,8 @@ export function RepoGraph(props: RepoGraphScreenProps) {
                macOS's. Pin it so it can never shrink below content; nothing
                downstream of it (arch-gen etc.) needs the space back — the
                row already has flex-shrink:0 protected members (idx-stat,
-               repo-pick-wrap, the quiz select/button) that no browser was
-               ever shrinking past content anyway; only the ph-spacer
+               repo-pick-wrap) that no browser was ever shrinking past
+               content anyway; only the ph-spacer
                (flex-basis:0) absorbs a tight row now. */
             .rg-host .src-chip{display:inline-flex;align-items:stretch;font-family:var(--mono);font-size:11px;background:var(--cream);border:1px solid var(--edge);border-radius:999px;overflow:hidden;flex-shrink:0}
             .rg-host .src-chip[hidden]{display:none}
@@ -811,7 +807,6 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .c4-elab{position:absolute;z-index:4;font-family:var(--mono);font-size:9.5px;color:var(--ink2);background:var(--cream);border:1px solid var(--edge);border-radius:5px;padding:2px 6px;transform:translate(-50%,-50%);white-space:nowrap;max-width:150px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 2px color-mix(in srgb, var(--ink) 6%, transparent);text-align:center;opacity:0;transition:opacity .14s;pointer-events:none}
             .rg-host .c4-elab.show{opacity:1}
 
-
             [x-cloak]{display:none !important}
           `,
         }}
@@ -835,6 +830,11 @@ export function RepoGraph(props: RepoGraphScreenProps) {
               margin-left:auto removed; ph-spacer (below) pushes right cluster right. */}
           <span class="idx-stat">
             <b id="rg-st-files">{fmt(stats.files)}</b> files · <b id="rg-st-symbols">{fmt(stats.symbols)}</b> symbols · <b id="rg-st-edges">{fmt(stats.edges)}</b> edges
+            {outsideImports && outsideImports.count > 0 ? (
+              <span class="idx-outside" title={outsideImports.examples.join("\n")}>
+                · <b>{fmt(outsideImports.count)}</b> imports point outside this {outsideScope === "folder" ? "folder" : "repo"} (not shown)
+              </span>
+            ) : null}
           </span>
           {/* Flex spacer: pushes everything after it to the trailing edge */}
           <span class="ph-spacer" aria-hidden="true" />

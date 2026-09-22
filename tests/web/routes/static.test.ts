@@ -32,7 +32,7 @@ describe("static routes", () => {
   describe("resolveRepoRoot (survives source AND bundled/dist layout)", () => {
     test("bundled: here=<root>/dist resolves to the real repo root", () => {
       // The launchd daemon runs dist/siltpoke-daemon.js, so `here` = <root>/dist.
-      // The old 3-up guess overshot to <root>/../.. (ai-agents/) → every
+      // The old 3-up guess overshot to <root>/../.. (workspace/) → every
       // /static/* 503. Walking up to package.json lands on the real root.
       expect(resolveRepoRoot(join(REPO_ROOT, "dist"))).toBe(REPO_ROOT);
     });

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * Task 4 (Slice ②): disk-level test-gap — new-vs-modified split.
+ * Task 4: disk-level test-gap — new-vs-modified split.
  *
- * Control matrix + resolver-confirmation tests (mocked deps) per
- * .superpowers/sdd/2026-07-25-critic-disk-awareness/task-4-brief.md.
+ * Control matrix + resolver-confirmation tests (mocked deps).
  *
  * Real-git/real-ripgrep production-path fixtures live in the companion file
  * `test-gap-disk-integration.test.ts` (split out to stay under the 400 LOC cap).

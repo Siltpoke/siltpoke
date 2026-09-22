@@ -19,7 +19,7 @@ import { VitalsPanel } from "../../web/primitives/VitalsPanel";
 import type { Species, Mood } from "../../web/creature/parts";
 import type { ActionRecordResult, Progression } from "../../state/progression";
 import { xpPanelData } from "../../state/progression";
-import { wellFedFromActions } from "../../web/screens/Home.data";
+import { wellFedFromHunger } from "../../web/screens/Home.data";
 import { readVitalsSeries } from "../../state/vitalsReader";
 
 export interface PetPropsForHero {
@@ -37,15 +37,24 @@ export interface PetPropsForHero {
  *   per-action reaction          → feed=happy, play=wow, pet=happy,
  *                                  clean=happy, sleep=sleepy, tease=snark
  *   capped (cap hit)             → use stats-derived mood (no fake sleepy)
- *   stats-based fallback         → hunger<3 hungry; energy<3 sleepy;
+ *   stats-based fallback         → not well-fed → hungry; energy<3 sleepy;
  *                                  mood<3 sad; mood>=7 happy; else neutral
  *
  * Capped used to force "sleepy" which made every interaction visually identical
  * once the user hit the daily cap on every action — confusing because stats
  * were still healthy. Now capped actions reflect actual creature state.
  */
+// Unreachable today, and routed through the shared predicate anyway.
+// `deriveMood` returns an ACTION_REACTION entry before it ever gets here, and
+// every member of dashboard.ts's VALID_ACTIONS is a key in that record — so the
+// only call site cannot reach this function. It carried its OWN `hunger < 3`,
+// a third number for the question audit defect [3] was about, sitting one file
+// away from the two that contradicted each other. Left alone it is a landmine:
+// add an action that has no reaction entry and it wakes up disagreeing with the
+// badge. Going through wellFedFromHunger makes it 4, not 3 — a semantic change
+// to code nothing can currently call, stated here rather than left to be found.
 function moodFromStats(stats: ActionRecordResult["next"]["stats"]): Mood {
-  if (stats.hunger < 3) return "hungry";
+  if (!wellFedFromHunger(stats.hunger)) return "hungry";
   if (stats.energy < 3) return "sleepy";
   if (stats.mood < 3)   return "sad";
   if (stats.mood >= 7)  return "happy";
@@ -158,7 +167,7 @@ export async function renderVitalsPanelOOB(
   now: Date,
 ): Promise<string> {
   const series = await readVitalsSeries(basePath, 7, now);
-  const wellFed = wellFedFromActions(progression.daily_actions, now);
+  const wellFed = wellFedFromHunger(progression.stats.hunger);
 
   const fmt = (n: number): string => `${Math.round(n)}/10`;
   const vitalsValues = {

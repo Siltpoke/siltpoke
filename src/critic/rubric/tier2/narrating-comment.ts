@@ -168,6 +168,7 @@ export const narratingCommentRule: RubricRule = {
           file,
           line: v.line,
           snippet: v.snippet,
+          snippet_is_source: true,
           message: `Narrating comment repeats what the next line already says. Comments should explain "why", not "what".`,
           suggested_fix:
             "Remove the comment and rename the variable/function to be self-explanatory, or rewrite the comment to explain intent rather than action.",

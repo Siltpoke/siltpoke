@@ -131,6 +131,7 @@ function makeBrainOutput(snippet: string): BrainOutput {
     xp_earned_events: [],
     // file is a changed file, so the file-check always passes and the SNIPPET
     // check is the only thing under test.
+    findings: [],
     evidence: [{ tool: "git-diff", file: "src/a/foo.ts", line: 1, snippet }],
   };
 }

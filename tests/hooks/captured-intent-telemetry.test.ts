@@ -53,6 +53,7 @@ function fakeBrainOutput(): BrainOutput {
     severity: "medium",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [{ tool: "tsc", file: "src/dummy.ts", line: 5, snippet: REAL_SNIPPET }],
     reasoning: "test fixture",
   };

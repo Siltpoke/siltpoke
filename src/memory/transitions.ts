@@ -506,14 +506,14 @@ export function setFactKindCore(
 }
 
 /**
- * Real-time chat capture (memory work) — persist an explicit  fact
+ * Real-time chat capture (memory work) — persist an explicit "记住 X" fact
  * told to the pet in chat. Mirrors the `/remember` active-trust path (pushFact)
  * but lands here in the pure core for consistency with the other transitions.
  *
  * New fact: status="active", learned_from.stream="chat", kind=null,
  * pinned=false, stability="durable", confidence=1.0, all clocks = now,
  * events=[created]. (Differs from /remember, which is pinned+permanent — a chat
- *  is a durable working-fact, correctable later on /memory.)
+ * "记住" is a durable working-fact, correctable later on /memory.)
  *
  * Dedupe: if an existing ACTIVE fact has normalized-equal text (trim +
  * lowercase, COMPARE only — stored text is never mutated), no duplicate is
@@ -526,7 +526,7 @@ export function setFactKindCore(
  * restateFactCore stamps on an active-fact reconfirmation), tagged
  * reason:"chat_repeat" to mark the dedupe origin.
  *
- * Precondition: `text` must be non-empty. Trigger-only  with no
+ * Precondition: `text` must be non-empty. Trigger-only "记住" with no
  * content is the CALLER's no-op-with-feedback responsibility (chat.ts guards
  * payload === "" before calling); empty text reaching here is a programmer
  * error, signalled by `throw` — deliberately kept OUT of the ok/error
@@ -621,7 +621,7 @@ export interface BatchCaptureResult {
  * truthful capture ack (SAVED vs ALREADY KNOWN) from these flags.
  *
  * Each item's optional `entities` (extracted by `extractDurableFacts`, or absent
- * for the explicit  path which has no extractor) thread through to
+ * for the explicit "记住 X" path which has no extractor) thread through to
  * `captureChatFactCore` so a fresh fact carries the entities it was extracted with.
  *
  * Pure: input `memory` is never mutated (each transition shallow-copies).

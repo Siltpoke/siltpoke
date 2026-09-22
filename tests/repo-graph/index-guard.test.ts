@@ -153,6 +153,37 @@ describe("validateIndexPath — accept + canonicalization", () => {
   });
 });
 
+// 2026-09-14: a folder inside a repo is indexed as ITSELF (spec §4.1). #737 had
+// resolved it to the repo root as a stopgap; that resolution — and the
+// `repo_root_not_allowed` refusal it needed — are gone.
+describe("validateIndexPath — a folder inside a repo is indexed as itself", () => {
+  test("subfolder of a git repo → projHash is the folder's, not the repo's", () => {
+    const repo = join(root, "repo");
+    const sub = join(repo, "TypeScript");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    mkdirSync(sub);
+    const r = guard(sub);
+    expect(r).toEqual({ ok: true, realPath: sub, projHash: computeProjHash(sub) });
+    if (r.ok) expect(r.projHash).not.toBe(computeProjHash(repo));
+  });
+
+  test("a repo root above every allow-root no longer matters — only the picked folder is walked", () => {
+    const repo = join(outside, "repo");
+    const allowed = join(repo, "packages");
+    const sub = join(allowed, "web");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    mkdirSync(sub, { recursive: true });
+    expect(validateIndexPath(sub, { allowRoots: [allowed] })).toEqual({ ok: true, realPath: sub, projHash: computeProjHash(sub) });
+  });
+
+  test("a dotfiles repo AT the allow-root: a folder under it indexes only that folder", () => {
+    const sub = join(root, "Projects", "x");
+    mkdirSync(join(root, ".git"), { recursive: true });
+    mkdirSync(sub, { recursive: true });
+    expect(guard(sub)).toEqual({ ok: true, realPath: sub, projHash: computeProjHash(sub) });
+  });
+});
+
 // ── validateListDir reuses the same realpath+containment core but ALLOWS
 // the allow-root itself (the browser starts at + must list $HOME). ──
 describe("validateListDir — browser containment (allowRootItself)", () => {

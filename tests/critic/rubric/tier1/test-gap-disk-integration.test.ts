@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * Task 4 (Slice ②): disk-level test-gap — new-vs-modified split.
+ * Task 4: disk-level test-gap — new-vs-modified split.
  *
  * Real-git / real-ripgrep production-path fixtures, split out of
  * `test-gap-disk.test.ts` to stay under the 400 LOC cap. The mocked
  * control-matrix + resolver-confirmation tests live in that companion file.
- *
- * Per .superpowers/sdd/2026-07-25-critic-disk-awareness/task-4-brief.md.
  */
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";

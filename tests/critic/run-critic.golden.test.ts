@@ -71,6 +71,7 @@ function brainOut(overrides?: Partial<BrainOutput>): BrainOutput {
     severity: "medium",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [],
     ...overrides,
   };
@@ -166,6 +167,7 @@ test("golden: runCritic PASSIVE_BUBBLE path is stable", async () => {
     pose: "base",
     bubble_short: "Clean refactor",
     critique_for_claude: "",
+    findings: [],
     evidence: [],
   });
 
@@ -214,6 +216,7 @@ test("golden: runCritic NORMAL accepted path is stable", async () => {
   let captured: CritiqueInput | null = null;
   const SNIPPET = "let x: string = badValue;";
   const accepted = brainOut({
+    findings: [],
     evidence: [{ tool: "tsc", file: "src/foo.ts", line: 10, snippet: SNIPPET }],
   });
 
@@ -264,6 +267,7 @@ test("golden: runCritic NORMAL unverified-evidence path is stable", async () => 
   let writeCalled = false;
   const FABRICATED = "this snippet was hallucinated by the LLM!";
   const rejected = brainOut({
+    findings: [],
     evidence: [{ tool: "tsc", file: "src/foo.ts", line: 10, snippet: FABRICATED }],
   });
 

@@ -33,13 +33,22 @@
  * daemon; the async fetch wrappers are thin and injectable.
  */
 import { existsSync } from "node:fs";
+import { isSiltpokedPing, parseJsonOrNull, resolveDaemonPort } from "../daemon/port";
 import { loadDaemonConfig } from "../config/daemon-config";
 import { defaultPlistPath } from "../installer/launchd";
 import { siltpokeRoot } from "../installer/paths";
 import { defaultUnitPath } from "../installer/systemd";
 import type { CheckResult, DoctorOptions } from "./doctor";
 
-const DEFAULT_DAEMON_HEALTH_URL = "http://127.0.0.1:9876/api/daemon-health";
+/**
+ * Both doctor probes must aim at the port the daemon actually listens on, not a
+ * hardcoded 9876 — otherwise a user who set `SILTPOKE_DAEMON_PORT` gets a red
+ * "daemon unreachable" row about a port nothing was ever on (audit defect
+ * `[5b]`, the "端口写死" half).
+ */
+const daemonBaseUrl = (): string =>
+  `http://127.0.0.1:${resolveDaemonPort(process.env)}`;
+const defaultDaemonHealthUrl = (): string => `${daemonBaseUrl()}/api/daemon-health`;
 
 /** Shape of the /api/daemon-health payload's `data`. */
 export interface DaemonHealth {
@@ -128,7 +137,7 @@ export function mapDaemonHealthToCheck(health: DaemonHealth | null): CheckResult
  * `fetchFn` is injectable for tests (no live daemon needed).
  */
 export async function checkDaemonStaleness(opts: DoctorOptions = {}): Promise<CheckResult> {
-  const url = opts.daemonHealthUrl ?? DEFAULT_DAEMON_HEALTH_URL;
+  const url = opts.daemonHealthUrl ?? defaultDaemonHealthUrl();
   const doFetch = opts.fetchFn ?? fetch;
   let health: DaemonHealth | null = null;
   try {
@@ -150,13 +159,21 @@ export async function checkDaemonStaleness(opts: DoctorOptions = {}): Promise<Ch
 // Daemon-alive check (track #6 T5, AC11).
 // ---------------------------------------------------------------------------
 
-const DEFAULT_DAEMON_PING_URL = "http://127.0.0.1:9876/api/ping";
+const defaultDaemonPingUrl = (): string => `${daemonBaseUrl()}/api/ping`;
 const ALIVE_CHECK_NAME = "daemon alive (/api/ping)";
 const PING_TIMEOUT_MS = 500;
 
 const DAEMON_OFF_DETAIL = "daemon: off (opt-in — open /siltpoke-dashboard to enable)";
 const DAEMON_ENABLED_UNREACHABLE_DETAIL =
   "daemon.enabled is true but /api/ping is unreachable — try /siltpoke-restart-daemon";
+/**
+ * Distinct from "unreachable" on purpose: something DID answer on the port, it
+ * just was not siltpoke. Restarting the daemon does not help here — the port
+ * has to be freed, or siltpoke moved off it — so the row must not send the
+ * user to `/siltpoke-restart-daemon`.
+ */
+const DAEMON_PORT_TAKEN_DETAIL =
+  "something is answering on the daemon's port but it is not siltpoked — free the port, or set SILTPOKE_DAEMON_PORT to another one";
 
 /**
  * Probe /api/ping with a short timeout. Up → ✓ pass. Down defers to
@@ -168,19 +185,53 @@ const DAEMON_ENABLED_UNREACHABLE_DETAIL =
  * tests (no live daemon / real config.json needed).
  */
 export async function checkDaemonAlive(opts: DoctorOptions = {}): Promise<CheckResult> {
-  const url = opts.daemonPingUrl ?? DEFAULT_DAEMON_PING_URL;
+  const url = opts.daemonPingUrl ?? defaultDaemonPingUrl();
   const doFetch = opts.fetchFn ?? fetch;
+  // Three outcomes, not two: nobody answered, siltpoke answered, or a stranger
+  // answered. The old code only had the first two, so a stranger read as
+  // "unreachable" and sent the user to restart a daemon that was fine.
+  let answeredByStranger = false;
   try {
     const res = await doFetch(url, { signal: AbortSignal.timeout(PING_TIMEOUT_MS) });
     if (res.ok) {
-      return { name: ALIVE_CHECK_NAME, pass: true, status: "pass", detail: null };
+      // A 2xx alone does not mean siltpoke answered — any server that owns the
+      // port can return one, and this row would then report "daemon alive ✓"
+      // about a stranger. So identify the responder from its body (audit
+      // defect `[5b]`).
+      //
+      // This row goes further than the other three probes, which return a
+      // plain boolean: it has to TELL the user what to do, so it separates
+      // "a stranger has your port" from "nobody answered". The boolean probes
+      // (`isPortHealthy`, `probeDaemon`, `siltpokedAnswersAt`) do not make
+      // that distinction and do not need to — for them an unreadable body
+      // falls to `false`, which is the safe direction in each case.
+      //
+      // The body is READ first and parsed separately, and the stranger verdict
+      // is only reached once that read succeeded. Calling `res.json()` and
+      // treating any throw as "a stranger" conflated two different things: a
+      // body that is not JSON, and a body that could not be read at all — the
+      // same `AbortSignal.timeout` bounds the body read, so a real siltpoked
+      // that is briefly slow under load throws here too. That version told
+      // such a user to go hunt for a port squatter that did not exist.
+      const body = await res.text();
+      if (isSiltpokedPing(parseJsonOrNull(body))) {
+        return { name: ALIVE_CHECK_NAME, pass: true, status: "pass", detail: null };
+      }
+      answeredByStranger = true;
     }
   } catch {
-    // Connection refused / timeout → offline; fall through to the enabled check.
+    // Connection refused, timeout, or a body that never finished arriving →
+    // we do not know who is on the port, so this stays "unreachable".
   }
   const home = opts.siltpokeHome ?? siltpokeRoot();
   const loadCfg = opts.loadDaemonConfigFn ?? loadDaemonConfig;
   const { enabled } = await loadCfg(home);
+  if (answeredByStranger) {
+    // Reported whether or not the user opted in: a stranger on the port breaks
+    // the daemon the moment they DO open the dashboard, and it is never the
+    // expected state the `daemon: off` row describes.
+    return { name: ALIVE_CHECK_NAME, pass: false, detail: DAEMON_PORT_TAKEN_DETAIL };
+  }
   if (!enabled) {
     return { name: ALIVE_CHECK_NAME, pass: true, status: "info", detail: DAEMON_OFF_DETAIL };
   }

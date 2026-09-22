@@ -24,14 +24,19 @@
  */
 import {
   BrainError,
-  extractJsonString,
   type BrainUsage,
   type CallBrainOptions,
+  extractJsonString,
 } from "../brain";
-import { parseBrainOutput } from "../schema";
 import type { BrainFailureInput } from "../failure-classify";
-import type { BrainProviderMeta, CallRawResult, ReviewerBrainProvider } from "../provider";
-import { recordQoderSession, reapQoderSessions } from "../qoder-reaper";
+import {
+  type BrainProviderMeta,
+  type CallRawResult,
+  FAMILY_ACCEPTS_MODEL,
+  type ReviewerBrainProvider,
+} from "../provider";
+import { reapQoderSessions, recordQoderSession } from "../qoder-reaper";
+import { parseBrainOutput } from "../schema";
 import { resolveReviewerCwd } from "./reviewer-cwd";
 
 /** Comparable fixed overhead to claude -p (unlike codex's heavier ~120s). */
@@ -233,6 +238,9 @@ export function makeCcForkReviewerProvider(config: CcForkReviewerConfig): Review
       name: config.name,
       billing: "quota",
       genAiSystem: config.genAiSystem,
+      // Both ccfork builds push `--model` in buildArgv when a model is set
+      // (omitted when undefined — qoder rejects the literal).
+      acceptsModel: FAMILY_ACCEPTS_MODEL[config.name],
     },
     callRaw,
     call: async (opts: CallBrainOptions) => {

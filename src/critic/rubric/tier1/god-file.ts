@@ -61,6 +61,7 @@ export const godFileRule: RubricRule = {
             line: 1,
             end_line: lines,
             snippet: src.slice(0, 200),
+            snippet_is_source: true,
             message: `File is ${lines} lines (threshold: ${THRESHOLD_LINES}). Likely doing too many things; consider splitting by responsibility.`,
             suggested_fix: "Split into smaller files organized by feature/domain, not type.",
           });

@@ -40,7 +40,7 @@ describe("shortenPath", () => {
   });
   test("no home match still truncates deep absolute paths", () => {
     const out = shortenPath(
-      "/var/folders/abcdefgh/Projects/ai-agents/deep/nested/repo",
+      "/var/folders/abcdefgh/Projects/workspace/deep/nested/repo",
       "/Users/x",
     );
     expect(out).toBe("/…/nested/repo");

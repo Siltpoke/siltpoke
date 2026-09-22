@@ -1254,9 +1254,9 @@ test("memory book: 删除 updates action-log live — expanded rail shows 🌙 �
   const rail = row.locator(".memory-action-log-rail");
   await expect(rail).toBeVisible({ timeout: 3_000 });
 
-  // At least one log event verb must contain  (🌙 退休) — the retire event
+  // At least one log event verb must contain "退休" (🌙 退休) — the retire event
   // that was appended live by the mutation handler.
-  // .first(): the sibling test ()
+  // .first(): the sibling test ("删除 button soft-retires… 撤回退休 restores it")
   // runs retire→reactivate→retire on this SAME seeded fact, so its immutable
   // event log holds two real "retired" events. When they straddle a minute
   // boundary (under full-suite load) the rail renders two "○ Retired" verbs;

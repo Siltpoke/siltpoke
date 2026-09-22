@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * `attachWhy` — slice ④ task 6. Maps each changed-file delta from the
+ * `attachWhy` — task 6. Maps each changed-file delta from the
  * "since you last looked" watermark panel to a `WhyAnchor` (rung "U"/1/2/3,
  * see `../../repo-graph/why-lookup`), so the panel can show WHY a file
  * changed alongside the existing WHAT-changed classification.

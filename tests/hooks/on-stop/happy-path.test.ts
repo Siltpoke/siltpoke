@@ -54,6 +54,7 @@ test("successful Brain call writes state.json and critique markdown", async () =
     severity: "medium",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [],
       reasoning: "test fixture",
   };
@@ -170,6 +171,7 @@ test("hook injects memory + recent into the prompt passed to Brain", async () =>
     severity: "info" as const,
     confidence: "high" as const,
     xp_earned_events: [],
+    findings: [],
     evidence: [],
       reasoning: "test fixture",
   };
@@ -232,6 +234,7 @@ test("two different cwds produce two isolated state.json files", async () => {
     severity: "info",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [],
       reasoning: "test fixture",
   };
@@ -244,6 +247,7 @@ test("two different cwds produce two isolated state.json files", async () => {
     severity: "medium",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [],
       reasoning: "test fixture",
   };
@@ -317,6 +321,7 @@ test("identical event fired twice: second invocation skipped on no_change", asyn
     severity: "info",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [],
       reasoning: "test fixture",
   };

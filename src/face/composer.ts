@@ -31,11 +31,23 @@ export function composeOutput(opts: ComposeOptions): string {
 
   const rows = Math.max(faceLines.length, innerLines.length);
   const out: string[] = [];
-  // U+2800 BRAILLE PATTERN BLANK is a real character — not whitespace per
-  // Unicode White_Space property — so Claude Code's statusline renderer
-  // does not trim it or collapse it. Most modern terminals render it as
-  // a 1-column blank glyph. We use it for indent on blank face rows so
-  // bubble continuation lines visually align under the bubble start.
+  // U+2800 BRAILLE PATTERN BLANK is a real character — not whitespace per the
+  // Unicode White_Space property — so Claude Code's statusline renderer does
+  // not trim it. Most modern terminals render it as a 1-column blank glyph.
+  // We use it for indent on blank face rows so bubble continuation lines
+  // visually align under the bubble start.
+  //
+  // MEASURED 2026-09-20, install-audit defect [5a]. The audit asked whether
+  // this odd character could be swapped for something with better font
+  // coverage. A probe rendered five rows through the real statusline: no
+  // indent, three ASCII spaces, three U+2800, three U+00A0 (NBSP) and three
+  // U+2007 (FIGURE SPACE). ASCII spaces, NBSP and FIGURE SPACE were ALL
+  // stripped; only U+2800 survived. The renderer strips by the Unicode
+  // White_Space property, not by ASCII — so every space-like character is
+  // stripped, and U+2800 is not a choice among alternatives, it is the only
+  // one that works. Do not "clean this up" into spaces; that is the one
+  // change guaranteed to break the layout. tests/face/indent-char.test.ts
+  // holds the line.
   const INDENT_CHAR = "⠀";
 
   for (let i = 0; i < rows; i++) {

@@ -42,6 +42,7 @@ test("confidence=high writes critique markdown + state bubble (regression)", asy
     severity: "high",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [],
       reasoning: "test fixture",
   };
@@ -94,6 +95,7 @@ test("confidence=medium suppresses critique markdown but keeps state bubble", as
     severity: "medium",
     confidence: "medium",
     xp_earned_events: [],
+    findings: [],
     evidence: [],
       reasoning: "test fixture",
   };
@@ -148,6 +150,7 @@ test("confidence=low suppresses critique AND skips the empty-bubble state write"
     severity: "info",
     confidence: "low",
     xp_earned_events: [],
+    findings: [],
     evidence: [],
       reasoning: "test fixture",
   };

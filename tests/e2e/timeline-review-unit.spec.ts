@@ -1,112 +1,55 @@
 /**
- * timeline-review-unit.spec.ts — the ⏱ review-unit control, end to end.
+ * timeline-review-unit.spec.ts — the ⏱ review-unit control is off the page.
  *
- * THIS IS THE ASSERTION THE PREVIOUS ROUND COULD NOT MAKE. #677 shipped a
- * `reviewUnit` `<select>` into `src/cli/report-artifacts.ts` — the retired
- * tamagotchi report page (`src/daemon/server.ts`: "its legacy GET /dashboard
- * report page is retired"; `buildReport` has no caller in `src/`). Four
- * golden fixtures asserted that select's HTML and passed, while no user
- * could reach the control and nothing wrote `reviewUnit` from a browser. The
- * obvious second home, `/settings`, is unmounted too (server.ts, 2026-08-06),
- * so this control now lives on `/timeline` — a path in the nav, which is the
- * only kind of "shipped" that this defect distinguishes from.
+ * HIDDEN 2026-09-21 on the maintainer's call. Hidden, not removed: the `reviewUnit`
+ * axis, `src/config/review-unit-config.ts`, the island and
+ * `src/web/screens/timeline/review-unit-row.tsx` all still exist and still
+ * work, and editing `reviewUnit` in `config.json` still takes effect. Only the
+ * choice is gone from the UI.
  *
- * So a markup assertion is explicitly NOT what this file does. It drives the
- * served page in a real browser and only believes the setting landed when a
- * FRESH page load — a new request, a new read of config.json — comes back
- * showing it. That is the only evidence a viewer's click reached disk
- * (memory `stubbed-writer-proves-nothing-about-disk`).
+ * WHAT THIS FILE USED TO DO, and why it still lives here. It drove the real
+ * control in a real browser and only believed a save had landed when a FRESH
+ * page load came back showing it — because #677 had shipped this same control
+ * into the retired report page, where four golden fixtures asserted its markup
+ * and passed while no user could reach it. `git log` has that version.
  *
- * Runs against the e2e daemon's own SILTPOKE_HOME (./.playwright-tmp/siltpoke),
- * so it writes a real config.json but never the developer's. It restores
- * `commit` at the end because the specs share one daemon and one config file.
+ * The same discipline is why the file was not simply deleted. "It is hidden"
+ * is a claim about what a user sees, and a claim about what a user sees is
+ * only settled in a browser. A unit test asserting the screen's HTML string
+ * (`tests/web/timeline-review-unit.test.tsx`) is the cheap half; this is the
+ * half that would catch the control coming back through some other path — a
+ * layout, a partial, a route that composes the row itself.
+ *
+ * To unhide: restore the row in `src/web/screens/TimelineScreen.tsx` (the
+ * comment there names the three lines), then restore this file's previous
+ * version from git and flip the unit test's absence assertions back.
  */
 
 import { test, expect } from "@playwright/test";
 
 const SELECT = "[data-review-unit-select]";
 const SAVE = "[data-review-unit-save]";
+const ISLAND = '[x-data="reviewUnitRow"]';
 
-async function selectedUnit(page: import("@playwright/test").Page): Promise<string> {
-  return page.locator(SELECT).inputValue();
-}
-
-test.describe("Timeline — review unit", () => {
-  test.beforeAll(async ({ browser }) => {
-    // ESTABLISH the starting state; do not assume it. The three tests share
-    // one daemon and one gitignored `./.playwright-tmp/siltpoke/config.json`
-    // that PERSISTS between local runs, so an interrupted run (Ctrl-C, a
-    // webServer timeout, a crash between the save and the teardown) leaves
-    // `pr` on disk and the next run fails on a precondition rather than on
-    // the code. The `commit`-is-unchanged assertion in the 401 test is only
-    // evidence if `commit` was actually the starting value.
-    const page = await browser.newPage();
+test.describe("Timeline — review unit is hidden", () => {
+  test("no review-unit control is reachable on /timeline", async ({ page }) => {
     await page.goto("/timeline");
-    if ((await page.locator(SELECT).inputValue()) !== "commit") {
-      await page.selectOption(SELECT, "commit");
-      await page.click(SAVE);
-      await expect(page.locator(SAVE)).toContainText("Saved ✓");
-    }
-    await page.close();
+    // Wait for the page's own content before asserting an absence — asserting
+    // "not there" against a page that has not rendered yet passes for the
+    // wrong reason, and would keep passing if /timeline broke entirely.
+    await expect(page.locator("body")).toContainText(/\S/);
+
+    await expect(page.locator(SELECT)).toHaveCount(0);
+    await expect(page.locator(SAVE)).toHaveCount(0);
+    await expect(page.locator(ISLAND)).toHaveCount(0);
   });
 
-  test.afterEach(async ({ page }) => {
-    // Leave the shared config on the default. Done through the UI on purpose:
-    // if the control were broken, this teardown would fail too rather than
-    // quietly papering over the state it left behind.
+  test("the page still works without it", async ({ page }) => {
+    // The control sat inside the filter row. Removing it must not have taken
+    // the row with it — that is the failure mode of deleting a sibling.
     await page.goto("/timeline");
-    if ((await selectedUnit(page)) !== "commit") {
-      await page.selectOption(SELECT, "commit");
-      await page.click(SAVE);
-      await expect(page.locator(SAVE)).toContainText("Saved ✓");
-    }
-  });
-
-  test("the control is on the served page, not only in a fixture", async ({ page }) => {
-    await page.goto("/timeline");
-    const select = page.locator(SELECT);
-    await expect(select).toBeVisible();
-    // Exactly the two live units — the four dead trigger modes must not be
-    // offered as choices anywhere a user can click.
-    await expect(select.locator("option")).toHaveCount(2);
-    await expect(select.locator("option")).toHaveText(["commit", "pr"]);
-  });
-
-  test("choosing pr and saving survives a fresh page load", async ({ page }) => {
-    await page.goto("/timeline");
-    await expect(page.locator(SELECT)).toHaveValue("commit");
-
-    await page.selectOption(SELECT, "pr");
-    await page.click(SAVE);
-    await expect(page.locator(SAVE)).toContainText("Saved ✓");
-    // `toHaveText("")`, not `toBeHidden()`: the span renders empty, so a page
-    // with a DEAD bundle has a zero-size box that Playwright also calls
-    // hidden — an assertion that cannot tell "no error" from "Alpine never
-    // ran" carries no information.
-    await expect(page.locator("[data-review-unit-error]")).toHaveText("");
-
-    // The point of the whole spec: a NEW request re-reads config.json from
-    // disk. An island that only updated its own state would pass every
-    // assertion above and fail here.
-    await page.reload();
-    await expect(page.locator(SELECT)).toHaveValue("pr");
-  });
-
-  test("an unauthenticated POST cannot change the review unit", async ({ page }) => {
-    // POST /api/config says "Fail CLOSED" in its own comment and nothing
-    // asserted it — a blind cross-origin POST that could flip the review unit
-    // to `pr` would silence reviews on every branch without a PR. The write
-    // path this slice just opened is exactly why the gate now gets a test.
-    const res = await page.request.post("/api/config", {
-      headers: { "content-type": "application/json" },
-      data: { reviewUnit: "pr" },
-      failOnStatusCode: false,
-    });
-    expect(res.status()).toBe(401);
-
-    // And it really did not land — the refusal is the fact, the unchanged
-    // page is the evidence.
-    await page.goto("/timeline");
-    await expect(page.locator(SELECT)).toHaveValue("commit");
+    await expect(page).toHaveTitle(/.+/);
+    const body = await page.locator("body").innerText();
+    expect(body.length).toBeGreaterThan(0);
   });
 });

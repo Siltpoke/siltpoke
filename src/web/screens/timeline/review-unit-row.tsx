@@ -22,10 +22,10 @@
  * (`src/daemon/server.ts`: "its legacy GET /dashboard report page is
  * retired") and `buildReport` has no caller in `src/`. The obvious
  * replacement, `/settings`, is ALSO unreachable: its mount is commented out
- * (2026-08-06, judged not to earn its place). So the control had no reachable home at
+ * (2026-08-06 — judged not worth its space). So the control had no reachable home at
  * all while the plan, the close report, and `review-unit-config.ts`'s own doc
  * comment each said the dashboard wrote it. A markup assertion says nothing
- * about reachability (memory `signal-decoupled-from-reality`), which is why
+ * about reachability, which is why
  * the e2e for this drives `/timeline` and not a rendered string.
  *
  * Compact by design: Timeline is a dense observability page, so this is one
@@ -50,8 +50,7 @@ export interface ReviewUnitRowProps {
   /** Daemon secret — rendered on the island's OWN container so the Save POST
    * can read it via closest("[data-secret]"), which includes self. Layout's
    * secret reaches the page as htmx `hx-headers` and FloatingChat's
-   * `data-secret` sibling, neither of which closest() would find
-   * (memory `dashboard-write-island-secret-closest`). */
+   * `data-secret` sibling, neither of which closest() would find. */
   secret: string;
   /**
    * Resolved from config.json by the route, NOT defaulted here. A component

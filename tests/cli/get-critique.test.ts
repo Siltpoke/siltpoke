@@ -37,12 +37,15 @@ test("returns archive file by id", async () => {
   expect(out).toContain("body content");
 });
 
-test("returns friendly 'not found' on unknown id", async () => {
+// An unknown id in an EMPTY store now reports the empty store, because that
+// is the fact that explains the silence (audit defect `[5c]`, see
+// tests/cli/critique-empty-state.test.ts for the full split).
+test("an unknown id on a fresh install reports the empty store", async () => {
   const out = await getCritique({ basePath: tmp, idOrLatest: "c-zzzz" });
-  expect(out).toContain("not found");
+  expect(out).toMatch(/no reviews yet/i);
 });
 
-test("returns 'not found' when critiques directory missing entirely", async () => {
+test("a missing critiques directory reads as 'no reviews yet', not as an error", async () => {
   const out = await getCritique({ basePath: tmp, idOrLatest: "latest" });
-  expect(out).toContain("not found");
+  expect(out).toMatch(/no reviews yet/i);
 });

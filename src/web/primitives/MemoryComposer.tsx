@@ -4,7 +4,7 @@
 import { tokens } from "../tokens/tokens";
 
 /**
- * NL  composer — docked at the bottom of the by-type view.
+ * NL "改记忆" composer — docked at the bottom of the by-type view.
  *
  * The matcher (island buildProposal) is deterministic (NO LLM): it can only
  * propose retiring an EXISTING semantic fact. ✓确认 on an actionable proposal

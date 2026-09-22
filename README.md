@@ -34,7 +34,7 @@ project:
   claim is asked to cite file:line evidence, and the ones that do are
   marked verified — so you can see at a glance which findings are grounded
   and which are the reviewer thinking out loud. Reviews land on disk — you
-  forward, dismiss (it learns), or ignore. Pull, never push.
+  forward, dismiss, or ignore. Pull, never push.
 - **Code-map.** A structural map of your codebase it can reason over —
   ask it to explain a file or symbol, grounded in the real call graph.
 - **Memory.** Bugs fingerprinted across sessions; facts you tell it
@@ -87,9 +87,11 @@ old Stop hook in `settings.json`, so reviews don't fire twice.
 
 ```bash
 codex plugin marketplace add https://github.com/Siltpoke/siltpoke
-codex plugin add siltpoke
+codex plugin add siltpoke@siltpoke
 codex plugin list                         # verify: siltpoke … installed, enabled
 ```
+
+The **`@siltpoke` marketplace qualifier is required** — a bare `codex plugin add siltpoke` fails with `plugin requires --marketplace unless passed as <plugin>@<marketplace>`.
 
 This installs Siltpoke with reviews included — the review Stop hook + SessionStart baseline hook ride the plugin itself, no source clone needed. You'll need Bun installed (`curl -fsSL https://bun.sh/install | bash`) since the bundled hooks are Bun-compiled, but that's the only external dependency.
 
@@ -181,9 +183,18 @@ makes agy register `source: "claude-code"` — which never fires (see below)
 git clone https://github.com/Siltpoke/siltpoke.git ~/siltpoke
 cd ~/siltpoke
 bun install
-bun run build:dist   # populates .antigravity-plugin/{hooks,dist}/ (git-ignored, build-generated)
+bun run build:dist   # populates .antigravity-plugin/{hooks,dist,skills}/ (git-ignored, build-generated)
 agy plugin install ~/siltpoke/.antigravity-plugin
 ```
+
+**Then finish the install from inside agy: ask your agent to "set up
+Siltpoke".** The plugin ships the Siltpoke skill to agy (`agy plugin install`
+reports `skills: 1 processed`), and that skill walks you through creating the
+pet — which writes `~/.siltpoke/config.json`. Until that file exists the Stop
+hook gates every review off, so a plugin install with no setup is installed-
+but-inert. There are no `/siltpoke-*` slash commands in agy, so ask in plain
+language rather than typing a command. The hook also prints this reminder
+once to stderr after your first turn.
 
 Install the **`.antigravity-plugin/` subdir specifically, not the repo
 root** — agy auto-detects the repo root's `.claude-plugin/` and registers
@@ -212,6 +223,11 @@ cd ~/siltpoke
 bun install
 bun run setup --agent agy
 ```
+
+This source route is an ALTERNATIVE to the plugin install above, not a
+required follow-up to it — `bun run setup --agent agy` also creates the pet,
+so pick one path. (Before the skill shipped to agy, the plugin path had no
+setup route at all and this was the only way; that gap is closed.)
 
 `bun run setup` wires Siltpoke into Antigravity's own hook system
 (`~/.gemini/config/hooks.json`, read-modify-write — other named hooks you
@@ -242,7 +258,7 @@ claude plugin install project-lifecycle@project-life-cycle
 
 ## Daily use
 
-In Claude Code there are only 10 commands — everything else (review
+In Claude Code there are only 11 commands — everything else (review
 history, chat, memory, timeline, code-map) lives in the dashboard, not
 behind a slash command. This list is the whole set; there is no hidden
 one:
@@ -257,6 +273,8 @@ one:
 /siltpoke-mute <duration>         Silence reviews (pair-programming, demos)
 /siltpoke-unmute                  Clear an active mute
 /siltpoke-doctor                  Install-health checklist
+/siltpoke-wake                    Reviews went quiet? Clear the stuck breaker
+                                  and review the next turn
 /siltpoke-restart-daemon          Restart the dashboard daemon (stop + start)
 /siltpoke-menubar <cmd>           Pet in the macOS menu bar via SwiftBar (install/status/remove)
 /siltpoke-help                    The full manual, generated from the CLI itself

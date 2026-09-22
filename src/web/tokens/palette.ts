@@ -376,7 +376,7 @@ export const palette = {
     // "where we are". Reads on `headerBg`, not on the page background.
     headerStrong: "#faf6ec",
 
-    // A card lifted off `paper` — the a selected card. Distinct from
+    // A card lifted off `paper` — the selected card. Distinct from
     // `memCardBg`, whose DARK value (#2e2816) is warm/olive: the 🌙 track's
     // zero-color-cast rule for dark surfaces is the reason this is its own
     // token rather than a reuse (the prototype's first pass made exactly that

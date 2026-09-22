@@ -172,6 +172,11 @@ function startClaudeSession(
     model,
     "--output-format",
     "stream-json",
+    // Defect [12], the loudest of the three sites: `--print
+    // --output-format=stream-json` EXITS 1 without --verbose ("requires
+    // --verbose"), so dashboard chat was dead on any clean install rather
+    // than merely mis-shaped.
+    "--verbose",
     "--no-session-persistence",
   ];
   if (opts.systemPrompt) args.push("--system-prompt", opts.systemPrompt);

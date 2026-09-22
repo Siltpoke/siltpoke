@@ -116,6 +116,7 @@ export const deepNestingRule: RubricRule = {
           file,
           line: v.line,
           snippet: v.snippet,
+          snippet_is_source: true,
           message: `Nesting depth ${v.depth} exceeds threshold (${DEPTH_THRESHOLD}) at '${v.nodeType}'. Deep nesting harms readability and testability.`,
           suggested_fix:
             "Extract deeply-nested logic into well-named functions. Use early returns / guard clauses to reduce nesting.",

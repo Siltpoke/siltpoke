@@ -80,6 +80,7 @@ function brainOut(evidence: BrainOutput["evidence"]): BrainOutput {
     pose: "arms_crossed",
     bubble_short: "Found a type error",
     bubble_long: "You have a type mismatch in foo.ts.",
+    findings: [],
     critique_for_claude: "src/foo.ts line 10 has a type error.",
     severity: "medium",
     confidence: "high",

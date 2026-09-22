@@ -14,7 +14,7 @@
  * this surface) and `resolveProjectRootByHash` (proj_hash → project_root, a
  * cheap lookup normally backed by memory.json) are stubbed.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -24,6 +24,7 @@ import { openIndex } from "../../src/chat/fts5-index";
 import { mountChatRoutes, type ChatAnchorRef } from "../../src/daemon/routes/chat";
 import type { StreamChatOptions, StreamEvent } from "../../src/daemon/routes/chat-stream";
 import { runIndexBuild } from "../../src/repo-graph/builder";
+import { resolveRepoGraphLocation } from "../../src/repo-graph/proj-hash";
 
 const TEST_SECRET = "test-secret";
 const PROJ_HASH = "deadbeef01234567";
@@ -74,6 +75,8 @@ function makeApp(resolveAnchor: (a: ChatAnchorRef) => Promise<ResolveAnchorResul
     streamFactory: fakeStream,
     resolveAnchor,
     resolveProjectRootByHash: async (hash: string) => (hash === PROJ_HASH ? repo : null),
+    resolveIndexLocationByHash: async (hash: string) =>
+      hash === PROJ_HASH ? resolveRepoGraphLocation(repo, { home }) : null,
     secret: TEST_SECRET,
   });
   return a;
@@ -170,14 +173,15 @@ describe("chat surfaces staleness when repo-graph queried", () => {
     expect(body).not.toContain("event: staleness");
   });
 
-  test("mount without resolveProjectRootByHash (test compat / un-anchored back-compat) → no staleness event", async () => {
+  test("mount without resolveIndexLocationByHash → no staleness event", async () => {
     const a = new Hono();
     mountChatRoutes(a, {
       homeBase: home,
       index: openIndex(home),
       streamFactory: fakeStream,
       resolveAnchor: async () => RESOLVED,
-      // resolveProjectRootByHash intentionally absent
+      // resolveIndexLocationByHash intentionally absent (resolveProjectRootByHash present — Memory scope alone must not surface staleness)
+      resolveProjectRootByHash: async () => repo,
       secret: TEST_SECRET,
     });
     const res = await postChat(a, {
@@ -186,5 +190,28 @@ describe("chat surfaces staleness when repo-graph queried", () => {
     });
     const body = await res.text();
     expect(body).not.toContain("event: staleness");
+  });
+
+  test("a sub-folder index: staleness reads that index, not the repo the Memory scope walks up to", async () => {
+    const root = realpathSync(repo);
+    const sub = join(root, "pkg");
+    mkdirSync(join(root, ".git"));
+    mkdirSync(join(sub, "src"), { recursive: true });
+    for (const n of ["a", "b", "c", "d", "e"]) writeFileSync(join(sub, "src", `${n}.ts`), `export const ${n}=1;\n`);
+    const built = await runIndexBuild({ cwd: root, root: sub, force: true, home });
+    writeFileSync(join(sub, "src", "a.ts"), "export const a=999;\n");
+
+    const a = new Hono();
+    mountChatRoutes(a, {
+      homeBase: home,
+      index: openIndex(home),
+      streamFactory: fakeStream,
+      resolveAnchor: async () => RESOLVED,
+      resolveProjectRootByHash: async () => sub,
+      resolveIndexLocationByHash: async () => ({ project_root: sub, storage_dir: built.storage_dir }),
+      secret: TEST_SECRET,
+    });
+    const res = await postChat(a, { message: "hi", anchor: { node_id: "function:src/a.ts:a", proj_hash: PROJ_HASH } });
+    expect(extractStaleness(await res.text())?.level).toBe("stale");
   });
 });

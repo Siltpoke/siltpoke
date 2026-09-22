@@ -136,7 +136,15 @@ export function parseBrainConfig(raw: string | null, env?: BrainConfigEnv): Brai
     const entry = reviewByBuilder?.[hostFamily];
     if (entry === undefined) return undefined;
     const provider = entry.provider ?? hostFamily; // absent → the builder reviews itself
-    const model = provider === "claude" && entry.model ? entry.model : undefined;
+    // A configured model is carried through verbatim. This read
+    // `provider === "claude"` until 2026-09-12 and silently dropped a legitimate
+    // agy / qoder / codebuddy model (spec brain-select-four-gaps §3.1). Whether
+    // a family's argv can actually SEND a model is the registry's fact, and this
+    // parser cannot ask for it without an import cycle (registry already imports
+    // FAMILIES from here) — so the capability filter lives in registry's
+    // resolveRole / resolveRoleMeta, and the writers refuse to store an
+    // unsendable model in the first place.
+    const model = entry.model ? entry.model : undefined;
     return model !== undefined ? { provider, model } : { provider };
   })();
 

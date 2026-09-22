@@ -16,13 +16,13 @@
  * no user could reach the control. `/settings` — the obvious second home — is
  * unmounted too (`src/daemon/server.ts`, 2026-08-06). The lesson is not "add
  * a test", since the old tests passed: it is that a markup assertion says
- * nothing about reachability (memory `signal-decoupled-from-reality`), and
+ * nothing about reachability, and
  * that a page NAME is not a checkable destination — only a mounted route is.
  * So this comment names the route, `/timeline`, not "the dashboard".
  *
  * The secret is read from the row's OWN `data-secret` container (closest()
  * includes self) — FloatingChat's data-secret is a sibling, not an ancestor,
- * so a bare closest() would miss (memory `dashboard-write-island-secret-closest`).
+ * so a bare closest() would miss.
  *
  * Registration: document.addEventListener("alpine:init", ...) before
  * Alpine.start(). Imported by src/web/client/index.ts. Never addEventListener
@@ -77,15 +77,13 @@ async function readSaveFailure(res: Response, wanted: string): Promise<string | 
   // Confirm from the SERVER's merged config, not from the fact that the
   // request returned 200. The route sanitises before merging, so a value it
   // declined comes back as the old one — reporting "Saved ✓" off the status
-  // code alone would be a green light for a write that did not happen
-  // (memory `stubbed-writer-proves-nothing-about-disk`).
+  // code alone would be a green light for a write that did not happen.
   const persisted = body.config?.reviewUnit;
   if (persisted === undefined) {
     // Not `?? "commit"`. A response without `config` (an older daemon, a
     // proxy-rewritten body) would then be reported as the specific, invented
     // fact "server kept commit" while the write may well have landed — a
-    // guard inventing a fresh falsehood on the input it was not written for
-    // (memory `guard-becomes-the-new-distortion`).
+    // guard inventing a fresh falsehood on the input it was not written for.
     return "saved, but the server did not report the stored value";
   }
   if (persisted !== wanted) return `not saved — server kept ${String(persisted)}`;

@@ -26,8 +26,8 @@ Before anything else, offer ONE fork, in the user's language:
   `species: "slime"`, `language: <inferred>`, the chosen `name`, **no `dials`
   block**, `"statusline": true`, `"daemon": false`. That is the whole express path
   — one confirmation, then the §5 kernel run. After it succeeds, still close the
-  loop with §8's report-back — above all, tell them to **restart Claude Code** so
-  the pet's face appears in the statusline (§7's menu-bar offer is optional).
+  loop with §9's report-back — above all, tell them to **restart Claude Code** so
+  the pet's face appears in the statusline (§8's menu-bar offer is optional).
 - **Custom (自己捏)** — meet the pet properly: walk §1–§5 below as written.
 
 If they don't choose, or seem unsure, default to **Custom** (the richer, safer
@@ -254,7 +254,35 @@ pet. It deletes the answers file after a successful run, backs up
 `~/.claude/settings.json` itself before touching it, and asks nothing — no
 host picker, no editor question, no overwrite confirmation.
 
-## 6. If it fails
+## 6. If it works
+
+The kernel exits 0 and prints three lines to stdout. **Read them — they report
+what actually happened, not what you asked for**, so do not tell the user a
+statusline is installed unless the kernel said so. (The real output shows the
+user's absolute home path where `~` is written below.)
+
+```
+siltpoke: created "Mossbite" (slime) — ~/.siltpoke/config.json
+siltpoke: statusline installed — your pet shows up in Claude Code
+siltpoke: background daemon off (opt-in — open /siltpoke-dashboard to start it)
+```
+
+The second and third lines vary:
+
+- `statusline installed` — the shim is wired into `~/.claude/settings.json`.
+- `statusline NOT installed (see the warning above)` — the pet is fine, the
+  statusline is not. A warning on stderr says why. **Say this to the user**;
+  it is the one case where setup half-succeeded, and silently reporting
+  success would leave them staring at a statusline that never changes.
+- `statusline left off (you asked for it off)` — expected when `"statusline"`
+  was `false`.
+- `background daemon off (opt-in …)` — the normal case; §5 says to leave the
+  daemon `false`.
+
+If the kernel printed nothing at all, something is wrong with the install —
+treat it as a failure and run `/siltpoke-doctor`, do not assume success.
+
+## 7. If it fails
 
 The kernel exits non-zero and prints one line to stderr. Translate it; do not
 dump the raw trace:
@@ -284,7 +312,7 @@ dump the raw trace:
   write failed. Report the path verbatim and suggest checking permissions on
   `~/.siltpoke/` and `~/.claude/` (and disk space).
 
-## 7. Offer the menu-bar pet (macOS only)
+## 8. Offer the menu-bar pet (macOS only)
 
 Once the kernel run in §5 succeeded, offer ONE optional extra: the pet in the
 macOS menu bar (a separate surface from the statusline and the dashboard, via
@@ -296,7 +324,7 @@ platform, check with `uname -s` (`Darwin` = macOS); on anything else, skip
 this whole step silently — no mention, no command.
 
 Ask, in the user's language, whether they'd also like the pet in their menu
-bar. If they decline, move on to §8. If they say yes, run exactly this — one
+bar. If they decline, move on to §9. If they say yes, run exactly this — one
 fixed command, zero user data on the line:
 
 ```bash
@@ -320,7 +348,7 @@ the one line it prints; don't dump raw output:
 The menu bar is optional — a "no" here costs nothing, the pet already lives in
 the statusline and dashboard.
 
-## 8. Report back
+## 9. Report back
 
 Tell the user, in their chosen language:
 

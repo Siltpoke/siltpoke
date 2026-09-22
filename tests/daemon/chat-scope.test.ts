@@ -128,7 +128,7 @@ describe("chat send-path memory scope", () => {
 
   test("capture write is threaded with the SAME scope as the read (un-anchored → GLOBAL_ONLY)", async () => {
     const h = buildHarness({});
-    // An explicit  fires the capture write path.
+    // An explicit "记住 X" fires the capture write path.
     await post(h.app, { message: "记住 我喜欢中文" });
     expect(h.writeScopes.length).toBeGreaterThan(0);
     for (const s of h.writeScopes) expect(s).toBe(GLOBAL_ONLY);

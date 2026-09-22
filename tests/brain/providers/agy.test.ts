@@ -103,6 +103,7 @@ test("agy provider meta matches spec (quota billing, google gen_ai.system)", () 
     name: "agy",
     billing: "quota",
     genAiSystem: "google",
+    acceptsModel: true,
   });
 });
 
@@ -471,7 +472,7 @@ test("call(): merged prompt over AGY_PROMPT_MAX_BYTES rejects with BrainError co
     };
   }) as unknown as typeof Bun.spawn;
 
-  // Multi-byte UTF-8 filler (each  is 3 bytes) — asserts the gate checks
+  // Multi-byte UTF-8 filler (each "锅" is 3 bytes) — asserts the gate checks
   // Buffer.byteLength, not JS string .length (char count would under-count
   // and let an over-cap prompt slip through the gate).
   const filler = "锅".repeat(Math.ceil(AGY_PROMPT_MAX_BYTES / 3) + 10);

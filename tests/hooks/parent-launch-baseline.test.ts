@@ -12,7 +12,7 @@
 //
 // MEASURED (2026-09-01, siltpoke), session
 // `05fffe58-9e6a-413b-b962-54221fd361f1`:
-//   - SessionStart's cwd was `~/Projects/ai-agents/siltpoke` — the multi-repo
+//   - SessionStart's cwd was `~/Projects/workspace/siltpoke` — the multi-repo
 //     parent, four repos under it, itself NOT a git repo (its own CLAUDE.md
 //     says so). Evidence: that is where the per-session record landed, and it
 //     carries `head_sha: null` because `git rev-parse HEAD` fails there. Three
@@ -62,7 +62,7 @@ function commit(dir: string, file: string, body: string): string {
   return spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).stdout.trim();
 }
 
-/** A non-git parent holding one git child — the shape of `ai-agents/siltpoke/`. */
+/** A non-git parent holding one git child — the shape of `workspace/siltpoke/`. */
 function workspace(): { parent: string; child: string; sha: string } {
   const parent = mkdtempSync(join(tmpdir(), "sp-parent-launch-"));
   const child = join(parent, "child-repo");
@@ -188,6 +188,7 @@ function brainOutput(overrides?: Partial<BrainOutput>): BrainOutput {
     severity: "medium",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [],
     ...overrides,
   };
@@ -255,6 +256,7 @@ describe("the Stop hook enqueues a usable baseline in the parent-launch shape", 
         output: brainOutput({
           mood: "annoyed",
           severity: "medium",
+          findings: [],
           evidence: [{ tool: "tsc", file: "x.ts", line: 3, snippet: SNIPPET }],
         }),
         usage: noopUsage,

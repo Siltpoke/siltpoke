@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // These guard the two manifests that `/plugin install` VALIDATES — a check the
@@ -27,11 +27,32 @@ describe("marketplace.json is a valid marketplace catalog", () => {
     expect((marketplace.plugins as unknown[]).length).toBeGreaterThan(0);
   });
 
-  test("every plugin entry has a name and a ./-relative source", () => {
-    for (const p of marketplace.plugins as Array<{ name?: unknown; source?: unknown }>) {
+  test("every plugin entry has a name and a source this tree supports", () => {
+    // TWO legal shapes, because this suite runs in BOTH trees. The private
+    // repo keeps `"./"` — the maintainer's dev install is a directory
+    // marketplace reading this very file. The public snapshot is rewritten by
+    // pin-marketplace-ref.py to a github source pinned to the release tag, so
+    // `/plugin install` lands on the tag instead of main's HEAD (audit [5e]).
+    // A `./`-only assertion failed the snapshot's own suite and aborted the
+    // export — found by running it, 2026-09-22.
+    for (const p of marketplace.plugins as Array<{
+      name?: unknown;
+      source?: unknown;
+      version?: unknown;
+    }>) {
       expect(typeof p.name).toBe("string");
-      expect(typeof p.source).toBe("string");
-      expect(p.source as string).toMatch(/^\.\//);
+      if (typeof p.source === "string") {
+        expect(p.source).toMatch(/^\.\//);
+        continue;
+      }
+      // The pinned shape, asserted field by field: a github source whose ref
+      // is THIS entry's version. A ref that stops tracking the version is the
+      // failure that matters — it freezes every new user on an old release
+      // with nothing reporting it.
+      const src = p.source as { source?: unknown; repo?: unknown; ref?: unknown };
+      expect(src.source).toBe("github");
+      expect(src.repo).toBe("Siltpoke/siltpoke");
+      expect(src.ref).toBe(`v${p.version as string}`);
     }
   });
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * Slice ① of critic disk-awareness: a REVERSE_DEPS soft-context section.
+ * Critic disk-awareness: a REVERSE_DEPS soft-context section.
  *
  * Wraps Task 1's `importersOf` substrate into a formatted section (for the
  * Brain prompt) plus a bare-canonical-path token list (for the evidence-guard

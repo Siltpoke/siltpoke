@@ -115,9 +115,14 @@ describe("doctor — check 2: Stop hook registered", () => {
     const r = hookCheck();
     expect(r.pass).toBe(true);
     expect(r.status).toBe("info");
+    // Wording moved to "<fact>. <advice>." so one imperative phrase
+    // (setupAdviceFor) can serve every host without reading as a run-on; the
+    // substance the row must carry — info status, and the command THIS host
+    // actually has — is what the two assertions above and below check.
     expect(r.detail).toBe(
-      "legacy http Stop hook shape detected — run `/siltpoke-setup` to migrate to the silent curl fast path",
+      "legacy http Stop hook shape detected. Run `/siltpoke-setup` to migrate to the silent curl fast path.",
     );
+    expect(r.detail).toContain("/siltpoke-setup");
   });
 
   test("fails when hooks.Stop is missing", () => {
@@ -341,10 +346,29 @@ describe("doctor — check 5: global.json schema v3", () => {
     expect(globalCheck().pass).toBe(true);
   });
 
-  test("fails when global.json is missing", () => {
+  // Audit defect [2]. This test used to assert `pass === false` for an absent
+  // file — it pinned the defect as a contract. `/siltpoke-setup` never writes
+  // global.json (src/cli/install.ts has zero references to it); it appears the
+  // first time a review awards XP. So on a fresh install this row was the sole
+  // ✗ in "1 of 18 checks failed", and the first thing a new user saw was a
+  // broken-looking install that was in fact healthy.
+  test("passes as info when global.json is absent (written on first review)", () => {
+    const r = globalCheck();
+    expect(r.pass).toBe(true);
+    expect(r.status).toBe("info");
+    expect(r.detail).toContain("absent");
+    // The row must still say WHY, or an absent-OK branch is indistinguishable
+    // from a check that silently stopped looking.
+    expect(r.detail).toContain("first time a review awards XP");
+  });
+
+  test("still fails when global.json is present but corrupt", () => {
+    // Absent-OK must not become "any read failure is OK" — a file that exists
+    // and cannot be parsed is a real fault and stays a hard ✗.
+    writeFileSync(join(env.siltpokeHome, "global.json"), "{ not json");
     const r = globalCheck();
     expect(r.pass).toBe(false);
-    expect(r.detail).toContain("does not exist");
+    expect(r.detail).toContain("not valid JSON");
   });
 
   test("fails when global.json schemaVersion is wrong", () => {

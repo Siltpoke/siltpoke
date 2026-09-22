@@ -25,6 +25,7 @@ import { readMemory } from "../memory/memory";
 import { readRecent, resolveRecentPath } from "../memory/recent";
 import { getProjectCapabilities } from "../critic/capabilities";
 import { runCritic, type RunCriticDeps, type BrainContext } from "../critic/run-critic";
+import { emptyCritiqueNote } from "../state/critique";
 import { loadBudgetConfig, evaluateBudget } from "../state/budget-config";
 import { loadDailyRollup } from "../state/usage";
 import { runGitDiff } from "../critic/tools/run-git-diff";
@@ -316,11 +317,18 @@ export async function runReview(opts: ReviewOpts = {}): Promise<ReviewResult> {
         out(critique.bubble_long);
       }
 
-      // critique_for_claude (if non-null / non-empty)
+      // critique_for_claude — printed when there is one, and SAID when there is
+      // not. Skipping the section silently is the same ambiguity defect [15]
+      // fixed on the markdown side: the reader cannot tell "no concerns" from
+      // "the reviewer died". `emptyCritiqueNote` holds the one wording, and
+      // distinguishes the clean case (info) from the malfunction (low-or-worse
+      // with nothing written).
+      out("");
       if (critique.critique_for_claude && critique.critique_for_claude.trim().length > 0) {
-        out("");
         out("for Claude:");
         out(critique.critique_for_claude);
+      } else {
+        out(emptyCritiqueNote(critique.severity));
       }
 
       // evidence list

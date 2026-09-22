@@ -38,7 +38,8 @@
  *
  * - The wiring cases originally fetched `/static/index.js` behind an
  *   `if (res.status === 503) return;`. That reads as a graceful degrade and
- *   is anything but: `public/static/` is gitignored, `ensureClientBundle()`
+ *   is anything but: `public/static/`'s contents are ignored apart from the two
+ *   committed runtime assets, `ensureClientBundle()`
  *   is skipped for `port: 0` daemons (every daemon this suite boots), and no
  *   CI step builds the bundle — so in CI, and only in CI, the route 503s
  *   deterministically and both tests returned before asserting anything.
@@ -122,7 +123,8 @@ describe("response compression — real daemon wiring", () => {
     // NO early return on 503, and the target is `tokens.css` rather than the
     // client bundle, for one reason found in review: `/static/index.js` 503s
     // deterministically in CI, which made the original version of this test
-    // silently assert NOTHING there. `public/static/` is gitignored,
+    // silently assert NOTHING there. `public/static/`'s contents are ignored apart
+  // from the two committed runtime assets,
     // `ensureClientBundle()` is skipped for `port: 0` daemons
     // (`src/daemon/server.ts`) — which is every daemon this suite boots — and
     // no CI step builds it. So a `if (res.status === 503) return;` guard was

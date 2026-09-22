@@ -16,8 +16,8 @@
  * evidence-guard rejection). Nothing read either — `m112_accepted` was even
  * declared in the raw row type and then never mapped onto `CriticCall`. So the
  * surface built to explain an absence was printing a wrong explanation it had
- * the data to get right. That is the "signal decoupled from reality" shape in
- * `docs/lessons.md` L3, in its "lying" family.
+ * the data to get right. That is the "signal decoupled from reality" shape,
+ * in its "lying" family.
  *
  * Measured distribution over the 400 most recent fired reviews of a real store
  * (`scripts/probes/critic-audit-coverage-probe.ts` section [4], snapshot

@@ -39,15 +39,15 @@ describe("isCode — everything the walker's language table covers", () => {
 });
 
 describe("isCode — what the walker's table would have missed (R3)", () => {
-  // Every one of these is a real tracked path shape in this repo, and every one
-  // of them is `not code` under the literal D7 rule (SOURCE_EXT_TO_LANG is
+  // Every one of these is a path shape a project like this really tracks, and
+  // every one is `not code` under the literal D7 rule (SOURCE_EXT_TO_LANG is
   // ts|tsx|js|jsx|py and nothing else). A turn that touches only one of them is
   // a real change to how the project builds, ships, or gates itself.
   test.each([
     ".github/workflows/ci.yml",
-    "docs/tracks.yaml",
-    "scripts/close-gate.sh",
-    ".claude/close-gate.json",
+    ".github/workflows/release.yml",
+    "install/bootstrap.sh",
+    "knip.json",
     ".claude-plugin/plugin.json",
     ".dependency-cruiser.cjs",
     "src/web/styles.css",

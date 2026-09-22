@@ -85,10 +85,39 @@ const REAL_CRITIQUES = join(process.cwd(), ".siltpoke", "critiques");
 const REAL_ARCHIVE = join(REAL_CRITIQUES, "archive");
 const REAL_HISTORY = join(REAL_CRITIQUES, "history.jsonl");
 const REAL_LATEST = join(REAL_CRITIQUES, "latest.md");
+// The fifth path. state.json backs the statusline pet and its speech bubble,
+// and the critic writes it unconditionally into event.cwd's .siltpoke/ — so
+// with cwd pinned to the real repo below, a run leaves the developer looking at
+// this suite's placeholder bubble ("ok") until the next real review overwrites
+// it. Four paths were saved and restored here; this one was not on the list,
+// and it is the only one the human actually sees on every terminal line.
+const REAL_STATE = join(process.cwd(), ".siltpoke", "state.json");
+// The sixth. `handle-stop.ts:1547/:2026` append to `<stateBase>/pending-critiques.jsonl`,
+// which the real distil-worker and case1-capture pipeline later consume. It does
+// NOT fire on today's run — the guard is `evidence.length > 0` and the default
+// fake brain output carries `evidence: []` — but four tests in THIS file already
+// override evidence with a non-empty array, so it is one ordinary edit from
+// leaking a permanent line into the developer's queue. Covered now rather than
+// after, because "the list was incomplete" is the whole reason this file is
+// being edited. Raised by review; verified before adding (the real queue is 0
+// lines today, so nothing here is retroactive cleanup).
+const REAL_PENDING = join(process.cwd(), ".siltpoke", "pending-critiques.jsonl");
 const FAKE_HISTORY_MARK = '"session_id":"sess-v3"';
 
 function isFakeCritique(text: string): boolean {
   return /^session_id:\s*sess-v3\s*$/m.test(text) && text.includes("\nsomething actionable\n");
+}
+
+/** True iff the state.json sitting in the real repo is the one this suite wrote. */
+function stateIsFake(): boolean {
+  if (!existsSync(REAL_STATE)) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(REAL_STATE, "utf8")) as { last_session_id?: unknown };
+    return parsed.last_session_id === "sess-v3";
+  } catch {
+    // Unparseable is not ours to judge — leave it alone rather than delete it.
+    return false;
+  }
 }
 
 /** Absolute paths of fake critique files currently sitting in the real archive. */
@@ -118,6 +147,14 @@ function fakeHistoryLineCount(): number {
     .filter((l) => l.includes(FAKE_HISTORY_MARK)).length;
 }
 
+/** Lines in the real pending-critiques queue that this suite appended. */
+function fakePendingLineCount(): number {
+  if (!existsSync(REAL_PENDING)) return 0;
+  return readFileSync(REAL_PENDING, "utf8")
+    .split("\n")
+    .filter((l) => l.includes(FAKE_HISTORY_MARK)).length;
+}
+
 function latestIsFake(): boolean {
   return existsSync(REAL_LATEST) && isFakeCritique(readFileSync(REAL_LATEST, "utf8"));
 }
@@ -127,7 +164,15 @@ afterAll(() => {
     archiveFiles: fakeArchiveFiles().map((f) => f.slice(REAL_ARCHIVE.length + 1)),
     historyLines: fakeHistoryLineCount(),
     latestIsFake: latestIsFake(),
-  }).toEqual({ archiveFiles: [], historyLines: 0, latestIsFake: false });
+    stateIsFake: stateIsFake(),
+    pendingLines: fakePendingLineCount(),
+  }).toEqual({
+    archiveFiles: [],
+    historyLines: 0,
+    latestIsFake: false,
+    stateIsFake: false,
+    pendingLines: 0,
+  });
 });
 
 
@@ -189,6 +234,7 @@ function makeFakeBrainOutput(overrides?: Partial<BrainOutput>): BrainOutput {
     severity: "medium",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [],
     ...overrides,
   };
@@ -424,6 +470,7 @@ describe("handleStopHook — tool-augmented path (flag ON)", () => {
           bubble_short: "Type error found",
           severity: "medium",
           confidence: "high",
+          findings: [],
           evidence: [
             {
               tool: "tsc",
@@ -479,6 +526,7 @@ describe("handleStopHook — tool-augmented path (flag ON)", () => {
       runToolsFn: async () => makeWithTscError("real snippet here in raw output"),
       callBrainFn: async (): Promise<BrainCallResult> => ({
         output: makeFakeBrainOutput({
+          findings: [],
           evidence: [
             {
               tool: "tsc",
@@ -569,6 +617,7 @@ describe("handleStopHook — tool-augmented path (flag ON)", () => {
           mood: "annoyed",
           severity: "medium",
           confidence: "high",
+          findings: [],
           evidence: [{ tool: "tsc", file: "src/dummy.ts", line: 5, snippet: REAL_SNIPPET }],
         }),
         usage: USAGE,
@@ -623,6 +672,7 @@ describe("handleStopHook — provider truth on ledger rows (track #7 T3)", () =>
     name: "codex",
     billing: "quota",
     genAiSystem: "openai",
+    acceptsModel: false,
   };
   const CODEX_USAGE = {
     cache_creation_input_tokens: 0,
@@ -761,6 +811,7 @@ describe("handleStopHook — provider truth on ledger rows (track #7 T3)", () =>
       }),
       callBrainFn: async () => ({
         output: makeFakeBrainOutput({
+          findings: [],
           evidence: [{ tool: "tsc", file: "src/dummy.ts", line: 5, snippet: REAL_SNIPPET }],
         }),
         usage: CODEX_USAGE,
@@ -1683,6 +1734,13 @@ describe("handleStopHook — V3 store memory read", () => {
       ? readFileSync(REAL_LATEST, "utf8")
       : null;
 
+    // Same shape, fifth path: save only a REAL state.json, so a fake left by an
+    // earlier run is never re-established, and a bubble the live daemon writes
+    // mid-run is never clobbered.
+    const savedState = existsSync(REAL_STATE) && !stateIsFake()
+      ? readFileSync(REAL_STATE, "utf8")
+      : null;
+
     // Same reason as the anchor restore above, one path over: with event.cwd
     // pinned to the real repo, the critic files its critique in THIS
     // checkout's archive. Left in place, each run added a file that the
@@ -1719,6 +1777,20 @@ describe("handleStopHook — V3 store memory read", () => {
       if (latestIsFake()) {
         if (savedLatest !== null) writeFileSync(REAL_LATEST, savedLatest);
         else rmSync(REAL_LATEST, { force: true });
+      }
+
+      if (stateIsFake()) {
+        if (savedState !== null) writeFileSync(REAL_STATE, savedState);
+        else rmSync(REAL_STATE, { force: true });
+      }
+
+      // Append-only like history.jsonl, so filter rather than restore: drop our
+      // lines, keep every line the live daemon may have appended meanwhile.
+      if (existsSync(REAL_PENDING)) {
+        const kept = readFileSync(REAL_PENDING, "utf8")
+          .split("\n")
+          .filter((l) => !l.includes(FAKE_HISTORY_MARK));
+        writeFileSync(REAL_PENDING, kept.join("\n"));
       }
     }
     expect(captured).toContain("SEEDED_FACT_ABC");

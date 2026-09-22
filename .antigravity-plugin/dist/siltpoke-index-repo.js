@@ -15039,17 +15039,17 @@ var init_schema_v3 = __esm(() => {
 
 // src/memory/project.ts
 import { writeFile, rename as rename2, readFile, mkdir, readdir } from "fs/promises";
-import { existsSync as existsSync2, readFileSync as readFileSync2, statSync } from "fs";
+import { existsSync, readFileSync, statSync } from "fs";
 import { dirname as dirname2, join as join2, basename } from "path";
-import { createHash as createHash3, randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 function hashId(input) {
-  return createHash3("sha256").update(input).digest("hex").slice(0, 16);
+  return createHash("sha256").update(input).digest("hex").slice(0, 16);
 }
 function tryReadMarker(path) {
-  if (!existsSync2(path))
+  if (!existsSync(path))
     return null;
   try {
-    const raw = readFileSync2(path, "utf8");
+    const raw = readFileSync(path, "utf8");
     const parsed = JSON.parse(raw);
     const result = markerSchema.safeParse(parsed);
     return result.success ? result.data : null;
@@ -15135,7 +15135,7 @@ function projectPath(home, projectId) {
 }
 async function readProject(home, projectId) {
   const path = projectPath(home, projectId);
-  if (!existsSync2(path))
+  if (!existsSync(path))
     return null;
   let parsed;
   try {
@@ -15180,6 +15180,10 @@ var init_project = __esm(() => {
   init_quarantine();
   init_schema_v3();
 });
+
+// src/cli/index-repo.ts
+import { realpathSync, statSync as statSync2 } from "fs";
+import { resolve as resolve2 } from "path";
 
 // src/repo-graph/builder.ts
 import { existsSync as existsSync5 } from "fs";
@@ -18507,8 +18511,11 @@ async function parseSource(source, lang, env = process.env, moduleDir = dirname(
   }
 }
 
+// src/repo-graph/builder.ts
+init_project();
+
 // src/repo-graph/anchor-discovery.ts
-import { existsSync, readFileSync } from "fs";
+import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
 import { posix } from "path";
 function candidateRoots(imp, filePaths, index) {
   const rel = imp.target.replace(/\./g, "/");
@@ -18606,6 +18613,43 @@ function configFilesOnDisk(repoRoot) {
   }
   return out2;
 }
+function rebaseToRoot(root, target) {
+  const rel = posix.relative(root, posix.join(root, target));
+  return rel === "" ? "" : `${rel}/`;
+}
+function normalizeDir(p) {
+  const n = posix.normalize(p);
+  return n.length > 1 && n.endsWith("/") ? n.slice(0, -1) : n;
+}
+function parentConfigRules(root, ceiling) {
+  const normRoot = normalizeDir(root);
+  const normCeiling = normalizeDir(ceiling);
+  if (!normRoot.startsWith(`${normCeiling}/`))
+    return [];
+  let dir = posix.dirname(normRoot);
+  for (;; ) {
+    for (const name2 of ["tsconfig.json", "jsconfig.json"]) {
+      const abs = `${dir}/${name2}`;
+      if (!existsSync2(abs))
+        continue;
+      const parsed = parseJsonc(readFileSync2(abs, "utf8"));
+      if (!parsed)
+        continue;
+      const scopeFromRoot = `${posix.relative(normRoot, dir)}/`;
+      return tsAliasRulesFromConfig(scopeFromRoot, parsed).map((rule) => ({
+        scopeDir: "",
+        prefix: rule.prefix,
+        targets: rule.targets.map((t) => rebaseToRoot(normRoot, t))
+      }));
+    }
+    if (dir === normCeiling)
+      return [];
+    const parent = posix.dirname(dir);
+    if (parent === dir || parent.length < normCeiling.length)
+      return [];
+    dir = parent;
+  }
+}
 function pythonImports(graph) {
   const out2 = [];
   for (const e of graph.edges) {
@@ -18621,26 +18665,31 @@ function pythonImports(graph) {
   }
   return out2;
 }
-function discoverAnchorMap(repoRoot, graph) {
+function discoverAnchorMap(repoRoot, graph, opts = {}) {
   const filePaths = graph.nodes.filter((n) => n.type === "file").map((n) => n.path);
   const tsAliases = [];
-  for (const cfgRel of configFilesOnDisk(repoRoot)) {
+  const configs = configFilesOnDisk(repoRoot);
+  for (const cfgRel of configs) {
     const abs = `${repoRoot}/${cfgRel}`;
-    if (!existsSync(abs))
+    if (!existsSync2(abs))
       continue;
-    const parsed = parseJsonc(readFileSync(abs, "utf8"));
+    const parsed = parseJsonc(readFileSync2(abs, "utf8"));
     if (!parsed)
       continue;
     const slash = cfgRel.lastIndexOf("/");
     const scopeDir = slash >= 0 ? cfgRel.slice(0, slash + 1) : "";
     tsAliases.push(...tsAliasRulesFromConfig(scopeDir, parsed));
   }
+  const hasOwnRootConfig = configs.some((rel) => !rel.includes("/"));
+  if (!hasOwnRootConfig && opts.ceiling !== undefined) {
+    tsAliases.push(...parentConfigRules(repoRoot, opts.ceiling));
+  }
   const pythonRoots = discoverPythonRoots(filePaths, pythonImports(graph));
   return { tsAliases, pythonRoots };
 }
 
 // src/repo-graph/ast-signature.ts
-import { createHash } from "crypto";
+import { createHash as createHash2 } from "crypto";
 var AST_SIG_VERSION = 1;
 function walkStats(root) {
   let maxDepth = 0;
@@ -18666,8 +18715,8 @@ function computeAstSignature(tree) {
   for (const key of Object.keys(stats.histogram).sort()) {
     sortedHistogram[key] = stats.histogram[key];
   }
-  const json = JSON.stringify({ maxDepth: stats.maxDepth, histogram: sortedHistogram });
-  return createHash("sha256").update(json).digest("hex").slice(0, 8);
+  const json2 = JSON.stringify({ maxDepth: stats.maxDepth, histogram: sortedHistogram });
+  return createHash2("sha256").update(json2).digest("hex").slice(0, 8);
 }
 
 // src/repo-graph/call-resolver.ts
@@ -18825,8 +18874,8 @@ function getLeadingDoc(node) {
   const txt = prev.text;
   if (!txt.startsWith("/**"))
     return;
-  const doc = parseFirstDocComment(txt);
-  return doc === "" ? undefined : doc;
+  const doc2 = parseFirstDocComment(txt);
+  return doc2 === "" ? undefined : doc2;
 }
 function classifyCallee(callExpr, lang) {
   const callee = callExpr.childForFieldName("function");
@@ -18855,7 +18904,7 @@ function collectCalls(root, ctx, fileNodeId) {
   const fnSet = functionTypes(ctx.lang);
   const callSet = callTypes(ctx.lang);
   const agg = new Map;
-  function record(source, name2, kind) {
+  function record2(source, name2, kind) {
     const key = `${source}\x00${name2}\x00${kind}`;
     const existing = agg.get(key);
     if (existing) {
@@ -18874,7 +18923,7 @@ function collectCalls(root, ctx, fileNodeId) {
     }
     if (callSet.has(node.type)) {
       const { name: name2, kind } = classifyCallee(node, ctx.lang);
-      record(enclosing, name2, kind);
+      record2(enclosing, name2, kind);
     }
     for (let i2 = 0;i2 < node.namedChildCount; i2++) {
       const child = node.namedChild(i2);
@@ -18958,7 +19007,7 @@ function extractFile(tree, ctx) {
       const id = nodeId("function", ctx.relPath, name2);
       const sig = getSignature(node, ctx.lang);
       const exported = isExported(node);
-      const doc = getLeadingDoc(node);
+      const doc2 = getLeadingDoc(node);
       nodes.push({
         id,
         type: "function",
@@ -18967,7 +19016,7 @@ function extractFile(tree, ctx) {
         lineRange: lineRange(node),
         signature: sig,
         exported,
-        ...doc !== undefined ? { doc } : {}
+        ...doc2 !== undefined ? { doc: doc2 } : {}
       });
       edges.push({
         id: edgeId(fileNodeId, "contains", id),
@@ -18982,7 +19031,7 @@ function extractFile(tree, ctx) {
       const name2 = getName(node);
       const id = nodeId("class", ctx.relPath, name2);
       const exported = isExported(node);
-      const doc = getLeadingDoc(node);
+      const doc2 = getLeadingDoc(node);
       nodes.push({
         id,
         type: "class",
@@ -18990,7 +19039,7 @@ function extractFile(tree, ctx) {
         path: ctx.relPath,
         lineRange: lineRange(node),
         exported,
-        ...doc !== undefined ? { doc } : {}
+        ...doc2 !== undefined ? { doc: doc2 } : {}
       });
       edges.push({
         id: edgeId(fileNodeId, "contains", id),
@@ -19029,12 +19078,184 @@ function extractFile(tree, ctx) {
 }
 
 // src/repo-graph/fingerprint.ts
-import { createHash as createHash2 } from "crypto";
+import { createHash as createHash3 } from "crypto";
 function computeContentSha(content) {
-  return createHash2("sha256").update(content).digest("hex");
+  return createHash3("sha256").update(content).digest("hex");
 }
 function fingerprintMatches(a, b) {
   return a.content_sha256 === b.content_sha256 && a.ast_sig === b.ast_sig;
+}
+
+// src/repo-graph/outside-imports.ts
+import { posix as posix3 } from "path";
+
+// src/repo-graph/import-resolver.ts
+import { posix as posix2 } from "path";
+var TS_EXTS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
+var TS_INDEX = TS_EXTS.map((e) => `index${e}`);
+var PY_EXTS = [".py"];
+var PY_PKG = ["__init__.py"];
+function buildFileIndex(graph) {
+  const idx = new Set;
+  for (const n of graph.nodes)
+    if (n.type === "file")
+      idx.add(n.path);
+  return idx;
+}
+function isPython(sourceFilePath) {
+  return sourceFilePath.endsWith(".py");
+}
+function guess(base, exts, pkgFiles, idx) {
+  const stems = [base];
+  const ext = /\.(js|jsx|mjs|cjs|ts|tsx)$/.exec(base);
+  if (ext)
+    stems.push(base.slice(0, -ext[0].length));
+  for (const stem of stems) {
+    let clean = posix2.normalize(stem);
+    if (clean === ".")
+      clean = "";
+    if (clean) {
+      if (idx.has(clean))
+        return clean;
+      for (const e of exts)
+        if (idx.has(clean + e))
+          return clean + e;
+    }
+    for (const pkg of pkgFiles) {
+      const cand = clean ? posix2.join(clean, pkg) : pkg;
+      if (idx.has(cand))
+        return cand;
+    }
+  }
+  return null;
+}
+function resolveImportTarget(sourceFilePath, rawTarget, idx, anchorMap) {
+  const tier123 = resolveTier123(sourceFilePath, rawTarget, idx);
+  if (tier123)
+    return tier123;
+  if (!anchorMap)
+    return null;
+  return resolveTier4(sourceFilePath, rawTarget, idx, anchorMap);
+}
+function resolveTier123(sourceFilePath, rawTarget, idx) {
+  if (!rawTarget)
+    return null;
+  const py = isPython(sourceFilePath);
+  const exts = py ? PY_EXTS : TS_EXTS;
+  const indexish = py ? PY_PKG : TS_INDEX;
+  const sourceDir = posix2.dirname(sourceFilePath);
+  if (!py && (rawTarget.startsWith("./") || rawTarget.startsWith("../"))) {
+    return guess(posix2.join(sourceDir, rawTarget), exts, indexish, idx);
+  }
+  if (py && rawTarget.startsWith(".")) {
+    const dots = rawTarget.length - rawTarget.replace(/^\.+/, "").length;
+    const rest = rawTarget.slice(dots).replace(/\./g, "/");
+    let dir = sourceDir;
+    for (let i2 = 1;i2 < dots; i2++)
+      dir = posix2.dirname(dir);
+    return guess(rest ? posix2.join(dir, rest) : dir, exts, indexish, idx);
+  }
+  if (py && rawTarget.includes(".")) {
+    const base = rawTarget.replace(/\./g, "/");
+    const hit = guess(base, exts, indexish, idx);
+    if (hit)
+      return hit;
+    const parent = base.slice(0, base.lastIndexOf("/"));
+    return parent ? guess(parent, exts, indexish, idx) : null;
+  }
+  return null;
+}
+function resolveTier4(sourceFilePath, rawTarget, idx, anchorMap) {
+  if (isPython(sourceFilePath)) {
+    return resolvePythonRoots(rawTarget, idx, anchorMap.pythonRoots);
+  }
+  if (rawTarget.startsWith("./") || rawTarget.startsWith("../"))
+    return null;
+  return resolveTsAlias(sourceFilePath, rawTarget, idx, anchorMap.tsAliases);
+}
+function resolvePythonRoots(rawTarget, idx, roots) {
+  if (rawTarget.startsWith(".") || !rawTarget.includes("."))
+    return null;
+  const rel = rawTarget.replace(/\./g, "/");
+  const hits = new Set;
+  for (const root of roots) {
+    const r = guess(`${root}${rel}`, PY_EXTS, PY_PKG, idx);
+    if (r)
+      hits.add(r);
+  }
+  const [only] = [...hits];
+  return hits.size === 1 && only !== undefined ? only : null;
+}
+function aliasRuleHits(rule, rawTarget, idx) {
+  const rest = rule.prefix ? rawTarget.slice(rule.prefix.length) : rawTarget;
+  const hits = new Set;
+  for (const t of rule.targets) {
+    const r = guess(`${t}${rest}`, TS_EXTS, TS_INDEX, idx);
+    if (r)
+      hits.add(r);
+  }
+  return hits;
+}
+function matchingAliasRules(sourceFilePath, rawTarget, aliases) {
+  const scoped = aliases.filter((a) => sourceFilePath.startsWith(a.scopeDir)).sort((x, y) => y.scopeDir.length - x.scopeDir.length);
+  const topScope = scoped[0]?.scopeDir;
+  if (topScope === undefined)
+    return [];
+  return scoped.filter((a) => a.scopeDir === topScope).filter((a) => a.prefix === "" || rawTarget.startsWith(a.prefix)).sort((x, y) => y.prefix.length - x.prefix.length);
+}
+function resolveTsAlias(sourceFilePath, rawTarget, idx, aliases) {
+  for (const rule of matchingAliasRules(sourceFilePath, rawTarget, aliases)) {
+    const hits = aliasRuleHits(rule, rawTarget, idx);
+    if (hits.size === 0)
+      continue;
+    const [only] = [...hits];
+    return hits.size === 1 && only !== undefined ? only : null;
+  }
+  return null;
+}
+
+// src/repo-graph/outside-imports.ts
+var OUTSIDE_EXAMPLES_MAX = 5;
+var climbsAboveRoot = (rootRelative) => rootRelative === ".." || rootRelative.startsWith("../");
+function isOutsideImport(sourcePath, rawTarget, anchorMap) {
+  if (!rawTarget)
+    return false;
+  const sourceDir = posix3.dirname(sourcePath);
+  if (sourcePath.endsWith(".py")) {
+    if (!rawTarget.startsWith("."))
+      return false;
+    const dots = rawTarget.length - rawTarget.replace(/^\.+/, "").length;
+    const depth = sourceDir === "." ? 0 : sourceDir.split("/").length;
+    return dots - 1 > depth;
+  }
+  if (rawTarget.startsWith("./") || rawTarget.startsWith("../")) {
+    return climbsAboveRoot(posix3.join(sourceDir, rawTarget));
+  }
+  if (!anchorMap)
+    return false;
+  const [rule] = matchingAliasRules(sourcePath, rawTarget, anchorMap.tsAliases).filter((r) => r.prefix !== "");
+  return rule !== undefined && rule.targets.length > 0 && rule.targets.every(climbsAboveRoot);
+}
+function computeOutsideImports(graph, anchorMap) {
+  const idx = buildFileIndex(graph);
+  const pathById = new Map(graph.nodes.filter((n) => n.type === "file").map((n) => [n.id, n.path]));
+  let count = 0;
+  const examples = [];
+  for (const edge of graph.edges) {
+    if (edge.type !== "imports")
+      continue;
+    const source = pathById.get(edge.source);
+    if (source === undefined)
+      continue;
+    if (resolveImportTarget(source, edge.target, idx, anchorMap) !== null)
+      continue;
+    if (!isOutsideImport(source, edge.target, anchorMap))
+      continue;
+    count += 1;
+    if (examples.length < OUTSIDE_EXAMPLES_MAX)
+      examples.push(`${source} \u2192 ${edge.target}`);
+  }
+  return { count, examples };
 }
 
 // src/repo-graph/proj-hash.ts
@@ -19067,12 +19288,13 @@ var PROJ_HASH_LEN = 12;
 function computeProjHash(projectRoot) {
   return createHash4("sha256").update(projectRoot).digest("hex").slice(0, PROJ_HASH_LEN);
 }
-function resolveRepoGraphLocation(cwd, opts = {}) {
-  const { project_root } = resolveProjectRoot(cwd);
-  const proj_hash = computeProjHash(project_root);
+function repoGraphLocationForRoot(projectRoot, opts = {}) {
+  const proj_hash = computeProjHash(projectRoot);
   const home = opts.home ?? siltpokeRoot();
-  const storage_dir = join4(home, "repo-memory", proj_hash);
-  return { project_root, proj_hash, storage_dir };
+  return { project_root: projectRoot, proj_hash, storage_dir: join4(home, "repo-memory", proj_hash) };
+}
+function resolveRepoGraphLocation(cwd, opts = {}) {
+  return repoGraphLocationForRoot(resolveProjectRoot(cwd).project_root, opts);
 }
 
 // src/repo-graph/seen-seed.ts
@@ -19469,7 +19691,7 @@ async function markBuildStart(storage_dir, project_root, proj_hash) {
 async function runIndexBuild(opts) {
   const now = opts.now ?? (() => new Date);
   const start2 = performance.now();
-  const location = resolveRepoGraphLocation(opts.cwd, { home: opts.home });
+  const location = opts.root !== undefined ? repoGraphLocationForRoot(opts.root, { home: opts.home }) : resolveRepoGraphLocation(opts.cwd, { home: opts.home });
   const { project_root, proj_hash, storage_dir } = location;
   const preexisted = existsSync5(storage_dir);
   await markBuildStart(storage_dir, project_root, proj_hash);
@@ -19492,6 +19714,12 @@ async function cleanupFailedBuild(storage_dir, preexisted) {
     if (meta3)
       await writeMeta(storage_dir, { ...meta3, building: false });
   } catch {}
+}
+function enclosingRepoRoot(project_root) {
+  const enclosing = resolveProjectRoot(project_root);
+  if (enclosing.source === "fallback" || enclosing.project_root === project_root)
+    return;
+  return enclosing.project_root;
 }
 async function buildInner(opts, location, now, start2) {
   const { project_root, proj_hash, storage_dir } = location;
@@ -19558,7 +19786,9 @@ async function buildInner(opts, location, now, start2) {
   await writeGraph(storage_dir, newGraph);
   await writeQueryIndex(storage_dir, queryIndex);
   await writeFingerprints(storage_dir, newFingerprints);
-  const anchorMap = discoverAnchorMap(project_root, newGraph);
+  const repo_root = enclosingRepoRoot(project_root);
+  const anchorMap = discoverAnchorMap(project_root, newGraph, repo_root !== undefined ? { ceiling: repo_root } : {});
+  const imports_outside_root = computeOutsideImports(newGraph, anchorMap);
   const duration_ms = performance.now() - start2;
   const meta3 = {
     schemaVersion: 1,
@@ -19569,7 +19799,9 @@ async function buildInner(opts, location, now, start2) {
     counters,
     coverage,
     building: false,
-    anchorMap
+    anchorMap,
+    imports_outside_root,
+    ...repo_root !== undefined ? { repo_root } : {}
   };
   await writeMeta(storage_dir, meta3);
   return {
@@ -19584,10 +19816,13 @@ async function buildInner(opts, location, now, start2) {
 // src/cli/index-repo.ts
 init_project();
 function parseArgs(argv) {
+  const at = argv.indexOf("--root");
+  const value = at >= 0 ? argv[at + 1] : undefined;
   return {
     force: argv.includes("--force"),
     json: argv.includes("--json"),
-    progress: argv.includes("--progress")
+    progress: argv.includes("--progress"),
+    root: value !== undefined && value.length > 0 && !value.startsWith("--") ? value : null
   };
 }
 function formatHuman(result) {
@@ -19618,8 +19853,27 @@ function formatJson(result) {
 }
 if (import.meta.main) {
   const opts = parseArgs(process.argv.slice(2));
+  if (process.argv.includes("--root") && opts.root === null) {
+    process.stderr.write(`siltpoke-index: --root needs a directory
+`);
+    process.exit(2);
+  }
+  let resolvedRoot = null;
+  if (opts.root !== null) {
+    try {
+      const abs = resolve2(process.cwd(), opts.root);
+      resolvedRoot = realpathSync(abs);
+      if (!statSync2(resolvedRoot).isDirectory())
+        throw new Error("not a directory");
+    } catch {
+      process.stderr.write(`siltpoke-index: --root must be an existing directory: ${opts.root}
+`);
+      process.exit(2);
+    }
+  }
   const result = await runIndexBuild({
     cwd: process.cwd(),
+    ...resolvedRoot !== null ? { root: resolvedRoot } : {},
     force: opts.force,
     onProgress: opts.progress ? (done, total) => process.stdout.write(`${JSON.stringify({ type: "progress", done, total })}
 `) : undefined

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * since-you-looked tests, part 1/3 — slice ③ task 6 ("since you last looked"
+ * since-you-looked tests, part 1/3 — task 6 ("since you last looked"
  * panel). Split across three sibling files (this one, `-baseline.test.ts`,
  * `-gestures.test.ts`) to stay under the `lint:files` 400 LOC ratchet; shared
  * fixtures/mount-helper live in `_since-you-looked-harness.ts`.

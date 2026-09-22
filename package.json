@@ -1,6 +1,6 @@
 {
   "name": "siltpoke",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
@@ -23,6 +23,8 @@
     "build:tokens": "bun scripts/build-tokens.ts",
     "build:dist": "bun scripts/build-dist.ts",
     "check:dist": "bun run build:dist && git diff --exit-code dist/",
+    "check:client": "bun run build:tokens && bun run build:tailwind && bun run build:client && git diff --exit-code public/static/index.js public/static/tailwind.css",
+    "check:bundle-untouched": "git diff --exit-code -- public/static/index.js public/static/tailwind.css",
     "dev:web": "bun scripts/dev-web.ts",
     "build:tailwind": "tailwindcss -i src/web/tokens/tailwind.css -o public/static/tailwind.css --minify",
     "build:tailwind:watch": "tailwindcss -i src/web/tokens/tailwind.css -o public/static/tailwind.css --watch",
@@ -38,8 +40,6 @@
     "audit:dup": "jscpd src --min-tokens 50 --min-lines 5 --reporters consoleFull",
     "audit:cycles": "dpdm --exit-code circular:1 src/cli/daemon.ts src/hooks/handle-stop.ts src/cli/report.ts",
     "audit:arch": "depcruise --config .dependency-cruiser.cjs src",
-    "eval": "bun scripts/eval-run.ts",
-    "eval:fast": "bun scripts/eval-run.ts --fast",
     "test:coverage": "bun test --coverage",
     "test:coverage:check": "bun test --coverage 2>&1 | tee /tmp/cov.txt && (grep -E 'All files.*\\| ([0-9]+\\.?[0-9]*)' /tmp/cov.txt | awk -F'|' '{print $4}' | awk '{ gsub(/^ +| +$/,\"\"); if ($1 < 80) { print \"Coverage \" $1 \" < 80 threshold\"; exit 1 } else { print \"Coverage \" $1 \" OK\" } }')"
   },

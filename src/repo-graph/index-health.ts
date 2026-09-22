@@ -21,7 +21,7 @@
 import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { computeContentSha } from "./fingerprint";
-import { resolveRepoGraphLocation } from "./proj-hash";
+import { repoGraphLocationForRoot, resolveRepoGraphLocation } from "./proj-hash";
 import { readFingerprints } from "./store";
 import type { Fingerprints } from "./types";
 import { walkProject } from "./walker";
@@ -144,24 +144,21 @@ export function computeStaleness(
 }
 
 /**
- * Compute staleness for a real project by reading its stored fingerprints and
- * re-hashing what is on disk now. Returns `null` when the project has no index
- * — deliberately distinct from an index that is present and perfectly fresh,
- * which reports 0 everywhere and would otherwise be indistinguishable.
- *
- * Costs one walk + one sha per file (no parsing) — ~1s on a 600-file repo,
- * which is why this can run as a routine health check rather than a build.
+ * Staleness of the index stored at a KNOWN location. Callers that got the root
+ * from a stored index (a `?repo=` hash, a chat anchor, an explain ctx) MUST use
+ * this: re-resolving that root through marker > git would walk a sub-folder
+ * index up to its repo and read a different index (spec 2026-09-14 §4.3).
  */
-export async function readIndexStaleness(opts: {
-  cwd: string;
+export async function readIndexStalenessAt(opts: {
+  project_root: string;
+  storage_dir: string;
   home?: string;
   /** Seam for tests; defaults to reading the real file. */
   readFileFn?: (absPath: string) => Promise<string>;
 }): Promise<IndexStaleness | null> {
   const read = opts.readFileFn ?? ((p: string) => readFile(p, "utf8"));
-  const { project_root, storage_dir } = resolveRepoGraphLocation(opts.cwd, { home: opts.home });
-  let root = project_root;
-  let fingerprints: Fingerprints = await readFingerprints(storage_dir);
+  let root = opts.project_root;
+  let fingerprints: Fingerprints = await readFingerprints(opts.storage_dir);
   // resolveRepoGraphLocation intentionally does NOT canonicalize: two callers
   // that pass the identical raw cwd string must keep hashing to the identical
   // storage_dir (existing behavior every other test here depends on). But a raw
@@ -177,9 +174,10 @@ export async function readIndexStaleness(opts: {
   // original (empty) result rather than throwing.
   if (Object.keys(fingerprints.files).length === 0) {
     try {
-      const canonicalRoot = realpathSync(project_root);
-      if (canonicalRoot !== project_root) {
-        const canonicalLocation = resolveRepoGraphLocation(canonicalRoot, { home: opts.home });
+      const canonicalRoot = realpathSync(opts.project_root);
+      if (canonicalRoot !== opts.project_root) {
+        // Same root, canonical spelling — never a walk-up.
+        const canonicalLocation = repoGraphLocationForRoot(canonicalRoot, { home: opts.home });
         const canonicalFingerprints = await readFingerprints(canonicalLocation.storage_dir);
         if (Object.keys(canonicalFingerprints.files).length > 0) {
           root = canonicalRoot;
@@ -187,7 +185,7 @@ export async function readIndexStaleness(opts: {
         }
       }
     } catch {
-      // keep the raw (empty) result if realpath cannot resolve the cwd
+      // keep the raw (empty) result if realpath cannot resolve the root
     }
   }
   // An index that exists but holds zero files is still an index; "no index at
@@ -214,4 +212,18 @@ export async function readIndexStaleness(opts: {
   }
 
   return computeStaleness(fingerprints.files, current, unreadable);
+}
+
+/**
+ * Staleness for the project a terminal is in: resolves cwd (marker > git root
+ * > cwd) first. For doctor and the audit script — never for a stored root.
+ */
+export async function readIndexStaleness(opts: {
+  cwd: string;
+  home?: string;
+  /** Seam for tests; defaults to reading the real file. */
+  readFileFn?: (absPath: string) => Promise<string>;
+}): Promise<IndexStaleness | null> {
+  const { project_root, storage_dir } = resolveRepoGraphLocation(opts.cwd, { home: opts.home });
+  return readIndexStalenessAt({ project_root, storage_dir, home: opts.home, readFileFn: opts.readFileFn });
 }

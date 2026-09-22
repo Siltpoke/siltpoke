@@ -119,11 +119,11 @@ async function writeDaemonShim(home) {
 var init_shim = () => {};
 
 // src/installer/daemon-path.ts
-import { existsSync as existsSync2 } from "fs";
+import { existsSync as existsSync3 } from "fs";
 import { basename as basename2, join as join5, dirname as dirname3 } from "path";
 import { homedir } from "os";
 import { spawnSync } from "child_process";
-function defaultWhich(bin) {
+function defaultWhich2(bin) {
   try {
     const r = spawnSync("which", [bin], { encoding: "utf8" });
     const out = (r.stdout || "").trim();
@@ -133,7 +133,7 @@ function defaultWhich(bin) {
   }
 }
 function resolveDaemonPath(deps = {}) {
-  const which = deps.which ?? defaultWhich;
+  const which = deps.which ?? defaultWhich2;
   const home = deps.home ?? homedir();
   const warnings = [];
   const dirs = [];
@@ -163,7 +163,7 @@ function resolveDaemonEntry(hereDir) {
 }
 function resolveDaemonLauncher(bunPath, repoScript, home = homedir()) {
   const shim = daemonShimPath(home);
-  if (existsSync2(shim) && resolvePluginRoot(home) !== null) {
+  if (existsSync3(shim) && resolvePluginRoot(home) !== null) {
     return { program: "/bin/sh", script: shim, viaShim: true };
   }
   return { program: bunPath, script: repoScript, viaShim: false };
@@ -181,7 +181,7 @@ __export(exports_launchd, {
   installAutostart: () => installAutostart,
   defaultPlistPath: () => defaultPlistPath
 });
-import { writeFileSync as writeFileSync2, mkdirSync as mkdirSync2, existsSync as existsSync3, rmSync } from "fs";
+import { writeFileSync as writeFileSync2, mkdirSync as mkdirSync2, existsSync as existsSync4, rmSync } from "fs";
 import { join as join6, dirname as dirname4 } from "path";
 import { homedir as homedir2 } from "os";
 import { spawnSync as spawnSync2 } from "child_process";
@@ -260,7 +260,7 @@ async function installAutostart(home = homedir2()) {
 }
 async function uninstallAutostart(opts = {}) {
   const plistPath = opts.plistPath ?? defaultPlistPath();
-  if (!existsSync3(plistPath)) {
+  if (!existsSync4(plistPath)) {
     return { removed: false };
   }
   const exec = opts.exec ?? ((cmd, args) => spawnSync2(cmd, args, { stdio: "ignore" }));
@@ -284,7 +284,7 @@ __export(exports_systemd, {
   installAutostart: () => installAutostart2,
   defaultUnitPath: () => defaultUnitPath
 });
-import { writeFileSync as writeFileSync3, mkdirSync as mkdirSync3, existsSync as existsSync4, rmSync as rmSync2 } from "fs";
+import { writeFileSync as writeFileSync3, mkdirSync as mkdirSync3, existsSync as existsSync5, rmSync as rmSync2 } from "fs";
 import { join as join7, dirname as dirname5 } from "path";
 import { homedir as homedir3 } from "os";
 import { spawnSync as spawnSync3 } from "child_process";
@@ -352,7 +352,7 @@ async function installAutostart2(home = homedir3()) {
 }
 async function uninstallAutostart2(opts = {}) {
   const unitPath = opts.unitPath ?? defaultUnitPath();
-  if (!existsSync4(unitPath)) {
+  if (!existsSync5(unitPath)) {
     return { removed: false };
   }
   const exec = opts.exec ?? ((cmd, args) => spawnSync3(cmd, args, { stdio: "ignore" }));
@@ -416,7 +416,7 @@ async function uninstallAutostartForPlatform(opts = {}) {
 }
 
 // src/cli/configure.ts
-import { existsSync as existsSync5 } from "fs";
+import { existsSync as existsSync6 } from "fs";
 import { readFile as readFile2, rm } from "fs/promises";
 import { join as join8 } from "path";
 
@@ -14744,7 +14744,7 @@ function date4(params) {
 config(en_default());
 // src/brain/schema.ts
 var evidenceItemSchema = exports_external.object({
-  tool: exports_external.enum(["tsc", "eslint", "git-diff", "ripgrep"]),
+  tool: exports_external.enum(["tsc", "eslint", "git-diff", "ripgrep", "rubric"]),
   file: exports_external.string().min(1),
   line: exports_external.number().int().positive().optional(),
   snippet: exports_external.string().min(10).max(240)
@@ -14782,11 +14782,18 @@ var categoryEnum = exports_external.enum([
   "consistency"
 ]);
 var refutationCheckedEnum = exports_external.enum(["yes", "no", "not-possible-from-the-diff"]);
+var modelFindingSchema = exports_external.object({
+  title: exports_external.string().min(1).max(120),
+  body: exports_external.string().min(1).max(600),
+  severity: severityEnum,
+  file: exports_external.string().min(1),
+  quote: exports_external.string().min(10).max(240),
+  claimed_start_line: exports_external.number().int().positive().optional(),
+  claimed_end_line: exports_external.number().int().positive().optional()
+});
 var brainOutputSchema = exports_external.object({
   mood: moodEnum,
   pose: poseEnum,
-  bubble_short: exports_external.string().min(1).max(200),
-  bubble_long: exports_external.string().max(2000),
   critique_for_claude: exports_external.string(),
   severity: severityEnum,
   confidence: confidenceEnum,
@@ -14795,6 +14802,9 @@ var brainOutputSchema = exports_external.object({
     amount: exports_external.number().int().nonnegative()
   })),
   evidence: exports_external.array(evidenceItemSchema).max(5).default([]),
+  findings: exports_external.array(modelFindingSchema).default([]),
+  bubble_short: exports_external.string().min(1).max(200),
+  bubble_long: exports_external.string().max(2000),
   reasoning: exports_external.string().max(800).optional(),
   category: categoryEnum.optional(),
   what_would_refute: exports_external.string().max(200).optional(),
@@ -14880,6 +14890,70 @@ function swapStatusLine(input, wrapperCommand) {
   const old = typeof next.statusLine?.command === "string" ? next.statusLine?.command : null;
   next.statusLine = { type: "command", command: wrapperCommand };
   return { next, oldStatusLineCommand: old };
+}
+
+// src/installer/statusline-interpreter.ts
+import { existsSync as existsSync2 } from "fs";
+var GIT_BASH_CANDIDATES = [
+  "C:\\Program Files\\Git\\bin\\bash.exe",
+  "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+  "C:\\Program Files\\Git\\usr\\bin\\bash.exe"
+];
+function localAppDataGitBash(env) {
+  const base = env.LOCALAPPDATA;
+  if (typeof base !== "string" || base.trim().length === 0)
+    return null;
+  return `${base.replace(/[\\/]+$/, "")}\\Programs\\Git\\bin\\bash.exe`;
+}
+function gitBashCandidates(env) {
+  const perUser = localAppDataGitBash(env);
+  return perUser === null ? GIT_BASH_CANDIDATES : [...GIT_BASH_CANDIDATES, perUser];
+}
+function defaultWhich(bin) {
+  try {
+    return Bun.which(bin);
+  } catch {
+    return null;
+  }
+}
+function isWslLauncher(path) {
+  return /[\\/]system32[\\/]bash\.exe$/i.test(path);
+}
+function toPosixish(path) {
+  return path.replace(/\\/g, "/");
+}
+var SHELL_SAFE = /^[A-Za-z0-9_@%+=:,./-]*$/;
+function quoteIfNeeded(token) {
+  if (SHELL_SAFE.test(token))
+    return token;
+  return `"${token.replace(/(["\\$`])/g, "\\$1")}"`;
+}
+function buildStatuslineCommand(shimPath, deps = {}) {
+  const platform = deps.platform ?? process.platform;
+  const which = deps.which ?? defaultWhich;
+  const exists = deps.exists ?? existsSync2;
+  if (platform !== "win32") {
+    const found2 = which("sh");
+    return {
+      command: `sh ${quoteIfNeeded(shimPath)}`,
+      interpreter: "sh",
+      resolved: found2 !== null,
+      reason: found2 !== null ? null : "sh was not found on PATH at install time; the statusline will not render until it is"
+    };
+  }
+  const env = deps.env ?? process.env;
+  const onPath = which("bash");
+  const fromPath = onPath !== null && !isWslLauncher(onPath) ? onPath : null;
+  const fromDisk = fromPath === null ? gitBashCandidates(env).find(exists) ?? null : null;
+  const found = fromPath ?? fromDisk;
+  const interpreter = toPosixish(found ?? GIT_BASH_CANDIDATES[0]);
+  const shim = toPosixish(shimPath);
+  return {
+    command: `${quoteIfNeeded(interpreter)} ${quoteIfNeeded(shim)}`,
+    interpreter,
+    resolved: found !== null,
+    reason: found !== null ? null : "no Git Bash was found on PATH or in its usual install locations; " + "install Git for Windows, or point statusLine.command at your own bash.exe"
+  };
 }
 
 // src/cli/configure.ts
@@ -15194,7 +15268,7 @@ function buildConfig(opts) {
 async function writeConfig(dir, opts) {
   const configPath = join8(dir, "config.json");
   const fresh = buildConfig(opts);
-  if (!existsSync5(configPath)) {
+  if (!existsSync6(configPath)) {
     atomicWrite(configPath, `${JSON.stringify(fresh, null, 2)}
 `);
     return;
@@ -15211,10 +15285,24 @@ async function writeConfig(dir, opts) {
   atomicWrite(configPath, `${JSON.stringify({ ...prior, ...fresh }, null, 2)}
 `);
 }
-async function wireSettings(home, siltpokeDir, wantStatusline, warn) {
+async function swapInStatusline(settings, home, siltpokeDir, warn, interpreterDeps) {
+  const shimPath = await writeShim(home);
+  const statusline = buildStatuslineCommand(shimPath, interpreterDeps);
+  if (!statusline.resolved) {
+    warn(`warning: ${statusline.reason}`);
+  }
+  const swapped = swapStatusLine(settings, statusline.command);
+  const old = swapped.oldStatusLineCommand;
+  const isSelf = old !== null && (old.includes("siltpoke") || old.includes("face/wrapper"));
+  if (old && !isSelf) {
+    atomicWrite(join8(siltpokeDir, "inner.txt"), old);
+  }
+  return swapped.next;
+}
+async function wireSettings(home, siltpokeDir, wantStatusline, warn, interpreterDeps = {}) {
   const claudeHome = join8(home, ".claude");
   const settingsPath = join8(claudeHome, "settings.json");
-  const hasSettings = existsSync5(settingsPath);
+  const hasSettings = existsSync6(settingsPath);
   if (!hasSettings && !wantStatusline)
     return;
   let current = {};
@@ -15231,14 +15319,7 @@ async function wireSettings(home, siltpokeDir, wantStatusline, warn) {
   let next = removeLegacyStopHook(current, (d) => removed.push(d));
   const sweptSomething = JSON.stringify(next) !== JSON.stringify(current);
   if (wantStatusline) {
-    const shimPath = await writeShim(home);
-    const swapped = swapStatusLine(next, `sh ${shimPath}`);
-    next = swapped.next;
-    const old = swapped.oldStatusLineCommand;
-    const isSelf = old !== null && (old.includes("siltpoke") || old.includes("face/wrapper"));
-    if (old && !isSelf) {
-      atomicWrite(join8(siltpokeDir, "inner.txt"), old);
-    }
+    next = await swapInStatusline(next, home, siltpokeDir, warn, interpreterDeps);
   } else if (!sweptSomething) {
     return;
   }
@@ -15256,12 +15337,16 @@ async function configure(opts, home, deps = {}) {
   const siltpokeDir = siltpokeRoot({ ...process.env, HOME: home });
   validateOptions(opts);
   await writeConfig(siltpokeDir, opts);
+  let statusline = opts.statusline ? "installed" : "skipped";
   try {
-    await wireSettings(home, siltpokeDir, opts.statusline, warn);
+    await wireSettings(home, siltpokeDir, opts.statusline, warn, deps.statuslineInterpreter);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     warn(`warning: settings.json wiring failed (${msg}); the pet is installed either way`);
+    if (opts.statusline)
+      statusline = "failed";
   }
+  let autostart = "not-requested";
   if (opts.daemon) {
     if (resolvePluginRoot(home) !== null) {
       await writeDaemonShim(home);
@@ -15272,40 +15357,79 @@ async function configure(opts, home, deps = {}) {
     });
     try {
       const result = await install();
+      autostart = result.status === "installed" ? "installed" : { declined: result.status };
       if (result.status !== "installed") {
         warn(`warning: daemon autostart ${result.status} (platform=${result.platform})`);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       warn(`warning: daemon autostart failed (${msg}); the pet is installed either way`);
+      autostart = "failed";
     }
   }
+  return {
+    name: opts.name,
+    species: opts.species,
+    configPath: join8(siltpokeDir, "config.json"),
+    statusline,
+    autostart
+  };
 }
-if (import.meta.main) {
-  const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
-  if (home.length === 0) {
-    process.stderr.write(`siltpoke-configure: HOME is not set
-`);
-    process.exit(2);
+function summarize(r) {
+  const lines = [`siltpoke: created "${r.name}" (${r.species}) \u2014 ${r.configPath}`];
+  if (r.statusline === "installed") {
+    lines.push("siltpoke: statusline installed \u2014 your pet shows up in Claude Code");
+  } else if (r.statusline === "failed") {
+    lines.push("siltpoke: statusline NOT installed (see the warning above) \u2014 the pet itself is fine");
+  } else {
+    lines.push("siltpoke: statusline left off (you asked for it off)");
   }
-  const argv = process.argv.slice(2);
+  if (r.autostart === "not-requested") {
+    lines.push("siltpoke: background daemon off (opt-in \u2014 open /siltpoke-dashboard to start it)");
+  } else if (r.autostart === "installed") {
+    lines.push("siltpoke: daemon autostart installed");
+  } else if (r.autostart === "failed") {
+    lines.push("siltpoke: daemon autostart FAILED (see the warning above)");
+  } else {
+    lines.push(`siltpoke: daemon autostart NOT installed \u2014 ${r.autostart.declined} on this platform (see the warning above)`);
+  }
+  return lines;
+}
+async function runConfigureCli(argv, home, deps = {}) {
+  const out = deps.out ?? ((s) => process.stdout.write(`${s}
+`));
+  const warn = deps.warn ?? ((s) => process.stderr.write(`${s}
+`));
+  if (home.length === 0) {
+    warn("siltpoke-configure: HOME is not set");
+    return 2;
+  }
   const answers = answersFilePath(argv);
+  let result;
   try {
     const opts = answers !== null ? await readAnswersFile(answers, argv) : parseArgs(argv);
-    await configure(opts, home);
+    result = await configure(opts, home, { ...deps, warn });
   } catch (err) {
     if (err instanceof ConfigureInputError) {
-      process.stderr.write(`siltpoke-configure: ${err.message}
-`);
-      process.exit(2);
+      warn(`siltpoke-configure: ${err.message}`);
+      return 2;
     }
     throw err;
   }
   if (answers !== null)
     await rm(answers, { force: true });
+  for (const line of summarize(result))
+    out(line);
+  return 0;
+}
+if (import.meta.main) {
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  process.exit(await runConfigureCli(process.argv.slice(2), home));
 }
 export {
   validateOptions,
+  summarize,
+  runConfigureCli,
   removeLegacyStopHook,
   readAnswersFile,
   parseArgs,

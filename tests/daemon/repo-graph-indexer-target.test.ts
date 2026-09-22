@@ -11,7 +11,7 @@
  * Measured on the live install before the fix:
  *   ps            → bun …/siltpoke//dist/siltpoke-daemon.js start
  *   dist bundle   → join115(import.meta.dir, "../../cli/index-repo.ts")
- *   resolves to   → …/ai-agents/siltpoke/cli/index-repo.ts   (does not exist)
+ *   resolves to   → …/workspace/siltpoke/cli/index-repo.ts   (does not exist)
  *   bun <that>    → error: Module not found … ; exit 1
  *
  * `src/hooks/agy-stop.ts` already carries the correct shape for exactly this
@@ -38,7 +38,7 @@ describe("resolveIndexerTarget — bundled", () => {
   test("never escapes the dist directory it was given", () => {
     // The old expression walked up two levels; assert we stay put. A `..` that
     // climbs out of dist/ is the exact failure being pinned.
-    const dir = "/Users/v/Projects/ai-agents/siltpoke/siltpoke/dist";
+    const dir = "/Users/v/Projects/workspace/siltpoke/siltpoke/dist";
     const target = resolveIndexerTarget(dir);
     expect(target.startsWith(`${dir}/`)).toBe(true);
     expect(target).not.toContain("..");

@@ -14524,7 +14524,7 @@ config(en_default());
 var pendingAnchorSchema = exports_external.object({
   file: exports_external.string().min(1),
   line: exports_external.number().int().positive().optional(),
-  tool: exports_external.enum(["tsc", "eslint", "git-diff", "ripgrep"]),
+  tool: exports_external.enum(["tsc", "eslint", "git-diff", "ripgrep", "rubric"]),
   fingerprint: exports_external.string()
 });
 var pendingCritiqueSchema = exports_external.object({

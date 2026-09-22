@@ -277,7 +277,7 @@ const CONTRAST_ROUTES = [
  * `body` itself) matches nothing. Same for content sitting behind an
  * `x-show`/`x-if` that starts closed — `display:none` is skipped by design.
  * Each value below is the real dark-mode count measured during fix round 1
- * review (see the Task Close Report), rounded down with headroom: low enough
+ * review, rounded down with headroom: low enough
  * to survive an ordinary content edit (a new stat tile, a copy change), high
  * enough that a collapse to 0 (or to a handful of chrome-only elements) still
  * fails.
@@ -465,7 +465,7 @@ test.describe("contrast walk negative control", () => {
     const [failure] = result.failures;
     expect(failure.tag).toBe("h1");
     // rgb(232,232,232) ink on the planted rgb(244,238,223) background — the
-    // exact pair captured in the Task Close Report.
+    // exact pair measured when this was written.
     expect(failure.ratio).toBeCloseTo(1.06, 1);
     expect(failure.floor).toBe(3);
   });

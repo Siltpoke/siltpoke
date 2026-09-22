@@ -61,5 +61,16 @@ export type ToolResult =
        * on a plain `git diff`, where the working tree has no commit message at all.
        */
       reviewSubject?: ReviewSubject;
+      /**
+       * Whether this diff's `+` side is the file as it sits on disk right now,
+       * so a line number derived from a hunk means something to a reader who
+       * opens that file.
+       *
+       * Absent is read as FALSE by everything downstream, and that is the point:
+       * every path that cannot answer the question leaves it off, and the guard
+       * then writes a tier without a line number instead of a line number
+       * nobody checked.
+       */
+      rangesAnchored?: boolean;
     }
   | { tool: "ripgrep"; status: ToolStatus; parsed: RipgrepMatch[]; raw: string };

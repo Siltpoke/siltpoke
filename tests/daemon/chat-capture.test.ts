@@ -1,5 +1,5 @@
 // memory work (real-time chat capture) — the chat route detects an explicit
-//  remember-intent on the user turn, persists it via writeMemory (same
+// "记住 X" remember-intent on the user turn, persists it via writeMemory (same
 // store the facts route writes to), and injects a [SAVED]/[ALREADY KNOWN]/
 // [CAPTURE INCOMPLETE] marker + an always-on capture-honesty framing into the
 // system prompt so the pet acks truthfully (and never hallucinates a save).

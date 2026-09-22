@@ -34,7 +34,6 @@ import { DetailPane, EmptyDetail } from "./timeline/detail-pane";
 import { TimelineFilterRow } from "./timeline/filter-row";
 import { fmtCost, fmtTokens, turnKey } from "./timeline/format";
 import { makeProjHashResolver } from "./timeline/proj-hash";
-import { ReviewUnitRow } from "./timeline/review-unit-row";
 import { TimelineRail } from "./timeline/rail";
 
 export interface TimelineScreenProps {
@@ -226,7 +225,11 @@ function LazyDossier({ paneKey, url }: { paneKey: string; url: string }) {
   );
 }
 
-export function TimelineScreen({ telemetry, dossierQuery, reviewUnit, secret }: TimelineScreenProps) {
+// `reviewUnit` and `secret` stay in TimelineScreenProps and the route keeps
+// passing them — only this destructure drops them, because the one consumer
+// (the review-unit row) is hidden. Restoring the row means adding them back
+// here plus the import and the JSX line named in the comment below.
+export function TimelineScreen({ telemetry, dossierQuery }: TimelineScreenProps) {
   const now = new Date();
   const firedRows = telemetry.recent.filter((c) => c.status === "fired");
   // Perf (Task 6 review carry-over): memoize proj_hash resolution by
@@ -306,10 +309,26 @@ export function TimelineScreen({ telemetry, dossierQuery, reviewUnit, secret }: 
               [status seg][kind ▾][range ▾] … [search][project ▾]. Sort
               lives in the rail header, not here. */}
           <TimelineFilterRow telemetry={telemetry} />
-          {/* ⏱ The setting that decides when this page gets rows at all —
-              placed with the filters because it reads as one more control
-              over what shows up, not as a settings page bolted on. */}
-          <ReviewUnitRow secret={secret ?? ""} reviewUnit={reviewUnit} />
+          {/* ⏱ The review-unit control (commit | pr) used to render here.
+              HIDDEN 2026-09-21 on the maintainer's call — hidden, not removed: the
+              `reviewUnit` axis, its config reader, the island and
+              `./timeline/review-unit-row` are all still here and still work,
+              and editing `reviewUnit` in config.json still takes effect. Only
+              the choice is off the page.
+
+              To bring it back, restore three things: the
+                import { ReviewUnitRow } from "./timeline/review-unit-row";
+              the `reviewUnit, secret` destructure on TimelineScreen, and
+                <ReviewUnitRow secret={secret ?? ""} reviewUnit={reviewUnit} />
+              and flip the absence assertions in
+              `tests/web/timeline-review-unit.test.tsx` +
+              `tests/e2e/timeline-review-unit.spec.ts` back to presence.
+
+              The other copy of this control — the `<select id="cfg-review-unit">`
+              in `src/cli/report-artifacts.ts` — is deliberately untouched: it
+              sits on the retired report page, which has no caller in `src/`, so
+              it is already unreachable. Editing it would churn four
+              `report.golden` fixtures for no user-visible effect. */}
         </div>
 
         {/* Master rail + dossier */}

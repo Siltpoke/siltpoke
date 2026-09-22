@@ -275,7 +275,7 @@ export interface Proposal {
   contradictedText?: string;
   /** The user's ORIGINAL typed message — stored as the new fact's save_reason
    * on confirm so a hand-typed memory's 为什么 line shows the user's own words
-   * (provenance), not the  fallback. */
+   * (provenance), not the "没记下来源（早期记忆）" fallback. */
   sourceText?: string;
 }
 
@@ -577,7 +577,7 @@ export function groupMemoriesByEntity(
 }
 
 /**
- * Deterministic  matcher (NO LLM).
+ * Deterministic "改记忆" matcher (NO LLM).
  * Forget/retire intent + exactly one matching non-retired semantic fact →
  * actionable proposal. Otherwise an honest non-actionable proposal.
  */

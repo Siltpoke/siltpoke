@@ -2,6 +2,16 @@
 // Copyright (c) 2026 Jiaqi Duan
 
 import type { BrainFailureInput } from "./failure-classify";
+import {
+  type BrainUsage,
+  type ClaudeStreamEvent,
+  type ResultEvent,
+  EnvelopeShapeError,
+  extractUsage,
+  findResultEvent,
+  normalizeStreamEnvelope,
+} from "./envelope";
+import { explainBrainFailure } from "./failure-reason";
 import { type BrainOutput, parseBrainOutput, describeSchemaIssues } from "./schema";
 
 export interface CallBrainOptions {
@@ -20,13 +30,6 @@ export interface CallBrainOptions {
   cwd?: string;
 }
 
-export interface BrainUsage {
-  cache_creation_input_tokens: number;
-  cache_read_input_tokens: number;
-  input_tokens: number;
-  output_tokens: number;
-  total_cost_usd: number | null;
-}
 
 export interface BrainCallResult {
   output: BrainOutput;
@@ -162,54 +165,20 @@ export function resolveBrainTimeoutMs(explicitMs?: number): number {
   return ms;
 }
 
-// `claude -p --output-format json` stream shapes + the result-event parsing
-// helpers below are shared verbatim with reflection.ts's callReflection,
-// which drives the same `claude -p` CLI. Exported so reflection.ts imports
-// them instead of keeping its own byte-identical copies.
-export interface ResultEvent {
-  type: "result";
-  subtype?: string;
-  is_error?: boolean;
-  result?: string;
-  error?: string;
-  total_cost_usd?: number;
-  usage?: {
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
-    input_tokens?: number;
-    output_tokens?: number;
-  };
-}
-
-export interface ClaudeStreamEvent {
-  type: string;
-  [key: string]: unknown;
-}
+// The stdout-envelope shapes and their readers live in `./envelope` — split
+// out so explain can read one without importing this module, and to keep this
+// file under the LOC cap. Import them FROM `./envelope`; only `BrainUsage` is
+// re-exported here, because `explain/{explain,types,arch-generate}.ts` already
+// type against `brain`'s copy and a re-export beats churning three imports.
+// (The other five were re-exported too at first and nothing imported them —
+// `audit:dead` was right to name them.)
+export type { BrainUsage } from "./envelope";
 
 const FENCED_JSON = /```(?:json)?\s*([\s\S]*?)\s*```/;
 
 export function extractJsonString(text: string): string {
   const match = text.match(FENCED_JSON);
   return match ? match[1]?.trim() : text.trim();
-}
-
-export function findResultEvent(events: ClaudeStreamEvent[]): ResultEvent {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const ev = events[i]!;
-    if (ev.type === "result") return ev as unknown as ResultEvent;
-  }
-  throw new BrainError("claude -p stream contained no result event");
-}
-
-export function extractUsage(resultEvent: ResultEvent): BrainUsage {
-  const u = resultEvent.usage ?? {};
-  return {
-    cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0,
-    cache_read_input_tokens: u.cache_read_input_tokens ?? 0,
-    input_tokens: u.input_tokens ?? 0,
-    output_tokens: u.output_tokens ?? 0,
-    total_cost_usd: resultEvent.total_cost_usd ?? null,
-  };
 }
 
 /**
@@ -219,6 +188,35 @@ export function extractUsage(resultEvent: ResultEvent): BrainUsage {
  * `callBrainText` returns it as-is). Never JSON-parses the inner result — that
  * is the caller's concern.
  */
+/**
+ * The stdout the failure classifier should read.
+ *
+ * `--verbose` (defect [12]) made stdout the WHOLE event stream, and the
+ * classifier greps the last 500 bytes of it with substring regexes. Two of the
+ * stream's own event TYPE NAMES collide with those markers — `rate_limit_event`
+ * matches `/rate[ _-]?limit/i` — so a plain ambiguous failure whose tail
+ * happened to include that event classified as `throttle`, which authorizes a
+ * second PAID spawn. Measured, not reasoned: with the raw tail the probe
+ * returned "throttle" where "ambiguous" was correct.
+ *
+ * So when stdout parses as an envelope, hand the classifier the RESULT EVENT
+ * only — its `error` / `subtype` / `result` are the actual failure text and it
+ * carries no other event's name. When it does not parse (the pre-[12]
+ * behaviour, and any genuinely broken output), fall back to the raw tail,
+ * which is where a plain-text auth error still lands.
+ *
+ * The markers themselves stay FROZEN (failure-classify.ts's contract); this
+ * changes what is fed to them, not what they match.
+ */
+function classifierStdout(stdout: string): string {
+  try {
+    const ev = findResultEvent(normalizeStreamEnvelope(JSON.parse(stdout)));
+    return JSON.stringify(ev).slice(-500);
+  } catch {
+    return stdout.slice(-500);
+  }
+}
+
 export async function runBrainCall(
   opts: CallBrainOptions,
 ): Promise<{ resultText: string; usage: BrainUsage }> {
@@ -238,6 +236,23 @@ export async function runBrainCall(
           opts.systemPrompt,
           "--output-format",
           "json",
+          // Defect [12]: `--output-format json` returns the full event ARRAY
+          // only when verbose is on, and that is the USER's
+          // `~/.claude/settings.json` — off in a clean new-user config, which
+          // made every review fail silently. The argv flag wins over the
+          // setting (measured against CC 2.1.274), so the shape is ours.
+          //
+          // ⚠️ CHANGING THIS FLAG CHANGES WHAT THE FAILURE CLASSIFIER READS.
+          // With it, stdout is the whole event stream, and one of the stream's
+          // own type names (`rate_limit_event`) matches a frozen classifier
+          // marker (`/rate[ _-]?limit/i` in failure-classify.ts). That is why
+          // the exit!==0 path below hands the classifier `classifierStdout()`
+          // — the result event alone — instead of the raw tail: without it a
+          // plain `ambiguous` failure classified as `throttle` and authorized
+          // a second PAID spawn (measured; tests/brain/classifier-verbose-noise
+          // .test.ts opens with that device check). If this flag ever goes
+          // away, `classifierStdout` must be revisited in the same change.
+          "--verbose",
           "--no-session-persistence",
         ],
         {
@@ -283,31 +298,35 @@ export async function runBrainCall(
 
   if (exitCode !== 0) {
     // Classifier examines BOTH tails — with --output-format json,
-    // claude -p errors can land on stdout while stderr stays empty.
+    // claude -p errors can land on stdout while stderr stays empty. The
+    // MESSAGE has to read both for the same reason: interpolating `stderr`
+    // alone left the hook logging `exited with code 1:` and nothing after it,
+    // for failures whose cause was sitting in stdout (audit defect `[4]`).
     throw new BrainError(
-      `claude -p exited with code ${exitCode}: ${stderr.slice(0, 500)}`,
+      `claude -p exited with code ${exitCode}: ${explainBrainFailure({ exitCode, stderr, stdout })}`,
       undefined,
       {
         exitCode,
         stderr: stderr.slice(-500),
-        stdout: stdout.slice(-500),
+        stdout: classifierStdout(stdout),
       },
     );
   }
 
-  let events: ClaudeStreamEvent[];
+  // Envelope reading lives in ./envelope and raises EnvelopeShapeError;
+  // re-wrap at this boundary so every caller of runBrainCall keeps seeing the
+  // BrainError it has always caught (the classifier, brain-guarded's retry,
+  // the critic phases). `findResultEvent` is inside the same try because it
+  // raises the same class for the same reason.
+  let resultEvent: ResultEvent;
   try {
-    const parsed = JSON.parse(stdout);
-    if (!Array.isArray(parsed)) {
-      throw new BrainError("claude -p stdout was not a JSON array");
-    }
-    events = parsed as ClaudeStreamEvent[];
+    const events: ClaudeStreamEvent[] = normalizeStreamEnvelope(JSON.parse(stdout));
+    resultEvent = findResultEvent(events);
   } catch (err) {
     if (err instanceof BrainError) throw err;
+    if (err instanceof EnvelopeShapeError) throw new BrainError(err.message, err);
     throw new BrainError("claude -p stdout was not valid JSON", err);
   }
-
-  const resultEvent = findResultEvent(events);
 
   if (resultEvent.is_error || !resultEvent.result) {
     throw new BrainError(

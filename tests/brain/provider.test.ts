@@ -50,6 +50,7 @@ test("claude provider meta matches spec §1", () => {
     name: "claude",
     billing: "usd",
     genAiSystem: "anthropic",
+    acceptsModel: true,
   });
 });
 
@@ -71,6 +72,9 @@ test("claude provider argv is byte-identical to brain.ts's runBrainCall (brain.t
     "test-system-prompt",
     "--output-format",
     "json",
+    // Defect [12] — siltpoke sets the envelope shape, not the user's
+    // ~/.claude/settings.json.
+    "--verbose",
     "--no-session-persistence",
   ]);
   expect(output.mood).toBe("happy");

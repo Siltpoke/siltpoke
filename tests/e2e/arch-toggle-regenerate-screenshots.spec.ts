@@ -342,7 +342,7 @@ test("02 — click Auto: subset view active, URL shows ?arch-source=subset", asy
 // rounded corners), which per the flexbox spec makes its automatic
 // min-width resolve to 0 instead of content-based, so it was the one
 // pagehead child the browser could shrink below its own text width once
-// the quiz controls widened the row. Linux's fallback-font metrics render
+// extra pagehead controls widened the row. Linux's fallback-font metrics render
 // this row measurably wider than macOS's, so only CI ever got tight enough
 // to clip it. Fixed with `flex-shrink:0` on `.src-chip` (RepoGraph.tsx),
 // mirroring the existing `.idx-stat` "review fixup" pattern.

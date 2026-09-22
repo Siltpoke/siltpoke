@@ -22,7 +22,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   checkAutostart,
-  checkDaemonAlive,
   checkDaemonStaleness,
   type DaemonHealth,
   mapDaemonHealthToCheck,
@@ -174,69 +173,6 @@ describe("doctor daemon-staleness — fetch wrapper", () => {
         jsonResponse({ success: true, data: { state: "broken_state", bootSha: "z", commitsBehind: 0 } }),
     });
     expect(r.detail).toBe("skipped (daemon down)");
-  });
-});
-
-// ── daemon-alive check (/api/ping probe, warn-only) ─────────────────────────
-
-describe("doctor daemon-alive — /api/ping probe", () => {
-  const OFF_DETAIL = "daemon: off (opt-in — open /siltpoke-dashboard to enable)";
-  const ENABLED_UNREACHABLE_DETAIL =
-    "daemon.enabled is true but /api/ping is unreachable — try /siltpoke-restart-daemon";
-
-  test("daemon up (200 on /api/ping) → ✓ pass, no detail", async () => {
-    const r = await checkDaemonAlive({
-      fetchFn: async () => ({ ok: true } as Response),
-    });
-    expect(r.name).toBe("daemon alive (/api/ping)");
-    expect(r.pass).toBe(true);
-    expect(r.status).toBe("pass");
-    expect(r.detail).toBeNull();
-  });
-
-  test("down + daemon.enabled=false (default) → ◦ info 'daemon: off (opt-in...)', pass stays true", async () => {
-    const r = await checkDaemonAlive({
-      fetchFn: async () => {
-        throw new Error("ECONNREFUSED");
-      },
-      loadDaemonConfigFn: async () => ({ enabled: false }),
-    });
-    expect(r.pass).toBe(true);
-    expect(r.status).toBe("info");
-    expect(r.detail).toBe(OFF_DETAIL);
-  });
-
-  test("non-200 response + daemon.enabled=false → ◦ info 'daemon: off (opt-in...)' (never a red fail)", async () => {
-    const r = await checkDaemonAlive({
-      fetchFn: async () => ({ ok: false } as Response),
-      loadDaemonConfigFn: async () => ({ enabled: false }),
-    });
-    expect(r.pass).toBe(true);
-    expect(r.status).toBe("info");
-    expect(r.detail).toBe(OFF_DETAIL);
-  });
-
-  test("down + daemon.enabled=true → ✗ genuine fail (opted in but unreachable)", async () => {
-    const r = await checkDaemonAlive({
-      fetchFn: async () => {
-        throw new Error("ECONNREFUSED");
-      },
-      loadDaemonConfigFn: async () => ({ enabled: true }),
-    });
-    expect(r.pass).toBe(false);
-    expect(r.detail).toBe(ENABLED_UNREACHABLE_DETAIL);
-  });
-
-  test("probes the injectable ping URL", async () => {
-    const seen: string[] = [];
-    await checkDaemonAlive({
-      daemonPingUrl: "http://127.0.0.1:1/api/ping",
-      fetchFn: async (input) => {
-        seen.push(String(input));
-        return { ok: true } as Response;
-      },
-    });
-    expect(seen).toEqual(["http://127.0.0.1:1/api/ping"]);
   });
 });
 

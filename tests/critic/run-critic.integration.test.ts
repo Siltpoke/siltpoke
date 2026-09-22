@@ -182,6 +182,7 @@ describe("runCritic integration — HARD_SUPPRESS (no tools available)", () => {
           severity: "info",
           confidence: "high",
           xp_earned_events: [],
+          findings: [],
           evidence: [],
         }),
         writeCritiqueFn: async () => ({ id: "c-suppress", path: stateBaseLocal }),
@@ -232,6 +233,7 @@ describe("runCritic integration — PASSIVE_BUBBLE (git + clean tools)", () => {
             severity: "info",
             confidence: "high",
             xp_earned_events: [],
+            findings: [],
             evidence: [],
           }),
           writeCritiqueFn: async (_basePath, _input) => {
@@ -313,6 +315,7 @@ describe("runCritic integration — NORMAL with stub Brain", () => {
             severity: "medium",
             confidence: "high",
             xp_earned_events: [],
+            findings: [],
             evidence: [
               {
                 tool: "tsc",
@@ -335,6 +338,89 @@ describe("runCritic integration — NORMAL with stub Brain", () => {
         expect(result.critique.mood).toBe("annoyed");
       }
       expect(writeCalled).toBe(true);
+    },
+  );
+
+  /**
+   * The last link in the `rangesAnchored` chain: `normal.ts` reading the flag
+   * off the tool result and handing it to the guard as its sixth argument.
+   *
+   * Everything below that is unit-tested, and everything above it is too, but
+   * this one line is the join. Hardcoding `false` there reds this test and
+   * nothing else — before it existed, hardcoding it reds nothing at all, which
+   * is this repo's recorded `delivery-half-has-no-assertions` shape.
+   */
+  test(
+    "an anchored diff reaches the guard, and the finding comes back with a line number",
+    async () => {
+      const DIFF = [
+        "diff --git a/src/pay.ts b/src/pay.ts",
+        "--- a/src/pay.ts",
+        "+++ b/src/pay.ts",
+        "@@ -10,2 +10,3 @@",
+        " const rate = 0.05;",
+        "+const total = subtotal * rate;",
+        " return total;",
+      ].join("\n");
+      let written: { findings?: unknown[] } | undefined;
+
+      await runCritic(
+        {
+          ...(baseOpts() as RunCriticOpts),
+          cwd: tmp,
+          changedFiles: ["src/pay.ts"],
+          caps: {
+            cwd: tmp, hasGit: true, hasTsc: false, hasEslint: false, hasRipgrep: false,
+            tsconfigPaths: [], eslintConfigPaths: [], detectedAt: Date.now(), configMtimes: {},
+          },
+        },
+        {
+          runToolsFn: async () => ({
+            tsc: {
+              tool: "tsc", status: "ok",
+              parsed: [{ file: "src/pay.ts", line: 11, col: 1, severity: "error", code: "TS1", message: "bad" }],
+              raw: "src/pay.ts(11,1): error TS1",
+            },
+            eslint: { tool: "eslint", status: "not_applicable", parsed: [], raw: "" },
+            "git-diff": {
+              tool: "git-diff", status: "ok", raw: DIFF, rangesAnchored: true,
+              parsed: [{
+                file: "src/pay.ts", oldStart: 10, oldLines: 2, newStart: 10, newLines: 3,
+                header: "@@ -10,2 +10,3 @@",
+                body: " const rate = 0.05;\n+const total = subtotal * rate;\n return total;",
+              }],
+            },
+            ripgrep: { tool: "ripgrep", status: "ok", parsed: [], raw: "" },
+            securityFindings: [] as never[],
+            owaspHints: [] as never[],
+            webSearchSources: [],
+          }),
+          callBrainFn: makeStubBrainFn({
+            mood: "annoyed", pose: "arms_crossed",
+            bubble_short: "that rate looks wrong",
+            bubble_long: "",
+            critique_for_claude: "rate applied to a pre-tax subtotal",
+            severity: "medium", confidence: "high", xp_earned_events: [],
+            evidence: [],
+            findings: [{
+              title: "rate applied before tax",
+              body: "subtotal is pre-tax here, so the rate lands on the wrong base",
+              severity: "medium",
+              file: "src/pay.ts",
+              quote: "const total = subtotal * rate;",
+            }],
+          }),
+          writeCritiqueFn: async (_basePath, input) => {
+            written = input.brain_output as { findings?: unknown[] };
+            return { id: "c-anchored-int", path: join(stateBase, "fake.md") };
+          },
+        },
+      );
+
+      const f = written?.findings?.[0] as Record<string, unknown> | undefined;
+      expect(f?.["quote_tier"]).toBe("strong");
+      expect(f?.["range_source"]).toBe("hunk");
+      expect(f?.["start_line"]).toBe(11);
     },
   );
 
@@ -393,6 +479,7 @@ describe("runCritic integration — NORMAL with stub Brain", () => {
             severity: "medium",
             confidence: "high",
             xp_earned_events: [],
+            findings: [],
             evidence: [
               {
                 tool: "tsc",

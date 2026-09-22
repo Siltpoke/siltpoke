@@ -160,9 +160,14 @@ describe("on-stop daemon respawn (AC9)", () => {
   });
 
   test("daemon alive → probe passes, no respawn (both paths)", async () => {
+    // The body matters: the probe identifies the responder, so a server that
+    // just says "ok" is a stranger, not the daemon (audit defect `[5b]`). This
+    // fixture used to serve exactly that and still assert "no respawn" — it
+    // was asserting the bug.
     const server = Bun.serve({
       port: 0,
-      fetch: () => new Response("ok"),
+      fetch: () =>
+        Response.json({ service: "siltpoked", ok: true, mode: "global", pid: 1 }),
     });
     try {
       const alivePort = String(server.port);
@@ -181,6 +186,26 @@ describe("on-stop daemon respawn (AC9)", () => {
       expect(spawnFake.calls.length).toBe(0);
     } finally {
       server.stop(true);
+    }
+  });
+
+  test("a stranger on the port does NOT count as alive — the daemon is respawned", async () => {
+    // Without this, a dev server holding the port silently suppresses the
+    // self-healing respawn at every Stop, and nothing is ever surfaced.
+    const stranger = Bun.serve({
+      port: 0,
+      fetch: () => new Response("<!doctype html><title>not siltpoke</title>"),
+    });
+    try {
+      await runHook({
+        rawJson: makeStopJson("s-stranger", 3200),
+        env: { ...legacyEnv, SILTPOKE_DAEMON_PORT: String(stranger.port) },
+        brainFn: async () => ({}) as never,
+        spawnFn: spawnFake.fn,
+      });
+      expect(spawnFake.calls.length).toBe(1);
+    } finally {
+      stranger.stop(true);
     }
   });
 

@@ -119,6 +119,7 @@ export const booleanParamRule: RubricRule = {
           file,
           line: v.line,
           snippet: v.snippet,
+          snippet_is_source: true,
           message: `Boolean literal passed as positional argument to '${v.funcName}'. Boolean flags obscure call-site intent.`,
           suggested_fix:
             "Replace the boolean flag with an options object: `{ visible: true }` instead of `true`. Or split into two separate functions.",

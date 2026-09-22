@@ -14,17 +14,17 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { atomicWrite } from "../../utils/atomic-write";
 import {
-  BrainError,
-  extractJsonString,
   type BrainCallResult,
+  BrainError,
   type BrainUsage,
   type CallBrainOptions,
+  extractJsonString,
 } from "../brain";
-import { brainOutputSchema, parseBrainOutput } from "../schema";
 import type { BrainFailureInput } from "../failure-classify";
-import type { CallRawResult, ReviewerBrainProvider } from "../provider";
-import { atomicWrite } from "../../utils/atomic-write";
+import { type CallRawResult, FAMILY_ACCEPTS_MODEL, type ReviewerBrainProvider } from "../provider";
+import { brainOutputSchema, parseBrainOutput } from "../schema";
 import { resolveReviewerCwd } from "./reviewer-cwd";
 
 /** codex has no native wall-clock timeout; fixed overhead is higher than
@@ -334,7 +334,12 @@ export function makeCodexProvider(deps?: {
     return { text: resultText, usage, servedModel };
   };
   return {
-    meta: { name: "codex", billing: "quota", genAiSystem: "openai" },
+    meta: {
+      name: "codex",
+      billing: "quota",
+      genAiSystem: "openai",
+      acceptsModel: FAMILY_ACCEPTS_MODEL.codex,
+    },
     callRaw,
     call: async (
       opts: CallBrainOptions,

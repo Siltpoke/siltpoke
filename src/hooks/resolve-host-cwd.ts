@@ -4,7 +4,7 @@
  * Re-anchor the review cwd to the edited files' repo when a host's Stop
  * payload hands us a cwd that doesn't contain the edits.
  *
- * Motivating case (memory `agy-host-p-mode-cwd-gap`): `agy -p` headless mode
+ * Motivating case: `agy -p` headless mode
  * omits `workspacePaths`, so `agy-stop.ts` falls back to `process.cwd()` —
  * agy's own config dir (`~/.gemini/config`). The critic then runs its tools
  * (git diff / tsc / ripgrep) against a directory with no diff and abstains

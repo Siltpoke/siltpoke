@@ -29,6 +29,7 @@ afterEach(() => {
 const OK: BrainCallResult = {
   output: {
     mood: "happy", pose: "base", bubble_short: "ok", bubble_long: "",
+    findings: [],
     critique_for_claude: "", severity: "info", confidence: "high",
     xp_earned_events: [], evidence: [], reasoning: "t",
   },
@@ -270,7 +271,7 @@ test("Retry slot is consumed BEFORE the backoff sleep (no over-consume window wh
 test("provider dep is used as the call target when callBrainFn is absent (T1 seam)", async () => {
   let called = 0;
   const provider: ReviewerBrainProvider = {
-    meta: { name: "codex", billing: "quota", genAiSystem: "openai" },
+    meta: { name: "codex", billing: "quota", genAiSystem: "openai", acceptsModel: false },
     callRaw: notUsedCallRaw,
     call: async () => {
       called++;
@@ -286,7 +287,7 @@ test("provider dep is used as the call target when callBrainFn is absent (T1 sea
 test("callBrainFn injection wins over provider dep (test seam precedence unchanged)", async () => {
   let providerCalled = false;
   const provider: ReviewerBrainProvider = {
-    meta: { name: "claude", billing: "usd", genAiSystem: "anthropic" },
+    meta: { name: "claude", billing: "usd", genAiSystem: "anthropic", acceptsModel: true },
     callRaw: notUsedCallRaw,
     call: async () => {
       providerCalled = true;
@@ -306,7 +307,7 @@ test("callBrainFn injection wins over provider dep (test seam precedence unchang
 
 function makeQuotaProvider(call: () => Promise<BrainCallResult>): ReviewerBrainProvider {
   return {
-    meta: { name: "codex", billing: "quota", genAiSystem: "openai" },
+    meta: { name: "codex", billing: "quota", genAiSystem: "openai", acceptsModel: false },
     callRaw: notUsedCallRaw,
     call,
   };
@@ -417,7 +418,7 @@ test("Quota-billed throttle retry: count=49 pre-seeded -> first attempt consumes
   });
   let calls = 0;
   const provider: ReviewerBrainProvider = {
-    meta: { name: "codex", billing: "quota", genAiSystem: "openai" },
+    meta: { name: "codex", billing: "quota", genAiSystem: "openai", acceptsModel: false },
     callRaw: notUsedCallRaw,
     call: async () => {
       calls++;
@@ -449,7 +450,7 @@ test("Quota-billed throttle retry: count=48 pre-seeded -> first consumes 48->49,
   });
   let calls = 0;
   const provider: ReviewerBrainProvider = {
-    meta: { name: "codex", billing: "quota", genAiSystem: "openai" },
+    meta: { name: "codex", billing: "quota", genAiSystem: "openai", acceptsModel: false },
     callRaw: notUsedCallRaw,
     call: async () => {
       calls++;
@@ -473,7 +474,7 @@ test("Quota-billed throttle retry: count=48 pre-seeded -> first consumes 48->49,
 
 function makeAgyProviderForTest(call: () => Promise<BrainCallResult>): ReviewerBrainProvider {
   return {
-    meta: { name: "agy", billing: "quota", genAiSystem: "google" },
+    meta: { name: "agy", billing: "quota", genAiSystem: "google", acceptsModel: true },
     callRaw: notUsedCallRaw,
     call,
   };
@@ -602,7 +603,7 @@ test("Pre-spawn quota-cap BrainError carries code:\"quota_cap\"", async () => {
     quota_calls_today: { codex: { date: new Date().toISOString().slice(0, 10), count: 50 } },
   });
   const provider: ReviewerBrainProvider = {
-    meta: { name: "codex", billing: "quota", genAiSystem: "openai" },
+    meta: { name: "codex", billing: "quota", genAiSystem: "openai", acceptsModel: false },
     callRaw: notUsedCallRaw,
     call: async () => OK,
   };
@@ -625,7 +626,7 @@ test("Retry-refusal re-throw (throttle, quota cap hit mid-retry) does NOT carry 
     quota_calls_today: { codex: { date: today, count: 49 } },
   });
   const provider: ReviewerBrainProvider = {
-    meta: { name: "codex", billing: "quota", genAiSystem: "openai" },
+    meta: { name: "codex", billing: "quota", genAiSystem: "openai", acceptsModel: false },
     callRaw: notUsedCallRaw,
     call: async () => {
       throw throttleError();

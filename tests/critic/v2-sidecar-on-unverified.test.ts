@@ -16,8 +16,9 @@
  * forever. Not because Siltpoke read nothing: it read plenty, and
  * `writeV2Archive` sat two lines past the `return` that discarded the review.
  *
- * the maintainer asked the right question at a real dashboard — "怎么会什么都没有
- * read" — and the answer is that the reading was thrown away with the review.
+ * The right question got asked at a real dashboard — why does it say nothing
+ * was read — and the answer is that the reading was thrown away with the
+ * review.
  *
  * NORMAL now always files, so it always mints an id, so the sidecar write is
  * always reached. This test drives the exact case that used to die (empty
@@ -89,6 +90,7 @@ function brainOut(evidence: BrainOutput["evidence"]): BrainOutput {
     pose: "arms_crossed",
     bubble_short: "found a god-file and a magic number",
     bubble_long: "",
+    findings: [],
     critique_for_claude: "the rubric really did fire; this is not an empty review",
     severity: "high",
     confidence: "high",

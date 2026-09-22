@@ -100,7 +100,15 @@ export async function runToolsPhase(args: ToolsPhaseArgs): Promise<ToolsPhaseRes
   // the #668 shape (one commit's message sitting over another commit's hunks)
   // would walk back in through the door D2 exists to close.
   const gd = toolResults["git-diff"];
-  if (revisionRange === undefined && gd.tool === "git-diff" && gd.status === "ok") {
+  // Same test `runGitDiff` and `computeRangesAnchored` use for "was a range
+  // given": a blank string is NOT a range. Three files used to ask this
+  // question and two of them agreed; a `""` would have been classified as a
+  // range here and as no-range there, and the two answers drive different git
+  // invocations. Unreachable today — neither producer emits an empty string —
+  // and unified anyway, because the divergence is the kind this project keeps
+  // paying for later.
+  const rangeGiven = revisionRange !== undefined && revisionRange.trim() !== "";
+  if (!rangeGiven && gd.tool === "git-diff" && gd.status === "ok") {
     const gdRawNow = typeof gd.raw === "string" ? gd.raw : "";
     if (gdRawNow.trim().length === 0) {
       try {
@@ -119,6 +127,12 @@ export async function runToolsPhase(args: ToolsPhaseArgs): Promise<ToolsPhaseRes
             // fallback sets it — the blob spans several commits, and without it the
             // reviewer has judged a top message against a lower commit's hunks.
             reviewSubject: fallback.reviewSubject,
+            // REBUILT, NOT PATCHED — this object replaces the one `runGitDiff`
+            // returned, so a field left off here is silently lost. Dropping this
+            // one would read downstream as "not anchored", and every clean-tree
+            // review without a merge in its window would lose its line numbers
+            // with nothing going red to say so.
+            rangesAnchored: fallback.rangesAnchored,
           };
         }
       } catch {

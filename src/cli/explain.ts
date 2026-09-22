@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * `/siltpoke-explain` CLI.
+ * The explain CLI — a dev-checkout entry point only.
+ *
+ * It was `/siltpoke-explain` until #279 cut the command surface. No shipped
+ * command reaches it and it has no `dist/` bundle; the user-facing entry is the
+ * Code Map's "Generate explanation" button, which calls the same orchestrator
+ * through the daemon. Its strings say `explain`, not a slash command, so a copy
+ * of them cannot teach a user something their host will reject.
  *
  * Usage:
  *   bun src/cli/explain.ts <target>             # depth=1, cache OK
@@ -123,7 +129,7 @@ function formatAmbiguous(
   });
   lines.push("");
   lines.push(
-    "Re-run with the qualified form, e.g. `/siltpoke-explain <path>:<symbol>`.",
+    "Re-run with the qualified form, e.g. `explain <path>:<symbol>`.",
   );
   return `${lines.join("\n")}\n`;
 }
@@ -243,7 +249,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
   const opts = parseArgs(argv);
   if (!opts.target) {
     process.stderr.write(
-      "usage: /siltpoke-explain <target> [--depth 1|2] [--force] [--json]\n",
+      "usage: explain <target> [--depth 1|2] [--force] [--json]\n",
     );
     return 1;
   }

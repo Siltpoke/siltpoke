@@ -64,6 +64,7 @@ const allNotApplicable = (): Record<ToolName, ToolResult> & {
 
 const fakeBrain: BrainOutput = {
   mood: "happy", pose: "base", bubble_short: "ok", bubble_long: "",
+  findings: [],
   critique_for_claude: "something actionable", severity: "medium",
   confidence: "high", xp_earned_events: [], evidence: [],
 };

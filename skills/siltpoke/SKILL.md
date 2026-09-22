@@ -1,6 +1,6 @@
 ---
 name: siltpoke
-description: Use when the user wants to install, inspect, open, or operate Siltpoke from Codex; includes setup, dashboard, inbox, memory, code-map, and review workflows. Does not replace Siltpoke's local installer.
+description: Use when the user wants to install, inspect, open, or operate Siltpoke from Codex or Antigravity (agy); includes setup, dashboard, inbox, memory, code-map, and review workflows. Does not replace Siltpoke's local installer.
 ---
 
 # Siltpoke
@@ -8,28 +8,70 @@ description: Use when the user wants to install, inspect, open, or operate Siltp
 Siltpoke is a local-first coding companion for CLI agents. It reviews your
 work in the Stop hook, but reviews only fire once a pet exists at
 `~/.siltpoke/config.json` — until then the hook is silently gated off. In
-Codex, use this skill both to CREATE that pet (a plugin-native install has no
-slash commands and no source clone, so this skill is the only path in) and to
-route every other request to the bundled Siltpoke CLI and dashboard.
+Codex or Antigravity (agy), use this skill both to CREATE that pet (a
+plugin-native install has no slash commands and no source clone, so this
+skill is the only path in) and to route every other request to the bundled
+Siltpoke CLI and dashboard.
 
 This skill is self-contained: do not read or defer to any Claude Code
-command file (`.claude-plugin/commands/*.md`) — Codex cannot see those files.
-Everything needed to run the flows below is written out here.
+command file (`.claude-plugin/commands/*.md`) — neither Codex nor agy can see
+those files. Everything needed to run the flows below is written out here.
 
 ## Resolve the plugin root first
 
 Every command below needs the plugin's install directory. A skill-run shell
-command's cwd is the user's project, not the plugin root, and Codex has no
-`${CLAUDE_PLUGIN_ROOT}`-equivalent env var. Resolve it once per session with:
+command's cwd is the user's project, not the plugin root, and neither Codex
+nor agy is guaranteed to export a `${CLAUDE_PLUGIN_ROOT}`-equivalent env var
+to a skill-run shell. Resolve it once per session with this ladder — each
+rung is skipped when it yields nothing, and the resolved value is validated
+before use so a missing install fails loudly instead of turning every later
+`bun` command into a confusing "module not found":
 
 ```bash
-PLUGIN_ROOT=$(codex plugin list --json | jq -r '.installed[] | select(.name=="siltpoke") | .source.path')
+PLUGIN_ROOT=""
+for _candidate in "${ANTIGRAVITY_PLUGIN_ROOT:-}" "${AGY_PLUGIN_ROOT:-}" "${CLAUDE_PLUGIN_ROOT:-}"; do
+  if [ -n "$_candidate" ] && [ -f "$_candidate/dist/siltpoke-cli.js" ]; then
+    PLUGIN_ROOT="$_candidate"
+    break
+  fi
+done
+if [ -z "$PLUGIN_ROOT" ] && command -v codex >/dev/null 2>&1; then
+  _candidate=$(codex plugin list --json 2>/dev/null | jq -r '.installed[]? | select(.name=="siltpoke") | .source.path' 2>/dev/null)
+  if [ -n "$_candidate" ] && [ -f "$_candidate/dist/siltpoke-cli.js" ]; then
+    PLUGIN_ROOT="$_candidate"
+  fi
+fi
+if [ -z "$PLUGIN_ROOT" ] && [ -n "${HOME:-}" ] && [ -f "${HOME}/.gemini/config/plugins/siltpoke/dist/siltpoke-cli.js" ]; then
+  PLUGIN_ROOT="${HOME}/.gemini/config/plugins/siltpoke"
+fi
+if [ -z "$PLUGIN_ROOT" ]; then
+  printf '%s\n' "Could not find a Siltpoke plugin install (checked ANTIGRAVITY_PLUGIN_ROOT / AGY_PLUGIN_ROOT / CLAUDE_PLUGIN_ROOT, codex plugin list, and ~/.gemini/config/plugins/siltpoke)." >&2
+fi
 ```
 
-If `jq` is not available, fall back to parsing `codex plugin list` (plain
-text) for the siltpoke row's PATH column, or a `python3 -c` one-liner over
-the same `--json` output. Once resolved, every command in this skill is
-`bun "$PLUGIN_ROOT/dist/<entrypoint>"`.
+Rungs, in order: **(a)** an env var already set for this host —
+`ANTIGRAVITY_PLUGIN_ROOT` / `AGY_PLUGIN_ROOT` / `CLAUDE_PLUGIN_ROOT`. Whether
+agy exports either of the first two to a skill-run shell is UNVERIFIED; this
+rung is free to try and costs nothing when the var is unset. Every variable the
+block reads — `HOME` included — is read through `${VAR:-}`, so a caller running
+with `set -u` gets the designed "could not find" message rather than a raw
+`parameter not set` abort. **(b)** the
+codex form, run only when a `codex` binary is present on PATH. This rung needs
+`jq`; the block does NOT carry a `jq`-less fallback, it just yields nothing and
+falls through. So on a codex box with no `jq`, if rung (c) does not save you
+either, resolve the path yourself from `codex plugin list`'s plain-text PATH
+column (or a `python3 -c` one-liner over the same `--json` output) before
+running anything below. **(c)** the agy
+form — agy installs the whole plugin directory, `dist/` included, to
+`$HOME/.gemini/config/plugins/siltpoke`. A rung only counts once
+`dist/siltpoke-cli.js` is confirmed to exist under the candidate path — an
+untested guess is not a resolution.
+
+If every rung fails, `PLUGIN_ROOT` stays empty and the snippet says so on
+stderr. **Stop there and tell the user plainly that their Siltpoke install
+couldn't be found automatically, and ask where it's installed** — do not
+proceed with an empty `$PLUGIN_ROOT`. Once resolved, every command in this
+skill is `bun "$PLUGIN_ROOT/dist/<entrypoint>"`.
 
 ## Create your pet (first-time setup)
 
@@ -179,19 +221,22 @@ scripts (`bun src/cli/list-inbox.ts`, `dismiss.ts`, `remember.ts`,
 the user plainly if they ask for one of these that it needs a source
 checkout, rather than guessing at a bundled command that doesn't exist.
 
-## Codex Integration Notes
+## Host Integration Notes
 
 - The pet is created entirely through this skill's step-by-step flow above —
-  there is no `bun run setup` wizard available to a plugin-native install
-  (that script needs a source clone this user doesn't have).
-- In Codex, use this skill as the command surface. Do not tell users to run
+  there is no `bun run setup` wizard available to a plugin-native install on
+  ANY host (that script needs a source clone this user doesn't have).
+- **Codex**: use this skill as the command surface. Do not tell users to run
   `/prompts:siltpoke-report`; current Codex CLI does not recognize that
-  route.
-- The Codex Stop hook currently routes through `src/hooks/codex-stop.ts`,
-  which adapts Codex hook input into Siltpoke's existing Stop-hook pipeline.
-- Siltpoke's Brain provider is still Claude CLI backed in this phase. Do not
-  claim that Codex is the reviewer brain unless a later provider-abstraction
-  phase has landed.
+  route. The Codex Stop hook currently routes through
+  `src/hooks/codex-stop.ts`, which adapts Codex hook input into Siltpoke's
+  existing Stop-hook pipeline.
+- **Antigravity (agy)**: use this skill as the command surface the same way —
+  agy has no verified `/siltpoke-*` slash form either (`agy --help` shows no
+  `skills` subcommand), so route natural-language requests here too.
+- Siltpoke's Brain provider is still Claude CLI backed in this phase, on
+  every host. Do not claim that Codex or agy is the reviewer brain unless a
+  later provider-abstraction phase has landed.
 
 ## Response Style
 

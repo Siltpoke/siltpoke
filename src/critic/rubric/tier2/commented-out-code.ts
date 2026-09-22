@@ -156,6 +156,7 @@ export const commentedOutCodeRule: RubricRule = {
           line: startLine + 1,
           end_line: endLine + 1,
           snippet: lines[startLine] ?? block[0].text,
+          snippet_is_source: true,
           message: `${block.length} consecutive comments appear to contain commented-out code. Dead code in comments creates noise and confusion.`,
           suggested_fix:
             "Remove commented-out code. If you need it later, retrieve it from version control history.",

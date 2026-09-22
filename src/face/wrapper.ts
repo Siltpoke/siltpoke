@@ -57,6 +57,16 @@ interface WrapperConfig {
   bubbleColor: string;
   terminalWidth: number;
   minimalMode: boolean;
+  /**
+   * Show the `.claude/tasklist.md` progress segment under the pet.
+   *
+   * OFF by default and opt-in, reversing the original behaviour: the segment
+   * used to render unconditionally whenever `<cwd>/.claude/tasklist.md`
+   * parsed, with no way to turn it off. It pinned one stale line
+   * (`0/14 ▶ <some old step>`) under every turn, which reads as current work
+   * and is not. Requested three times before this existed.
+   */
+  showTasklist: boolean;
 }
 
 export async function readConfig(basePath: string): Promise<WrapperConfig> {
@@ -67,6 +77,7 @@ export async function readConfig(basePath: string): Promise<WrapperConfig> {
     bubbleColor: "cyan",
     terminalWidth: 0,
     minimalMode: false,
+    showTasklist: false,
   };
   try {
     const configPath = join(basePath, "config.json");
@@ -83,6 +94,10 @@ export async function readConfig(basePath: string): Promise<WrapperConfig> {
           ? Math.floor(parsed.terminalWidth)
           : 0,
       minimalMode: parsed?.minimalMode === true,
+      // Opt-in: anything other than an explicit `true` means off, so an old
+      // config.json written before this key existed turns the segment OFF
+      // rather than grandfathering the old unconditional behaviour.
+      showTasklist: parsed?.showTasklist === true,
     };
   } catch {
     return fallback;
@@ -186,13 +201,58 @@ function wrapBubble(text: string, maxWidth: number, maxLines: number): string[] 
   return flat;
 }
 
+/**
+ * `[10:44 AM]: ` from an epoch-ms stamp, or "" when there is nothing to stamp.
+ *
+ * The trailing colon makes the line read as speech — `[10:44 AM]: "…"` is
+ * someone saying something at a time, which is what a pet bubble is. Without
+ * it the stamp sits next to the quote like a label on a log row.
+ *
+ * 12-hour with the meridiem, not 24-hour: this line is matched against the
+ * reader's own memory of the session, and that memory is "before lunch", not
+ * "before 12:00". A bare `[01:15]` is also genuinely ambiguous on a machine
+ * that has been awake across both — the hour is the half of the stamp that
+ * does the work, so it must not be the half that can be read two ways.
+ *
+ * Hours are NOT zero-padded (`9:05 AM`, not `09:05 AM`) — that is the
+ * conventional 12-hour form, and the leading zero reads as a 24-hour clock,
+ * which is the exact confusion the meridiem is here to remove. Minutes stay
+ * padded, because `9:5` is not a time.
+ */
+export function bubbleTimeStamp(atMs: number | undefined): string {
+  if (atMs === undefined || !Number.isFinite(atMs) || atMs <= 0) return "";
+  const d = new Date(atMs);
+  const h24 = d.getHours();
+  const meridiem = h24 < 12 ? "AM" : "PM";
+  // Midnight and noon are the two the modulo gets wrong: 0 % 12 and 12 % 12
+  // are both 0, and "0:15 AM" is not a time anyone writes.
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `[${h12}:${mm} ${meridiem}]: `;
+}
+
+/**
+ * The bubble carries WHEN it was said.
+ *
+ * Without it the pet's line looks the same at one minute old and at
+ * twenty-nine — the bubble only clears at 30 minutes (`DEFAULT_STALE_MS`) —
+ * so a review of earlier work reads as a review of the turn you just
+ * finished, and a reader assumes it is about the turn they just made.
+ *
+ * A clock time, not an age: it costs the same width every render (no reflow
+ * as "2m" becomes "12m"), and it is what a reader matches against their own
+ * memory of the session. Everything else about a review — which files, what
+ * evidence, which branch — stays in the dashboard timeline; this line is the
+ * one fact that has to travel with the sentence.
+ */
 function buildBubbleBlock(
   bubble: string,
   colorName: string,
   faceWidth: number,
   termWidth: number,
+  atMs?: number,
 ): string {
-  const quoted = `"${bubble}"`;
+  const quoted = `${bubbleTimeStamp(atMs)}"${bubble}"`;
   const effective = termWidth > 0 ? termWidth : 160;
   const available = Math.max(20, effective - faceWidth - 2);
   const wrapped = wrapBubble(quoted, available, 3);
@@ -212,6 +272,13 @@ function widestLine(text: string): number {
   return text.split("\n").reduce((m, l) => Math.max(m, l.length), 0);
 }
 
+/**
+ * Columns of left margin on the pet block in the statusline. Padding uses the
+ * same U+2800 as the centering below — a plain space here would be stripped by
+ * the renderer and the margin would silently be zero.
+ */
+const FACE_LEFT_MARGIN = 4;
+
 function buildFaceBlock(
   art: string,
   name: string,
@@ -228,10 +295,17 @@ function buildFaceBlock(
     ? Math.max(artWidth, widestLabel + 2)
     : artWidth;
 
-  // Claude Code's statusline renderer strips ASCII leading whitespace
-  // per line, so left padding uses U+2800 (Braille Pattern Blank) — a
-  // real character that survives the strip. Right padding stays as
-  // regular spaces (trailing whitespace is not trimmed).
+  // Claude Code's statusline renderer strips LEADING WHITESPACE per line, so
+  // left padding uses U+2800 (Braille Pattern Blank) — a real character that
+  // is not whitespace per Unicode, and so survives the strip. Right padding
+  // stays as regular spaces (trailing whitespace is not trimmed).
+  //
+  // MEASURED 2026-09-20 (install-audit defect [5a]): the strip is by the
+  // Unicode White_Space property, not by ASCII. NBSP (U+00A0) and FIGURE
+  // SPACE (U+2007) were probed through the real statusline alongside ASCII
+  // spaces and all three were stripped; only U+2800 came through. There is no
+  // better-covered character to switch to — see src/face/composer.ts for the
+  // full probe, and tests/face/indent-char.test.ts for the guard.
   const NBSP_LIKE = "⠀";
 
   const center = (line: string): string => {
@@ -242,9 +316,15 @@ function buildFaceBlock(
     return NBSP_LIKE.repeat(left) + line + " ".repeat(right);
   };
 
-  const centeredArt = artLines.map(center).join("\n");
+  // Left margin for the whole block. Every row gets it, so `faceWidth` in
+  // composeOutput widens with it and the bubble's continuation rows stay
+  // aligned — one knob, not two.
+  const margin = NBSP_LIKE.repeat(FACE_LEFT_MARGIN);
+  const place = (line: string): string => margin + center(line);
+
+  const centeredArt = artLines.map(place).join("\n");
   if (labelLines.length === 0) return centeredArt;
-  return [centeredArt, ...labelLines.map(center)].join("\n");
+  return [centeredArt, ...labelLines.map(place)].join("\n");
 }
 
 function formatProgressionLine(p: {
@@ -382,7 +462,9 @@ async function spliceFace(
       options.termWidth ??
       (cfg.terminalWidth > 0 ? cfg.terminalWidth : detectTermWidth());
 
-    const tasklistRaw = await readTasklist(options.cwd);
+    // Gate the READ, not just the render — an off segment should not touch
+    // the filesystem on every statusline paint.
+    const tasklistRaw = cfg.showTasklist ? await readTasklist(options.cwd) : null;
     const tasklistParsed = tasklistRaw ? parseTasklist(tasklistRaw) : null;
     const tasklistSeg = tasklistParsed
       ? colorize(formatTasklistSegment(tasklistParsed), "gray")
@@ -394,7 +476,13 @@ async function spliceFace(
 
     if (cfg.minimalMode) {
       if (!bubbleText) return appendSeg(stdout);
-      const bubbleBlock = buildBubbleBlock(bubbleText, bubbleColor, 0, termWidth);
+      const bubbleBlock = buildBubbleBlock(
+        bubbleText,
+        bubbleColor,
+        0,
+        termWidth,
+        stateFresh ? state?.last_updated_ms : undefined,
+      );
       return appendSeg(`${stdout.replace(/\n+$/, "")}\n\n${bubbleBlock}`);
     }
 
@@ -417,7 +505,7 @@ async function spliceFace(
     const face = applyAura(rawFace, auraGlyph);
     const faceWidth = widestLine(face);
     const inner = bubbleText
-      ? `${stdout.replace(/\n+$/, "")}\n\n${buildBubbleBlock(bubbleText, bubbleColor, faceWidth, termWidth)}`
+      ? `${stdout.replace(/\n+$/, "")}\n\n${buildBubbleBlock(bubbleText, bubbleColor, faceWidth, termWidth, stateFresh ? state?.last_updated_ms : undefined)}`
       : stdout;
     return composeOutput({ face, inner: appendSeg(inner), termWidth });
   } catch (err) {

@@ -105,6 +105,25 @@ export function SubLabel({ children }: { children: import("hono/jsx").Child }) {
  * line rendered `display:none` on every real page, and only an e2e
  * `toBeVisible` caught it. There is nothing here for that failure to hide in.
  */
+/**
+ * One style for every mark, hoisted when `not_checked` gained its own branch —
+ * two inline copies of the same object is how the two rows drift apart.
+ */
+const markStyle = {
+  display: "flex",
+  alignItems: "baseline",
+  gap: 8,
+  flexWrap: "wrap",
+  fontFamily: tokens.font.body,
+  fontSize: 11,
+  lineHeight: 1.5,
+  color: tokens.color.ink2,
+  background: `color-mix(in srgb, ${tokens.color.amber} 9%, transparent)`,
+  border: `1px solid ${tokens.color.amber}`,
+  borderRadius: tokens.radius.sm,
+  padding: "6px 10px",
+} as const;
+
 export function EvidenceMark({
   label,
   unverifiedCount,
@@ -120,7 +139,45 @@ export function EvidenceMark({
   /** Items dropped as unverifiable. 0 for `no_evidence` (nothing was cited). */
   unverifiedCount: number;
 }) {
-  if (label === null || label === "verified" || label === "not_checked") return null;
+  if (label === null || label === "verified") return null;
+
+  // `not_checked` renders its own sentence and returns before the count gates
+  // below, because its count is legitimately 0: the items pass through as
+  // cited-but-unexamined, so nothing sits in `unverified`.
+  //
+  // This branch was DEAD until 2026-09-04. `guardCritique` has one production
+  // call site and it passes `"NORMAL"`, so the PASSIVE_BUBBLE/HARD_SUPPRESS
+  // path that produced `not_checked` never ran there — and this component
+  // returned null for it, which cost nothing while nothing could reach it.
+  // Then the empty-corpus fix made `not_checked` reachable from NORMAL, and a
+  // review where NOT ONE citation was examined started rendering exactly like
+  // a fully-grounded one. That is the failure this component's own comment
+  // says it exists to prevent, reintroduced by a change made to improve
+  // honesty elsewhere. Found in review, not by a run.
+  if (label === "not_checked" || label === "not_checked_budget") {
+    // Two sentences, because the causes are not interchangeable and only one of
+    // them is the user's to act on. The first draft said "could not read the
+    // files" for both, which is false for the budget case — siltpoke read the
+    // diff and dropped part of it — and that case is the common one: this
+    // repo measures 39.1% of source-carrying diffs over the hunk budget.
+    //
+    // Neither sentence blames the reviewer. That is the whole point of the
+    // label: the findings may be right, nobody checked them.
+    const detail =
+      label === "not_checked_budget"
+        ? "this change was too large for Siltpoke to read in full, and the lines this review quotes are in the part it skipped — the findings may still be right, but nothing here is confirmed"
+        : "Siltpoke could not read the files this review quotes, so none of its quotes were checked against your code — the findings may still be right, but nothing here is confirmed";
+    return (
+      <div
+        data-evidence-mark={label}
+        data-unverified-count={String(unverifiedCount)}
+        style={markStyle}
+      >
+        <span style={{ fontWeight: 600 }}>unchecked</span>
+        <span>{detail}</span>
+      </div>
+    );
+  }
   // A count of zero alongside a label that promises dropped citations is a
   // contradiction, not a caveat — "0 quotes were dropped" is noise on a review
   // that is fine. Unreachable from today's writer (both fields are written
@@ -149,20 +206,7 @@ export function EvidenceMark({
     <div
       data-evidence-mark={label}
       data-unverified-count={String(unverifiedCount)}
-      style={{
-        display: "flex",
-        alignItems: "baseline",
-        gap: 8,
-        flexWrap: "wrap",
-        fontFamily: tokens.font.body,
-        fontSize: 11,
-        lineHeight: 1.5,
-        color: tokens.color.ink2,
-        background: `color-mix(in srgb, ${tokens.color.amber} 9%, transparent)`,
-        border: `1px solid ${tokens.color.amber}`,
-        borderRadius: tokens.radius.sm,
-        padding: "6px 10px",
-      }}
+      style={markStyle}
     >
       <span
         style={{

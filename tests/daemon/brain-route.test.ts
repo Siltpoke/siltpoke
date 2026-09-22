@@ -156,12 +156,42 @@ describe("POST /api/brain/review-by-builder/:builder (Brain select v2 T3)", () =
     expect((readConfig().brain as any).review_by_builder.codex).toEqual({ provider: "codex" });
   });
 
-  test("model on a non-claude reviewer -> 400, no write", async () => {
+  // Spec brain-select-four-gaps §3.1: the refusal follows the reviewer's real
+  // argv, not "is it claude" — agy carries --model, so this pin is legitimate.
+  test("model on a reviewer whose argv carries one (agy) -> 200, written", async () => {
     const app = buildApp();
     const res = await app.request("/api/brain/review-by-builder/codex", {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({ reviewer: "agy", model: "x" }),
+      body: JSON.stringify({ reviewer: "agy", model: "gemini-3-pro" }),
+    });
+    expect(res.status).toBe(200);
+    const cfg = JSON.parse(readFileSync(join(home, "config.json"), "utf8"));
+    expect(cfg.brain.review_by_builder.codex).toEqual({
+      provider: "agy",
+      model: "gemini-3-pro",
+    });
+  });
+
+  test("model on codex -> 400, no write (its spawn argv has no -m)", async () => {
+    const app = buildApp();
+    const res = await app.request("/api/brain/review-by-builder/agy", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ reviewer: "codex", model: "gpt-5.5" }),
+    });
+    expect(res.status).toBe(400);
+    expect(existsSync(join(home, "config.json"))).toBe(false);
+  });
+
+  // AC9: the same refusal on the ROLE route. The dashboard drops the field in
+  // the browser (role-row.ts), so before this the route was the way past it.
+  test("role route: model on codex -> 400, no write", async () => {
+    const app = buildApp();
+    const res = await app.request("/api/brain/roles/review", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ family: "codex", model: "gpt-5.5" }),
     });
     expect(res.status).toBe(400);
     expect(existsSync(join(home, "config.json"))).toBe(false);
@@ -200,5 +230,53 @@ describe("GET /api/brain includes v2 fields (T3)", () => {
     };
     expect(json.reviewByBuilder.length).toBe(5);
     expect(json.claudeModels.length).toBeGreaterThan(0);
+  });
+});
+
+// Spec brain-select-four-gaps §3.2: the dashboard's half of "undo the global
+// pin". The CLI got `siltpoke brain unset <role>`; without this route the
+// dashboard could pin a reviewer and never take it back, which is how the
+// setting became one-way in the first place.
+describe("DELETE /api/brain/roles/:role — undo a global pin", () => {
+  test("removes the pin so the per-builder rule applies again", async () => {
+    const app = buildApp();
+    await app.request("/api/brain/review-by-builder/codex", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ reviewer: "agy" }),
+    });
+    await app.request("/api/brain/roles/review", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ family: "qoder" }),
+    });
+    expect(
+      JSON.parse(readFileSync(join(home, "config.json"), "utf8")).brain.roles.review,
+    ).toEqual({ provider: "qoder" });
+
+    const res = await app.request("/api/brain/roles/review", {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+    expect(res.status).toBe(200);
+    const cfg = JSON.parse(readFileSync(join(home, "config.json"), "utf8"));
+    expect(cfg.brain.roles.review).toBeUndefined();
+    expect(cfg.brain.review_by_builder.codex).toEqual({ provider: "agy" });
+  });
+
+  test("unknown role -> 400", async () => {
+    const app = buildApp();
+    const res = await app.request("/api/brain/roles/banana", {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("no secret -> 401, no write", async () => {
+    const app = buildApp();
+    const res = await app.request("/api/brain/roles/review", { method: "DELETE" });
+    expect(res.status).toBe(401);
+    expect(existsSync(join(home, "config.json"))).toBe(false);
   });
 });

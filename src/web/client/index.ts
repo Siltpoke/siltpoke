@@ -48,7 +48,7 @@ import "./islands/memory-book";
 // Active-repos card — per-row expand + on-demand summary generation.
 import "./islands/active-repos";
 import "./islands/staleness-badge";
-// "Since you last looked" discovery panel (slice ③) — lazy GET + gesture-
+// "Since you last looked" discovery panel — lazy GET + gesture-
 // bound advance/mark-all.
 import "./islands/since-you-looked";
 // Progress a retired map — which a retired surface the detail rail shows (pure x-show).

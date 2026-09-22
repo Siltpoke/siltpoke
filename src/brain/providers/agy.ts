@@ -36,15 +36,16 @@
  *    config.toml fallback).
  * See an internal design note Task 2/3/4.
  */
+
+import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
-import { BrainError, extractJsonString, type CallBrainOptions } from "../brain";
-import { parseBrainOutput } from "../schema";
+import { reapAgyConversations, recordAgyConversation } from "../agy-reaper";
+import { BrainError, type CallBrainOptions, extractJsonString } from "../brain";
 import type { BrainFailureInput } from "../failure-classify";
-import type { CallRawResult, ReviewerBrainProvider } from "../provider";
-import { recordAgyConversation, reapAgyConversations } from "../agy-reaper";
+import { type CallRawResult, FAMILY_ACCEPTS_MODEL, type ReviewerBrainProvider } from "../provider";
+import { parseBrainOutput } from "../schema";
 import { resolveReviewerCwd } from "./reviewer-cwd";
 
 /** Same default as brain.ts's (unexported) claude -p timeout — agy -p has
@@ -314,7 +315,12 @@ async function callRaw(opts: CallBrainOptions): Promise<CallRawResult> {
 
 export function makeAgyProvider(): ReviewerBrainProvider {
   return {
-    meta: { name: "agy", billing: "quota", genAiSystem: "google" },
+    meta: {
+      name: "agy",
+      billing: "quota",
+      genAiSystem: "google",
+      acceptsModel: FAMILY_ACCEPTS_MODEL.agy,
+    },
     callRaw,
     call: async (opts: CallBrainOptions) => {
       const raw = await callRaw(opts);

@@ -18,10 +18,7 @@ import { extractDurableFacts } from "../memory/extract-facts";
 import { GLOBAL_ONLY, type ProjectScope, readMemory, writeMemory } from "../memory/memory";
 import { migrateFactsToGlobal } from "../memory/migrate-facts-to-global";
 import { runRetention } from "../observability/retention";
-import { type QuizSessionState, readQuizState, writeQuizState } from "../quiz/index";
-import { deriveModuleGraph } from "../repo-graph/module-graph";
-import { isValidProjHash, resolveRepoByHash } from "../repo-graph/repo-registry";
-import { readGraph } from "../repo-graph/store";
+import { isValidProjHash, makeIndexLocationResolver, resolveRepoByHash } from "../repo-graph/repo-registry";
 import type { HookEvent } from "../router/router";
 import { loadBudgetConfig } from "../state/budget-config";
 import { loadQuietHoursConfig } from "../state/quiet-hours";
@@ -45,6 +42,7 @@ import { mountTimelineRoutes } from "../web/routes/timeline";
 import { mountTraceWebRoutes } from "../web/routes/traces";
 import { hostAllowlistMiddleware } from "./host-guard";
 import { startDecayTick } from "./petTick";
+import { isSiltpokedPing } from "./port";
 import { mountBrainRoutes } from "./routes/brain";
 import { mountBrainHealthRoute } from "./routes/brain-health";
 import { type BudgetSignal, type ChatAnchorRef, mountChatRoutes, type QuietHoursSignal } from "./routes/chat";
@@ -132,14 +130,23 @@ export class DaemonAlreadyRunningError extends Error {
   }
 }
 
-/** True if a healthy siltpoked answers `/api/ping` with 2xx on the port. */
+// `isSiltpokedPing` lives in `./port` (a leaf module) so `src/cli/doctor-*`
+// can identify a ping responder without importing the whole daemon.
+// It is re-exported here because `src/daemon/server` is where callers already
+// look for the daemon's own health vocabulary.
+export { isSiltpokedPing };
+
+/** True if a healthy siltpoked answers `/api/ping` on the port. */
 async function isPortHealthy(hostname: string, port: number): Promise<boolean> {
   try {
     const r = await fetch(`http://${hostname}:${port}/api/ping`, {
       signal: AbortSignal.timeout(250),
     });
-    return r.ok;
+    if (!r.ok) return false;
+    return isSiltpokedPing(await r.json());
   } catch {
+    // Unreachable, timed out, or a body that is not JSON at all — none of
+    // those is a siltpoked.
     return false;
   }
 }
@@ -393,8 +400,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   // and Hono never sets that header — measured, not assumed: `c.json()` and
   // `c.text()` both come back with `content-length: null`. So passing a
   // threshold would install a knob that can never fire: a dead guard shipping
-  // with a comment claiming it works, which is the exact defect family
-  // `docs/lessons.md` catalogs. Every compressible content type is therefore
+  // with a comment claiming it works, which is the exact defect family this
+  // repo keeps producing. Every compressible content type is therefore
   // compressed regardless of size.
   //
   // That is the right trade here anyway. The responses a size gate would have
@@ -502,24 +509,6 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     return loc?.storage_dir ?? null;
   };
 
-  // Quiz mode (Task 4) — proj_hash → module graph (getGraphStorageDir →
-  // readGraph → deriveModuleGraph); null when the project has never been
-  // indexed, which the chat route surfaces as a `quiz_unavailable` blocked
-  // signal rather than quizzing against an empty graph.
-  const loadModuleGraph = async (projHash: string) => {
-    const dir = await getGraphStorageDir(projHash);
-    if (!dir) return null;
-    const graph = await readGraph(dir);
-    return deriveModuleGraph(graph);
-  };
-
-  // Quiz mode (Task 4) — read/write the per-session quiz sidecar
-  // (chats/<id>.quiz.json), bound to this daemon's homeBase.
-  const quizStore = {
-    read: (id: string) => readQuizState(homeBase, id),
-    write: (id: string, s: QuizSessionState) => writeQuizState(homeBase, id, s),
-  };
-
   // T3: map an anchor's proj_hash → its project_root path so the chat send path
   // can scope memory reads/writes to the anchored repo instead of the daemon's
   // own cwd (`/` under launchd). null (no indexed repo / no meta) → the route
@@ -528,6 +517,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     const loc = await resolveRepoByHash(projHash, { home: homeBase });
     return loc?.project_root ?? null;
   };
+
+  // The index's own location for staleness reads (chat). Not the Memory
+  // scope above: that is the same project_root today, but a staleness read must
+  // use the stored storage_dir, never re-derive it (spec 2026-09-14 §4.3).
+  const resolveIndexLocationByHash = makeIndexLocationResolver(homeBase);
 
   // Resolve a viewed critique into critique context for the floating
   // chat (see resolveCritiqueAnchorImpl for the proj_hash format-guard
@@ -563,14 +557,12 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     resolveCritiqueAnchor,
     getGraphStorageDir,
     resolveProjectRootByHash,
+    resolveIndexLocationByHash,
     checkSendGate,
-    // Quiz mode (Task 4).
-    loadModuleGraph,
-    quizStore,
     // Recall: inject active user-facts into the chat system prompt
     // (same store the /memory page reads).
     readMemory,
-    // memory work — real-time chat capture: persist  facts told to
+    // memory work — real-time chat capture: persist "记住 X" facts told to
     // the pet in chat to the same store the facts route writes to.
     writeMemory,
     // Conversational auto-capture — distill durable user-facts from plain chat
@@ -641,7 +633,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   const taskRegistry = new TaskRegistry(homeBase);
   mountRepoGraphRoutes(app, { cwd: process.cwd(), secret: opts.secret, home: homeBase, taskRegistry });
   // /api/repo-graph/seen* -- watermark delta + advance/mark-all. Extracted to
-  // its own mount (fast-follow after slice ③ landed; repo-graph.tsx was 2x
+  // its own mount (fast-follow; repo-graph.tsx was 2x
   // the 800-LOC hard cap) -- same `home`/`secret` deps as the mount above.
   mountSeenRoutes(app, { secret: opts.secret, home: homeBase });
   mountFsRoutes(app, { secret: opts.secret, home: homeBase });

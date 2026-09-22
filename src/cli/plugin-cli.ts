@@ -35,6 +35,7 @@ import { computeQuizDials } from "./quiz-score";
 import { openDashboard, restartDashboard } from "./report";
 import { runMenubarCli } from "./menubar";
 import { formatUnmuteHuman, formatUnmuteJson, runUnmute } from "./unmute";
+import { formatWakeHuman, formatWakeJson, runWake } from "./wake";
 import { runBrainCli } from "./brain-cli";
 import { siltpokeRoot } from "../installer/paths";
 
@@ -173,6 +174,16 @@ const HANDLERS: Record<string, Handler> = {
   unmute: (rest, io) => {
     const result = runUnmute();
     io.stdout(rest.includes("--json") ? formatUnmuteJson(result) : formatUnmuteHuman(result));
+    return 0;
+  },
+
+  wake: async (rest, io) => {
+    // Defect [11]: the self-serve clear for a latched Brain breaker. The code
+    // existed in src/cli/wake.ts and every user-facing string pointed at
+    // `/siltpoke-wake`, but it was wired into neither the CLI nor the plugin
+    // commands — so the one documented way out did not exist.
+    const result = await runWake();
+    io.stdout(rest.includes("--json") ? formatWakeJson(result) : formatWakeHuman(result));
     return 0;
   },
 

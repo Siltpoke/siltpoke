@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * Slice ③ Task 5 -- daemon endpoints:
+ * Task 5 -- daemon endpoints:
  *
  *   GET  /api/repo-graph/seen?repo=<projHash>          delta + composed staleness
  *   POST /api/repo-graph/seen/advance   { repo, path }  secret-gated
@@ -29,7 +29,7 @@
  * rule -- see `.dependency-cruiser.cjs`).
  */
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -61,11 +61,26 @@ function seedRepo(): { home: string; repo: string } {
   return { home, repo };
 }
 
+/** A git repo with a 5-file sub-folder indexed ON ITS OWN (the repo root has
+ * no index), then one sub-folder file edited → 1/5 = 20% = "stale". A reader
+ * that walks the sub-folder up to the repo finds no index at all. */
+async function staleSubfolderIndex(): Promise<{ home: string; repo: string; sub: string; hash: string; storageDir: string }> {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "sp-home-")));
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), "sp-repo-")));
+  const sub = join(repo, "pkg");
+  mkdirSync(join(repo, ".git"), { recursive: true });
+  mkdirSync(join(sub, "src"), { recursive: true });
+  for (const n of ["a", "b", "c", "d", "e"]) writeFileSync(join(sub, "src", `${n}.ts`), `export const ${n} = 1;\n`);
+  const built = await runIndexBuild({ cwd: repo, root: sub, force: true, home });
+  writeFileSync(join(sub, "src", "a.ts"), "export const a = 999;\n");
+  return { home, repo, sub, hash: built.proj_hash, storageDir: built.storage_dir };
+}
+
 function makeApp(cwd: string, home: string): Hono {
   const app = new Hono();
   mountRepoGraphRoutes(app, { cwd, home, secret: SECRET });
   // The 3 seen handlers were extracted to their own mount (fast-follow after
-  // slice ③ landed) -- mount both here so the seen routes stay reachable.
+  // that extraction landed) -- mount both here so the seen routes stay reachable.
   mountSeenRoutes(app, { home, secret: SECRET });
   return app;
 }
@@ -220,6 +235,13 @@ describe("GET /api/repo-graph/seen", () => {
     expect(status).toBe(200);
     expect(body.success).toBe(true);
     expect(body.data?.deltas).toEqual([]);
+  });
+
+  test("a sub-folder index: seen's staleness reads that index, not the repo above it", async () => {
+    const { home, repo, hash } = await staleSubfolderIndex();
+    const { status, body } = await getSeen(makeApp(repo, home), hash);
+    expect(status).toBe(200);
+    expect(body.data?.staleness.level).toBe("stale");
   });
 });
 

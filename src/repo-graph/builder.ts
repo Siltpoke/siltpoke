@@ -13,12 +13,14 @@
 import { existsSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { parseSource } from "../critic/rubric/tier2/ast-loader";
+import { resolveProjectRoot } from "../memory/project";
 import { discoverAnchorMap } from "./anchor-discovery";
 import { computeAstSignature } from "./ast-signature";
 import { computeCoverage } from "./coverage";
 import { type ExtractedFile, extractFile } from "./extractor";
 import { computeContentSha, fingerprintMatches } from "./fingerprint";
-import { resolveRepoGraphLocation } from "./proj-hash";
+import { computeOutsideImports } from "./outside-imports";
+import { repoGraphLocationForRoot, resolveRepoGraphLocation } from "./proj-hash";
 import { seedSeenWatermark, type WriteSeenFn } from "./seen-seed";
 import {
   ensureStorageDir,
@@ -48,6 +50,12 @@ import { type WalkedFile, walkProject } from "./walker";
 
 export interface IndexBuildOptions {
   cwd: string;
+  /**
+   * Index exactly this directory (realpath-canonical, absolute). Given → no
+   * walk-up: it is the project root and its hash names the storage dir. Absent
+   * → resolve from `cwd` (marker > git root > cwd), the pre-2026-09-14 behavior.
+   */
+  root?: string;
   /** When true, ignore fingerprints and re-walk every file. */
   force?: boolean;
   /** When provided, override the siltpoke home dir (tests). */
@@ -213,7 +221,10 @@ export async function runIndexBuild(opts: IndexBuildOptions): Promise<IndexBuild
   const now = opts.now ?? (() => new Date());
   const start = performance.now();
 
-  const location = resolveRepoGraphLocation(opts.cwd, { home: opts.home });
+  const location =
+    opts.root !== undefined
+      ? repoGraphLocationForRoot(opts.root, { home: opts.home })
+      : resolveRepoGraphLocation(opts.cwd, { home: opts.home });
   const { project_root, proj_hash, storage_dir } = location;
 
   // Whether a (presumably good) index already existed BEFORE this
@@ -221,7 +232,7 @@ export async function runIndexBuild(opts: IndexBuildOptions): Promise<IndexBuild
   // (no `building:true` orphan, the stale-orphan root cause); a re-index that
   // throws keeps the prior data but reverts the `building` flag. Also doubles
   // as the "had a prior index before this build" signal `seedSeenWatermark`
-  // needs (slice ③, C2) — captured here, BEFORE markBuildStart/buildInner run
+  // needs (C2) — captured here, BEFORE markBuildStart/buildInner run
   // any writes, so it's never contaminated by this build's own directory
   // creation.
   const preexisted = existsSync(storage_dir);
@@ -257,6 +268,16 @@ async function cleanupFailedBuild(storage_dir: string, preexisted: boolean): Pro
   } catch {
     /* best-effort; daemon-side cleanup is the authority */
   }
+}
+
+/**
+ * The repo `project_root` sits inside, when it is not that repo's root. A
+ * `fallback` resolution means "no marker, no .git anywhere above" — no repo.
+ */
+function enclosingRepoRoot(project_root: string): string | undefined {
+  const enclosing = resolveProjectRoot(project_root);
+  if (enclosing.source === "fallback" || enclosing.project_root === project_root) return undefined;
+  return enclosing.project_root;
 }
 
 async function buildInner(
@@ -370,7 +391,9 @@ async function buildInner(
   // Tier-4 import anchors (alias-edge resolution): discovered at index time
   // (TS configs read from disk + Python source roots inferred structurally) and
   // baked into meta so the consume-time resolver stays a pure function.
-  const anchorMap = discoverAnchorMap(project_root, newGraph);
+  const repo_root = enclosingRepoRoot(project_root);
+  const anchorMap = discoverAnchorMap(project_root, newGraph, repo_root !== undefined ? { ceiling: repo_root } : {});
+  const imports_outside_root = computeOutsideImports(newGraph, anchorMap);
 
   const duration_ms = performance.now() - start;
   const meta: RepoGraphMeta = {
@@ -383,6 +406,8 @@ async function buildInner(
     coverage,
     building: false,
     anchorMap,
+    imports_outside_root,
+    ...(repo_root !== undefined ? { repo_root } : {}),
   };
   await writeMeta(storage_dir, meta);
 

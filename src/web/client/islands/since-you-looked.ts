@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Jiaqi Duan
 /**
  * since-you-looked island — the "Since you last looked" discovery panel
- * (slice ③, task 6). Renders every dynamic node IMPERATIVELY against the
+ * (task 6). Renders every dynamic node IMPERATIVELY against the
  * `#syl-*` ids `SinceYouLookedPanel.tsx` sets up, the same split as
  * `islands/repo-graph.ts` (server renders the shell, the island owns live
  * content) — chosen over declarative `x-for`/`x-show` so a DOM-mount test
@@ -25,7 +25,7 @@
  * · body changed" / "new to you" / "deleted"), never a score or an urgency
  * word. `groupByDirectory` is the ONLY grouping rule — no severity sort.
  *
- * Slice ④ (task 6): each row also renders a WHY cell (`whyCopy`) from the
+ * Task 6: each row also renders a WHY cell (`whyCopy`) from the
  * `why: WhyAnchor` the real `GET /seen` route now attaches per delta
  * (`../../../daemon/routes/seen-why.ts`). `why` is OPTIONAL on the wire
  * type here (not on the real route's response, but on this file's own
@@ -38,7 +38,7 @@ import type { StalenessVerdict } from "../../../repo-graph/staleness-verdict";
 import type { SeenFileDelta } from "../../../repo-graph/types";
 import type { WhyAnchor } from "../../../repo-graph/why-lookup";
 
-/** A `SeenFileDelta` with the WHY anchor the real route attaches (slice ④). */
+/** A `SeenFileDelta` with the WHY anchor the real route attaches. */
 export type SeenFileDeltaWithWhy = SeenFileDelta & { why?: WhyAnchor };
 
 export interface SeenApiData {
@@ -144,7 +144,7 @@ function getRefs(root: HTMLElement): Refs | null {
 }
 
 /**
- * The WHY cell (slice ④) — an anchor `<a>` only for rung 2 (points at the
+ * The WHY cell — an anchor `<a>` only for rung 2 (points at the
  * transcript file), a plain `<span>` for every other state. Honest copy
  * from `whyCopy`; rung 1's full `user_ask` goes on the `title` attribute
  * (same "quote in the tooltip, short prose inline" pattern the brief's SSR

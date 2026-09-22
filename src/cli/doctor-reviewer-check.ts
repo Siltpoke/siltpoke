@@ -28,11 +28,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isClaudeFamilyModel } from "../brain/agy-honesty";
-import { loadBrainConfigSync, type BrainRole, type ProviderFamily } from "../brain/brain-config";
+import { type BrainRole, loadBrainConfigSync, type ProviderFamily } from "../brain/brain-config";
 import { familyBinary, resolveRoleMeta } from "../brain/registry";
 import { siltpokeRoot } from "../installer/paths";
-import { defaultRepoRoot } from "./doctor";
+import { brainView } from "./brain-cli";
 import type { CheckResult, DoctorOptions } from "./doctor";
+import { defaultRepoRoot } from "./doctor";
 
 /** Sidecar written by run-eval.ts's `--provider codex` execute path
  * (src/eval/caller-impact/verdict-writer.ts's VerdictProvenance, T5 AC12). */
@@ -105,11 +106,42 @@ function crossFamilyNote(reviewFamily: ProviderFamily, authorFamily: ProviderFam
     : `cross-family: ✓ (review=${reviewFamily}, author=${authorFamily}).`;
 }
 
+/**
+ * The review row's line when per-builder rules exist — `built-by→reviewer` for
+ * each configured rule, or `null` when there are none (the caller keeps its
+ * single-family line).
+ *
+ * `review_by_builder` resolves only when `SILTPOKE_HOST` names the building
+ * family, and doctor runs outside the Stop hook, so the resolved role cannot
+ * show these rules at all: every one of them collapsed into the claude default
+ * and the row read "◦ same family as author (claude)" to a user who had just
+ * configured Codex to review Claude's work (spec brain-select-four-gaps §3.3).
+ * Reuses `brainView`, the same reader `siltpoke brain` prints from, so the two
+ * surfaces cannot disagree.
+ */
+function perBuilderMapping(siltpokeHome: string): string | null {
+  const view = brainView(siltpokeHome);
+  const rules = view.reviewByBuilder.filter((b) => b.configured);
+  if (rules.length === 0) return null;
+  const pairs = rules.map((b) => `${b.builder}→${b.reviewer}`).join(" · ");
+  const overridden = rules.some((b) => b.overriddenByGlobalPin)
+    ? " ⚠ NOT in effect — brain.roles.review is pinned; run `siltpoke brain unset review` to restore these."
+    : "";
+  return `by builder: ${pairs}. (which reviewer runs depends on who wrote the code)${overridden}`;
+}
+
 export function checkBrainRoles(opts: DoctorOptions): CheckResult[] {
   const siltpokeHome = opts.siltpokeHome ?? siltpokeRoot();
   const config = loadBrainConfigSync(siltpokeHome);
   const which = opts.reviewerWhichFn ?? ((cmd: string) => Bun.which(cmd));
   const provenance = readEvalProvenance(resolveEvalProvenancePath(opts));
+
+  // Computed once: the per-builder rules are a property of the config, not of
+  // whichever family the review role happened to resolve to. It used to be read
+  // inside the claude-only branch, so the whole mapping vanished the moment
+  // review was pinned to a non-claude family — on exactly the config this
+  // feature exists for (found in review).
+  const builderMapping = perBuilderMapping(siltpokeHome);
 
   return ROLE_ORDER.map((role): CheckResult => {
     const resolved = resolveRoleMeta(config, role);
@@ -117,6 +149,7 @@ export function checkBrainRoles(opts: DoctorOptions): CheckResult[] {
     const name = `brain role: ${role}`;
     const modelLabel = resolved.model ?? "(CLI default)";
     const bin = familyBinary(family);
+    const mappingNote = role === "review" && builderMapping !== null ? ` ${builderMapping}` : "";
 
     // claude family: in-process, nothing to gate -> plain healthy row for
     // chat/extract (no provenance, no cross-family concern to surface — a
@@ -134,6 +167,15 @@ export function checkBrainRoles(opts: DoctorOptions): CheckResult[] {
       // resolves to this claude/config default — which understates what actually
       // runs on a non-claude host. Say so, so a claude row here isn't read as
       // "reviews are always claude". (This branch is claude-only by construction.)
+      //
+      // §3.3: when per-builder rules exist, print the MAPPING instead. The old
+      // line said "◦ same family as author (claude)" to someone who had just
+      // configured Codex to review Claude's work — the caveat above hinted that
+      // review follows the builder, but never that their own rule would apply,
+      // and "same family" is the reading a person acts on.
+      if (builderMapping !== null) {
+        return { name, pass: true, status: "info", detail: builderMapping };
+      }
       const builderNote =
         " (at review time this defaults to the building host's CLI family; set brain.roles.review to pin one.)";
       const detail = `family: claude. model=${modelLabel}. ${crossFamilyNote(family, config.authorFamily, resolved.model)}${builderNote}`;
@@ -146,7 +188,7 @@ export function checkBrainRoles(opts: DoctorOptions): CheckResult[] {
         name,
         pass: true,
         status: "warn",
-        detail: `family: ${family}. binary: ✗ \`${bin}\` not found on PATH — this role fails-soft until installed. model=${modelLabel}. ${provenanceLine(family, provenance)}`,
+        detail: `family: ${family}. binary: ✗ \`${bin}\` not found on PATH — this role fails-soft until installed. model=${modelLabel}.${mappingNote} ${provenanceLine(family, provenance)}`,
       };
     }
 
@@ -162,7 +204,7 @@ export function checkBrainRoles(opts: DoctorOptions): CheckResult[] {
       name,
       pass: true,
       status: claudeModel ? "warn" : "info",
-      detail: `family: ${family}. binary: ✓ present. model=${modelLabel}.${crossNote} ${provenanceLine(family, provenance)}`,
+      detail: `family: ${family}. binary: ✓ present. model=${modelLabel}.${crossNote}${mappingNote} ${provenanceLine(family, provenance)}`,
     };
   });
 }

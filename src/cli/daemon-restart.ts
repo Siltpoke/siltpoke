@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Jiaqi Duan
 import { spawnSync } from "node:child_process";
 import { refreshMenubar } from "../hooks/menubar-refresh";
+import { resolveDaemonPort } from "../daemon/port";
 import type { ExecSyncFn } from "../installer/launchd";
 import { siltpokeRoot } from "../installer/paths";
 import { writeRestartOutcome, type RestartOutcome } from "./restart-outcome";
@@ -96,7 +97,7 @@ export interface RestartDeps {
 }
 
 function daemonPort(): number {
-  return process.env.PORT ? Number(process.env.PORT) : 9876;
+  return resolveDaemonPort(process.env);
 }
 
 /**

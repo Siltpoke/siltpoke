@@ -13,10 +13,11 @@
  * `siltpoke brain set-builder` command writes, so command and dashboard are one
  * source of truth.
  */
-import { Dashboard } from "../shells/Dashboard";
+
+import { type BrainView, sourceIsExplicitPin } from "../../cli/brain-cli";
 import { CANONICAL_NAV } from "../routes/nav";
+import { Dashboard } from "../shells/Dashboard";
 import { tokens } from "../tokens/tokens";
-import type { BrainView } from "../../cli/brain-cli";
 
 export interface SettingsScreenProps {
   view: BrainView;
@@ -126,10 +127,16 @@ export function SettingsScreen({ view, secret }: SettingsScreenProps) {
                 data-role={r.role}
                 data-family={r.family}
                 data-model={r.model ?? ""}
+                data-pinned={sourceIsExplicitPin(r.source) ? "1" : ""}
+                data-model-capable={view.modelCapableFamilies.join(",")}
                 style={rowStyle}
               >
                 {label}
                 <select x-model="family" style={selStyle}>
+                  {/* "" = no pin: the role follows the building agent and any
+                      per-builder rule. Selecting it DELETEs the pin — before
+                      this the dashboard could set one with no way back. */}
+                  <option value="">(follow the building agent)</option>
                   {view.families.map((f) => (
                     <option value={f}>{f}</option>
                   ))}
@@ -140,8 +147,19 @@ export function SettingsScreen({ view, secret }: SettingsScreenProps) {
                     <option value={m}>{m}</option>
                   ))}
                 </select>
+                {/* Every other model-capable family takes a free-text model:
+                    siltpoke curates an option list for claude only, but agy /
+                    qoder / codebuddy all pass --model straight through, so
+                    offering nothing was refusing a setting that works. */}
+                <input
+                  type="text"
+                  x-show="family !== 'claude' && acceptsModel()"
+                  x-model="model"
+                  placeholder="(CLI default)"
+                  style={{ ...selStyle, width: 190 }}
+                />
                 <span
-                  x-show="family !== 'claude'"
+                  x-show="family !== '' && !acceptsModel()"
                   x-text="'model · set in ' + family + '’s own config'"
                   style={{ fontFamily: tokens.font.mono, fontSize: 10.5, color: tokens.color.ink3 }}
                 >
@@ -206,6 +224,7 @@ export function SettingsScreen({ view, secret }: SettingsScreenProps) {
               data-builder={row.builder}
               data-reviewer={row.reviewer}
               data-model={row.model ?? ""}
+              data-model-capable={view.modelCapableFamilies.join(",")}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -263,13 +282,45 @@ export function SettingsScreen({ view, secret }: SettingsScreenProps) {
                   <option value={m}>{m}</option>
                 ))}
               </select>
+              {/* free-text model for the other CLIs that really take one */}
+              <input
+                type="text"
+                x-show="reviewer !== 'claude' && acceptsModel()"
+                x-model="model"
+                placeholder="(CLI default)"
+                style={{
+                  fontFamily: tokens.font.mono,
+                  fontSize: 13,
+                  width: 190,
+                  color: tokens.color.ink,
+                  background: tokens.color.paperD,
+                  border: `1px solid ${tokens.color.edge}`,
+                  borderRadius: tokens.radius.sm,
+                  padding: "5px 8px",
+                }}
+              />
               <span
-                x-show="reviewer !== 'claude'"
+                x-show="!acceptsModel()"
                 x-text="'model · set in ' + reviewer + '’s own config'"
                 style={{ fontFamily: tokens.font.mono, fontSize: 10.5, color: tokens.color.ink3 }}
               >
                 model · set in this CLI’s own config
               </span>
+              {/* the global pin outranks every rule in this table */}
+              {row.configured && row.overriddenByGlobalPin ? (
+                <span
+                  style={{
+                    fontFamily: tokens.font.mono,
+                    fontSize: 9,
+                    color: tokens.color.terra,
+                    border: `1px solid ${tokens.color.terra}`,
+                    borderRadius: 3,
+                    padding: "0 3px",
+                  }}
+                >
+                  overridden — the review brain above is pinned
+                </span>
+              ) : null}
               {/* cross-family cue: reviewer differs from the builder */}
               <span
                 x-show={`reviewer !== '${row.builder}'`}

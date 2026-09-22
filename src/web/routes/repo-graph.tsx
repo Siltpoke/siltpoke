@@ -200,8 +200,19 @@ async function renderRepoGraphPage(c: Context, deps: RepoGraphWebRouteDeps) {
   if (queryRepo !== undefined && !repos.some((r) => r.proj_hash === queryRepo)) {
     return c.html(
       <Layout title="code map · siltpoke" secret={secret}>
+        {/* Says only what the page knows: nothing is stored under this hash.
+            "Never indexed" and "removed" look identical from here, so the copy
+            names both and asserts neither — the old "This project no longer
+            exists" was shown for a repo indexed seconds earlier (2026-09-13),
+            and pointed at a menu this page does not render. */}
         <div class="p-6 text-sm text-neutral-500">
-          This project no longer exists. It may have been renamed, moved, or forgotten — pick another repo from the menu.
+          <p>No code map is indexed under this link. It may never have been indexed, or its index was removed.</p>
+          <p class="mt-2">
+            <a href="/repo-graph" class="underline">
+              Open the Code Map
+            </a>{" "}
+            to pick a repo, or index one with <b>+ Index a repo</b> in its repo menu.
+          </p>
         </div>
       </Layout>,
     );
@@ -303,6 +314,8 @@ async function renderRepoGraphPage(c: Context, deps: RepoGraphWebRouteDeps) {
         currentProjHash={activeProjHash}
         stalenessBanner={stalenessBanner}
         stats={stats}
+        outsideImports={meta?.imports_outside_root ?? null}
+        outsideScope={meta?.repo_root ? "folder" : "repo"}
         secret={secret}
         generatedModel={generatedModel ? {
           doc: generatedModel.model,

@@ -498,7 +498,7 @@ export function mountFactsRoutes(app: Hono, deps: FactsDeps): void {
     return c.json({ error: "internal_error" }, 500);
   });
 
-  // POST /api/facts/:id/restate → reconfirm an existing fact (NL ); a
+  // POST /api/facts/:id/restate → reconfirm an existing fact (NL "重申"); a
   // pending target is approved, an active target gets its clocks refreshed.
   app.post("/api/facts/:id/restate", async (c) => {
     const id = c.req.param("id");

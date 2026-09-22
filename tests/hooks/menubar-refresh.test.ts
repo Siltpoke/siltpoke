@@ -8,7 +8,7 @@
  * from actually shelling out to `open`/`osascript` on the dev machine.
  */
 import { expect, test } from "bun:test";
-import { notifyReview, refreshMenubar } from "../../src/hooks/menubar-refresh";
+import { defaultShimExists, notifyReview, refreshMenubar } from "../../src/hooks/menubar-refresh";
 
 test("refresh is a no-op off darwin", () => {
   const calls: string[] = [];
@@ -141,4 +141,100 @@ test("FIX3: notify fires when the SwiftBar plugin shim is present + darwin + not
   });
   expect(calls.length).toBe(1);
   expect(calls[0]![0]).toBe("osascript");
+});
+
+// ---------------------------------------------------------------------------
+// The notification gate reads the shim path. It hardcoded the DEFAULT plugin
+// folder while `install` writes into SwiftBar's configured `PluginDirectory`,
+// so a user who points SwiftBar anywhere else installed the menu-bar pet and
+// then silently got no notifications. Third reader of the same path with the
+// same omission (see tests/cli/menubar-cli.test.ts for the other two).
+// ---------------------------------------------------------------------------
+
+test("shim lookup: an installed pet in the default folder costs no subprocess", () => {
+  const calls: string[] = [];
+  const found = defaultShimExists({
+    home: "/Users/t",
+    existsSync: (p) => p === "/Users/t/Library/Application Support/SwiftBar/plugins/siltpoke.1m.sh",
+    exec: (c, a) => {
+      calls.push([c, ...a].join(" "));
+      return { status: 1, stdout: "" };
+    },
+  });
+  expect(found).toBe(true);
+  // The common case must not add a `defaults read` to the Stop-hook path.
+  expect(calls.length).toBe(0);
+});
+
+test("shim lookup: falls back to SwiftBar's configured PluginDirectory", () => {
+  const found = defaultShimExists({
+    home: "/Users/t",
+    existsSync: (p) => p === "/Users/t/Custom/Plugins/siltpoke.1m.sh",
+    exec: (c, a) =>
+      c === "defaults" && a[0] === "read"
+        ? { status: 0, stdout: "/Users/t/Custom/Plugins\n" }
+        : { status: 1, stdout: "" },
+  });
+  expect(found).toBe(true);
+});
+
+test("shim lookup: absent in both places → false", () => {
+  const found = defaultShimExists({
+    home: "/Users/t",
+    existsSync: () => false,
+    exec: () => ({ status: 0, stdout: "/Users/t/Custom/Plugins\n" }),
+  });
+  expect(found).toBe(false);
+});
+
+// I4 from the first round's review: promise 3 is "nothing on the Stop-hook
+// path can throw", and it rested on two try/catch blocks that no test drove.
+// Both could be deleted with the whole suite still green.
+
+test("shim lookup: a throwing existsSync is swallowed, not propagated", () => {
+  expect(() =>
+    defaultShimExists({
+      home: "/Users/t",
+      existsSync: () => {
+        throw new Error("EIO");
+      },
+      exec: () => ({ status: 1, stdout: "" }),
+    }),
+  ).not.toThrow();
+  expect(
+    defaultShimExists({
+      home: "/Users/t",
+      existsSync: () => {
+        throw new Error("EIO");
+      },
+      exec: () => ({ status: 1, stdout: "" }),
+    }),
+  ).toBe(false);
+});
+
+test("shim lookup: a throwing exec is swallowed, not propagated", () => {
+  const boom = () => {
+    throw new Error("spawn failed");
+  };
+  expect(() =>
+    defaultShimExists({ home: "/Users/t", existsSync: () => false, exec: boom }),
+  ).not.toThrow();
+  expect(defaultShimExists({ home: "/Users/t", existsSync: () => false, exec: boom })).toBe(false);
+});
+
+test("shim lookup: the absent case DOES pay one pref read — the documented cost, asserted", () => {
+  // The comment and CHANGELOG previously claimed "no subprocess in the common
+  // case" while the gate's own population (never installed) pays exactly one.
+  // Pinning it means the claim and the code cannot drift apart again.
+  const calls: string[] = [];
+  const found = defaultShimExists({
+    home: "/Users/t",
+    existsSync: () => false,
+    exec: (c, a) => {
+      calls.push([c, ...a].join(" "));
+      return { status: 1, stdout: "" };
+    },
+  });
+  expect(found).toBe(false);
+  expect(calls).toEqual(["defaults read com.ameba.SwiftBar PluginDirectory"]);
 });

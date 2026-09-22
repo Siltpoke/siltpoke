@@ -14,6 +14,7 @@ import {
   writeProgression,
 } from "../state/progression";
 import { appendPreferenceEntry } from "../preference-log/writer";
+import { absentCritiqueMessage } from "./critique-absent";
 import { siltpokeRoot } from "../installer/paths";
 
 export const FORWARD_XP_REWARD = 10;
@@ -36,7 +37,7 @@ export async function markForwarded(
   const homeBase = opts.homeBase ?? siltpokeRoot();
   const path = await findCritiqueByIdOrLatest(opts.basePath, opts.idOrLatest);
   if (!path) {
-    return `# Siltpoke: review '${opts.idOrLatest}' not found.\n`;
+    return absentCritiqueMessage(opts.basePath, opts.idOrLatest);
   }
   const before = await readStatus(path);
   const alreadyForwarded = before === "forwarded";

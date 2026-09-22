@@ -169,15 +169,18 @@ export function mountExplainRoutes(
           <h1>Explanations</h1>
           <p class="subtitle">
             {entries.length === 0
-              ? "Persisted /siltpoke-explain output for this project lives here."
+              ? "Explanations generated from the Code Map are kept here."
               : `${entries.length} explanation${entries.length === 1 ? "" : "s"} cached under .siltpoke/explanations/`}
           </p>
           {entries.length === 0 ? (
             <div class="empty">
-              No explanations yet. Generate one by running{" "}
-              <code>/siltpoke-explain &lt;target&gt;</code> or{" "}
-              <code>bun src/cli/explain.ts &lt;target&gt;</code> from this
-              project's working directory.
+              {/* Was "run /siltpoke-explain <target>" — a command #279 removed —
+                  with a `bun src/cli/explain.ts` fallback that only resolves in
+                  a dev checkout, never in a plugin install. The only entry a
+                  user actually has is the Code Map button. */}
+              No explanations yet. Open{" "}
+              <a href="/repo-graph">Code Map</a>, click a module, and choose
+              "Generate explanation".
             </div>
           ) : (
             <ul class="entries">

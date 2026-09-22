@@ -54,6 +54,7 @@ import {
   projectArchitecture,
 } from "../../repo-graph/project-architecture";
 import { resolveRepoGraphLocation } from "../../repo-graph/proj-hash";
+import { repoDisplayName } from "../../repo-graph/repo-label";
 import { resolveRequestProject } from "../project-context";
 import {
   enumerateRepos,
@@ -64,7 +65,7 @@ import {
   restorePreservedArchModel,
 } from "../../repo-graph/repo-registry";
 import { validateIndexPath } from "../../repo-graph/index-guard";
-import { readIndexStaleness } from "../../repo-graph/index-health";
+import { readIndexStalenessAt } from "../../repo-graph/index-health";
 import { stalenessVerdict } from "../../repo-graph/staleness-verdict";
 import { loadIndexConfig, resolveAllowRoots } from "../../config/index-config";
 import { loadRepoGraphConfig } from "../../config/repo-graph-config";
@@ -211,12 +212,11 @@ export async function runIndexerProcess({
   onProgress,
   signal,
 }: IndexRunArgs & { script: string }): Promise<IndexRunResult> {
-  // Arg-array spawn (no shell → no interpolation). The indexer takes its root
-  // from cwd, so cwd = the validated realPath; SILTPOKE_HOME pins the child's
-  // storage to the daemon's home. process.execPath = the bun binary. `--progress`
-  // makes it emit `{"type":"progress","done","total"}` NDJSON we tail for SSE.
+  // Arg-array spawn (no shell → no interpolation). `--root` makes the child
+  // index exactly the validated realPath — without it the child walks up to the
+  // enclosing repo (spec 2026-09-14); cwd is set to the same dir.
   const env = { ...process.env, ...(home ? { SILTPOKE_HOME: home } : {}) } as Record<string, string>;
-  const proc = Bun.spawn([process.execPath, script, "--progress"], {
+  const proc = Bun.spawn([process.execPath, script, "--progress", "--root", realPath], {
     cwd: realPath,
     env,
     stdout: "pipe",
@@ -469,10 +469,16 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
         try {
           // "started" carries the hash + name; the client shows "scanning…" until
           // the first "progress" arrives (total unknown during the eager walk).
-          await stream.writeSSE({ event: "started", data: JSON.stringify({ hash: v.projHash, name: basenameOf(v.realPath) }) });
+          await stream.writeSSE({
+            event: "started",
+            data: JSON.stringify({
+              hash: v.projHash,
+              name: basenameOf(v.realPath),
+            }),
+          });
           const runner = deps.indexRunner ?? defaultIndexRunner;
-          // Obligation 2: spawn on v.realPath (canonical,
-          // allow-root-validated), NEVER the raw input — closes the TOCTOU window.
+          // Obligation 2: spawn at v.realPath (canonical, allow-root-validated),
+          // NEVER the raw input — closes the TOCTOU window.
           const res = await runner({
             realPath: v.realPath,
             projHash: v.projHash,
@@ -586,7 +592,7 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
           e.status === "indexing" ? "indexing" : e.status === "ready" ? "ready" : "none";
         return {
           id: e.proj_hash,
-          name: e.project_root ? basenameOf(e.project_root) : e.proj_hash,
+          name: repoDisplayName(e),
           path: e.project_root ?? "",
           files: cn?.file ?? 0,
           symbols: cn ? cn.function + cn.class + cn.module + cn.symbol : 0,
@@ -625,13 +631,17 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
       return c.json({ success: false, data: null, error: "unknown_repo" }, 400);
     }
     const cfg = await loadRepoGraphConfig(home ?? siltpokeRoot());
-    const s = await readIndexStaleness({ cwd: resolved.project_root, home: home ?? siltpokeRoot() });
+    const s = await readIndexStalenessAt({
+      project_root: resolved.project_root,
+      storage_dir: resolved.storage_dir,
+      home: home ?? siltpokeRoot(),
+    });
     return c.json({ success: true, data: stalenessVerdict(s, cfg.staleness_warn_pct), error: null });
   });
 
   // GET /api/repo-graph/seen, POST /api/repo-graph/seen/advance, and
   // POST /api/repo-graph/seen/mark-all moved to seen.tsx (fast-follow after
-  // slice ③ landed — this file was 2x the 800-LOC hard cap; those 3 handlers
+  // that extraction landed — this file was 2x the 800-LOC hard cap; those 3 handlers
   // share zero closure state with the rest of this mount). Mounted alongside
   // this route in src/daemon/server.ts via `mountSeenRoutes`.
 
@@ -1743,9 +1753,11 @@ function buildExplanation(
   const usedBy = projection
     ? projection.edges.filter((e) => e.target === subId).map((e) => ({ id: e.source, weight: e.weight }))
     : [];
+  // No `route` field. It carried `/siltpoke-explain?target=…` — a command
+  // gone since #279 — and the modal never read it: the header renders
+  // `target`, not the route. It was a dead field naming a dead command.
   return {
     target,
-    route: `/siltpoke-explain?target=${encodeURIComponent(target)}`,
     title: basenameOf(file),
     grounded: result.meta.evidence_score,
     fresh,

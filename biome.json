@@ -1,19 +1,64 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
-  "files": { "includes": ["**", "!node_modules/**", "!dist/**", "!build/**", "!coverage/**", "!.siltpoke/**", "!tests/fixtures/**"] },
+  "files": {
+    "includes": [
+      "**",
+      "!node_modules/**",
+      "!dist/**",
+      "!build/**",
+      "!coverage/**",
+      "!.siltpoke/**",
+      "!tests/fixtures/**"
+    ]
+  },
   "linter": {
     "enabled": true,
     "rules": {
       "recommended": true,
       "suspicious": {
-        "noConsole": { "level": "error", "options": { "allow": ["error", "warn"] } },
+        "noConsole": {
+          "level": "error",
+          "options": {
+            "allow": [
+              "error",
+              "warn"
+            ]
+          }
+        },
         "noExplicitAny": "warn"
       },
       "complexity": {
         "noBannedTypes": "error",
-        "noExcessiveCognitiveComplexity": { "level": "warn", "options": { "maxAllowedComplexity": 15 } }
+        "noExcessiveCognitiveComplexity": {
+          "level": "warn",
+          "options": {
+            "maxAllowedComplexity": 15
+          }
+        }
+      },
+      "style": {
+        "noNonNullAssertion": "off"
       }
     }
   },
-  "formatter": { "enabled": false }
+  "formatter": {
+    "enabled": false
+  },
+  "overrides": [
+    {
+      "includes": [
+        "tests/**"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noExplicitAny": "off"
+          },
+          "complexity": {
+            "noExcessiveCognitiveComplexity": "off"
+          }
+        }
+      }
+    }
+  ]
 }

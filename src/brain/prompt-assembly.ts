@@ -64,7 +64,7 @@ export interface AssemblyInput {
    */
   callerImpactSection?: string;
   /**
-   * Optional reverse-deps section (critic disk-awareness slice ①).
+   * Optional reverse-deps section (critic disk-awareness).
    * When provided, appended after callerImpactSection (before anti-examples)
    * so the "files that import what you changed" facts reach the Brain
    * prompt. Fenced (Control 1). Produced by `buildReverseDepsSection` from

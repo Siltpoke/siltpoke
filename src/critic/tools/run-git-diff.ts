@@ -94,7 +94,15 @@ async function applyAdaptiveBodies(rawHunks: RawHunk[]): Promise<GitDiffHunk[]> 
   );
 }
 
-async function parseUnifiedDiff(stdout: string): Promise<GitDiffHunk[]> {
+/**
+ * Parse raw unified-diff text into `GitDiffHunk[]` with the same per-hunk
+ * adaptive truncation (`adaptiveHunkBody`) production applies after `git
+ * diff` returns. Exported so callers that already have diff TEXT in hand
+ * (no cwd/git subprocess to spawn — e.g. `src/eval/moat/arm.ts`, which reads
+ * a diff out of a fixture rather than a live repo) can reuse the exact
+ * production parsing/truncation instead of reimplementing it.
+ */
+export async function parseUnifiedDiff(stdout: string): Promise<GitDiffHunk[]> {
   const raw = parseUnifiedDiffRaw(stdout);
   return applyAdaptiveBodies(raw);
 }
@@ -107,6 +115,63 @@ function buildRaw(stdout: string, stderr: string): string {
 /** Allowlist for revisionRange values — prevents option injection via git argv.
  * First char must NOT be `-` to block leading-dash flag injection (e.g. --no-pager). */
 const REVISION_RANGE_RE = /^[A-Za-z0-9._^~:/][A-Za-z0-9._^~:/-]*$/;
+
+/**
+ * The ref whose tree is on the NEW side of a revision range.
+ *
+ * Exported for its own test rather than left inline, because the rule is not
+ * obvious and the wrong version is silent: `src/cli/review.ts` builds a
+ * THREE-dot `base...HEAD`, and splitting on the FIRST `..` yields `.HEAD`,
+ * which resolves to nothing. Every such review would then be treated as
+ * unanchored and lose its line numbers, with no error anywhere to say why.
+ * Both `A..B` and `A...B` put B's tree on the new side.
+ */
+export function rangeRightSide(revisionRange: string): string {
+  const sep = revisionRange.lastIndexOf("..");
+  return sep === -1 ? revisionRange.trim() : revisionRange.slice(sep + 2).trim();
+}
+
+/**
+ * Whether the `+` side of the diff we are about to hand the reviewer is the
+ * file as it sits on disk right now.
+ *
+ * It matters because a line number is only useful if the reader can open the
+ * file and find the code there. `git diff HEAD` compares against the working
+ * tree, so its `+` side IS the disk and the answer is yes. A range compares two
+ * commits, and its `+` side is the disk only when the right-hand side resolves
+ * to HEAD and nothing is uncommitted.
+ *
+ * FAILS CLOSED. Every error, timeout, or unparseable answer returns false, and
+ * the caller then writes a provenance tier with no line number rather than a
+ * number nothing verified.
+ */
+async function computeRangesAnchored(
+  cwd: string,
+  revisionRange: string | undefined,
+  timeoutMs: number,
+): Promise<boolean> {
+  // Same test the argv construction above uses: a blank string is "no range".
+  // Three places used to ask this question three ways; they now agree.
+  if (revisionRange === undefined || revisionRange.trim() === "") return true;
+
+  const rightSide = rangeRightSide(revisionRange);
+  if (rightSide === "") return false;
+
+  try {
+    const [right, head, dirty] = await Promise.all([
+      spawnWithTimeout({ argv: ["git", "rev-parse", rightSide], cwd, timeoutMs }),
+      spawnWithTimeout({ argv: ["git", "rev-parse", "HEAD"], cwd, timeoutMs }),
+      spawnWithTimeout({ argv: ["git", "diff", "--quiet", "HEAD"], cwd, timeoutMs }),
+    ]);
+    if (right.timedOut || head.timedOut || dirty.timedOut) return false;
+    if (right.exitCode !== 0 || head.exitCode !== 0) return false;
+    const sameCommit = right.stdout.trim() !== "" && right.stdout.trim() === head.stdout.trim();
+    // `--quiet` exits 0 when there is nothing to report and 1 when there is.
+    return sameCommit && dirty.exitCode === 0;
+  } catch {
+    return false;
+  }
+}
 
 export async function runGitDiff(opts: {
   cwd: string;
@@ -183,7 +248,8 @@ export async function runGitDiff(opts: {
   }
 
   const status: ToolStatus = "ok";
-  return { tool: "git-diff", status, parsed, raw };
+  const rangesAnchored = await computeRangesAnchored(cwd, revisionRange, timeoutMs);
+  return { tool: "git-diff", status, parsed, raw, rangesAnchored };
 }
 
 /**
@@ -203,7 +269,12 @@ export async function runRecentCommitsDiff(opts: {
   cwd: string;
   commitCount?: number;
   timeoutMs?: number;
-}): Promise<{ raw: string; parsed: GitDiffHunk[]; reviewSubject?: ReviewSubject } | null> {
+}): Promise<{
+  raw: string;
+  parsed: GitDiffHunk[];
+  reviewSubject?: ReviewSubject;
+  rangesAnchored: boolean;
+} | null> {
   const { cwd, commitCount = 3, timeoutMs = DEFAULT_TIMEOUT_MS } = opts;
   const result = await spawnWithTimeout({
     // The three `--*` flags pin the header shape against the adopter's git config:
@@ -226,7 +297,7 @@ export async function runRecentCommitsDiff(opts: {
   // Strip every inline commit header and name exactly one review subject, so a
   // scope claim cannot be made against a message that belongs to another commit.
   // See ./review-subject.ts for the mechanism and the two measured false positives.
-  const { subject, diffOnly } = splitRecentCommitsLog(result.stdout);
+  const { subject, diffOnly, windowHasMerge } = splitRecentCommitsLog(result.stdout);
   const body = subject === null ? result.stdout : diffOnly;
   // `.citable`, not `.shown`: the notice is siltpoke's own prose, and `raw` is read
   // back as a diff by the /critic snapshot, the chat `diff_text` channel and the
@@ -245,5 +316,13 @@ export async function runRecentCommitsDiff(opts: {
   } catch {
     parsed = [];
   }
-  return subject === null ? { raw, parsed } : { raw, parsed, reviewSubject: subject };
+  // This path is only ever taken on a CLEAN working tree, so the newest commit's
+  // `+` side IS the file on disk — unless a merge is in the window. Plain `-p`
+  // emits no patch for a merge, so the merge is dropped and the newest block
+  // then belongs to an ancestor on one side of it, whose line numbers are
+  // relative to that side's parent.
+  const rangesAnchored = !windowHasMerge;
+  return subject === null
+    ? { raw, parsed, rangesAnchored }
+    : { raw, parsed, reviewSubject: subject, rangesAnchored };
 }

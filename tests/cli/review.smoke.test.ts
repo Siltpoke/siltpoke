@@ -173,6 +173,7 @@ function makeNormalBrainOutput(): BrainOutput {
     severity: "medium",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [
       {
         tool: "tsc",
@@ -306,6 +307,7 @@ describe("Review smoke: --base main scope", () => {
         severity: "info",
         confidence: "high",
         xp_earned_events: [],
+        findings: [],
         evidence: [],
       };
 
@@ -394,6 +396,7 @@ describe("Review smoke: unverified evidence", () => {
         severity: "medium",
         confidence: "high",
         xp_earned_events: [],
+        findings: [],
         evidence: [
           {
             tool: "tsc",

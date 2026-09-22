@@ -7,7 +7,12 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { type ExecSyncFn, loadLaunchAgent } from "./launchd";
 
-const SWIFTBAR_APP_PATH = "/Applications/SwiftBar.app";
+/**
+ * The only place this literal lives. `menubar-setup` re-exports it, and
+ * `/siltpoke-menubar status` now shows it to the user, so a second hand-typed
+ * copy would drift somewhere visible.
+ */
+export const SWIFTBAR_APP_PATH = "/Applications/SwiftBar.app";
 const SWIFTBAR_LABEL = "io.siltpoke.swiftbar";
 
 /**

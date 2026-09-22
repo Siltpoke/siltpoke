@@ -183,6 +183,7 @@ function makeBrainOutputWithEvidence(snippet: string): BrainOutput {
     severity: "medium",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [
       {
         tool: "tsc",
@@ -275,6 +276,7 @@ describe("Smoke: PASSIVE_BUBBLE — clean refactor", () => {
         severity: "info",
         confidence: "high",
         xp_earned_events: [],
+        findings: [],
         evidence: [],
       };
 
@@ -380,6 +382,7 @@ describe("Smoke: HARD_SUPPRESS — no git, no changed files", () => {
           severity: "info",
           confidence: "high",
           xp_earned_events: [],
+          findings: [],
           evidence: [],
         }),
         writeCritiqueFn: async () => {
@@ -466,6 +469,7 @@ describe("Smoke: NORMAL with a fabricated snippet — citation dropped, review k
           severity: "medium",
           confidence: "high",
           xp_earned_events: [],
+          findings: [],
           evidence: [
             {
               tool: "tsc",
@@ -542,6 +546,7 @@ describe("Smoke: Telemetry counters", () => {
           severity: "info",
           confidence: "high",
           xp_earned_events: [],
+          findings: [],
           evidence: [],
         }),
         writeCritiqueFn: async (_bp) => ({ id: "c-tel1", path: "/tmp" }),
@@ -612,6 +617,7 @@ describe("Smoke: Telemetry counters", () => {
           severity: "medium",
           confidence: "high",
           xp_earned_events: [],
+          findings: [],
           evidence: [
             {
               tool: "tsc",
@@ -694,6 +700,7 @@ describe("Smoke: Telemetry counters", () => {
               severity: "info",
               confidence: "high",
               xp_earned_events: [],
+              findings: [],
               evidence: [],
             }),
             writeCritiqueFn: async (_bp) => ({ id: "c-path", path: "/tmp" }),

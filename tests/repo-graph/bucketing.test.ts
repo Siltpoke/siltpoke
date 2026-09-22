@@ -41,7 +41,6 @@ const SNAPSHOTS: Record<string, string[]> = {
     "src/config/",
     "src/critic/",
     "src/daemon/",
-    "src/eval/",
     "src/explain/",
     "src/face/",
     "src/few-shot/",

@@ -34,9 +34,12 @@ describe("doctor — orchestration", () => {
   // whether deriveRenderVersion() can enable itself on this installation);
   // 14 → 15 on 2026-08-13 (registered project roots still exist — the
   // path-identity audit found nine of ten roots dead with no surface saying so).
-  test("runAllChecks returns 14 entries (one per check)", () => {
+  // 15 → 16 on 2026-09-20 (statusline interpreter runnable — install-audit
+  // defect [10]: doctor was green on a Windows box whose statusline could
+  // never start, because nothing checked the interpreter it names).
+  test("runAllChecks returns 15 entries (one per check)", () => {
     const results = runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome });
-    expect(results).toHaveLength(14);
+    expect(results).toHaveLength(15);
     for (const r of results) {
       expect(typeof r.name).toBe("string");
       expect(typeof r.pass).toBe("boolean");

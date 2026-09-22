@@ -20,7 +20,7 @@ explicitly when you want them.
 ```
 /siltpoke-inbox            List pending reviews (read-only)
 /siltpoke-forward <id>     Pull a specific review into the chat (+10 XP if fresh)
-/siltpoke-dismiss <id> <reason>   Reject + Siltpoke learns from why it was wrong
+(no dismiss command ships today — see the note under "Reviewing")
 ```
 
 That's the whole loop:
@@ -29,7 +29,7 @@ That's the whole loop:
 2. You run `/siltpoke-inbox` whenever you want.
 3. For each pending review:
    - **Useful** → `/siltpoke-forward <id>` (default — XP awarded)
-   - **Wrong** → `/siltpoke-dismiss <id> <reason>` (triggers Reflexion → writes a learned rule → Siltpoke won't make the same wrong call again)
+   - **Wrong** → dismiss it in the dashboard. Today that RECORDS the dismissal and nothing more: there is no `/siltpoke-dismiss` command, and the code that would turn a dismissal into a learned rule is not wired to anything. Siltpoke does learn, but from the other direction — when you actually fix code it flagged, confirmed mechanically by git.
    - **Neutral / already-seen** → `/siltpoke-ack <id>` (no XP, no learning)
 
 ---
@@ -40,9 +40,11 @@ That's the whole loop:
 
 ```bash
 codex plugin marketplace add https://github.com/Siltpoke/siltpoke
-codex plugin add siltpoke
+codex plugin add siltpoke@siltpoke
 codex plugin list                                      # verify: siltpoke … installed, enabled
 ```
+
+The **`@siltpoke` marketplace qualifier is required** — a bare `codex plugin add siltpoke` fails with `plugin requires --marketplace unless passed as <plugin>@<marketplace>`.
 
 This installs Siltpoke with reviews included — the review hooks ride the plugin (no source clone needed).
 
@@ -127,19 +129,26 @@ plain language through the Siltpoke skill/plugin.
 
 | Command | What it does |
 |---|---|
-| `/siltpoke` | State card — name, level, XP, mood, today's spend |
-| `/siltpoke-inbox` | List pending reviews (read-only) |
-| `/siltpoke-last` | Surface the most recent review into chat |
-| `/siltpoke-forward <id>` | Pull a specific review (+10 XP if fresh) |
-| `/siltpoke-forward-all` | Dump every pending review at once |
-| `/siltpoke-ack <id>` | Mark acknowledged — neutral, no XP, no learning |
-| `/siltpoke-dismiss <id> <reason>` | Reject + trigger Reflexion to learn |
-| `/siltpoke-wake` | One-shot bypass of budget + quiet-hours gates |
-| `/siltpoke-review` | Alias for `/siltpoke-wake` ("review my work now") |
-| `/siltpoke-stats` | Today's token spend + budget stage + review unit |
-| `/siltpoke-pet` | +5 XP (shared 100 action-XP/day cap) |
-| `/siltpoke-menubar <install\|status\|remove>` | Manage the macOS menu-bar pet (see § below) |
+| `/siltpoke-setup` | Create your pet + finish the install (statusline, dashboard) |
+| `/siltpoke-last` | Pull Siltpoke's most recent review INTO this conversation |
+| `/siltpoke-dashboard` | Open the dashboard (http://127.0.0.1:9876) |
+| `/siltpoke-restart-daemon` | Restart the dashboard daemon |
+| `/siltpoke-menubar` | Put the pet in your macOS menu bar (needs SwiftBar). install/status/remove |
+| `/siltpoke-mute` | Silence Siltpoke for a duration (15m / 1h / 2d / indefinite) |
+| `/siltpoke-unmute` | Un-silence Siltpoke |
+| `/siltpoke-brain` | Show or set which CLI + model reviews your code (set review <family> [model]) |
+| `/siltpoke-doctor` | Install-health diagnostic (✓/✗ checklist) |
+| `/siltpoke-wake` | Reviews went quiet? Clear the stuck breaker and review the next turn |
 | `/siltpoke-help` | This manual |
+
+That is the whole surface. Everything else — review history, chat, memory,
+timeline, code map, XP and spend — lives in the dashboard, not behind a slash
+command. This table used to list `/siltpoke`, `/siltpoke-inbox`,
+`/siltpoke-forward`, `/siltpoke-forward-all`, `/siltpoke-ack`,
+`/siltpoke-dismiss`, `/siltpoke-stats`, `/siltpoke-pet` and a
+`/siltpoke-review` alias; those were culled from the plugin (their `src/cli`
+code remains) and naming a command that does not exist is the same defect
+`/siltpoke-wake` was shipped to fix.
 
 ### Dashboard (browser)
 
@@ -223,8 +232,12 @@ for the full detail. Menu-bar notifications go through the same
 gates as everything else — `/siltpoke-mute` and quiet-hours suppress
 them exactly like chat-surfaced reviews.
 
-`/siltpoke-menubar status` reports whether the shim is installed;
-`/siltpoke-menubar remove` deletes it (running the command is the
+`/siltpoke-menubar status` reports whether the pet is actually showing —
+the shim being installed is necessary but not sufficient, since SwiftBar
+is what draws the menu bar. It names the one thing that is missing: the
+shim, SwiftBar itself, a running SwiftBar, or a shim sitting in a folder
+SwiftBar is no longer reading.
+`/siltpoke-menubar remove` deletes the shim (running the command is the
 consent — no extra prompt, matching `/siltpoke-mute` /
 `/siltpoke-unmute`).
 
@@ -524,9 +537,10 @@ Pet progression, budget, and debugging logs stay global.
     archive/YYYY-MM-DD/*
 ```
 
-`/siltpoke-inbox`, `/siltpoke-forward <id>`, `/siltpoke-ack <id>`, and
-`/siltpoke-dismiss <id> <reason>` all read from the current
-project's `.siltpoke/` — IDs are local to the project you're in.
+The source-only review commands (`/siltpoke-inbox`, `/siltpoke-forward <id>`,
+`/siltpoke-ack <id>`, `/siltpoke-dismiss <id> <reason>` — culled from the
+plugin, see the note above) all read from the current project's `.siltpoke/`
+— IDs are local to the project you're in.
 
 ---
 
@@ -538,9 +552,13 @@ Brain sees a 3-block system prompt in cache-friendly order:
 2. **Tier 1 long-term memory** — `~/.siltpoke/memory.json`, learned rules across all your projects
 3. **Tier 2 recent feedback** — `{cwd}/.siltpoke/recent_feedback.jsonl`, per-project FIFO of last 20 verdicts
 
-`/siltpoke-dismiss <id> <reason>` fires a Reflexion subprocess →
-extracts the lesson → appends a `learned_rule` to tier 1 → next call
-Siltpoke sees the rule → won't make the same wrong review again.
+**This path is designed but NOT wired today.** `/siltpoke-dismiss <id> <reason>`
+was meant to fire a Reflexion subprocess → extract the lesson → append a
+`learned_rule` to tier 1 → next call Siltpoke sees the rule. The command was
+culled from the plugin and the function behind it (`runDismiss`) is imported by
+nothing, so no dismissal has ever produced a rule. The tier-1 write path that
+IS live runs from the opposite signal: you FIX code Siltpoke flagged, git
+confirms it mechanically, and a rule is distilled from that validated catch.
 
 ---
 

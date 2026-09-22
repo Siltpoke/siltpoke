@@ -99,7 +99,7 @@ export function bundleStale(bundlePath: string, srcDir: string = clientSrcDir())
  * Ensure the client island bundle exists AND is up to date, rebuilding it when
  * it is missing or stale.
  *
- * `public/static/index.js` is a gitignored build artifact — a fresh clone or
+ * `public/static/index.js` is a COMMITTED runtime asset (since 2026-09-17) — a
  * marketplace install has no bundle until it's built, and without it every
  * Alpine/htmx island is dead (the page renders but nothing is clickable).
  * The daemon calls this at startup so `bun run report` works on first run.
@@ -142,7 +142,8 @@ function tailwindCssPath(): string {
 
 /**
  * Brand icons live in `src/web/assets/` — a TRACKED directory, unlike
- * `public/static/` which is gitignored (it holds build artifacts only). That
+ * `public/static/`, whose contents are ignored EXCEPT the two committed runtime
+ * assets index.js and tailwind.css (see .gitignore). That
  * matters for both distribution paths: `scripts/pack-dist.sh` builds the
  * tarball with `git archive`, which ships tracked files only, and the bundled
  * daemon runs from `<root>/dist/` where `resolveRepoRoot` still walks back to

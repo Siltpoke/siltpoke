@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * Seed `seen.json` at index time (slice ③, spec §4, C2 from the plan's
+ * Seed `seen.json` at index time (spec §4, C2 from the plan's
  * cross-family review). Split out of `builder.ts` to keep that file under
  * the LOC ratchet — this module owns the seed decision + its best-effort
  * git HEAD capture, `runIndexBuild` just calls `seedSeenWatermark` once
@@ -56,7 +56,7 @@ export async function captureGitHeadSha(project_root: string): Promise<string | 
  *     (nothing is "unseen" yet), `unknown_baseline: false`, best-effort
  *     `baseline_sha`.
  *   - `seen.json` absent AND `hadPriorIndexBeforeBuild` is true (upgrade
- *     path — e.g. a slice-②-era index missing seen.json) → the baseline is
+ *     path — e.g. a pre-watermark-era index missing seen.json) → the baseline is
  *     genuinely unknown; seed `{ files: {}, unknown_baseline: true }`
  *     rather than fabricating a "seen = current" baseline for a repo the
  *     user may already know well (or not at all). Downstream callers treat

@@ -12,7 +12,7 @@
 import { test, expect, describe } from "bun:test";
 import { Home } from "../../../src/web/screens/Home";
 import type { HomeData } from "../../../src/web/screens/Home";
-import { HOME_RENDER_FIXTURE } from "./_home-render-fixture";
+import { HOME_RENDER_FIXTURE, homeFixtureAtHunger } from "./_home-render-fixture";
 
 // ── Fixture ────────────────────────────────────────────────────────────────────
 // Uses real-data shapes: stats=null, vitals=[], navMeta real.
@@ -146,10 +146,17 @@ describe("Home screen Wave 1.5b composition", () => {
   });
 
   test("HOME header hides well-fed pill when hunger <= 4", () => {
-    const lowHunger = String(
-      <Home data={{ ...FIXTURE, stats: { ...FIXTURE.stats, hunger: 4 } }} />,
-    );
+    // Built through homeFixtureAtHunger so the badge flag and the hunger stat
+    // cannot disagree. Spreading `stats` alone left topbarBadges.wellFed at
+    // true and described a screen that cannot exist — audit defect [3].
+    const lowHunger = String(<Home data={homeFixtureAtHunger(4)} />);
     expect(lowHunger).not.toContain("well-fed");
+  });
+
+  test("HOME header shows the well-fed pill above the threshold", () => {
+    // The positive control for the test above: without it, "not.toContain"
+    // passes just as well when the pill has been removed altogether.
+    expect(String(<Home data={homeFixtureAtHunger(9)} />)).toContain("well-fed");
   });
 
   test("HOME · today kicker (Design D)", () => {
@@ -214,9 +221,7 @@ describe("Home screen Wave 1.5b composition", () => {
     expect(html).not.toContain("BIAS AUDIT");
   });
 
-  // Sidebar 7-entry count: PET (1) + WORK (6) — "progress" added 2026-08-14
-  // (progress-page-slice-1 Task 7, the /progress distribution view). Home's
-  // fixture repo never seeds a ROADMAP.md, so this counts on the module-level
+  // Home's fixture repo, so this counts on the module-level
   // `unavailable` set in `src/web/routes/nav.ts` being empty by default (no
   // test in this file calls `setNavAvailability`) — the entry is visible
   // unless something deliberately hides it. Previously 6 (PET 1 + WORK 5)
@@ -225,7 +230,7 @@ describe("Home screen Wave 1.5b composition", () => {
   // both removed the same day with their routes' unmount. Previously 5, and
   // before that route's unmount. Previously 6; placeholders + help removed
   // 2026-07-02; "Restate" (re-internalization) nav entry added 064ba33c then
-  // removed (spec §5 — shelved surface stripped, superseded by the AI quiz).
+  // removed (spec §5 — shelved surface stripped).
   //
   // The raw count stays a count (this test's whole point is being a change
   // detector for accidental nav additions/removals — same convention

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * Slice ③ Task 7 (final) -- the cross-cutting E2E firing matrix for the
+ * Task 7 (final) -- the cross-cutting E2E firing matrix for the
  * user-seen watermark. Every test here goes through the REAL stack: a real
  * `runIndexBuild` (real tree-sitter parse, real fingerprints), real file
  * edits on disk, and the REAL `GET/POST /api/repo-graph/seen*` routes --
  * the GET lives in `mountSeenRoutes`, the two POSTs alongside it (extracted
- * out of `mountRepoGraphRoutes` in a slice ③ fast-follow; both mounted here)
+ * out of `mountRepoGraphRoutes` in a later fast-follow; both mounted here)
  * -- mirrors `tests/daemon/seen-routes.test.ts`'s harness. No mocking of the
  * store/seen-advance/seen-delta layer.
  *
@@ -85,7 +85,7 @@ function makeApp(cwd: string, home: string): Hono {
   const app = new Hono();
   mountRepoGraphRoutes(app, { cwd, home, secret: SECRET });
   // The GET/advance/mark-all seen routes were extracted to their own mount
-  // (slice ③ fast-follow) -- mount both here so they stay reachable.
+  // (later fast-follow) -- mount both here so they stay reachable.
   mountSeenRoutes(app, { home, secret: SECRET });
   return app;
 }
@@ -103,7 +103,7 @@ async function postAdvance(app: Hono, hash: string, path: string): Promise<Respo
   });
 }
 
-describe("seen-watermark E2E firing matrix (slice ③, Task 7)", () => {
+describe("seen-watermark E2E firing matrix (Task 7)", () => {
   test("real signature edit vs real body-only edit, through real tree-sitter -> GET reflects correct flags", async () => {
     const home = tmp("sp-home-");
     const repo = tmp("sp-repo-");
@@ -155,7 +155,7 @@ describe("seen-watermark E2E firing matrix (slice ③, Task 7)", () => {
     expect(sigDelta?.signature_changed).toBe(true);
   });
 
-  test("slice ④ task 6: every delta through the real GET route carries a why:WhyAnchor, never sinks the response", async () => {
+  test("task 6: every delta through the real GET route carries a why:WhyAnchor, never sinks the response", async () => {
     const home = tmp("sp-home-");
     const repo = tmp("sp-repo-"); // deliberately NOT a git repo -- the real
     // `lookupWhy` -> `blameLines` git-blame call fails ("not a git

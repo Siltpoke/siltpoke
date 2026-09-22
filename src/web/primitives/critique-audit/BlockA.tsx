@@ -19,7 +19,7 @@
  * This block used to return a placeholder before looking — and the fallback to
  * `diff_summary.intent` that WAS written sat after that early return, so the
  * 95% of rows that needed it could never reach it ("written, reviewed, never
- * executed", `docs/lessons.md` L3). It reads the row now.
+ * executed"). It reads the row now.
  *
  * *An earlier draft of this comment said 12/400 = 3%. That is the
  * `snippet not in evidence_corpus` row of the same probe table, read off the

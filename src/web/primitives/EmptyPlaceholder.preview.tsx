@@ -28,7 +28,7 @@ const stories: PreviewStory[] = [
               fontWeight: 600,
             }}
           >
-            /siltpoke-review · run anyway
+            review anyway
           </button>
         }
       />
@@ -64,7 +64,7 @@ const stories: PreviewStory[] = [
       <EmptyPlaceholder
         art={<Creature species="otter" mood="neutral" stage="juvenile" cell={4} />}
         headline="i don't know you yet"
-        sub="chat a bit + dismiss a few reviews and siltpoke will start writing facts."
+        sub="chat a bit, or fix something siltpoke flagged, and it will start writing facts."
       />
     ),
   },

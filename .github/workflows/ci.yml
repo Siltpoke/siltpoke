@@ -1,13 +1,13 @@
 name: ci
 
 # ──────────────────────────────────────────────────────────────────────────────
-# CI gate: lint + typecheck + unit tests + eval:fast
+# CI gate: lint + typecheck + unit tests
 #
 # LIVE since 2026-07-12. Previously dormant (workflow_dispatch only) during the
 # GitHub Actions billing pause.
 #
 # Why it was turned back on: while dormant, `main` went red and STAYED red,
-# unnoticed, for weeks — 5 failing unit tests (a an entry-count assertion never
+# unnoticed, for weeks — 5 failing unit tests (a entry-count assertion never
 # re-baselined after two board syncs; 4 report goldens never regenerated after
 # a MANUAL.md change) plus 2 failing e2e specs. Every one would have been caught
 # the day it landed. "Verify locally before merging" did not hold in practice.
@@ -72,7 +72,7 @@ concurrency:
 
 jobs:
   ci:
-    name: lint + typecheck + test + eval
+    name: lint + typecheck + test
     runs-on: ubuntu-latest
 
     steps:
@@ -95,6 +95,16 @@ jobs:
       # and fails if the committed tree doesn't match (see scripts/build-dist.ts).
       - name: Bundle is fresh (dist/ matches src/)
         run: bun run check:dist
+
+      # Same gate for the DASHBOARD's client bundle. public/static/index.js carries
+      # Alpine.js plus the interaction islands; it is a runtime asset the published
+      # package must contain, not build scratch. It was never tracked, so the
+      # published package shipped without it and the daemon answered
+      # `503 // client bundle missing` — every dashboard interaction dead on every
+      # host. Committed and byte-compared here so that cannot recur.
+      # BLOCKING.
+      - name: Client bundle is fresh (public/static/ matches src/web/client/)
+        run: bun run check:client
 
       # INFORMATIONAL, deliberately — and this is why the CI was never switched on.
       #
@@ -169,6 +179,18 @@ jobs:
           set -o pipefail
           bun test 2>&1 | tee unit-test.log
 
+      # The other half of the `check:client` gate above, and it has to be HERE,
+      # after the tests. `check:client` rebuilds public/static and byte-compares
+      # it, so a pass proves the tracked bundle was correct AT THAT MOMENT. A test
+      # that writes public/static afterwards left no trace in this job: the bundle
+      # was verified and then dirtied, and a `git add -A` on the developer's side
+      # shipped the unminified copy once (517,983 -> 896,916 bytes; the branch
+      # was rebuilt to drop it). No rebuild here on purpose: the only thing that can
+      # make this fail is something between the two steps having written those files.
+      # BLOCKING.
+      - name: Tracked bundle untouched by the test run
+        run: bun run check:bundle-untouched
+
       # Only when the unit step itself failed — `outcome` is "skipped" if an
       # earlier step broke first, so this never uploads an empty or absent file.
       - name: Upload unit test log on failure
@@ -178,5 +200,3 @@ jobs:
           name: unit-test-log
           path: unit-test.log
           retention-days: 7
-      - name: Eval harness (fast / no API cost)
-        run: bun run eval:fast

@@ -100,7 +100,7 @@ export interface SinceYouLookedPanelProps {
 }
 
 /**
- * "Since you last looked" — slice ③ discovery panel (R5/R10, task 6).
+ * "Since you last looked" — discovery panel (R5/R10, task 6).
  *
  * Renders ONLY a static skeleton with stable ids; the `sinceYouLooked`
  * Alpine island (`islands/since-you-looked.ts`) does a single lazy GET on

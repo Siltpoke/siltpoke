@@ -29,7 +29,7 @@ import type { BrainUsage } from "../brain/brain";
 import { loadRepoGraphConfig } from "../config/repo-graph-config";
 import { siltpokeRoot } from "../installer/paths";
 import { ledgerBrainCall } from "../state/usage";
-import { readIndexStaleness } from "../repo-graph/index-health";
+import { readIndexStalenessAt } from "../repo-graph/index-health";
 import { resolveTarget } from "../repo-graph/query";
 import { stalenessVerdict, type StalenessVerdict } from "../repo-graph/staleness-verdict";
 import {
@@ -211,7 +211,7 @@ export async function runExplain(
   const home = ctx.home ?? siltpokeRoot();
   const rgCfg = await loadRepoGraphConfig(home);
   const staleness = stalenessVerdict(
-    await readIndexStaleness({ cwd: ctx.cwd, home }),
+    await readIndexStalenessAt({ project_root: ctx.cwd, storage_dir: ctx.graphStorageDir, home }),
     rgCfg.staleness_warn_pct,
   );
 

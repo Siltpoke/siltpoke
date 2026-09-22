@@ -15622,7 +15622,7 @@ var TTL_DAYS = 2;
 var pendingAnchorSchema = exports_external.object({
   file: exports_external.string().min(1),
   line: exports_external.number().int().positive().optional(),
-  tool: exports_external.enum(["tsc", "eslint", "git-diff", "ripgrep"]),
+  tool: exports_external.enum(["tsc", "eslint", "git-diff", "ripgrep", "rubric"]),
   fingerprint: exports_external.string()
 });
 var pendingCritiqueSchema = exports_external.object({
@@ -15786,10 +15786,112 @@ function parseReflectionOutput(raw) {
   return reflectionOutputSchema.parse(raw);
 }
 
+// src/brain/envelope.ts
+class EnvelopeShapeError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "EnvelopeShapeError";
+  }
+}
+function normalizeStreamEnvelope(parsed) {
+  if (Array.isArray(parsed))
+    return parsed;
+  if (parsed !== null && typeof parsed === "object") {
+    const obj = parsed;
+    if (obj.type === "result")
+      return [obj];
+    const keys = Object.keys(obj).slice(0, 8).join(", ");
+    throw new EnvelopeShapeError(`claude -p stdout was a single JSON object with no result event (type=${JSON.stringify(obj.type ?? null)}, keys: ${keys || "none"})`);
+  }
+  throw new EnvelopeShapeError(`claude -p stdout was ${parsed === null ? "null" : typeof parsed}, not a result event or event array`);
+}
+function findResultEvent(events) {
+  for (let i = events.length - 1;i >= 0; i--) {
+    const ev = events[i];
+    if (ev.type === "result")
+      return ev;
+  }
+  throw new EnvelopeShapeError("claude -p stream contained no result event");
+}
+function extractUsage(resultEvent) {
+  const u = resultEvent.usage ?? {};
+  return {
+    cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0,
+    cache_read_input_tokens: u.cache_read_input_tokens ?? 0,
+    input_tokens: u.input_tokens ?? 0,
+    output_tokens: u.output_tokens ?? 0,
+    total_cost_usd: resultEvent.total_cost_usd ?? null
+  };
+}
+
+// src/brain/failure-reason.ts
+var MAX_REASON = 500;
+function usableMax(max) {
+  return Number.isFinite(max) && max >= 1 ? Math.floor(max) : MAX_REASON;
+}
+function oneLine(text) {
+  return text.replace(/\s+/g, " ").trim();
+}
+function keepHead(text, max) {
+  return oneLine(text).slice(0, usableMax(max));
+}
+function keepTail(text, max) {
+  return oneLine(text).slice(-usableMax(max));
+}
+function readStream(text, max) {
+  const trimmed = text.trim();
+  if (trimmed.length === 0)
+    return { kind: "unreadable" };
+  let event;
+  try {
+    event = findResultEvent(normalizeStreamEnvelope(JSON.parse(trimmed)));
+  } catch {
+    return { kind: "unreadable" };
+  }
+  if (typeof event.error === "string" && event.error.trim().length > 0) {
+    return { kind: "reason", text: keepHead(event.error, max) };
+  }
+  if (event.is_error === false)
+    return { kind: "completed" };
+  if (typeof event.result === "string" && event.result.trim().length > 0) {
+    return { kind: "reason", text: keepHead(event.result, max) };
+  }
+  return { kind: "completed" };
+}
+function explainBrainFailure(facts, max = MAX_REASON) {
+  if (facts.spawnError !== undefined && facts.spawnError.trim().length > 0) {
+    return keepHead(facts.spawnError, max);
+  }
+  const readings = new Map;
+  for (const [name, stream] of [
+    ["stdout", facts.stdout],
+    ["stderr", facts.stderr]
+  ]) {
+    const reading = readStream(stream, max);
+    readings.set(name, reading);
+    if (reading.kind === "reason")
+      return reading.text;
+  }
+  for (const [name, stream] of [
+    ["stderr", facts.stderr],
+    ["stdout", facts.stdout]
+  ]) {
+    if (readings.get(name)?.kind === "completed")
+      continue;
+    const plain = keepTail(stream, max);
+    if (plain.length > 0)
+      return plain;
+  }
+  if ([...readings.values()].some((r) => r.kind === "completed")) {
+    return `exit ${facts.exitCode ?? "?"} after the model had already answered`;
+  }
+  return `exit ${facts.exitCode ?? "?"}, no output`;
+}
+
 // src/brain/schema.ts
 init_zod();
 var evidenceItemSchema = exports_external.object({
-  tool: exports_external.enum(["tsc", "eslint", "git-diff", "ripgrep"]),
+  tool: exports_external.enum(["tsc", "eslint", "git-diff", "ripgrep", "rubric"]),
   file: exports_external.string().min(1),
   line: exports_external.number().int().positive().optional(),
   snippet: exports_external.string().min(10).max(240)
@@ -15827,11 +15929,18 @@ var categoryEnum = exports_external.enum([
   "consistency"
 ]);
 var refutationCheckedEnum = exports_external.enum(["yes", "no", "not-possible-from-the-diff"]);
+var modelFindingSchema = exports_external.object({
+  title: exports_external.string().min(1).max(120),
+  body: exports_external.string().min(1).max(600),
+  severity: severityEnum,
+  file: exports_external.string().min(1),
+  quote: exports_external.string().min(10).max(240),
+  claimed_start_line: exports_external.number().int().positive().optional(),
+  claimed_end_line: exports_external.number().int().positive().optional()
+});
 var brainOutputSchema = exports_external.object({
   mood: moodEnum,
   pose: poseEnum,
-  bubble_short: exports_external.string().min(1).max(200),
-  bubble_long: exports_external.string().max(2000),
   critique_for_claude: exports_external.string(),
   severity: severityEnum,
   confidence: confidenceEnum,
@@ -15840,6 +15949,9 @@ var brainOutputSchema = exports_external.object({
     amount: exports_external.number().int().nonnegative()
   })),
   evidence: exports_external.array(evidenceItemSchema).max(5).default([]),
+  findings: exports_external.array(modelFindingSchema).default([]),
+  bubble_short: exports_external.string().min(1).max(200),
+  bubble_long: exports_external.string().max(2000),
   reasoning: exports_external.string().max(800).optional(),
   category: categoryEnum.optional(),
   what_would_refute: exports_external.string().max(200).optional(),
@@ -15886,23 +15998,13 @@ function extractJsonString(text) {
   const match = text.match(FENCED_JSON);
   return match ? match[1]?.trim() : text.trim();
 }
-function findResultEvent(events) {
-  for (let i = events.length - 1;i >= 0; i--) {
-    const ev = events[i];
-    if (ev.type === "result")
-      return ev;
+function classifierStdout(stdout) {
+  try {
+    const ev = findResultEvent(normalizeStreamEnvelope(JSON.parse(stdout)));
+    return JSON.stringify(ev).slice(-500);
+  } catch {
+    return stdout.slice(-500);
   }
-  throw new BrainError("claude -p stream contained no result event");
-}
-function extractUsage(resultEvent) {
-  const u = resultEvent.usage ?? {};
-  return {
-    cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0,
-    cache_read_input_tokens: u.cache_read_input_tokens ?? 0,
-    input_tokens: u.input_tokens ?? 0,
-    output_tokens: u.output_tokens ?? 0,
-    total_cost_usd: resultEvent.total_cost_usd ?? null
-  };
 }
 async function runBrainCall(opts) {
   const model = opts.model ?? DEFAULT_MODEL;
@@ -15919,6 +16021,7 @@ async function runBrainCall(opts) {
         opts.systemPrompt,
         "--output-format",
         "json",
+        "--verbose",
         "--no-session-persistence"
       ], {
         stdin: "pipe",
@@ -15953,25 +16056,23 @@ async function runBrainCall(opts) {
     clearTimeout(killTimer);
   }
   if (exitCode !== 0) {
-    throw new BrainError(`claude -p exited with code ${exitCode}: ${stderr.slice(0, 500)}`, undefined, {
+    throw new BrainError(`claude -p exited with code ${exitCode}: ${explainBrainFailure({ exitCode, stderr, stdout })}`, undefined, {
       exitCode,
       stderr: stderr.slice(-500),
-      stdout: stdout.slice(-500)
+      stdout: classifierStdout(stdout)
     });
   }
-  let events;
+  let resultEvent;
   try {
-    const parsed = JSON.parse(stdout);
-    if (!Array.isArray(parsed)) {
-      throw new BrainError("claude -p stdout was not a JSON array");
-    }
-    events = parsed;
+    const events = normalizeStreamEnvelope(JSON.parse(stdout));
+    resultEvent = findResultEvent(events);
   } catch (err) {
     if (err instanceof BrainError)
       throw err;
+    if (err instanceof EnvelopeShapeError)
+      throw new BrainError(err.message, err);
     throw new BrainError("claude -p stdout was not valid JSON", err);
   }
-  const resultEvent = findResultEvent(events);
   if (resultEvent.is_error || !resultEvent.result) {
     throw new BrainError(`claude -p reported an error: ${resultEvent.error ?? resultEvent.subtype ?? "no result field"}`);
   }

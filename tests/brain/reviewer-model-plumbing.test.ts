@@ -18,9 +18,13 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseBrainConfig } from "../../src/brain/brain-config";
+import { FAMILIES, parseBrainConfig } from "../../src/brain/brain-config";
 import type { CallBrainOptions } from "../../src/brain/brain";
-import { resolveRole } from "../../src/brain/registry";
+import {
+  familySupportsModelChoice,
+  providerForFamily,
+  resolveRole,
+} from "../../src/brain/registry";
 
 // agy's call() runs a best-effort conversation-DB reaper on every call. Point
 // both homes at a throwaway dir so this suite can never touch the real
@@ -111,15 +115,19 @@ test("codebuddy: reviewer_model reaches the spawned --model argv", async () => {
   expect(argv[idx + 1]).toBe("gemini-3.1-pro");
 });
 
-test("codex: reviewer_model is RESOLVED onto the role but a no-op in argv (no --model / -m under ChatGPT auth)", async () => {
+// Until 2026-09-12 this test asserted the model RESOLVED onto the codex role and
+// was merely "a no-op in argv" — it pinned the discrepancy as intended behaviour
+// instead of closing it, which is how `brain show` came to display a model the
+// process never received. resolveRole now strips a model codex cannot send
+// (spec brain-select-four-gaps §3.1); the argv half of the assertion is unchanged.
+test("codex: reviewer_model is STRIPPED at resolve, and never reaches argv", async () => {
   const resolved = resolveRole(
     parseBrainConfig(JSON.stringify({ reviewer_provider: "codex", reviewer_model: "gpt-5.5" })),
     "review",
   );
-  // The model still resolves onto the role (registry doesn't strip it) ...
   expect(resolved.family).toBe("codex");
-  expect(resolved.model).toBe("gpt-5.5");
-  // ... but the codex adapter never emits a --model / -m flag for it.
+  expect(resolved.model).toBeUndefined();
+  // ... and the codex adapter never emits a --model / -m flag either.
   const argv = await argvForConfig(
     JSON.stringify({ reviewer_provider: "codex", reviewer_model: "gpt-5.5" }),
   );
@@ -127,4 +135,37 @@ test("codex: reviewer_model is RESOLVED onto the role but a no-op in argv (no --
   expect(argv).not.toContain("--model");
   expect(argv).not.toContain("-m");
   expect(argv).not.toContain("gpt-5.5");
+});
+
+// AC3, the half that is actually ground truth (spec brain-select-four-gaps).
+// `FAMILY_ACCEPTS_MODEL` is a DECLARATION; TypeScript can force a sixth provider
+// to fill it in, but nothing in the type system can stop that entry from being
+// WRONG. This walks the registry — not a hand-written list — hands each provider
+// a model directly (bypassing resolveRole, whose own filter reads the same
+// declaration and would make this circular), and checks the declaration against
+// the argv the provider really builds. A new provider that declares `true` while
+// its argv drops the model fails here.
+test("every family's declared model capability matches the argv it really builds", async () => {
+  const PROBE = "probe-model-9x";
+  expect(FAMILIES.length).toBeGreaterThan(0);
+
+  for (const family of FAMILIES) {
+    const sink: { argv?: string[] } = {};
+    try {
+      await providerForFamily(family).call({
+        systemPrompt: "REVIEW RUBRIC",
+        contextBundle: "diff --git a/x.ts",
+        cwd: "/repo/under/review",
+        model: PROBE,
+        spawnFn: capturingSpawn(sink),
+      });
+    } catch {
+      // Empty stdout -> parse/exit failure is expected; argv already captured.
+    }
+    const argv = sink.argv ?? [];
+    // Control: the probe must have reached a real spawn, or "no model in argv"
+    // would be indistinguishable from "this provider never spawned".
+    expect(argv.length).toBeGreaterThan(0);
+    expect(argv.includes(PROBE)).toBe(familySupportsModelChoice(family));
+  }
 });

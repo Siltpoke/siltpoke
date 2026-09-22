@@ -10,6 +10,7 @@ import {
   deriveStopMarkerKey,
   readMarker,
 } from "../daemon/marker";
+import { isSiltpokedPing, resolveDaemonPort } from "../daemon/port";
 import { resolveDaemonEntry } from "../installer/daemon-path";
 import { siltpokeRoot } from "../installer/paths";
 import type { HookEvent } from "../router/router";
@@ -42,7 +43,12 @@ async function probeDaemon(port: number): Promise<boolean> {
     const r = await fetch(`http://127.0.0.1:${port}/api/ping`, {
       signal: AbortSignal.timeout(250),
     });
-    return r.ok;
+    // A 2xx from SOMETHING is not a daemon. If a stranger holds the port and
+    // answers (a SPA catch-all answers anything), treating it as alive makes
+    // `maybeRespawnDaemon` return early and siltpoked is never started —
+    // silently, on the self-healing path that runs at every Stop.
+    // Audit defect `[5b]`, §26.3.
+    return r.ok && isSiltpokedPing(await r.json());
   } catch {
     return false;
   }
@@ -110,7 +116,7 @@ export async function maybeRespawnDaemon(env: NodeJS.ProcessEnv, spawnFn?: Daemo
     const home = siltpokeRoot(env);
     const daemonCfg = await loadDaemonConfig(home);
     if (!daemonCfg.enabled) return;
-    const port = Number(env.SILTPOKE_DAEMON_PORT ?? "9876");
+    const port = resolveDaemonPort(env);
     if (await probeDaemon(port)) return;
     respawnDaemonDetached(spawnFn);
   } catch {
@@ -208,7 +214,7 @@ export async function runHook(opts: RunHookOptions): Promise<void> {
   const suppressionEnabled = env.SILTPOKE_SUPPRESSION_ENABLED !== "0";
   if (suppressionEnabled) {
     const stopMarkerDir = markerDir(env);
-    const port = Number(env.SILTPOKE_DAEMON_PORT ?? "9876");
+    const port = resolveDaemonPort(env);
 
     // Key on session_id + a hash of the transcript content — the ONE thing
     // both firing hook processes compute identically for the same logical Stop

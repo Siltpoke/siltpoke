@@ -548,6 +548,7 @@ function absenceOf(raw, skipped) {
 }
 var EVIDENCE_LABELS = new Set([
   "not_checked",
+  "not_checked_budget",
   "verified",
   "no_evidence",
   "partly_unverified",
@@ -1136,7 +1137,8 @@ async function readConfig(basePath) {
     bubble: "",
     bubbleColor: "cyan",
     terminalWidth: 0,
-    minimalMode: false
+    minimalMode: false,
+    showTasklist: false
   };
   try {
     const configPath = join10(basePath, "config.json");
@@ -1150,7 +1152,8 @@ async function readConfig(basePath) {
       bubble: typeof parsed?.bubble === "string" ? parsed.bubble : "",
       bubbleColor: typeof parsed?.bubbleColor === "string" ? parsed.bubbleColor : "cyan",
       terminalWidth: typeof parsed?.terminalWidth === "number" && parsed.terminalWidth > 0 ? Math.floor(parsed.terminalWidth) : 0,
-      minimalMode: parsed?.minimalMode === true
+      minimalMode: parsed?.minimalMode === true,
+      showTasklist: parsed?.showTasklist === true
     };
   } catch {
     return fallback;
@@ -1232,8 +1235,18 @@ function wrapBubble(text2, maxWidth, maxLines) {
   }
   return flat;
 }
-function buildBubbleBlock(bubble, colorName, faceWidth, termWidth) {
-  const quoted = `"${bubble}"`;
+function bubbleTimeStamp(atMs) {
+  if (atMs === undefined || !Number.isFinite(atMs) || atMs <= 0)
+    return "";
+  const d = new Date(atMs);
+  const h24 = d.getHours();
+  const meridiem = h24 < 12 ? "AM" : "PM";
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `[${h12}:${mm} ${meridiem}]: `;
+}
+function buildBubbleBlock(bubble, colorName, faceWidth, termWidth, atMs) {
+  const quoted = `${bubbleTimeStamp(atMs)}"${bubble}"`;
   const effective = termWidth > 0 ? termWidth : 160;
   const available = Math.max(20, effective - faceWidth - 2);
   const wrapped = wrapBubble(quoted, available, 3);
@@ -1253,6 +1266,7 @@ function widestLine(text2) {
   return text2.split(`
 `).reduce((m, l) => Math.max(m, l.length), 0);
 }
+var FACE_LEFT_MARGIN = 4;
 function buildFaceBlock(art, name, progressionLine, titleLine) {
   const artLines = art.split(`
 `);
@@ -1269,11 +1283,13 @@ function buildFaceBlock(art, name, progressionLine, titleLine) {
     const right = total - left;
     return NBSP_LIKE.repeat(left) + line + " ".repeat(right);
   };
-  const centeredArt = artLines.map(center).join(`
+  const margin = NBSP_LIKE.repeat(FACE_LEFT_MARGIN);
+  const place = (line) => margin + center(line);
+  const centeredArt = artLines.map(place).join(`
 `);
   if (labelLines.length === 0)
     return centeredArt;
-  return [centeredArt, ...labelLines.map(center)].join(`
+  return [centeredArt, ...labelLines.map(place)].join(`
 `);
 }
 function formatProgressionLine(p) {
@@ -1365,7 +1381,7 @@ async function spliceFace(options, stdout) {
     const bubbleText = stateFresh ? state?.bubble_short : cfg.bubble;
     const bubbleColor = stateFresh ? severityToColor(state?.severity, cfg.bubbleColor) : cfg.bubbleColor;
     const termWidth = options.termWidth ?? (cfg.terminalWidth > 0 ? cfg.terminalWidth : detectTermWidth());
-    const tasklistRaw = await readTasklist(options.cwd);
+    const tasklistRaw = cfg.showTasklist ? await readTasklist(options.cwd) : null;
     const tasklistParsed = tasklistRaw ? parseTasklist(tasklistRaw) : null;
     const tasklistSeg = tasklistParsed ? colorize(formatTasklistSegment(tasklistParsed), "gray") : "";
     const appendSeg = (s) => tasklistSeg ? `${s.replace(/\n+$/, "")}
@@ -1373,7 +1389,7 @@ ${tasklistSeg}` : s;
     if (cfg.minimalMode) {
       if (!bubbleText)
         return appendSeg(stdout);
-      const bubbleBlock = buildBubbleBlock(bubbleText, bubbleColor, 0, termWidth);
+      const bubbleBlock = buildBubbleBlock(bubbleText, bubbleColor, 0, termWidth, stateFresh ? state?.last_updated_ms : undefined);
       return appendSeg(`${stdout.replace(/\n+$/, "")}
 
 ${bubbleBlock}`);
@@ -1388,7 +1404,7 @@ ${bubbleBlock}`);
     const faceWidth = widestLine(face);
     const inner = bubbleText ? `${stdout.replace(/\n+$/, "")}
 
-${buildBubbleBlock(bubbleText, bubbleColor, faceWidth, termWidth)}` : stdout;
+${buildBubbleBlock(bubbleText, bubbleColor, faceWidth, termWidth, stateFresh ? state?.last_updated_ms : undefined)}` : stdout;
     return composeOutput({ face, inner: appendSeg(inner), termWidth });
   } catch (err) {
     await logError(options.basePath, `Face splice failed, falling through: ${err}`);
@@ -1525,5 +1541,6 @@ export {
   resolveDaemonScript,
   resolveBunBinary,
   readConfig,
-  parseAgentFlag
+  parseAgentFlag,
+  bubbleTimeStamp
 };

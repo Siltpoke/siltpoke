@@ -21,6 +21,11 @@ describe("runInstall presetAgents (AC10)", () => {
       presetAgents: ["claude-code"],
       env: { ...process.env, CLAUDE_HOME: dir, SILTPOKE_HOME: join(dir, ".siltpoke") },
       platform: "darwin",
+      // This call carries no `CI: "true"` (the spread inherits it on a runner,
+      // not locally) and today it never reaches the local-model step anyway —
+      // it returns `no_settings` first. That is safety by an unrelated early
+      // return, so say the intent instead of relying on it.
+      setupOllamaFn: async () => ({ enabled: false }),
     });
     // the interactive agent multi-choice must NOT have been shown
     expect(out.join("")).not.toContain("Which CLI agents");

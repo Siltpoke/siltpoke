@@ -4,7 +4,7 @@
  * The `/siltpoke-help` manual.
  *
  * Lives in code (not in the command's markdown) for one reason: the command
- * surface a `/plugin install` actually exposes is the 10 commands below, and
+ * surface a `/plugin install` actually exposes is the 11 commands below, and
  * that list has to be derivable from the shipped bundle rather than from a
  * prose file that can drift from it. `tests/plugin/commands.test.ts` asserts
  * this text lists exactly the commands that exist.
@@ -21,6 +21,7 @@ export const PLUGIN_COMMANDS: ReadonlyArray<{ name: string; blurb: string }> = [
   { name: "/siltpoke-unmute", blurb: "Un-silence Siltpoke." },
   { name: "/siltpoke-brain", blurb: "Show or set which CLI + model reviews your code (set review <family> [model])." },
   { name: "/siltpoke-doctor", blurb: "Install-health diagnostic (✓/✗ checklist)." },
+  { name: "/siltpoke-wake", blurb: "Reviews went quiet? Clear the stuck breaker and review the next turn." },
   { name: "/siltpoke-help", blurb: "This manual." },
 ];
 
@@ -41,7 +42,7 @@ WHAT IT DOES
   Reviews NEVER auto-inject into your chat — nothing interrupts you.
   You pull one in when you want it, with /siltpoke-last.
 
-COMMANDS (the whole surface — there are only 10)
+COMMANDS (the whole surface — there are only 11)
 
 ${commandTable()}
 

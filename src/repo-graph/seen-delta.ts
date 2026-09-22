@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Jiaqi Duan
 /**
  * Pure classification of a single file's seen-vs-current fingerprint delta
- * (slice ③), plus `classifyAll` which runs it over an entire watermark.
+ * plus `classifyAll` which runs it over an entire watermark.
  *
  * `classifySeenFingerprintDelta` is intentionally dumb: it takes the two
  * fingerprint sides (already looked up) plus a pre-computed
@@ -127,7 +127,7 @@ function canonicalizeFiles(files: Record<string, unknown> | undefined): Map<stri
  * generation) can force a mismatch without needing a real version bump.
  *
  * C6: both `seen`'s keys and `current.files`'s keys are canonicalized before
- * the union — `Fingerprints` keys (slice ②) are not guaranteed canonical, and
+ * the union — `Fingerprints` keys are not guaranteed canonical, and
  * a canonical-vs-raw mismatch would misclassify a present file as `deleted`.
  * A key that `canonicalKey` rejects (`RootEscapeError`) is skipped, not
  * thrown — one bad key must never abort the whole classify.

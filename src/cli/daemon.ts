@@ -8,6 +8,7 @@ import { generateSecret } from "../daemon/auth";
 import { runStopWithGuard } from "./daemon-stop-guard";
 import { installAutostartForPlatform } from "../installer/autostart";
 import { runRestart } from "./daemon-restart";
+import { resolveDaemonPort } from "../daemon/port";
 import { siltpokeRoot } from "../installer/paths";
 
 const BASE = siltpokeRoot();
@@ -29,7 +30,7 @@ async function cmdStart(detach: boolean): Promise<void> {
     process.stdout.write(`siltpoked spawned (pid=${proc.pid ?? "?"})\n`);
     return;
   }
-  const port = process.env.PORT ? Number(process.env.PORT) : 9876;
+  const port = resolveDaemonPort(process.env);
   let handle: Awaited<ReturnType<typeof startDaemon>>;
   try {
     handle = await startDaemon({
@@ -70,7 +71,7 @@ async function cmdStop(force: boolean): Promise<void> {
     process.stderr.write("siltpoked: pidfile empty\n");
     process.exit(1);
   }
-  const port = process.env.PORT ? Number(process.env.PORT) : 9876;
+  const port = resolveDaemonPort(process.env);
   const baseUrl = `http://127.0.0.1:${port}`;
   const code = await runStopWithGuard({
     pid,

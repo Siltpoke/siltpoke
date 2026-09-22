@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * Wires the slice ① reverse-deps section (Task 2, `buildReverseDepsSection`)
+ * Wires the reverse-deps section (Task 2, `buildReverseDepsSection`)
  * into the NORMAL critic phase as a sibling to the existing caller-impact
  * section (Task 3).
  *
@@ -102,6 +102,7 @@ function makeFakeBrainOutput(overrides?: Partial<BrainOutput>): BrainOutput {
     severity: "medium",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [],
     ...overrides,
   };
@@ -140,6 +141,7 @@ describe("runCritic — NORMAL reverse-deps wiring", () => {
     // check can only pass if the token reached the evidence corpus via the
     // reverse-deps wiring under test.
     const brainOutput = makeFakeBrainOutput({
+      findings: [],
       evidence: [{ tool: "ripgrep", file: "src/a/foo.ts", line: 1, snippet: IMPORTER_TOKEN }],
     });
 
@@ -187,6 +189,7 @@ describe("runCritic — NORMAL reverse-deps wiring", () => {
     // Left as `accepted === false` it would have been unfalsifiable.
     let writeCalled = false;
     const brainOutput = makeFakeBrainOutput({
+      findings: [],
       evidence: [{ tool: "ripgrep", file: "src/a/foo.ts", line: 1, snippet: IMPORTER_TOKEN }],
     });
     const deps: RunCriticDeps = {
@@ -216,6 +219,7 @@ describe("runCritic — NORMAL reverse-deps wiring", () => {
     // proving the throw didn't break the normal phase.
     let capturedSystemPrompt = "";
     const brainOutput = makeFakeBrainOutput({
+      findings: [],
       evidence: [{ tool: "tsc", file: "src/a/foo.ts", line: 10, snippet: REAL_SNIPPET }],
     });
     const throwingDeps = fakeDeps(REVERSE_DEPS_FILES);
@@ -246,6 +250,7 @@ describe("runCritic — NORMAL reverse-deps wiring", () => {
     // Default deps hit real ripgrep/fs against a non-existent cwd → no
     // importers found → no section, no throw.
     const brainOutput = makeFakeBrainOutput({
+      findings: [],
       evidence: [{ tool: "tsc", file: "src/a/foo.ts", line: 10, snippet: REAL_SNIPPET }],
     });
     const deps: RunCriticDeps = {

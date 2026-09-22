@@ -15172,8 +15172,8 @@ var init_project = __esm(() => {
 });
 
 // src/cli/plugin-cli.ts
-import { existsSync as existsSync19 } from "fs";
-import { join as join31 } from "path";
+import { existsSync as existsSync21 } from "fs";
+import { join as join33 } from "path";
 import { fileURLToPath as fileURLToPath3 } from "url";
 
 // src/installer/personality-seed.ts
@@ -15182,7 +15182,7 @@ init_zod();
 // src/brain/schema.ts
 init_zod();
 var evidenceItemSchema = exports_external.object({
-  tool: exports_external.enum(["tsc", "eslint", "git-diff", "ripgrep"]),
+  tool: exports_external.enum(["tsc", "eslint", "git-diff", "ripgrep", "rubric"]),
   file: exports_external.string().min(1),
   line: exports_external.number().int().positive().optional(),
   snippet: exports_external.string().min(10).max(240)
@@ -15220,11 +15220,18 @@ var categoryEnum = exports_external.enum([
   "consistency"
 ]);
 var refutationCheckedEnum = exports_external.enum(["yes", "no", "not-possible-from-the-diff"]);
+var modelFindingSchema = exports_external.object({
+  title: exports_external.string().min(1).max(120),
+  body: exports_external.string().min(1).max(600),
+  severity: severityEnum,
+  file: exports_external.string().min(1),
+  quote: exports_external.string().min(10).max(240),
+  claimed_start_line: exports_external.number().int().positive().optional(),
+  claimed_end_line: exports_external.number().int().positive().optional()
+});
 var brainOutputSchema = exports_external.object({
   mood: moodEnum,
   pose: poseEnum,
-  bubble_short: exports_external.string().min(1).max(200),
-  bubble_long: exports_external.string().max(2000),
   critique_for_claude: exports_external.string(),
   severity: severityEnum,
   confidence: confidenceEnum,
@@ -15233,6 +15240,9 @@ var brainOutputSchema = exports_external.object({
     amount: exports_external.number().int().nonnegative()
   })),
   evidence: exports_external.array(evidenceItemSchema).max(5).default([]),
+  findings: exports_external.array(modelFindingSchema).default([]),
+  bubble_short: exports_external.string().min(1).max(200),
+  bubble_long: exports_external.string().max(2000),
   reasoning: exports_external.string().max(800).optional(),
   category: categoryEnum.optional(),
   what_would_refute: exports_external.string().max(200).optional(),
@@ -15537,8 +15547,8 @@ function randomName(species, rng = Math.random) {
 }
 
 // src/cli/doctor.ts
-import { existsSync as existsSync11, lstatSync, readdirSync as readdirSync2, readFileSync as readFileSync7, readlinkSync } from "fs";
-import { dirname as dirname5, join as join18, resolve } from "path";
+import { existsSync as existsSync13, lstatSync, readdirSync as readdirSync2, readFileSync as readFileSync9, readlinkSync } from "fs";
+import { dirname as dirname5, join as join20, resolve } from "path";
 import { fileURLToPath } from "url";
 
 // src/installer/paths.ts
@@ -15567,6 +15577,13 @@ function siltpokeRoot(env = process.env) {
   }
   return join(homeDir(env), ".siltpoke");
 }
+function resolveCodexHome(env = process.env) {
+  const override = env.CODEX_HOME;
+  if (typeof override === "string" && override.length > 0) {
+    return override;
+  }
+  return join(homeDir(env), ".codex");
+}
 function resolveAgyHooksJsonPath(env = process.env) {
   const override = env.ANTIGRAVITY_HOOKS_HOME;
   if (typeof override === "string" && override.length > 0) {
@@ -15587,12 +15604,13 @@ var PROJ_HASH_LEN = 12;
 function computeProjHash(projectRoot) {
   return createHash2("sha256").update(projectRoot).digest("hex").slice(0, PROJ_HASH_LEN);
 }
-function resolveRepoGraphLocation(cwd, opts = {}) {
-  const { project_root } = resolveProjectRoot(cwd);
-  const proj_hash = computeProjHash(project_root);
+function repoGraphLocationForRoot(projectRoot, opts = {}) {
+  const proj_hash = computeProjHash(projectRoot);
   const home = opts.home ?? siltpokeRoot();
-  const storage_dir = join3(home, "repo-memory", proj_hash);
-  return { project_root, proj_hash, storage_dir };
+  return { project_root: projectRoot, proj_hash, storage_dir: join3(home, "repo-memory", proj_hash) };
+}
+function resolveRepoGraphLocation(cwd, opts = {}) {
+  return repoGraphLocationForRoot(resolveProjectRoot(cwd).project_root, opts);
 }
 
 // src/memory/active-project.ts
@@ -15667,6 +15685,17 @@ function atomicWrite(path, data, opts) {
   writeFileSync(tmp, data, opts?.mode !== undefined ? { mode: opts.mode } : undefined);
   renameSync(tmp, path);
 }
+
+// src/state/usage.ts
+var KNOWN_KINDS = new Set([
+  "main",
+  "reflection",
+  "arch_generate",
+  "explain",
+  "chat",
+  "repo_summary",
+  "chat_capture"
+]);
 
 // src/state/brain-health.ts
 var FILE = "brain-health.json";
@@ -15781,6 +15810,36 @@ function checkBrainHealth(opts) {
 // src/cli/doctor-daemon-check.ts
 import { existsSync as existsSync4 } from "fs";
 
+// src/daemon/port.ts
+var DEFAULT_DAEMON_PORT = 9876;
+function resolveDaemonPort(env) {
+  for (const name of ["SILTPOKE_DAEMON_PORT", "PORT"]) {
+    const raw = env[name];
+    if (raw === undefined || raw === "")
+      continue;
+    const parsed = Number(raw);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535)
+      continue;
+    return parsed;
+  }
+  return DEFAULT_DAEMON_PORT;
+}
+function isSiltpokedPing(body) {
+  if (typeof body !== "object" || body === null)
+    return false;
+  const b = body;
+  if (b.service === "siltpoked")
+    return true;
+  return b.ok === true && typeof b.pid === "number" && (b.mode === "project" || b.mode === "global");
+}
+function parseJsonOrNull(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 // src/config/daemon-config.ts
 init_zod();
 import { existsSync as existsSync3 } from "fs";
@@ -15825,7 +15884,8 @@ function defaultUnitPath() {
 }
 
 // src/cli/doctor-daemon-check.ts
-var DEFAULT_DAEMON_HEALTH_URL = "http://127.0.0.1:9876/api/daemon-health";
+var daemonBaseUrl = () => `http://127.0.0.1:${resolveDaemonPort(process.env)}`;
+var defaultDaemonHealthUrl = () => `${daemonBaseUrl()}/api/daemon-health`;
 var CHECK_NAME = "daemon running latest code";
 var VALID_STATES = new Set(["current", "behind", "unknown"]);
 function asDaemonHealth(data) {
@@ -15872,7 +15932,7 @@ function mapDaemonHealthToCheck(health) {
   }
 }
 async function checkDaemonStaleness(opts = {}) {
-  const url2 = opts.daemonHealthUrl ?? DEFAULT_DAEMON_HEALTH_URL;
+  const url2 = opts.daemonHealthUrl ?? defaultDaemonHealthUrl();
   const doFetch = opts.fetchFn ?? fetch;
   let health = null;
   try {
@@ -15888,23 +15948,32 @@ async function checkDaemonStaleness(opts = {}) {
   }
   return mapDaemonHealthToCheck(health);
 }
-var DEFAULT_DAEMON_PING_URL = "http://127.0.0.1:9876/api/ping";
+var defaultDaemonPingUrl = () => `${daemonBaseUrl()}/api/ping`;
 var ALIVE_CHECK_NAME = "daemon alive (/api/ping)";
 var PING_TIMEOUT_MS = 500;
 var DAEMON_OFF_DETAIL = "daemon: off (opt-in \u2014 open /siltpoke-dashboard to enable)";
 var DAEMON_ENABLED_UNREACHABLE_DETAIL = "daemon.enabled is true but /api/ping is unreachable \u2014 try /siltpoke-restart-daemon";
+var DAEMON_PORT_TAKEN_DETAIL = "something is answering on the daemon's port but it is not siltpoked \u2014 free the port, or set SILTPOKE_DAEMON_PORT to another one";
 async function checkDaemonAlive(opts = {}) {
-  const url2 = opts.daemonPingUrl ?? DEFAULT_DAEMON_PING_URL;
+  const url2 = opts.daemonPingUrl ?? defaultDaemonPingUrl();
   const doFetch = opts.fetchFn ?? fetch;
+  let answeredByStranger = false;
   try {
     const res = await doFetch(url2, { signal: AbortSignal.timeout(PING_TIMEOUT_MS) });
     if (res.ok) {
-      return { name: ALIVE_CHECK_NAME, pass: true, status: "pass", detail: null };
+      const body = await res.text();
+      if (isSiltpokedPing(parseJsonOrNull(body))) {
+        return { name: ALIVE_CHECK_NAME, pass: true, status: "pass", detail: null };
+      }
+      answeredByStranger = true;
     }
   } catch {}
   const home = opts.siltpokeHome ?? siltpokeRoot();
   const loadCfg = opts.loadDaemonConfigFn ?? loadDaemonConfig;
   const { enabled } = await loadCfg(home);
+  if (answeredByStranger) {
+    return { name: ALIVE_CHECK_NAME, pass: false, detail: DAEMON_PORT_TAKEN_DETAIL };
+  }
   if (!enabled) {
     return { name: ALIVE_CHECK_NAME, pass: true, status: "info", detail: DAEMON_OFF_DETAIL };
   }
@@ -16148,16 +16217,15 @@ function computeStaleness(indexed, current, unreadable = []) {
     rows_wrong_pct: rowsWrongPct
   };
 }
-async function readIndexStaleness(opts) {
+async function readIndexStalenessAt(opts) {
   const read = opts.readFileFn ?? ((p) => readFile5(p, "utf8"));
-  const { project_root, storage_dir } = resolveRepoGraphLocation(opts.cwd, { home: opts.home });
-  let root = project_root;
-  let fingerprints = await readFingerprints(storage_dir);
+  let root = opts.project_root;
+  let fingerprints = await readFingerprints(opts.storage_dir);
   if (Object.keys(fingerprints.files).length === 0) {
     try {
-      const canonicalRoot = realpathSync(project_root);
-      if (canonicalRoot !== project_root) {
-        const canonicalLocation = resolveRepoGraphLocation(canonicalRoot, { home: opts.home });
+      const canonicalRoot = realpathSync(opts.project_root);
+      if (canonicalRoot !== opts.project_root) {
+        const canonicalLocation = repoGraphLocationForRoot(canonicalRoot, { home: opts.home });
         const canonicalFingerprints = await readFingerprints(canonicalLocation.storage_dir);
         if (Object.keys(canonicalFingerprints.files).length > 0) {
           root = canonicalRoot;
@@ -16182,6 +16250,10 @@ async function readIndexStaleness(opts) {
     current.push({ relPath: file2.relPath, contentSha: computeContentSha(content) });
   }
   return computeStaleness(fingerprints.files, current, unreadable);
+}
+async function readIndexStaleness(opts) {
+  const { project_root, storage_dir } = resolveRepoGraphLocation(opts.cwd, { home: opts.home });
+  return readIndexStalenessAt({ project_root, storage_dir, home: opts.home, readFileFn: opts.readFileFn });
 }
 
 // src/repo-graph/staleness-verdict.ts
@@ -16360,8 +16432,8 @@ function checkProjectRoots(opts = {}) {
 }
 
 // src/cli/doctor-reviewer-check.ts
-import { existsSync as existsSync10, readFileSync as readFileSync6 } from "fs";
-import { join as join17 } from "path";
+import { existsSync as existsSync11, readFileSync as readFileSync7 } from "fs";
+import { join as join18 } from "path";
 
 // src/brain/agy-honesty.ts
 var CLAUDE_FAMILY_PREFIXES = ["Claude ", "claude-"];
@@ -16415,7 +16487,7 @@ function parseBrainConfig(raw, env) {
     if (entry === undefined)
       return;
     const provider = entry.provider ?? hostFamily;
-    const model = provider === "claude" && entry.model ? entry.model : undefined;
+    const model = entry.model ? entry.model : undefined;
     return model !== undefined ? { provider, model } : { provider };
   })();
   const review = reviewByEnv !== undefined ? { provider: reviewByEnv } : asRoleConfig(rolesRaw.review) ?? reviewAliasConfig ?? reviewByBuilderConfig ?? hostFamilyConfig ?? fallback;
@@ -16468,6 +16540,15 @@ function loadBrainConfigSync(homeBase) {
   }
 }
 
+// src/brain/provider.ts
+var FAMILY_ACCEPTS_MODEL = {
+  claude: true,
+  agy: true,
+  qoder: true,
+  codebuddy: true,
+  codex: false
+};
+
 // src/brain/agy-reaper.ts
 var DEFAULT_MIN_AGE_MS = 24 * 60 * 60 * 1000;
 var UUID_RE = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/;
@@ -16489,7 +16570,7 @@ function familyModelDefault(family, role) {
   return role === "review" ? DEFAULT_MODEL : CLAUDE_PINNED;
 }
 function familySupportsModelChoice(family) {
-  return family === "claude";
+  return FAMILY_ACCEPTS_MODEL[family];
 }
 var CLAUDE_REVIEW_MODELS = [
   DEFAULT_MODEL,
@@ -16507,17 +16588,275 @@ function familyBinary(family) {
     return "codebuddy";
   return null;
 }
+function sendableModel(family, model) {
+  return familySupportsModelChoice(family) ? model : undefined;
+}
 function resolveRoleMeta(config2, role) {
   const rc = config2.roles[role];
-  return { family: rc.provider, model: rc.model ?? familyModelDefault(rc.provider, role) };
+  return {
+    family: rc.provider,
+    model: sendableModel(rc.provider, rc.model) ?? familyModelDefault(rc.provider, role)
+  };
+}
+
+// src/cli/brain-cli.ts
+import { existsSync as existsSync10, readFileSync as readFileSync6 } from "fs";
+import { join as join17 } from "path";
+var FAMILIES2 = ["claude", "codex", "agy", "qoder", "codebuddy"];
+var ROLES = ["chat", "review", "extract"];
+function isFamily(x) {
+  return FAMILIES2.includes(x);
+}
+function isRole(x) {
+  return ROLES.includes(x);
+}
+function readRawConfig(home) {
+  const configPath = join17(home, "config.json");
+  if (!existsSync10(configPath))
+    return {};
+  try {
+    const parsed = JSON.parse(readFileSync6(configPath, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+function roleSource(raw, role) {
+  const brain = raw.brain && typeof raw.brain === "object" ? raw.brain : {};
+  const roles = brain.roles && typeof brain.roles === "object" ? brain.roles : {};
+  if (roles[role] && typeof roles[role] === "object")
+    return "pinned here";
+  if (role === "review") {
+    if (process.env.SILTPOKE_REVIEWER_PROVIDER)
+      return "env override";
+    if (typeof raw.reviewer_provider === "string")
+      return "reviewer_provider";
+    if (process.env.SILTPOKE_HOST)
+      return "follows builder";
+  }
+  return "default";
+}
+var REVIEW_OVERRIDING_SOURCES = [
+  "env override",
+  "pinned here",
+  "reviewer_provider"
+];
+function reviewOverrideSource(raw) {
+  const source = roleSource(raw, "review");
+  return REVIEW_OVERRIDING_SOURCES.includes(source) ? source : null;
+}
+function brainView(home) {
+  const config2 = loadBrainConfigSync(home);
+  const raw = readRawConfig(home);
+  const roles = ROLES.map((role) => {
+    const meta3 = resolveRoleMeta(config2, role);
+    return { role, family: meta3.family, model: meta3.model, source: roleSource(raw, role) };
+  });
+  const rbb = config2.review_by_builder ?? {};
+  const reviewIsPinned = reviewOverrideSource(raw) !== null;
+  const reviewByBuilder = FAMILIES2.map((builder) => {
+    const entry = rbb[builder];
+    const reviewer = entry?.provider ?? builder;
+    const model = familySupportsModelChoice(reviewer) ? entry?.model : undefined;
+    return {
+      builder,
+      reviewer,
+      ...model !== undefined ? { model } : {},
+      configured: entry !== undefined,
+      reviewerSupportsModel: familySupportsModelChoice(reviewer),
+      overriddenByGlobalPin: entry !== undefined && reviewIsPinned
+    };
+  });
+  return {
+    authorFamily: config2.authorFamily,
+    roles,
+    families: FAMILIES2,
+    reviewByBuilder,
+    claudeModels: CLAUDE_REVIEW_MODELS,
+    modelCapableFamilies: FAMILIES2.filter(familySupportsModelChoice)
+  };
+}
+function formatBrainShow(home) {
+  const view = brainView(home);
+  const lines = [];
+  lines.push(`builder (authored the code): ${view.authorFamily}`);
+  lines.push("");
+  lines.push("brains by role:");
+  for (const r of view.roles) {
+    const model = r.model ?? "(CLI default)";
+    const marker = r.role === "review" ? " \u2190" : "";
+    lines.push(`  ${r.role.padEnd(8)} ${r.family} \xB7 ${model}  [${r.source}]${marker}`);
+  }
+  lines.push("");
+  const configured = view.reviewByBuilder.filter((b) => b.configured);
+  if (configured.length > 0) {
+    lines.push("per-builder review overrides (built by \u2192 reviewed by):");
+    for (const b of configured) {
+      const model = b.model ?? (b.reviewerSupportsModel ? "(CLI default)" : "(set in its own config)");
+      const suffix = b.overriddenByGlobalPin ? "   \u26A0 OVERRIDDEN by the pinned review brain" : "";
+      lines.push(`  ${b.builder.padEnd(10)} \u2192 ${b.reviewer} \xB7 ${model}${suffix}`);
+    }
+    if (configured.some((b) => b.overriddenByGlobalPin)) {
+      lines.push("  these rules are stored but NOT in effect \u2014 run: siltpoke brain unset review");
+    }
+    lines.push("");
+  }
+  lines.push("set with:  siltpoke brain set review <family> [model]");
+  lines.push("      or:  siltpoke brain set-builder <builder> <reviewer> [model]");
+  lines.push("   undo:  siltpoke brain unset <role>   (back to following the building agent)");
+  lines.push(`families:  ${FAMILIES2.join(" / ")}`);
+  return lines.join(`
+`);
+}
+function runBrainSet(home, role, family, model) {
+  if (!isRole(role)) {
+    return { ok: false, message: `unknown role "${role}" \u2014 one of: ${ROLES.join(" / ")}` };
+  }
+  if (!isFamily(family)) {
+    return { ok: false, message: `unknown family "${family}" \u2014 one of: ${FAMILIES2.join(" / ")}` };
+  }
+  if (model !== undefined && model.length > 0 && !familySupportsModelChoice(family)) {
+    return {
+      ok: false,
+      message: `"${family}" does not accept a model from siltpoke \u2014 its CLI serves the model set in its own config`
+    };
+  }
+  const configPath = join17(home, "config.json");
+  let prior = {};
+  if (existsSync10(configPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync6(configPath, "utf8"));
+      if (parsed && typeof parsed === "object")
+        prior = parsed;
+    } catch {}
+  }
+  const priorBrain = prior.brain && typeof prior.brain === "object" ? prior.brain : {};
+  const priorRoles = priorBrain.roles && typeof priorBrain.roles === "object" ? priorBrain.roles : {};
+  const roleConfig = model !== undefined && model.length > 0 ? { provider: family, model } : { provider: family };
+  const next = {
+    ...prior,
+    brain: {
+      ...priorBrain,
+      roles: {
+        ...priorRoles,
+        [role]: roleConfig
+      }
+    }
+  };
+  atomicWrite(configPath, `${JSON.stringify(next, null, 2)}
+`);
+  const modelNote = model && model.length > 0 ? ` \xB7 ${model}` : " \xB7 (CLI default)";
+  return { ok: true, message: `${role} brain set to ${family}${modelNote}` };
+}
+function setReviewByBuilder(home, builder, reviewer, model) {
+  if (!isFamily(builder)) {
+    return { ok: false, message: `unknown builder family "${builder}" \u2014 one of: ${FAMILIES2.join(" / ")}` };
+  }
+  if (!isFamily(reviewer)) {
+    return { ok: false, message: `unknown reviewer family "${reviewer}" \u2014 one of: ${FAMILIES2.join(" / ")}` };
+  }
+  const hasModel = model !== undefined && model.length > 0;
+  if (hasModel && !familySupportsModelChoice(reviewer)) {
+    return {
+      ok: false,
+      message: `"${reviewer}"'s review model is set in its own CLI config \u2014 only claude's model is chosen here`
+    };
+  }
+  const configPath = join17(home, "config.json");
+  let prior = {};
+  if (existsSync10(configPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync6(configPath, "utf8"));
+      if (parsed && typeof parsed === "object")
+        prior = parsed;
+    } catch {}
+  }
+  const priorBrain = prior.brain && typeof prior.brain === "object" ? prior.brain : {};
+  const priorRbb = priorBrain.review_by_builder && typeof priorBrain.review_by_builder === "object" ? priorBrain.review_by_builder : {};
+  const entry = hasModel ? { provider: reviewer, model } : { provider: reviewer };
+  const next = {
+    ...prior,
+    brain: {
+      ...priorBrain,
+      review_by_builder: { ...priorRbb, [builder]: entry }
+    }
+  };
+  atomicWrite(configPath, `${JSON.stringify(next, null, 2)}
+`);
+  const modelNote = hasModel ? ` \xB7 ${model}` : familySupportsModelChoice(reviewer) ? " \xB7 (CLI default)" : " \xB7 (set in its own config)";
+  return { ok: true, message: `code built by ${builder} \u2192 reviewed by ${reviewer}${modelNote}` };
+}
+function runBrainUnset(home, role) {
+  if (!isRole(role)) {
+    return { ok: false, message: `unknown role "${role}" \u2014 one of: ${ROLES.join(" / ")}` };
+  }
+  const configPath = join17(home, "config.json");
+  if (!existsSync10(configPath)) {
+    return { ok: true, message: `${role} brain was not pinned \u2014 nothing to unset` };
+  }
+  let prior = {};
+  try {
+    const parsed = JSON.parse(readFileSync6(configPath, "utf8"));
+    if (parsed && typeof parsed === "object")
+      prior = parsed;
+  } catch {
+    return { ok: true, message: `${role} brain was not pinned \u2014 nothing to unset` };
+  }
+  const priorBrain = prior.brain && typeof prior.brain === "object" ? prior.brain : {};
+  const priorRoles = priorBrain.roles && typeof priorBrain.roles === "object" ? priorBrain.roles : {};
+  if (!(role in priorRoles)) {
+    return { ok: true, message: `${role} brain was not pinned \u2014 nothing to unset` };
+  }
+  const { [role]: _removed, ...remainingRoles } = priorRoles;
+  const next = {
+    ...prior,
+    brain: { ...priorBrain, roles: remainingRoles }
+  };
+  atomicWrite(configPath, `${JSON.stringify(next, null, 2)}
+`);
+  return {
+    ok: true,
+    message: `${role} brain unpinned \u2014 it now follows the building agent (and any per-builder rule)`
+  };
+}
+function runBrainCli(rest, home) {
+  const verb = rest[0];
+  if (verb === undefined || verb === "show") {
+    return { ok: true, message: formatBrainShow(home) };
+  }
+  if (verb === "set") {
+    const [, role, family, model] = rest;
+    if (role === undefined || family === undefined) {
+      return { ok: false, message: "usage: siltpoke brain set <role> <family> [model]" };
+    }
+    return runBrainSet(home, role, family, model);
+  }
+  if (verb === "unset") {
+    const [, role] = rest;
+    if (role === undefined) {
+      return { ok: false, message: "usage: siltpoke brain unset <role>" };
+    }
+    return runBrainUnset(home, role);
+  }
+  if (verb === "set-builder") {
+    const [, builder, reviewer, model] = rest;
+    if (builder === undefined || reviewer === undefined) {
+      return { ok: false, message: "usage: siltpoke brain set-builder <builder> <reviewer> [model]" };
+    }
+    return setReviewByBuilder(home, builder, reviewer, model);
+  }
+  return {
+    ok: false,
+    message: `usage: siltpoke brain [show | set <role> <family> [model] | unset <role> | set-builder <builder> <reviewer> [model]] \u2014 got "${verb}"`
+  };
 }
 
 // src/cli/doctor-reviewer-check.ts
 function readEvalProvenance(path) {
-  if (!existsSync10(path))
+  if (!existsSync11(path))
     return null;
   try {
-    const parsed = JSON.parse(readFileSync6(path, "utf8"));
+    const parsed = JSON.parse(readFileSync7(path, "utf8"));
     if (typeof parsed !== "object" || parsed === null)
       return null;
     return parsed;
@@ -16526,7 +16865,7 @@ function readEvalProvenance(path) {
   }
 }
 function defaultEvalProvenancePath(repoRoot) {
-  return join17(repoRoot, "src", "eval", "caller-impact", "verdict.provenance.json");
+  return join18(repoRoot, "src", "eval", "caller-impact", "verdict.provenance.json");
 }
 function resolveEvalProvenancePath(opts) {
   return opts.evalProvenancePath ?? defaultEvalProvenancePath(opts.repoRoot ?? defaultRepoRoot());
@@ -16546,20 +16885,34 @@ function crossFamilyNote(reviewFamily, authorFamily, model) {
   }
   return reviewFamily === authorFamily ? `cross-family: \u25E6 same family as author (${authorFamily}) \u2014 a different family reduces self-preference bias.` : `cross-family: \u2713 (review=${reviewFamily}, author=${authorFamily}).`;
 }
+function perBuilderMapping(siltpokeHome) {
+  const view = brainView(siltpokeHome);
+  const rules = view.reviewByBuilder.filter((b) => b.configured);
+  if (rules.length === 0)
+    return null;
+  const pairs = rules.map((b) => `${b.builder}\u2192${b.reviewer}`).join(" \xB7 ");
+  const overridden = rules.some((b) => b.overriddenByGlobalPin) ? " \u26A0 NOT in effect \u2014 brain.roles.review is pinned; run `siltpoke brain unset review` to restore these." : "";
+  return `by builder: ${pairs}. (which reviewer runs depends on who wrote the code)${overridden}`;
+}
 function checkBrainRoles(opts) {
   const siltpokeHome = opts.siltpokeHome ?? siltpokeRoot();
   const config2 = loadBrainConfigSync(siltpokeHome);
   const which = opts.reviewerWhichFn ?? ((cmd) => Bun.which(cmd));
   const provenance = readEvalProvenance(resolveEvalProvenancePath(opts));
+  const builderMapping = perBuilderMapping(siltpokeHome);
   return ROLE_ORDER.map((role) => {
     const resolved = resolveRoleMeta(config2, role);
     const family = resolved.family;
     const name = `brain role: ${role}`;
     const modelLabel = resolved.model ?? "(CLI default)";
     const bin = familyBinary(family);
+    const mappingNote = role === "review" && builderMapping !== null ? ` ${builderMapping}` : "";
     if (bin === null) {
       if (role !== "review") {
         return { name, pass: true, detail: null };
+      }
+      if (builderMapping !== null) {
+        return { name, pass: true, status: "info", detail: builderMapping };
       }
       const builderNote = " (at review time this defaults to the building host's CLI family; set brain.roles.review to pin one.)";
       const detail = `family: claude. model=${modelLabel}. ${crossFamilyNote(family, config2.authorFamily, resolved.model)}${builderNote}`;
@@ -16571,7 +16924,7 @@ function checkBrainRoles(opts) {
         name,
         pass: true,
         status: "warn",
-        detail: `family: ${family}. binary: \u2717 \`${bin}\` not found on PATH \u2014 this role fails-soft until installed. model=${modelLabel}. ${provenanceLine(family, provenance)}`
+        detail: `family: ${family}. binary: \u2717 \`${bin}\` not found on PATH \u2014 this role fails-soft until installed. model=${modelLabel}.${mappingNote} ${provenanceLine(family, provenance)}`
       };
     }
     const claudeModel = role === "review" && family === "agy" && resolved.model !== undefined && isClaudeFamilyModel(resolved.model);
@@ -16580,9 +16933,97 @@ function checkBrainRoles(opts) {
       name,
       pass: true,
       status: claudeModel ? "warn" : "info",
-      detail: `family: ${family}. binary: \u2713 present. model=${modelLabel}.${crossNote} ${provenanceLine(family, provenance)}`
+      detail: `family: ${family}. binary: \u2713 present. model=${modelLabel}.${crossNote}${mappingNote} ${provenanceLine(family, provenance)}`
     };
   });
+}
+
+// src/cli/doctor-statusline-check.ts
+import { existsSync as existsSync12, readFileSync as readFileSync8 } from "fs";
+import { join as join19 } from "path";
+
+// src/installer/statusline-interpreter.ts
+function splitInterpreter(command) {
+  const s = command.trimStart();
+  if (s.length === 0)
+    return null;
+  const first = s[0];
+  if (first === '"' || first === "'") {
+    const end = s.indexOf(first, 1);
+    if (end === -1)
+      return null;
+    const token2 = s.slice(1, end);
+    return token2.length > 0 ? token2 : null;
+  }
+  const token = s.split(/\s+/)[0] ?? "";
+  return token.length > 0 ? token : null;
+}
+
+// src/cli/doctor-statusline-check.ts
+var CHECK_NAME3 = "statusline interpreter runnable";
+function readStatuslineCommand(path) {
+  try {
+    const parsed = JSON.parse(readFileSync8(path, "utf8"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+      return null;
+    const statusLine = parsed.statusLine;
+    return typeof statusLine?.command === "string" ? statusLine.command : null;
+  } catch {
+    return null;
+  }
+}
+function interpreterToCheck(opts, path) {
+  const host = detectDoctorHost(opts);
+  if (host !== "claude-code") {
+    return {
+      name: CHECK_NAME3,
+      pass: true,
+      status: "info",
+      detail: `skipped \u2014 this is a ${host} install; ${path} is not what it is wired through`
+    };
+  }
+  const command = readStatuslineCommand(path);
+  if (command === null || command.trim().length === 0) {
+    return {
+      name: CHECK_NAME3,
+      pass: true,
+      status: "info",
+      detail: "no Siltpoke statusLine to check \u2014 the pet's statusline is opt-in (`/siltpoke-setup --statusline`)"
+    };
+  }
+  if (!command.includes("statusline.sh") && !command.includes("siltpoke")) {
+    return {
+      name: CHECK_NAME3,
+      pass: true,
+      status: "info",
+      detail: "the wired statusLine is not Siltpoke's \u2014 left alone"
+    };
+  }
+  const interpreter = splitInterpreter(command);
+  if (interpreter === null) {
+    return {
+      name: CHECK_NAME3,
+      pass: false,
+      detail: `could not read an interpreter out of statusLine.command in ${path} (${command})`
+    };
+  }
+  return interpreter;
+}
+function checkStatuslineInterpreter(opts = {}) {
+  const path = join19(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
+  const decided = interpreterToCheck(opts, path);
+  if (typeof decided !== "string")
+    return decided;
+  const isPath = decided.includes("/") || decided.includes("\\");
+  const found = isPath ? (opts.statuslineExistsFn ?? existsSync12)(decided) : (opts.statuslineWhichFn ?? ((c) => Bun.which(c)))(decided) !== null;
+  if (found) {
+    return { name: CHECK_NAME3, pass: true, detail: null };
+  }
+  return {
+    name: CHECK_NAME3,
+    pass: false,
+    detail: `statusLine.command in ${path} runs the shim with \`${decided}\`, which ` + `${isPath ? "does not exist on disk" : "is not on PATH"} \u2014 the statusline ` + "cannot start, and renders nothing rather than an error. " + (isPath ? "Point it at a shell that exists." : 'On Windows use Git Bash, e.g. "C:/Program Files/Git/bin/bash.exe".')
+  };
 }
 
 // src/cli/doctor.ts
@@ -16591,11 +17032,11 @@ function defaultRepoRoot() {
   return resolve(here, "..", "..");
 }
 function readJson(path) {
-  if (!existsSync11(path))
+  if (!existsSync13(path))
     return { ok: false, reason: "missing", detail: `${path} does not exist` };
   let raw;
   try {
-    raw = readFileSync7(path, "utf8");
+    raw = readFileSync9(path, "utf8");
   } catch (e) {
     return { ok: false, reason: "unreadable", detail: `${path} not readable (${e.message})` };
   }
@@ -16605,13 +17046,51 @@ function readJson(path) {
     return { ok: false, reason: "corrupt", detail: `${path} is not valid JSON (${e.message})` };
   }
 }
+function detectDoctorHost(opts = {}) {
+  if (existsSync13(opts.claudeHome ?? resolveClaudeHome()))
+    return "claude-code";
+  if (existsSync13(opts.agyHooksJsonPath ?? resolveAgyHooksJsonPath()))
+    return "antigravity";
+  if (existsSync13(opts.codexConfigPath ?? join20(resolveCodexHome(), "config.toml")))
+    return "codex";
+  return "claude-code";
+}
+function setupAdviceFor(host) {
+  switch (host) {
+    case "codex":
+      return "Run `/skills` and pick siltpoke";
+    case "antigravity":
+      return 'Ask your agent to "set up Siltpoke"';
+    default:
+      return "Run `/siltpoke-setup`";
+  }
+}
+function hostWiringPath(host, opts) {
+  switch (host) {
+    case "codex":
+      return join20(resolveCodexHome(), "hooks.json");
+    case "antigravity":
+      return opts.agyHooksJsonPath ?? resolveAgyHooksJsonPath();
+    default:
+      return join20(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
+  }
+}
 function checkSettingsJson(opts) {
-  const path = join18(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
+  const path = join20(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
   const r = readJson(path);
   const name = "~/.claude/settings.json valid";
+  const host = detectDoctorHost(opts);
+  if (host !== "claude-code") {
+    return {
+      name,
+      pass: true,
+      status: "info",
+      detail: `skipped \u2014 this is a ${host} install, wired through ${hostWiringPath(host, opts)}, not ${path}`
+    };
+  }
   if (!r.ok) {
     if (r.reason === "missing") {
-      return { name, pass: false, detail: `${path} does not exist \u2014 run \`/siltpoke-setup\` to set up Siltpoke` };
+      return { name, pass: false, detail: `${path} does not exist \u2014 ${setupAdviceFor(host)} to set Siltpoke up` };
     }
     return { name, pass: false, detail: r.detail };
   }
@@ -16622,6 +17101,15 @@ function checkSettingsJson(opts) {
 }
 function checkStopHook(opts) {
   const name = "Stop hook registered (curl fast path + command pair)";
+  const host = detectDoctorHost(opts);
+  if (host !== "claude-code") {
+    return {
+      name,
+      pass: true,
+      status: "info",
+      detail: `skipped \u2014 this is a ${host} install; its Stop hook lives in ${hostWiringPath(host, opts)}`
+    };
+  }
   const isPluginInstall = opts.pluginInstall ?? Boolean(process.env.CLAUDE_PLUGIN_ROOT);
   if (isPluginInstall && pluginOwnsStopHook(opts)) {
     return {
@@ -16631,7 +17119,7 @@ function checkStopHook(opts) {
       detail: "plugin-owned \u2014 hooks/hooks.json declares the Stop hook (settings.json hooks.Stop[] is expected empty)"
     };
   }
-  const path = join18(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
+  const path = join20(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
   const r = readJson(path);
   if (!r.ok) {
     return { name, pass: false, detail: `${path} not readable \u2014 settings.json must exist first` };
@@ -16652,13 +17140,13 @@ function checkStopHook(opts) {
       name,
       pass: true,
       status: "info",
-      detail: "legacy http Stop hook shape detected \u2014 run `/siltpoke-setup` to migrate to the silent curl fast path"
+      detail: `legacy http Stop hook shape detected. ${setupAdviceFor(host)} to migrate to the silent curl fast path.`
     };
   }
   return {
     name,
     pass: false,
-    detail: "no Stop hook matcher contains both the curl fast path (command ~ curl \u2026 /hooks/stop) and a command fallback (~ on-stop.ts). Run `/siltpoke-setup` to re-register."
+    detail: `no Stop hook matcher contains both the curl fast path (command ~ curl \u2026 /hooks/stop) and a command fallback (~ on-stop.ts). ${setupAdviceFor(host)} to re-register.`
   };
 }
 function scanStopMatchers(matchers) {
@@ -16678,12 +17166,12 @@ function scanStopMatchers(matchers) {
 }
 function checkInnerTxt(opts) {
   const name = "~/.siltpoke/inner.txt readable";
-  const path = join18(opts.siltpokeHome ?? siltpokeRoot(), "inner.txt");
-  if (!existsSync11(path)) {
+  const path = join20(opts.siltpokeHome ?? siltpokeRoot(), "inner.txt");
+  if (!existsSync13(path)) {
     return { name, pass: true, detail: null };
   }
   try {
-    readFileSync7(path, "utf8");
+    readFileSync9(path, "utf8");
     return { name, pass: true, detail: null };
   } catch (e) {
     return { name, pass: false, detail: `${path} not readable (${e.message})` };
@@ -16691,8 +17179,8 @@ function checkInnerTxt(opts) {
 }
 function checkWakeJson(opts) {
   const name = "~/.siltpoke/wake.json healthy (absent OK)";
-  const path = join18(opts.siltpokeHome ?? siltpokeRoot(), "wake.json");
-  if (!existsSync11(path)) {
+  const path = join20(opts.siltpokeHome ?? siltpokeRoot(), "wake.json");
+  if (!existsSync13(path)) {
     return { name, pass: true, detail: null };
   }
   const r = readJson(path);
@@ -16713,9 +17201,17 @@ function checkWakeJson(opts) {
 }
 function checkGlobalSchema(opts) {
   const name = "~/.siltpoke/global.json schema v3 current";
-  const path = join18(opts.siltpokeHome ?? siltpokeRoot(), "global.json");
+  const path = join20(opts.siltpokeHome ?? siltpokeRoot(), "global.json");
   const r = readJson(path);
   if (!r.ok) {
+    if (r.reason === "missing") {
+      return {
+        name,
+        pass: true,
+        status: "info",
+        detail: `${path} absent \u2014 written the first time a review awards XP; nothing has reviewed yet`
+      };
+    }
     return { name, pass: false, detail: r.detail };
   }
   const parsed = globalSchema.safeParse(r.value);
@@ -16728,10 +17224,19 @@ function checkGlobalSchema(opts) {
   return { name, pass: true, detail: null };
 }
 function checkSlashSymlinks(opts) {
+  const host = detectDoctorHost(opts);
+  if (host !== "claude-code") {
+    return {
+      name: "slash command symlinks intact",
+      pass: true,
+      status: "info",
+      detail: `skipped \u2014 a ${host} install has no Claude Code slash-command symlinks. ${setupAdviceFor(host)} if Siltpoke is not wired.`
+    };
+  }
   const platform = opts.platform ?? process.platform;
   const repoRoot = opts.repoRoot ?? defaultRepoRoot();
-  const claudeCommandsDir = join18(opts.claudeHome ?? resolveClaudeHome(), "commands");
-  const pluginCommandsDir = join18(repoRoot, ".claude-plugin", "commands");
+  const claudeCommandsDir = join20(opts.claudeHome ?? resolveClaudeHome(), "commands");
+  const pluginCommandsDir = join20(repoRoot, ".claude-plugin", "commands");
   if (opts.pluginInstall ?? Boolean(process.env.CLAUDE_PLUGIN_ROOT)) {
     return {
       name: "slash commands",
@@ -16740,7 +17245,7 @@ function checkSlashSymlinks(opts) {
       detail: "shipped with the plugin \u2014 no symlinks to verify"
     };
   }
-  if (!existsSync11(pluginCommandsDir)) {
+  if (!existsSync13(pluginCommandsDir)) {
     return {
       name: "slash command symlinks intact",
       pass: false,
@@ -16751,9 +17256,9 @@ function checkSlashSymlinks(opts) {
   const total = sourceFiles.length;
   const broken = [];
   for (const f of sourceFiles) {
-    const linkPath = join18(claudeCommandsDir, f);
-    const expectedTarget = join18(pluginCommandsDir, f);
-    if (!existsSync11(linkPath)) {
+    const linkPath = join20(claudeCommandsDir, f);
+    const expectedTarget = join20(pluginCommandsDir, f);
+    if (!existsSync13(linkPath)) {
       broken.push(`${f} (missing)`);
       continue;
     }
@@ -16796,7 +17301,7 @@ function checkSlashSymlinks(opts) {
 }
 function checkConfigJson(opts) {
   const name = "~/.siltpoke/config.json valid";
-  const path = join18(opts.siltpokeHome ?? siltpokeRoot(), "config.json");
+  const path = join20(opts.siltpokeHome ?? siltpokeRoot(), "config.json");
   const r = readJson(path);
   if (!r.ok) {
     return { name, pass: false, detail: r.detail };
@@ -16816,12 +17321,12 @@ function checkConfigJson(opts) {
 function checkAgyHooksJson(opts) {
   const name = "~/.gemini/config/hooks.json siltpoke-review Stop registered (agy)";
   const path = opts.agyHooksJsonPath ?? resolveAgyHooksJsonPath();
-  if (!existsSync11(path)) {
+  if (!existsSync13(path)) {
     return {
       name,
       pass: true,
       status: "info",
-      detail: `${path} absent \u2014 Antigravity not wired (optional; agy wiring isn't part of /siltpoke-setup yet \u2014 wire it from a source checkout if you want it)`
+      detail: `${path} absent \u2014 Antigravity not wired (optional: it is wired during setup only when agy is present on the machine, same wire-only-if-present rule as codebuddy/qoder)`
     };
   }
   const r = readJson(path);
@@ -16837,7 +17342,7 @@ function checkAgyHooksJson(opts) {
     return {
       name,
       pass: false,
-      detail: `${path} is missing the "siltpoke-review" key (agy wiring isn't part of /siltpoke-setup yet \u2014 edit ${path} manually, or re-run the installer from a source checkout).`
+      detail: `${path} is missing the "siltpoke-review" key. ${setupAdviceFor("antigravity")}, or edit ${path} by hand.`
     };
   }
   const stop = Array.isArray(entry.Stop) ? entry.Stop : [];
@@ -16846,7 +17351,7 @@ function checkAgyHooksJson(opts) {
     return {
       name,
       pass: false,
-      detail: `${path} "siltpoke-review".Stop has no command entry pointing at agy-stop.ts (agy wiring isn't part of /siltpoke-setup yet \u2014 edit ${path} manually, or re-run the installer from a source checkout).`
+      detail: `${path} "siltpoke-review".Stop has no command entry pointing at agy-stop.ts. ${setupAdviceFor("antigravity")}, or edit ${path} by hand.`
     };
   }
   return { name, pass: true, detail: null };
@@ -16877,7 +17382,8 @@ function runAllChecks(opts = {}) {
     checkAutostart(opts),
     ...checkBrainRoles(opts),
     checkAgyHooksJson(opts),
-    checkProjectRoots(opts)
+    checkProjectRoots(opts),
+    checkStatuslineInterpreter(opts)
   ];
 }
 function formatChecklist(results, opts = {}) {
@@ -16944,8 +17450,8 @@ import { readFile as readFile7 } from "fs/promises";
 
 // src/state/critique-status.ts
 import { readFile as readFile6, writeFile as writeFile3, readdir as readdir3 } from "fs/promises";
-import { existsSync as existsSync12 } from "fs";
-import { join as join19 } from "path";
+import { existsSync as existsSync14 } from "fs";
+import { join as join21 } from "path";
 var STATUS_LINE = /^status:\s*(\S+)\s*$/m;
 var CRITIQUE_ID_LINE = /^critique_id:\s*(\S+)\s*$/m;
 async function readCritiqueId(critiquePath) {
@@ -16984,22 +17490,22 @@ async function setStatus(critiquePath, next) {
   }
 }
 async function findCritiqueByIdOrLatest(basePath, idOrLatest) {
-  const critiqueRoot = join19(basePath, "critiques");
+  const critiqueRoot = join21(basePath, "critiques");
   if (idOrLatest === "latest") {
-    const latestPath = join19(critiqueRoot, "latest.md");
-    return existsSync12(latestPath) ? latestPath : null;
+    const latestPath = join21(critiqueRoot, "latest.md");
+    return existsSync14(latestPath) ? latestPath : null;
   }
-  const archiveRoot = join19(critiqueRoot, "archive");
-  if (!existsSync12(archiveRoot))
+  const archiveRoot = join21(critiqueRoot, "archive");
+  if (!existsSync14(archiveRoot))
     return null;
   try {
     const dates = await readdir3(archiveRoot);
     for (const date5 of dates.sort().reverse()) {
-      const dateDir = join19(archiveRoot, date5);
+      const dateDir = join21(archiveRoot, date5);
       const files = await readdir3(dateDir);
       const match = files.find((f) => f === `${idOrLatest}.md`);
       if (match)
-        return join19(dateDir, match);
+        return join21(dateDir, match);
     }
     return null;
   } catch {
@@ -17007,15 +17513,170 @@ async function findCritiqueByIdOrLatest(basePath, idOrLatest) {
   }
 }
 
+// src/cli/critique-absent.ts
+import { existsSync as existsSync15 } from "fs";
+import { readdir as readdir4 } from "fs/promises";
+import { join as join22 } from "path";
+async function hasNoCritiquesAtAll(basePath) {
+  const critiqueRoot = join22(basePath, "critiques");
+  if (existsSync15(join22(critiqueRoot, "latest.md")))
+    return false;
+  const archiveRoot = join22(critiqueRoot, "archive");
+  if (!existsSync15(archiveRoot))
+    return true;
+  let dates;
+  try {
+    dates = await readdir4(archiveRoot);
+  } catch {
+    return true;
+  }
+  for (const date5 of dates) {
+    try {
+      const files = await readdir4(join22(archiveRoot, date5));
+      if (files.some((f) => f.endsWith(".md")))
+        return false;
+    } catch {
+      continue;
+    }
+  }
+  return true;
+}
+var NO_CRITIQUES_YET = `# Siltpoke: no reviews yet.
+
+` + "Siltpoke writes one after a turn in which code actually changed, so there is " + "nothing here until you have changed some code and let the turn finish. " + `Nothing is wrong.
+`;
+function critiqueNotFound(idOrLatest) {
+  return `# Siltpoke: no review with id '${idOrLatest}'.
+
+` + "This project does have reviews \u2014 that id just is not one of them. " + "Run `/siltpoke-last` with no argument for the most recent one.\n";
+}
+function latestPointerMissing() {
+  return "# Siltpoke: reviews exist, but the `latest` pointer is missing.\n\n" + "Your reviews are still on disk under `.siltpoke/critiques/archive/`; only " + "the shortcut to the newest one is gone (writing it is allowed to fail " + "without losing the review). Ask for one by id \u2014 `/siltpoke-last <id>` \u2014 " + `or let the next review run, which rewrites the pointer.
+`;
+}
+async function absentCritiqueMessage(basePath, idOrLatest) {
+  if (await hasNoCritiquesAtAll(basePath))
+    return NO_CRITIQUES_YET;
+  if (idOrLatest === "latest")
+    return latestPointerMissing();
+  return critiqueNotFound(idOrLatest);
+}
+
+// src/cli/critique-freshness.ts
+import { spawnSync } from "child_process";
+function runGit(args, cwd) {
+  try {
+    const r = spawnSync("git", args, { cwd, encoding: "utf8" });
+    return r.status === 0 ? r.stdout : null;
+  } catch {
+    return null;
+  }
+}
+function humanAge(ms) {
+  if (ms < 0)
+    return "in the future (clock skew)";
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1)
+    return "just now";
+  if (mins < 60)
+    return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48)
+    return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  return `${Math.round(hours / 24)} days ago`;
+}
+function changedSince(sinceIso, cwd, git) {
+  const out = new Set;
+  const log = git(["log", `--since=${sinceIso}`, "--name-only", "--pretty=format:"], cwd);
+  for (const l of (log ?? "").split(`
+`))
+    if (l.trim())
+      out.add(l.trim());
+  for (const args of [
+    ["diff", "--name-only"],
+    ["diff", "--name-only", "--cached"]
+  ]) {
+    for (const l of (git(args, cwd) ?? "").split(`
+`))
+      if (l.trim())
+        out.add(l.trim());
+  }
+  return [...out].sort();
+}
+var MAX_LISTED = 6;
+function isGenerated(path) {
+  return path.startsWith("dist/") || path.startsWith("public/static/") || path.endsWith("lock") || path.endsWith(".lockb");
+}
+function listingOrder(files) {
+  return [...files].sort((a, b) => {
+    const ga = isGenerated(a) ? 1 : 0;
+    const gb = isGenerated(b) ? 1 : 0;
+    return ga !== gb ? ga - gb : a.localeCompare(b);
+  });
+}
+function renderFreshness(input) {
+  const { timestamp, branch, evidenceLabel, cwd, now } = input;
+  if (!timestamp)
+    return "";
+  const written = Date.parse(timestamp);
+  if (!Number.isFinite(written))
+    return "";
+  const git = input.gitFn ?? runGit;
+  const clock = new Date(written).toTimeString().slice(0, 5);
+  const lines = [`> \uD83D\uDD50 This review was written **${humanAge(now.getTime() - written)}** (${clock}).`];
+  const currentBranch = (git(["rev-parse", "--abbrev-ref", "HEAD"], cwd) ?? "").trim();
+  if (branch && currentBranch && branch !== currentBranch) {
+    lines.push(`> \uD83D\uDD00 It ran on branch \`${branch}\`; you are on \`${currentBranch}\`. It is about other work.`);
+  } else if (branch) {
+    lines.push(`> \uD83D\uDD00 Branch \`${branch}\`.`);
+  }
+  const changed = changedSince(timestamp, cwd, git);
+  if (changed.length > 0) {
+    const ordered = listingOrder(changed);
+    const shown = ordered.slice(0, MAX_LISTED);
+    const more = changed.length - shown.length;
+    lines.push(`> \u26A0\uFE0F **${changed.length} file${changed.length === 1 ? "" : "s"} changed since it ran \u2014 it did not see ${changed.length === 1 ? "it" : "them"}:** ` + shown.map((f) => `\`${f}\``).join(", ") + (more > 0 ? `, and ${more} more` : ""));
+  }
+  if (evidenceLabel === "no_evidence") {
+    lines.push("> \uD83D\uDCC4 It cited no code, so there is no line to walk to and nothing here to check against.");
+  }
+  return `${lines.join(`
+`)}
+
+`;
+}
+function parseFrontmatter(md) {
+  const end = md.indexOf(`
+---`, 4);
+  const head = md.startsWith(`---
+`) && end > 0 ? md.slice(4, end) : "";
+  const get = (key) => {
+    const m = head.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
+    return m ? m[1].trim() : null;
+  };
+  return {
+    timestamp: get("timestamp"),
+    branch: get("branch"),
+    evidenceLabel: get("evidence_label")
+  };
+}
+
 // src/cli/get-critique.ts
 async function getCritique(opts) {
   const path = await findCritiqueByIdOrLatest(opts.basePath, opts.idOrLatest);
   if (!path) {
-    return `# Siltpoke: review '${opts.idOrLatest}' not found.
-`;
+    return absentCritiqueMessage(opts.basePath, opts.idOrLatest);
   }
   try {
-    return await readFile7(path, "utf8");
+    const md = await readFile7(path, "utf8");
+    const fm = parseFrontmatter(md);
+    const banner = renderFreshness({
+      ...fm,
+      cwd: opts.cwd ?? process.cwd(),
+      now: opts.now ?? new Date,
+      ...opts.gitFn ? { gitFn: opts.gitFn } : {}
+    });
+    return banner + md;
   } catch (err) {
     return `# Siltpoke: failed to read review at ${path}: ${err}
 `;
@@ -17028,8 +17689,8 @@ import { readFile as readFile9 } from "fs/promises";
 
 // src/state/progression.ts
 import { readFile as readFile8, writeFile as writeFile4, rename as rename4, mkdir as mkdir3 } from "fs/promises";
-import { existsSync as existsSync13 } from "fs";
-import { join as join20 } from "path";
+import { existsSync as existsSync16 } from "fs";
+import { join as join23 } from "path";
 import { randomBytes as randomBytes2 } from "crypto";
 var DEFAULT_STATS = {
   hp: 10,
@@ -17144,7 +17805,7 @@ function addXp(progression, amount) {
 }
 var FILENAME2 = "progression.json";
 function progressionPath(basePath) {
-  return join20(basePath, FILENAME2);
+  return join23(basePath, FILENAME2);
 }
 function isLegacyProgression(value) {
   if (typeof value !== "object" || value === null)
@@ -17184,7 +17845,7 @@ function migrateToV2(parsed, now) {
 }
 async function readProgression(basePath) {
   const path = progressionPath(basePath);
-  if (!existsSync13(path))
+  if (!existsSync16(path))
     return { ...DEFAULT_PROGRESSION, stats_last_tick_at: new Date().toISOString() };
   try {
     const raw = await readFile8(path, "utf8");
@@ -17215,8 +17876,8 @@ async function writeProgression(basePath, progression) {
 
 // src/preference-log/writer.ts
 import { appendFile, mkdir as mkdir4 } from "fs/promises";
-import { dirname as dirname6, join as join21 } from "path";
-var DEFAULT_PATH = join21(siltpokeRoot(), "preference-log.jsonl");
+import { dirname as dirname6, join as join24 } from "path";
+var DEFAULT_PATH = join24(siltpokeRoot(), "preference-log.jsonl");
 async function appendPreferenceEntry(entry, opts = {}) {
   const path = opts.path ?? DEFAULT_PATH;
   const fullEntry = {
@@ -17240,8 +17901,7 @@ async function markForwarded(opts) {
   const homeBase = opts.homeBase ?? siltpokeRoot();
   const path = await findCritiqueByIdOrLatest(opts.basePath, opts.idOrLatest);
   if (!path) {
-    return `# Siltpoke: review '${opts.idOrLatest}' not found.
-`;
+    return absentCritiqueMessage(opts.basePath, opts.idOrLatest);
   }
   const before = await readStatus(path);
   const alreadyForwarded = before === "forwarded";
@@ -17277,11 +17937,52 @@ async function markForwarded(opts) {
 if (false) {}
 
 // src/state/mute.ts
-import { readFileSync as readFileSync8, existsSync as existsSync14, unlinkSync } from "fs";
-import { join as join22 } from "path";
+import { readFileSync as readFileSync10, existsSync as existsSync17, unlinkSync } from "fs";
+import { join as join25 } from "path";
 var MUTE_FILENAME = "mute.json";
+var MUTE_SCHEMA_VERSION = 1;
 function mutePath(homeBase) {
-  return join22(homeBase, MUTE_FILENAME);
+  return join25(homeBase, MUTE_FILENAME);
+}
+function readMute(homeBase) {
+  const path = mutePath(homeBase);
+  if (!existsSync17(path))
+    return null;
+  let raw;
+  try {
+    raw = readFileSync10(path, "utf8");
+  } catch {
+    return null;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return null;
+  }
+  const m = parsed;
+  if (m.schemaVersion !== MUTE_SCHEMA_VERSION)
+    return null;
+  if (typeof m.indefinite !== "boolean")
+    return null;
+  if (m.indefinite) {
+    if (m.until_ms !== null)
+      return null;
+  } else {
+    if (typeof m.until_ms !== "number" || !Number.isFinite(m.until_ms))
+      return null;
+  }
+  if (typeof m.set_at !== "string")
+    return null;
+  return {
+    schemaVersion: 1,
+    until_ms: m.indefinite ? null : m.until_ms,
+    indefinite: m.indefinite,
+    set_at: m.set_at
+  };
 }
 function writeMute(homeBase, mute) {
   const path = mutePath(homeBase);
@@ -17291,7 +17992,7 @@ function writeMute(homeBase, mute) {
 }
 function clearMute(homeBase) {
   const path = mutePath(homeBase);
-  if (!existsSync14(path))
+  if (!existsSync17(path))
     return false;
   try {
     unlinkSync(path);
@@ -17299,6 +18000,16 @@ function clearMute(homeBase) {
   } catch {
     return false;
   }
+}
+function isMuted(homeBase, now) {
+  const mute = readMute(homeBase);
+  if (mute === null)
+    return false;
+  if (mute.indefinite)
+    return true;
+  if (mute.until_ms === null)
+    return false;
+  return mute.until_ms > now.getTime();
 }
 
 // src/cli/mute.ts
@@ -17388,6 +18099,7 @@ var PLUGIN_COMMANDS = [
   { name: "/siltpoke-unmute", blurb: "Un-silence Siltpoke." },
   { name: "/siltpoke-brain", blurb: "Show or set which CLI + model reviews your code (set review <family> [model])." },
   { name: "/siltpoke-doctor", blurb: "Install-health diagnostic (\u2713/\u2717 checklist)." },
+  { name: "/siltpoke-wake", blurb: "Reviews went quiet? Clear the stuck breaker and review the next turn." },
   { name: "/siltpoke-help", blurb: "This manual." }
 ];
 function commandTable() {
@@ -17407,7 +18119,7 @@ WHAT IT DOES
   Reviews NEVER auto-inject into your chat \u2014 nothing interrupts you.
   You pull one in when you want it, with /siltpoke-last.
 
-COMMANDS (the whole surface \u2014 there are only 10)
+COMMANDS (the whole surface \u2014 there are only 11)
 
 ${commandTable()}
 
@@ -17491,19 +18203,19 @@ function computeQuizDials(raw, matchModeOverride) {
 }
 
 // src/cli/report.ts
-import { spawnSync as spawnSync3 } from "child_process";
-import { existsSync as existsSync17 } from "fs";
-import { basename as basename3, dirname as dirname7, join as join26 } from "path";
+import { spawnSync as spawnSync6 } from "child_process";
+import { existsSync as existsSync20 } from "fs";
+import { basename as basename4, dirname as dirname8, join as join31 } from "path";
 import { fileURLToPath as fileURLToPath2 } from "url";
 
 // src/config/write-daemon-enabled.ts
-import { existsSync as existsSync15 } from "fs";
+import { existsSync as existsSync18 } from "fs";
 import { readFile as readFile10 } from "fs/promises";
-import { join as join23 } from "path";
+import { join as join26 } from "path";
 async function setDaemonEnabled(home, enabled) {
-  const configPath = join23(home, "config.json");
+  const configPath = join26(home, "config.json");
   let obj = {};
-  if (existsSync15(configPath)) {
+  if (existsSync18(configPath)) {
     try {
       obj = JSON.parse(await readFile10(configPath, "utf8"));
     } catch {
@@ -17516,51 +18228,354 @@ async function setDaemonEnabled(home, enabled) {
 }
 
 // src/cli/daemon-restart.ts
-import { spawnSync as spawnSync2 } from "child_process";
+import { spawnSync as spawnSync5 } from "child_process";
 
 // src/hooks/menubar-refresh.ts
-import { spawnSync } from "child_process";
-var EXEC_TIMEOUT_MS = 3000;
+import { spawnSync as spawnSync4 } from "child_process";
+
+// src/installer/menubar-setup.ts
+import { spawnSync as spawnSync3 } from "child_process";
+import { existsSync as realExistsSync2, writeFileSync as writeFileSync3 } from "fs";
+import { basename as basename3, join as join28, normalize } from "path";
+
+// src/installer/swiftbar-autostart.ts
+import { spawnSync as spawnSync2 } from "child_process";
+import { mkdirSync as mkdirSync2, existsSync as realExistsSync, rmSync, writeFileSync as writeFileSync2 } from "fs";
+import { homedir as homedir4 } from "os";
+import { dirname as dirname7, join as join27 } from "path";
+var SWIFTBAR_APP_PATH = "/Applications/SwiftBar.app";
+var SWIFTBAR_LABEL = "io.siltpoke.swiftbar";
+function renderSwiftbarPlist() {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.siltpoke.swiftbar</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/open</string>
+    <string>-a</string>
+    <string>SwiftBar</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>`;
+}
+function defaultPlistPath2(home) {
+  return join27(home, "Library", "LaunchAgents", "io.siltpoke.swiftbar.plist");
+}
+var realExec = (cmd, args) => spawnSync2(cmd, args, { stdio: "ignore" });
+function installSwiftbarAutostart(opts = {}) {
+  const platform = opts.platform ?? process.platform;
+  if (platform !== "darwin") {
+    return { installed: false, reason: "not-darwin" };
+  }
+  const existsSync19 = opts.existsSync ?? realExistsSync;
+  if (!existsSync19(SWIFTBAR_APP_PATH)) {
+    return { installed: false, reason: "swiftbar-absent" };
+  }
+  const home = opts.home ?? homedir4();
+  const plistPath = opts.plistPath ?? defaultPlistPath2(home);
+  const writeFile5 = opts.writeFile ?? ((p, c) => writeFileSync2(p, c));
+  const exec = opts.exec ?? realExec;
+  const uid = opts.uid ?? process.getuid?.() ?? 0;
+  const mkdir5 = opts.mkdirSync ?? ((dir) => mkdirSync2(dir, { recursive: true }));
+  mkdir5(dirname7(plistPath));
+  writeFile5(plistPath, renderSwiftbarPlist());
+  loadLaunchAgent(plistPath, SWIFTBAR_LABEL, uid, exec);
+  return { installed: true, reason: "ok" };
+}
+
+// src/installer/tty-io.ts
+import { createReadStream, openSync } from "fs";
+function selectInputSource(deps) {
+  if (deps.isTTY) {
+    try {
+      return deps.openTty();
+    } catch {
+      return deps.openStdin();
+    }
+  }
+  return deps.openStdin();
+}
+function makeLineReader(source) {
+  let buffer = "";
+  let exhausted = false;
+  const decoder = new TextDecoder;
+  return async function readLine() {
+    while (!exhausted) {
+      const newline = buffer.indexOf(`
+`);
+      if (newline !== -1) {
+        const line2 = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        return line2;
+      }
+      const { done, value } = await source.read();
+      if (done) {
+        exhausted = true;
+        break;
+      }
+      if (value)
+        buffer += decoder.decode(value, { stream: true });
+    }
+    const line = buffer;
+    buffer = "";
+    return line;
+  };
+}
+function openStdinByteSource() {
+  const reader = Bun.stdin.stream().getReader();
+  return { read: () => reader.read() };
+}
+function streamToByteSource(stream) {
+  const queued = [];
+  let ended = false;
+  let failed = null;
+  let resolvePending = null;
+  let rejectPending = null;
+  const flush = () => {
+    if (!resolvePending)
+      return;
+    if (queued.length > 0) {
+      const resolve2 = resolvePending;
+      resolvePending = rejectPending = null;
+      resolve2({ done: false, value: queued.shift() });
+    } else if (failed) {
+      const reject = rejectPending;
+      resolvePending = rejectPending = null;
+      reject?.(failed);
+    } else if (ended) {
+      const resolve2 = resolvePending;
+      resolvePending = rejectPending = null;
+      resolve2({ done: true });
+    }
+  };
+  stream.on("data", (chunk) => {
+    queued.push(new Uint8Array(chunk));
+    flush();
+  });
+  stream.on("end", () => {
+    ended = true;
+    flush();
+  });
+  stream.on("error", (e) => {
+    failed = e;
+    flush();
+  });
+  return {
+    read: () => new Promise((resolve2, reject) => {
+      if (resolvePending) {
+        reject(new Error("streamToByteSource: a read is already in progress (concurrent reads unsupported)"));
+        return;
+      }
+      resolvePending = resolve2;
+      rejectPending = reject;
+      flush();
+    })
+  };
+}
+function openTtyByteSource() {
+  const fd = openSync("/dev/tty", "r");
+  return streamToByteSource(createReadStream("", { fd }));
+}
+function realTtyReadLine() {
+  const source = selectInputSource({
+    isTTY: process.stdin.isTTY === true,
+    openTty: openTtyByteSource,
+    openStdin: openStdinByteSource
+  });
+  return makeLineReader(source);
+}
+
+// src/installer/wizard.ts
+var ANSI_CYAN = "\x1B[36m";
+var ANSI_RESET = "\x1B[0m";
+function realWizardIO() {
+  const readLine = realTtyReadLine();
+  return {
+    readLine,
+    write(s) {
+      process.stdout.write(s);
+    }
+  };
+}
+function prompt(question, suffix) {
+  return `${ANSI_CYAN}? ${question} ${suffix}${ANSI_RESET} `;
+}
+async function askYesNo(io, question, opts = { default: "no" }) {
+  const hint = opts.default === "yes" ? "[Y/n]" : "[y/N]";
+  io.write(prompt(question, hint));
+  const raw = (await io.readLine()).trim().toLowerCase();
+  if (raw === "")
+    return opts.default === "yes";
+  if (raw === "y" || raw === "yes")
+    return true;
+  if (raw === "n" || raw === "no")
+    return false;
+  return opts.default === "yes";
+}
+
+// src/installer/menubar-setup.ts
+var SWIFTBAR_DOWNLOAD_URL = "https://github.com/swiftbar/SwiftBar/releases/latest";
+var SHIM_NAME = "siltpoke.1m.sh";
+var PROBE_TIMEOUT_MS = 3000;
+var SWIFTBAR_DEFAULTS_DOMAIN = "com.ameba.SwiftBar";
+var SWIFTBAR_PLUGIN_DIR_KEY = "PluginDirectory";
 function defaultExec(cmd, args) {
+  const r = spawnSync3(cmd, args, { encoding: "utf8" });
+  return { status: r.status ?? 1, stdout: r.stdout ?? "" };
+}
+function resolveWrapperPath(hereDir = import.meta.dir) {
+  if (basename3(hereDir) === "dist") {
+    return normalize(join28(hereDir, "siltpoke-card.js"));
+  }
+  return normalize(join28(hereDir, "..", "face", "wrapper.ts"));
+}
+function resolveBunPath(exec) {
+  const which = exec("which", ["bun"]);
+  const trimmed = which.stdout.trim();
+  return trimmed || "bun";
+}
+function renderShim(bunPath, wrapperPath) {
+  return `#!/bin/bash
+exec "${bunPath}" "${wrapperPath}" --menubar
+`;
+}
+function resolvePluginDir(exec, home) {
+  const existing = readPluginDirPref(exec, home);
+  if (existing) {
+    return existing;
+  }
+  const fallback = defaultPluginDir(home);
+  exec("defaults", ["write", SWIFTBAR_DEFAULTS_DOMAIN, SWIFTBAR_PLUGIN_DIR_KEY, fallback]);
+  return fallback;
+}
+function defaultPluginDir(home) {
+  return join28(home, "Library", "Application Support", "SwiftBar", "plugins");
+}
+function readPluginDirPref(exec, home) {
+  const read = exec("defaults", ["read", SWIFTBAR_DEFAULTS_DOMAIN, SWIFTBAR_PLUGIN_DIR_KEY]);
+  const existing = read.status === 0 ? read.stdout.trim() : "";
+  if (!existing) {
+    return null;
+  }
+  return existing.startsWith("~") ? join28(home, existing.slice(1)) : existing;
+}
+function resolveObeyedShimPath(exec, home) {
+  const pref = readPluginDirPref(exec, home);
+  return join28(pref ?? defaultPluginDir(home), SHIM_NAME);
+}
+function strandedShimPath(obeyedPath, home, existsSync19) {
+  const defaultPath = join28(defaultPluginDir(home), SHIM_NAME);
+  if (obeyedPath === defaultPath) {
+    return null;
+  }
+  return existsSync19(defaultPath) ? defaultPath : null;
+}
+function probeExec(cmd, args) {
   try {
-    spawnSync(cmd, args, { stdio: "ignore", timeout: EXEC_TIMEOUT_MS });
+    const r = spawnSync3(cmd, args, { encoding: "utf8", timeout: PROBE_TIMEOUT_MS });
+    return { status: r.status ?? 1, stdout: r.stdout ?? "" };
+  } catch {
+    return { status: 1, stdout: "" };
+  }
+}
+async function runMenubarSetup(deps) {
+  const platform = deps.platform ?? process.platform;
+  if (platform !== "darwin") {
+    return { installed: false, wroteShim: false, reason: "not-darwin" };
+  }
+  const { io } = deps;
+  const home = deps.home ?? process.env.HOME ?? "";
+  const exec = deps.exec ?? defaultExec;
+  const writeFile5 = deps.writeFile ?? ((p, c) => writeFileSync3(p, c));
+  const existsSync19 = deps.existsSync ?? realExistsSync2;
+  const swiftBarAppPresent = existsSync19(SWIFTBAR_APP_PATH);
+  const swiftBarCaskInstalled = swiftBarAppPresent || exec("brew", ["list", "--cask", "swiftbar"]).status === 0;
+  if (!swiftBarCaskInstalled) {
+    if (deps.nonInteractive) {
+      io.write(`SwiftBar isn't installed \u2014 the menu-bar pet needs it. Install it, then re-run:
+  ${SWIFTBAR_DOWNLOAD_URL}
+`);
+      return { installed: false, wroteShim: false, reason: "no-swiftbar" };
+    }
+    const consented = await askYesNo(io, "Install SwiftBar with Homebrew?", { default: "no" });
+    if (!consented) {
+      return { installed: false, wroteShim: false, reason: "declined" };
+    }
+    const brewOnPath = exec("which", ["brew"]).status === 0;
+    if (!brewOnPath) {
+      io.write(`Homebrew not found on PATH. Install SwiftBar manually: ${SWIFTBAR_DOWNLOAD_URL}
+`);
+      return { installed: false, wroteShim: false, reason: "no-brew" };
+    }
+    exec("brew", ["install", "--cask", "swiftbar"]);
+  }
+  const pluginDir = resolvePluginDir(exec, home);
+  exec("mkdir", ["-p", pluginDir]);
+  const shimPath = join28(pluginDir, SHIM_NAME);
+  const bunPath = resolveBunPath(exec);
+  const wrapperPath = deps.rendererPath ?? resolveWrapperPath();
+  writeFile5(shimPath, renderShim(bunPath, wrapperPath));
+  exec("chmod", ["+x", shimPath]);
+  exec("killall", ["SwiftBar"]);
+  exec("open", ["-a", "SwiftBar"]);
+  const auto = installSwiftbarAutostart({
+    platform,
+    exec: (cmd, argv) => ({ status: exec(cmd, argv).status }),
+    existsSync: existsSync19,
+    home,
+    writeFile: writeFile5,
+    mkdirSync: (dir) => {
+      exec("mkdir", ["-p", dir]);
+    }
+  });
+  return { installed: true, wroteShim: true, reason: "ok", autostart: auto.installed };
+}
+
+// src/hooks/menubar-refresh.ts
+var EXEC_TIMEOUT_MS = 3000;
+function defaultExec2(cmd, args) {
+  try {
+    spawnSync4(cmd, args, { stdio: "ignore", timeout: EXEC_TIMEOUT_MS });
   } catch {}
 }
 function refreshMenubar(deps = {}) {
   const platform = deps.platform ?? process.platform;
   if (platform !== "darwin")
     return;
-  (deps.exec ?? defaultExec)("open", [
+  (deps.exec ?? defaultExec2)("open", [
     "-g",
     "swiftbar://refreshplugin?name=siltpoke"
   ]);
 }
 
 // src/cli/restart-outcome.ts
-import { readFileSync as readFileSync9, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2 } from "fs";
-import { join as join24 } from "path";
+import { readFileSync as readFileSync11, writeFileSync as writeFileSync4, mkdirSync as mkdirSync3 } from "fs";
+import { join as join29 } from "path";
 function restartOutcomePath(homeBase) {
-  return join24(homeBase, "last-restart.json");
+  return join29(homeBase, "last-restart.json");
 }
 function writeRestartOutcome(homeBase, outcome) {
   try {
-    mkdirSync2(homeBase, { recursive: true });
-    writeFileSync2(restartOutcomePath(homeBase), `${JSON.stringify(outcome)}
+    mkdirSync3(homeBase, { recursive: true });
+    writeFileSync4(restartOutcomePath(homeBase), `${JSON.stringify(outcome)}
 `);
   } catch {}
 }
 
 // src/cli/daemon-restart.ts
 var DAEMON_LABEL = "io.siltpoke.daemon";
-function isLaunchdJobInstalled(exec = (cmd, args) => spawnSync2(cmd, args, { stdio: "ignore" }), uid = process.getuid?.() ?? 0) {
+function isLaunchdJobInstalled(exec = (cmd, args) => spawnSync5(cmd, args, { stdio: "ignore" }), uid = process.getuid?.() ?? 0) {
   const r = exec("launchctl", ["print", `gui/${uid}/${DAEMON_LABEL}`]);
   return r.status === 0;
 }
 var POLL_ATTEMPTS = 12;
 var POLL_INTERVAL_MS = 250;
-var PROBE_TIMEOUT_MS = 500;
+var PROBE_TIMEOUT_MS2 = 500;
 function daemonPort() {
-  return process.env.PORT ? Number(process.env.PORT) : 9876;
+  return resolveDaemonPort(process.env);
 }
 function classifyHealthResponse(ok, body) {
   if (!ok)
@@ -17578,7 +18593,7 @@ function classifyHealthResponse(ok, body) {
 async function defaultProbeBoot() {
   try {
     const res = await fetch(`http://127.0.0.1:${daemonPort()}/api/daemon-health`, {
-      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS2)
     });
     return classifyHealthResponse(res.ok, await res.json());
   } catch {
@@ -17591,7 +18606,7 @@ function isDifferentProcess(a, b) {
   return Boolean(a.startedAt && b.startedAt && a.startedAt !== b.startedAt);
 }
 async function runRestart(deps = {}) {
-  const exec = deps.exec ?? ((cmd, args) => spawnSync2(cmd, args, { stdio: "ignore" }));
+  const exec = deps.exec ?? ((cmd, args) => spawnSync5(cmd, args, { stdio: "ignore" }));
   const uid = deps.uid ?? process.getuid?.() ?? 0;
   const stdout = deps.stdout ?? ((s) => process.stdout.write(s));
   const stderr = deps.stderr ?? ((s) => process.stderr.write(s));
@@ -17665,17 +18680,6 @@ async function runRestart(deps = {}) {
 
 // src/state/state.ts
 var DEFAULT_STALE_MS = 30 * 60 * 1000;
-
-// src/state/usage.ts
-var KNOWN_KINDS = new Set([
-  "main",
-  "reflection",
-  "arch_generate",
-  "explain",
-  "chat",
-  "repo_summary",
-  "chat_capture"
-]);
 
 // src/cli/card.ts
 if (false) {}
@@ -19158,17 +20162,17 @@ var POSE_KEYS = new Set([
 ]);
 var ANIMATED_MOODS = new Set(["idle", "watching"]);
 // src/cli/report-stop.ts
-import { existsSync as existsSync16, readFileSync as readFileSync10 } from "fs";
-import { join as join25 } from "path";
+import { existsSync as existsSync19, readFileSync as readFileSync12 } from "fs";
+import { join as join30 } from "path";
 var BASE = siltpokeRoot();
-var PID_PATHS = [join25(BASE, "siltpoked.pid"), join25(BASE, "report.pid")];
+var PID_PATHS = [join30(BASE, "siltpoked.pid"), join30(BASE, "report.pid")];
 function stopReport(pidPaths = PID_PATHS) {
   for (const p of pidPaths) {
-    if (!existsSync16(p))
+    if (!existsSync19(p))
       continue;
     let pid;
     try {
-      pid = Number(readFileSync10(p, "utf8").trim());
+      pid = Number(readFileSync12(p, "utf8").trim());
     } catch (err) {
       return {
         killed: false,
@@ -20210,6 +21214,14 @@ if (false) {}
 
 // src/cli/report.ts
 var DASHBOARD_URL = "http://127.0.0.1:9876/";
+async function siltpokedAnswersAt(pingUrl, timeoutMs) {
+  try {
+    const r = await fetch(pingUrl, { signal: AbortSignal.timeout(timeoutMs) });
+    return r.ok && isSiltpokedPing(await r.json());
+  } catch {
+    return false;
+  }
+}
 async function openDashboard(opts = {}) {
   const homeBase = opts.homeBase ?? siltpokeRoot(process.env);
   const out = opts.out ?? ((s) => process.stdout.write(s));
@@ -20218,18 +21230,9 @@ async function openDashboard(opts = {}) {
     fileURLToPath2(new URL("./daemon.ts", import.meta.url)),
     "start"
   ];
-  async function daemonAlive(timeoutMs) {
-    try {
-      const r = await fetch(`${DASHBOARD_URL}api/ping`, {
-        signal: AbortSignal.timeout(timeoutMs)
-      });
-      return r.ok;
-    } catch {
-      return false;
-    }
-  }
-  const pidPath = join26(homeBase, "siltpoked.pid");
-  const alive = existsSync17(pidPath) ? await daemonAlive(250) : false;
+  const daemonAlive = (timeoutMs) => siltpokedAnswersAt(`${DASHBOARD_URL}api/ping`, timeoutMs);
+  const pidPath = join31(homeBase, "siltpoked.pid");
+  const alive = existsSync20(pidPath) ? await daemonAlive(250) : false;
   if (!alive) {
     await setDaemonEnabled(homeBase, true);
     const proc = Bun.spawn([...daemonArgv], {
@@ -20255,7 +21258,7 @@ async function openDashboard(opts = {}) {
   }
 }
 async function restartDashboard(opts = {}) {
-  const exec = opts.exec ?? ((cmd, args) => spawnSync3(cmd, args, { stdio: "ignore" }));
+  const exec = opts.exec ?? ((cmd, args) => spawnSync6(cmd, args, { stdio: "ignore" }));
   const uid = opts.uid ?? process.getuid?.() ?? 0;
   if (isLaunchdJobInstalled(exec, uid)) {
     const runLaunchdRestart = opts.runLaunchdRestart ?? runRestart;
@@ -20266,7 +21269,7 @@ async function restartDashboard(opts = {}) {
     return;
   }
   const homeBase = opts.homeBase ?? siltpokeRoot(process.env);
-  stopReport([join26(homeBase, "siltpoked.pid"), join26(homeBase, "report.pid")]);
+  stopReport([join31(homeBase, "siltpoked.pid"), join31(homeBase, "report.pid")]);
   for (let i = 0;i < 30; i++) {
     try {
       const r = await fetch(`${DASHBOARD_URL}api/ping`, {
@@ -20285,284 +21288,16 @@ if (false) {}
 
 // src/cli/menubar.ts
 import { existsSync as realExistsSync3, unlinkSync as unlinkSync2 } from "fs";
-import { join as join29 } from "path";
-
-// src/installer/menubar-setup.ts
-import { spawnSync as spawnSync5 } from "child_process";
-import { existsSync as realExistsSync2, writeFileSync as writeFileSync4 } from "fs";
-import { basename as basename4, join as join28, normalize } from "path";
-
-// src/installer/swiftbar-autostart.ts
-import { spawnSync as spawnSync4 } from "child_process";
-import { mkdirSync as mkdirSync3, existsSync as realExistsSync, rmSync, writeFileSync as writeFileSync3 } from "fs";
-import { homedir as homedir4 } from "os";
-import { dirname as dirname8, join as join27 } from "path";
-var SWIFTBAR_APP_PATH = "/Applications/SwiftBar.app";
-var SWIFTBAR_LABEL = "io.siltpoke.swiftbar";
-function renderSwiftbarPlist() {
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>io.siltpoke.swiftbar</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/usr/bin/open</string>
-    <string>-a</string>
-    <string>SwiftBar</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-</dict>
-</plist>`;
-}
-function defaultPlistPath2(home) {
-  return join27(home, "Library", "LaunchAgents", "io.siltpoke.swiftbar.plist");
-}
-var realExec = (cmd, args) => spawnSync4(cmd, args, { stdio: "ignore" });
-function installSwiftbarAutostart(opts = {}) {
-  const platform = opts.platform ?? process.platform;
-  if (platform !== "darwin") {
-    return { installed: false, reason: "not-darwin" };
-  }
-  const existsSync18 = opts.existsSync ?? realExistsSync;
-  if (!existsSync18(SWIFTBAR_APP_PATH)) {
-    return { installed: false, reason: "swiftbar-absent" };
-  }
-  const home = opts.home ?? homedir4();
-  const plistPath = opts.plistPath ?? defaultPlistPath2(home);
-  const writeFile5 = opts.writeFile ?? ((p, c) => writeFileSync3(p, c));
-  const exec = opts.exec ?? realExec;
-  const uid = opts.uid ?? process.getuid?.() ?? 0;
-  const mkdir5 = opts.mkdirSync ?? ((dir) => mkdirSync3(dir, { recursive: true }));
-  mkdir5(dirname8(plistPath));
-  writeFile5(plistPath, renderSwiftbarPlist());
-  loadLaunchAgent(plistPath, SWIFTBAR_LABEL, uid, exec);
-  return { installed: true, reason: "ok" };
-}
-
-// src/installer/tty-io.ts
-import { createReadStream, openSync } from "fs";
-function selectInputSource(deps) {
-  if (deps.isTTY) {
-    try {
-      return deps.openTty();
-    } catch {
-      return deps.openStdin();
-    }
-  }
-  return deps.openStdin();
-}
-function makeLineReader(source) {
-  let buffer = "";
-  let exhausted = false;
-  const decoder = new TextDecoder;
-  return async function readLine() {
-    while (!exhausted) {
-      const newline = buffer.indexOf(`
-`);
-      if (newline !== -1) {
-        const line2 = buffer.slice(0, newline);
-        buffer = buffer.slice(newline + 1);
-        return line2;
-      }
-      const { done, value } = await source.read();
-      if (done) {
-        exhausted = true;
-        break;
-      }
-      if (value)
-        buffer += decoder.decode(value, { stream: true });
-    }
-    const line = buffer;
-    buffer = "";
-    return line;
-  };
-}
-function openStdinByteSource() {
-  const reader = Bun.stdin.stream().getReader();
-  return { read: () => reader.read() };
-}
-function streamToByteSource(stream) {
-  const queued = [];
-  let ended = false;
-  let failed = null;
-  let resolvePending = null;
-  let rejectPending = null;
-  const flush = () => {
-    if (!resolvePending)
-      return;
-    if (queued.length > 0) {
-      const resolve2 = resolvePending;
-      resolvePending = rejectPending = null;
-      resolve2({ done: false, value: queued.shift() });
-    } else if (failed) {
-      const reject = rejectPending;
-      resolvePending = rejectPending = null;
-      reject?.(failed);
-    } else if (ended) {
-      const resolve2 = resolvePending;
-      resolvePending = rejectPending = null;
-      resolve2({ done: true });
-    }
-  };
-  stream.on("data", (chunk) => {
-    queued.push(new Uint8Array(chunk));
-    flush();
-  });
-  stream.on("end", () => {
-    ended = true;
-    flush();
-  });
-  stream.on("error", (e) => {
-    failed = e;
-    flush();
-  });
-  return {
-    read: () => new Promise((resolve2, reject) => {
-      if (resolvePending) {
-        reject(new Error("streamToByteSource: a read is already in progress (concurrent reads unsupported)"));
-        return;
-      }
-      resolvePending = resolve2;
-      rejectPending = reject;
-      flush();
-    })
-  };
-}
-function openTtyByteSource() {
-  const fd = openSync("/dev/tty", "r");
-  return streamToByteSource(createReadStream("", { fd }));
-}
-function realTtyReadLine() {
-  const source = selectInputSource({
-    isTTY: process.stdin.isTTY === true,
-    openTty: openTtyByteSource,
-    openStdin: openStdinByteSource
-  });
-  return makeLineReader(source);
-}
-
-// src/installer/wizard.ts
-var ANSI_CYAN = "\x1B[36m";
-var ANSI_RESET = "\x1B[0m";
-function realWizardIO() {
-  const readLine = realTtyReadLine();
-  return {
-    readLine,
-    write(s) {
-      process.stdout.write(s);
-    }
-  };
-}
-function prompt(question, suffix) {
-  return `${ANSI_CYAN}? ${question} ${suffix}${ANSI_RESET} `;
-}
-async function askYesNo(io, question, opts = { default: "no" }) {
-  const hint = opts.default === "yes" ? "[Y/n]" : "[y/N]";
-  io.write(prompt(question, hint));
-  const raw = (await io.readLine()).trim().toLowerCase();
-  if (raw === "")
-    return opts.default === "yes";
-  if (raw === "y" || raw === "yes")
-    return true;
-  if (raw === "n" || raw === "no")
-    return false;
-  return opts.default === "yes";
-}
-
-// src/installer/menubar-setup.ts
-var SWIFTBAR_APP_PATH2 = "/Applications/SwiftBar.app";
-var SWIFTBAR_DOWNLOAD_URL = "https://github.com/swiftbar/SwiftBar/releases/latest";
-var SHIM_NAME = "siltpoke.1m.sh";
-var SWIFTBAR_DEFAULTS_DOMAIN = "com.ameba.SwiftBar";
-var SWIFTBAR_PLUGIN_DIR_KEY = "PluginDirectory";
-function defaultExec2(cmd, args) {
-  const r = spawnSync5(cmd, args, { encoding: "utf8" });
-  return { status: r.status ?? 1, stdout: r.stdout ?? "" };
-}
-function resolveWrapperPath(hereDir = import.meta.dir) {
-  if (basename4(hereDir) === "dist") {
-    return normalize(join28(hereDir, "siltpoke-card.js"));
-  }
-  return normalize(join28(hereDir, "..", "face", "wrapper.ts"));
-}
-function resolveBunPath(exec) {
-  const which = exec("which", ["bun"]);
-  const trimmed = which.stdout.trim();
-  return trimmed || "bun";
-}
-function renderShim(bunPath, wrapperPath) {
-  return `#!/bin/bash
-exec "${bunPath}" "${wrapperPath}" --menubar
-`;
-}
-function resolvePluginDir(exec, home) {
-  const read = exec("defaults", ["read", SWIFTBAR_DEFAULTS_DOMAIN, SWIFTBAR_PLUGIN_DIR_KEY]);
-  const existing = read.status === 0 ? read.stdout.trim() : "";
-  if (existing) {
-    return existing.startsWith("~") ? join28(home, existing.slice(1)) : existing;
-  }
-  const fallback = join28(home, "Library", "Application Support", "SwiftBar", "plugins");
-  exec("defaults", ["write", SWIFTBAR_DEFAULTS_DOMAIN, SWIFTBAR_PLUGIN_DIR_KEY, fallback]);
-  return fallback;
-}
-async function runMenubarSetup(deps) {
-  const platform = deps.platform ?? process.platform;
-  if (platform !== "darwin") {
-    return { installed: false, wroteShim: false, reason: "not-darwin" };
-  }
-  const { io } = deps;
+function obeyedShimPath(deps) {
   const home = deps.home ?? process.env.HOME ?? "";
-  const exec = deps.exec ?? defaultExec2;
-  const writeFile5 = deps.writeFile ?? ((p, c) => writeFileSync4(p, c));
-  const existsSync18 = deps.existsSync ?? realExistsSync2;
-  const swiftBarAppPresent = existsSync18(SWIFTBAR_APP_PATH2);
-  const swiftBarCaskInstalled = swiftBarAppPresent || exec("brew", ["list", "--cask", "swiftbar"]).status === 0;
-  if (!swiftBarCaskInstalled) {
-    if (deps.nonInteractive) {
-      io.write(`SwiftBar isn't installed \u2014 the menu-bar pet needs it. Install it, then re-run:
-  ${SWIFTBAR_DOWNLOAD_URL}
-`);
-      return { installed: false, wroteShim: false, reason: "no-swiftbar" };
-    }
-    const consented = await askYesNo(io, "Install SwiftBar with Homebrew?", { default: "no" });
-    if (!consented) {
-      return { installed: false, wroteShim: false, reason: "declined" };
-    }
-    const brewOnPath = exec("which", ["brew"]).status === 0;
-    if (!brewOnPath) {
-      io.write(`Homebrew not found on PATH. Install SwiftBar manually: ${SWIFTBAR_DOWNLOAD_URL}
-`);
-      return { installed: false, wroteShim: false, reason: "no-brew" };
-    }
-    exec("brew", ["install", "--cask", "swiftbar"]);
-  }
-  const pluginDir = resolvePluginDir(exec, home);
-  exec("mkdir", ["-p", pluginDir]);
-  const shimPath = join28(pluginDir, SHIM_NAME);
-  const bunPath = resolveBunPath(exec);
-  const wrapperPath = deps.rendererPath ?? resolveWrapperPath();
-  writeFile5(shimPath, renderShim(bunPath, wrapperPath));
-  exec("chmod", ["+x", shimPath]);
-  exec("killall", ["SwiftBar"]);
-  exec("open", ["-a", "SwiftBar"]);
-  const auto = installSwiftbarAutostart({
-    platform,
-    exec: (cmd, argv) => ({ status: exec(cmd, argv).status }),
-    existsSync: existsSync18,
-    home,
-    writeFile: writeFile5,
-    mkdirSync: (dir) => {
-      exec("mkdir", ["-p", dir]);
-    }
-  });
-  return { installed: true, wroteShim: true, reason: "ok", autostart: auto.installed };
+  return resolveObeyedShimPath(deps.exec ?? probeExec, home);
 }
-
-// src/cli/menubar.ts
-var SHIM_RELATIVE_PATH = ["Library", "Application Support", "SwiftBar", "plugins", "siltpoke.1m.sh"];
-function shimPath(home) {
-  return join29(home, ...SHIM_RELATIVE_PATH);
+function swiftBarRunState(exec) {
+  const { status } = exec("pgrep", ["-x", "SwiftBar"]);
+  if (status === 0) {
+    return "running";
+  }
+  return status === 1 ? "stopped" : "unknown";
 }
 var USAGE = `usage: siltpoke-menubar <install|status|remove>
 `;
@@ -20593,20 +21328,62 @@ async function handleInstall(deps, write) {
   return 0;
 }
 function handleStatus(deps, write) {
+  const platform = deps.platform ?? process.platform;
+  if (platform !== "darwin") {
+    write(`siltpoke-menubar: the menu-bar pet is macOS-only.
+`);
+    return 0;
+  }
+  const existsSync21 = deps.existsSync ?? realExistsSync3;
+  const exec = deps.exec ?? probeExec;
   const home = deps.home ?? process.env.HOME ?? "";
-  const existsSync18 = deps.existsSync ?? realExistsSync3;
-  const installed = existsSync18(shimPath(home));
-  write(installed ? `menu-bar pet: installed
-` : `menu-bar pet: not installed
+  const obeyed = obeyedShimPath(deps);
+  if (!existsSync21(obeyed)) {
+    const stranded = strandedShimPath(obeyed, home, existsSync21);
+    if (stranded) {
+      write(`menu-bar pet: installed at ${stranded}, but SwiftBar is now reading ${obeyed} \u2014 the menu bar stays empty. Re-run install to put it where SwiftBar looks.
+`);
+      return 0;
+    }
+    write(`menu-bar pet: not installed
+`);
+    return 0;
+  }
+  const runState = swiftBarRunState(exec);
+  if (runState === "running") {
+    write(`menu-bar pet: installed, SwiftBar running
+`);
+    return 0;
+  }
+  if (runState === "unknown") {
+    write(`menu-bar pet: installed, but I could not tell whether SwiftBar is running \u2014 check your menu bar.
+`);
+    return 0;
+  }
+  if (!existsSync21(SWIFTBAR_APP_PATH)) {
+    write(`menu-bar pet: installed, but I cannot find SwiftBar at ${SWIFTBAR_APP_PATH} \u2014 nothing can draw the pet. If you don't have it:
+  ${SWIFTBAR_DOWNLOAD_URL}
+`);
+    return 0;
+  }
+  write(`menu-bar pet: installed, but SwiftBar is not running \u2014 the menu bar stays empty until it starts. Start it with: open -a SwiftBar
 `);
   return 0;
 }
 function handleRemove(deps, write) {
+  const platform = deps.platform ?? process.platform;
+  if (platform !== "darwin") {
+    write(`siltpoke-menubar: the menu-bar pet is macOS-only.
+`);
+    return 0;
+  }
+  const existsSync21 = deps.existsSync ?? realExistsSync3;
+  const exec = deps.exec ?? probeExec;
   const home = deps.home ?? process.env.HOME ?? "";
-  const existsSync18 = deps.existsSync ?? realExistsSync3;
   const rm = deps.rm ?? ((p) => unlinkSync2(p));
-  const path = shimPath(home);
-  if (!existsSync18(path)) {
+  const obeyed = obeyedShimPath(deps);
+  const path = existsSync21(obeyed) ? obeyed : strandedShimPath(obeyed, home, existsSync21);
+  if (!path) {
     write(`menu-bar pet: not installed (nothing to remove)
 `);
     return 0;
@@ -20653,194 +21430,62 @@ function formatUnmuteJson(result) {
 }
 if (false) {}
 
-// src/cli/brain-cli.ts
-import { existsSync as existsSync18, readFileSync as readFileSync11 } from "fs";
-import { join as join30 } from "path";
-var FAMILIES2 = ["claude", "codex", "agy", "qoder", "codebuddy"];
-var ROLES = ["chat", "review", "extract"];
-function isFamily(x2) {
-  return FAMILIES2.includes(x2);
+// src/cli/wake.ts
+import { mkdir as mkdir5, writeFile as writeFile5, readFile as readFile11, unlink } from "fs/promises";
+import { join as join32 } from "path";
+var FILENAME3 = "wake.json";
+var DEFAULT_TTL_MS = 5 * 60 * 1000;
+function wakePath(homeBase) {
+  return join32(homeBase, FILENAME3);
 }
-function isRole(x2) {
-  return ROLES.includes(x2);
-}
-function readRawConfig2(home) {
-  const configPath = join30(home, "config.json");
-  if (!existsSync18(configPath))
-    return {};
-  try {
-    const parsed = JSON.parse(readFileSync11(configPath, "utf8"));
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
+async function runWake(opts = {}) {
+  const homeBase = opts.homeBase ?? siltpokeRoot();
+  const ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
+  const now = opts.now ?? (() => new Date);
+  const expires_at_ms = now().getTime() + ttlMs;
+  const path = wakePath(homeBase);
+  await mkdir5(homeBase, { recursive: true });
+  const payload = { schemaVersion: 1, expires_at_ms };
+  await writeFile5(path, JSON.stringify(payload, null, 2), "utf8");
+  const health = readBrainHealth(homeBase);
+  const openClass = health.breaker?.class ?? null;
+  let cleared = false;
+  if (health.breaker !== null) {
+    writeBrainHealth(homeBase, clearBreaker(health));
+    cleared = readBrainHealth(homeBase).breaker === null;
   }
-}
-function roleSource(raw, role) {
-  const brain = raw.brain && typeof raw.brain === "object" ? raw.brain : {};
-  const roles = brain.roles && typeof brain.roles === "object" ? brain.roles : {};
-  if (roles[role] && typeof roles[role] === "object")
-    return "pinned here";
-  if (role === "review") {
-    if (process.env.SILTPOKE_REVIEWER_PROVIDER)
-      return "env override";
-    if (typeof raw.reviewer_provider === "string")
-      return "reviewer_provider";
-    if (process.env.SILTPOKE_HOST)
-      return "follows builder";
-  }
-  return "default";
-}
-function brainView(home) {
-  const config2 = loadBrainConfigSync(home);
-  const raw = readRawConfig2(home);
-  const roles = ROLES.map((role) => {
-    const meta3 = resolveRoleMeta(config2, role);
-    return { role, family: meta3.family, model: meta3.model, source: roleSource(raw, role) };
-  });
-  const rbb = config2.review_by_builder ?? {};
-  const reviewByBuilder = FAMILIES2.map((builder) => {
-    const entry = rbb[builder];
-    const reviewer = entry?.provider ?? builder;
-    const model = reviewer === "claude" ? entry?.model : undefined;
-    return {
-      builder,
-      reviewer,
-      ...model !== undefined ? { model } : {},
-      configured: entry !== undefined,
-      reviewerSupportsModel: familySupportsModelChoice(reviewer)
-    };
-  });
+  const muted = isMuted(homeBase, now());
+  const mute = muted ? readMute(homeBase) : null;
   return {
-    authorFamily: config2.authorFamily,
-    roles,
-    families: FAMILIES2,
-    reviewByBuilder,
-    claudeModels: CLAUDE_REVIEW_MODELS
+    wake_path: path,
+    expires_at_ms,
+    breaker_cleared: cleared,
+    breaker_class: cleared ? openClass : null,
+    muted,
+    muted_until: mute === null ? null : mute.indefinite ? "indefinite" : new Date(mute.until_ms).toISOString()
   };
 }
-function formatBrainShow(home) {
-  const view = brainView(home);
-  const lines = [];
-  lines.push(`builder (authored the code): ${view.authorFamily}`);
-  lines.push("");
-  lines.push("brains by role:");
-  for (const r of view.roles) {
-    const model = r.model ?? "(CLI default)";
-    const marker = r.role === "review" ? " \u2190" : "";
-    lines.push(`  ${r.role.padEnd(8)} ${r.family} \xB7 ${model}  [${r.source}]${marker}`);
+function formatWakeHuman(result, now = new Date) {
+  const mins = Math.max(1, Math.round((result.expires_at_ms - now.getTime()) / 60000));
+  const mutedNote = result.muted ? `But Siltpoke is muted${result.muted_until === "indefinite" ? " indefinitely" : ` until ${result.muted_until}`}, and mute beats wake \u2014 ` + `nothing will be reviewed until you run /siltpoke-unmute.
+` : "";
+  if (result.breaker_cleared) {
+    return `Siltpoke woken. The ${result.breaker_class} breaker that was stopping reviews is cleared \u2014 ` + `the next Stop hook will call the Brain again.
+` + `If it fails again the breaker reopens, so fix the cause first ` + `(run /siltpoke-doctor to see the last failure).
+` + mutedNote;
   }
-  lines.push("");
-  const configured = view.reviewByBuilder.filter((b2) => b2.configured);
-  if (configured.length > 0) {
-    lines.push("per-builder review overrides (built by \u2192 reviewed by):");
-    for (const b2 of configured) {
-      const model = b2.model ?? (b2.reviewerSupportsModel ? "(CLI default)" : "(set in its own config)");
-      lines.push(`  ${b2.builder.padEnd(10)} \u2192 ${b2.reviewer} \xB7 ${model}`);
-    }
-    lines.push("");
+  if (result.muted) {
+    return `Siltpoke woken, but nothing was blocking the Brain.
+${mutedNote}`;
   }
-  lines.push("set with:  siltpoke brain set review <family> [model]");
-  lines.push("      or:  siltpoke brain set-builder <builder> <reviewer> [model]");
-  lines.push(`families:  ${FAMILIES2.join(" / ")}`);
-  return lines.join(`
-`);
+  return `Siltpoke woken. No breaker was open; the next turn gets a review even with no new commit (${mins}m).
+`;
 }
-function runBrainSet(home, role, family, model) {
-  if (!isRole(role)) {
-    return { ok: false, message: `unknown role "${role}" \u2014 one of: ${ROLES.join(" / ")}` };
-  }
-  if (!isFamily(family)) {
-    return { ok: false, message: `unknown family "${family}" \u2014 one of: ${FAMILIES2.join(" / ")}` };
-  }
-  const configPath = join30(home, "config.json");
-  let prior = {};
-  if (existsSync18(configPath)) {
-    try {
-      const parsed = JSON.parse(readFileSync11(configPath, "utf8"));
-      if (parsed && typeof parsed === "object")
-        prior = parsed;
-    } catch {}
-  }
-  const priorBrain = prior.brain && typeof prior.brain === "object" ? prior.brain : {};
-  const priorRoles = priorBrain.roles && typeof priorBrain.roles === "object" ? priorBrain.roles : {};
-  const roleConfig = model !== undefined && model.length > 0 ? { provider: family, model } : { provider: family };
-  const next = {
-    ...prior,
-    brain: {
-      ...priorBrain,
-      roles: {
-        ...priorRoles,
-        [role]: roleConfig
-      }
-    }
-  };
-  atomicWrite(configPath, `${JSON.stringify(next, null, 2)}
-`);
-  const modelNote = model && model.length > 0 ? ` \xB7 ${model}` : " \xB7 (CLI default)";
-  return { ok: true, message: `${role} brain set to ${family}${modelNote}` };
+function formatWakeJson(result) {
+  return `${JSON.stringify(result, null, 2)}
+`;
 }
-function setReviewByBuilder(home, builder, reviewer, model) {
-  if (!isFamily(builder)) {
-    return { ok: false, message: `unknown builder family "${builder}" \u2014 one of: ${FAMILIES2.join(" / ")}` };
-  }
-  if (!isFamily(reviewer)) {
-    return { ok: false, message: `unknown reviewer family "${reviewer}" \u2014 one of: ${FAMILIES2.join(" / ")}` };
-  }
-  const hasModel = model !== undefined && model.length > 0;
-  if (hasModel && !familySupportsModelChoice(reviewer)) {
-    return {
-      ok: false,
-      message: `"${reviewer}"'s review model is set in its own CLI config \u2014 only claude's model is chosen here`
-    };
-  }
-  const configPath = join30(home, "config.json");
-  let prior = {};
-  if (existsSync18(configPath)) {
-    try {
-      const parsed = JSON.parse(readFileSync11(configPath, "utf8"));
-      if (parsed && typeof parsed === "object")
-        prior = parsed;
-    } catch {}
-  }
-  const priorBrain = prior.brain && typeof prior.brain === "object" ? prior.brain : {};
-  const priorRbb = priorBrain.review_by_builder && typeof priorBrain.review_by_builder === "object" ? priorBrain.review_by_builder : {};
-  const entry = hasModel ? { provider: reviewer, model } : { provider: reviewer };
-  const next = {
-    ...prior,
-    brain: {
-      ...priorBrain,
-      review_by_builder: { ...priorRbb, [builder]: entry }
-    }
-  };
-  atomicWrite(configPath, `${JSON.stringify(next, null, 2)}
-`);
-  const modelNote = hasModel ? ` \xB7 ${model}` : familySupportsModelChoice(reviewer) ? " \xB7 (CLI default)" : " \xB7 (set in its own config)";
-  return { ok: true, message: `code built by ${builder} \u2192 reviewed by ${reviewer}${modelNote}` };
-}
-function runBrainCli(rest, home) {
-  const verb = rest[0];
-  if (verb === undefined || verb === "show") {
-    return { ok: true, message: formatBrainShow(home) };
-  }
-  if (verb === "set") {
-    const [, role, family, model] = rest;
-    if (role === undefined || family === undefined) {
-      return { ok: false, message: "usage: siltpoke brain set <role> <family> [model]" };
-    }
-    return runBrainSet(home, role, family, model);
-  }
-  if (verb === "set-builder") {
-    const [, builder, reviewer, model] = rest;
-    if (builder === undefined || reviewer === undefined) {
-      return { ok: false, message: "usage: siltpoke brain set-builder <builder> <reviewer> [model]" };
-    }
-    return setReviewByBuilder(home, builder, reviewer, model);
-  }
-  return {
-    ok: false,
-    message: `usage: siltpoke brain [show | set <role> <family> [model] | set-builder <builder> <reviewer> [model]] \u2014 got "${verb}"`
-  };
-}
+if (false) {}
 
 // src/cli/plugin-cli.ts
 var REAL_IO = {
@@ -20855,22 +21500,22 @@ function resolveDaemonArgv() {
   const root = pluginRoot();
   const candidates = [
     fileURLToPath3(new URL("./siltpoke-daemon.js", import.meta.url)),
-    ...root ? [join31(root, "dist", "siltpoke-daemon.js")] : [],
+    ...root ? [join33(root, "dist", "siltpoke-daemon.js")] : [],
     fileURLToPath3(new URL("./daemon.ts", import.meta.url))
   ];
-  const found = candidates.find((p) => existsSync19(p));
+  const found = candidates.find((p) => existsSync21(p));
   return found ? ["bun", found, "start"] : undefined;
 }
 function resolveCardPath() {
   const root = pluginRoot();
   const candidates = [
     fileURLToPath3(new URL("./siltpoke-card.js", import.meta.url)),
-    ...root ? [join31(root, "dist", "siltpoke-card.js")] : []
+    ...root ? [join33(root, "dist", "siltpoke-card.js")] : []
   ];
-  return candidates.find((p) => existsSync19(p));
+  return candidates.find((p) => existsSync21(p));
 }
 function projectBase() {
-  return join31(process.cwd(), ".siltpoke");
+  return join33(process.cwd(), ".siltpoke");
 }
 function positional(rest) {
   return rest.find((a) => !a.startsWith("--"));
@@ -20933,6 +21578,11 @@ var HANDLERS = {
   unmute: (rest, io) => {
     const result = runUnmute();
     io.stdout(rest.includes("--json") ? formatUnmuteJson(result) : formatUnmuteHuman(result));
+    return 0;
+  },
+  wake: async (rest, io) => {
+    const result = await runWake();
+    io.stdout(rest.includes("--json") ? formatWakeJson(result) : formatWakeHuman(result));
     return 0;
   },
   brain: (rest, io) => {

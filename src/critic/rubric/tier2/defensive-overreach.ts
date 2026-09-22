@@ -249,6 +249,7 @@ export const defensiveOverreachRule: RubricRule = {
             line: line + 1,
             end_line: tryNode.endPosition.row + 1,
             snippet: lines[line] ?? "",
+            snippet_is_source: true,
             message:
               "try/except wraps CPU-only code with a silent except (pass or log-only). Exceptions should be handled or allowed to propagate.",
             suggested_fix:
@@ -272,6 +273,7 @@ export const defensiveOverreachRule: RubricRule = {
             line: line + 1,
             end_line: tryNode.endPosition.row + 1,
             snippet: lines[line] ?? "",
+            snippet_is_source: true,
             message:
               "try/catch wraps CPU-only code with a silent catch (console.log or empty). Exceptions should be handled or allowed to propagate.",
             suggested_fix:

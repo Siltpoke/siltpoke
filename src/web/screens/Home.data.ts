@@ -11,7 +11,7 @@ import { readFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { readMemory, GLOBAL_ONLY, type Fact, type ProjectScope } from "../../memory/memory";
-import { readProgression, xpPanelData, type DailyActions } from "../../state/api";
+import { readProgression, xpPanelData } from "../../state/api";
 import { readVitalsSeries } from "../../state/api";
 import { readCriticTelemetry, type CriticTelemetry } from "../../state/api";
 import { computeBiasAuditDelta, type BiasAuditDelta } from "../../critic/bias-audit/delta-computer";
@@ -54,7 +54,7 @@ export interface HomeData {
   /** 10 most recent facts (any status). */
   facts: Fact[];
   topbarBadges: {
-    /** True if last feed action is approximated within 6h — see wellFedFromActions(). */
+    /** True when `stats.hunger` is above the well-fed threshold — see wellFedFromHunger(). */
     wellFed: boolean;
     /**
      * Terse human-friendly duration only (e.g. "22 hrs" / "3 days" / "never").
@@ -131,8 +131,24 @@ export interface HomeDeps {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-/** 6 hours in milliseconds — threshold for wellFed badge. */
-export const WELL_FED_THRESHOLD_MS = 6 * 60 * 60 * 1000;
+/**
+ * The one threshold that decides "well-fed", read off the 0-10 hunger stat.
+ *
+ * Audit defect [3]. Two unrelated answers to "is it fed?" used to reach the
+ * same screen: the top-bar badge read `stats.hunger > 4` while the mood read
+ * "was there a feed action today". A new pet starts at hunger 5 and has never
+ * been fed, so BOTH fired — `well-fed` and `hungry` side by side, on every new
+ * user's first look. Not a race: deterministic.
+ *
+ * `stats.hunger` wins because it is the value the simulation actually
+ * maintains (starts at 5, decays 0.5/hour, +3 per feed — src/state/decay.ts and
+ * src/state/progression.ts). The discarded alternative was an admitted
+ * stand-in: its own comment called it an approximation because the data model
+ * has no last-fed timestamp, so it answered "fed today" for a question about
+ * "fed recently" — and it read "hungry" for a pet at 9/10 that was fed
+ * yesterday.
+ */
+export const WELL_FED_HUNGER_THRESHOLD = 4;
 
 // ── Internal helpers (exported for unit testing) ──────────────────────────────
 
@@ -151,22 +167,14 @@ export function pad7d(values: number[]): number[] {
 }
 
 /**
- * Approximation: returns true if today's `daily_actions.feed` entry is > 0.
+ * Is the pet well-fed? The single answer, for every surface that asks.
  *
- * NOTE: `DailyActions` is keyed by day string ("YYYY-MM-DD") — there is no
- * exact last-fed timestamp in the data model. This approximation treats any
- * feed action recorded today as "fed within 6h" (the true threshold from
- * WELL_FED_THRESHOLD_MS). A future pass should wire a real `last_fed_at` timestamp
- * if tighter precision is required.
+ * Callers must go through this function rather than re-testing the threshold
+ * themselves: two expressions that happen to agree today are not one source of
+ * truth, and that is precisely how defect [3] came about.
  */
-export function wellFedFromActions(
-  daily_actions: DailyActions[] | undefined,
-  now: Date,
-): boolean {
-  if (!daily_actions || daily_actions.length === 0) return false;
-  const todayKey = now.toISOString().slice(0, 10);
-  const todayEntry = daily_actions.find((e) => e.day === todayKey);
-  return (todayEntry?.feed ?? 0) > 0;
+export function wellFedFromHunger(hunger: number): boolean {
+  return hunger > WELL_FED_HUNGER_THRESHOLD;
 }
 
 /**
@@ -351,7 +359,9 @@ function buildStatuslinePreview(opts: {
 
 // ── Mood derivation ───────────────────────────────────────────────────────────
 
-function deriveMoodFromProgression(
+/** Exported so fixtures can derive mood instead of hand-writing it — see
+ * tests/web/screens/_home-render-fixture.ts homeFixtureAtHunger(). */
+export function deriveMoodFromProgression(
   streak: number,
   wellFed: boolean,
 ): Mood {
@@ -421,9 +431,9 @@ export async function getHomeData(deps: HomeDeps): Promise<HomeData> {
   // Use persistent streak counter (uncapped, tracks consecutive days).
   const streak_days = progression.streak_days_persistent;
 
-  // ── Well-fed badge ───────────────────────────────────────────────────────
+  // ── Well-fed ─────────────────────────────────────────────────────────────
 
-  const wellFed = wellFedFromActions(progression.daily_actions, now);
+  const wellFed = wellFedFromHunger(progression.stats.hunger);
 
   // ── Mood ─────────────────────────────────────────────────────────────────
 
@@ -472,7 +482,7 @@ export async function getHomeData(deps: HomeDeps): Promise<HomeData> {
   const vitalsValues: VitalsValues = {
     // mood: label-only from derived mood (no /10 scale)
     mood:   mood,
-    // hunger: fed/hungry from today's feed actions
+    // hunger: fed/hungry from the same threshold the badge uses
     hunger: wellFed ? "fed" : "hungry",
     // energy: numeric display from real stats (1-decimal cap)
     energy: fmt(progression.stats.energy),

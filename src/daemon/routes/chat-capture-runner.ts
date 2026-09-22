@@ -4,7 +4,7 @@
  * Real-time chat capture orchestration (memory work).
  *
  * Lifted out of `src/daemon/routes/chat.ts` so the route stays under the 800-LOC
- * cap and the explicit () + conversational (plain fact statement) capture
+ * cap and the explicit ("记住 X") + conversational (plain fact statement) capture
  * paths share ONE persistence structure (readMemory → captureChatFactsCore →
  * writeMemory → truthful signal). Sharing the batch core is also what fixes the
  * truthfulness bug where the auto path emitted [SAVED] for a pure dedupe — both
@@ -66,7 +66,7 @@ export type CaptureSignal = "saved" | "already_known" | "incomplete" | "correcte
  * Provenance written onto a chat-captured fact's `save_reason` — surfaced as the
  * /memory "Why" line. Without it the row falls back to "no source recorded (early
  * memory)", which mislabels brand-new chat facts as legacy sourceless memories.
- * Explicit () vs conversational (auto-extract) get distinct wording.
+ * Explicit ("记住 X") vs conversational (auto-extract) get distinct wording.
  */
 export const SAVE_REASON_EXPLICIT = "you asked me to remember this in chat";
 export const SAVE_REASON_AUTO = "noticed while chatting";
@@ -118,8 +118,8 @@ export interface RunChatCaptureDeps {
  * Decide + persist a chat capture for one user turn, returning the marker signal.
  *
  * Routing (deterministic, from code — security rule, never an LLM boolean):
- *   (a) explicit  trigger-only (no payload) → incomplete (no write).
- *   (b) explicit  with payload           → save X via the batch core.
+ *   (a) explicit "记住" trigger-only (no payload) → incomplete (no write).
+ *   (b) explicit "记住 X" with payload           → save X via the batch core.
  *   (c) no marker BUT looksLikeFactStatement     → ONE ledgered Haiku extraction,
  *       then save the returned claims via the batch core.
  *   else                                         → no capture.
@@ -134,12 +134,12 @@ export async function runChatCapture(
   const none: ChatCaptureResult = { signal: null, text: "" };
   const intent = detectRememberIntent(message);
 
-  // (a) trigger-only  with no content — ask what to remember, write nothing.
+  // (a) trigger-only "记住" with no content — ask what to remember, write nothing.
   if (intent.hit && intent.payload === "") {
     return { signal: "incomplete", text: "" };
   }
 
-  // (b) explicit  — deterministic, no paid call.
+  // (b) explicit "记住 X" — deterministic, no paid call.
   if (intent.hit && intent.payload) {
     try {
       const mem = await deps.readMemory(deps.homeBase, deps.projectCwd);
@@ -280,8 +280,8 @@ function deriveClassifiedClaims(
       return { text: f.text, entities: f.entities, classification: "add", targetId: null };
     }
     // Numeric-specifics guard, promoted from prompt to CODE: the eval
-    // calibration showed Haiku labels numeric-difference pairs ( vs stored
-    // ) contradict at 0.95-1.0 despite the prompt guard, and
+    // calibration showed Haiku labels numeric-difference pairs ("我有 3 只猫" vs stored
+    // "用户养了 2 只猫") contradict at 0.95-1.0 despite the prompt guard, and
     // its flat confidence curve means the ladder can't catch them. A numeric
     // difference is NOT a contradiction → downgrade to a coexisting add
     // (visible, no data loss — the conservative direction). The raw MESSAGE is

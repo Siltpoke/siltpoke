@@ -7,7 +7,7 @@
  *
  * CANONICAL_NAV (src/web/routes/nav.ts) carries 5 interactive entries —
  * Home / Timeline / Memory / Code Map / Settings. "Quests" was removed 2026-08-06
- * with the a retired page route's unmount, and this spec asserts its absence in the real
+ * with the retired page route's unmount, and this spec asserts its absence in the real
  * browser: the unit tests can only see the nav array, not what the shell renders.
  * The former disabled
  * placeholder entries (inventory / friends / commands) were removed entirely,

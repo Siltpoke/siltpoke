@@ -146,6 +146,7 @@ function makeFakeBrainOutput(overrides?: Partial<BrainOutput>): BrainOutput {
     severity: "medium",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [],
     ...overrides,
   };
@@ -207,6 +208,7 @@ describe("runCritic — PASSIVE_BUBBLE path", () => {
       pose: "base",
       bubble_short: "Clean refactor",
       critique_for_claude: "",
+      findings: [],
       evidence: [],
     });
 
@@ -274,6 +276,7 @@ describe("runCritic — reviewed-repo cwd threading (track #7 T3)", () => {
         capturedCwd = opts.cwd;
         return {
           output: makeFakeBrainOutput({
+            findings: [],
             evidence: [{ tool: "tsc", file: "src/foo.ts", line: 10, snippet: "let x: string = badValue;" }],
           }),
           usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 10, output_tokens: 5, total_cost_usd: 0 },
@@ -380,6 +383,7 @@ describe("runCritic — NORMAL accepted path", () => {
     let writeCalled = false;
 
     const brainOutput = makeFakeBrainOutput({
+      findings: [],
       evidence: [
         {
           tool: "tsc",
@@ -421,6 +425,7 @@ describe("runCritic — NORMAL accepted path", () => {
     const sectionOnlySnippet = "is not assignable to type 'string'.";
 
     const brainOutput = makeFakeBrainOutput({
+      findings: [],
       evidence: [
         { tool: "tsc", file: "src/foo.ts", line: 10, snippet: sectionOnlySnippet },
       ],
@@ -458,6 +463,7 @@ describe("runCritic — NORMAL unverified-evidence path", () => {
     const fabricatedSnippet = "this snippet was hallucinated by the LLM!";
 
     const brainOutput = makeFakeBrainOutput({
+      findings: [],
       evidence: [
         {
           tool: "tsc",
@@ -496,6 +502,7 @@ describe("runCritic — NORMAL unverified-evidence path", () => {
     let writeCalled = false;
 
     const brainOutput = makeFakeBrainOutput({
+      findings: [],
       evidence: [],
     });
 
@@ -573,6 +580,7 @@ describe("runCritic — NORMAL caller-impact wiring", () => {
     // src/foo.ts (a changed file) so the file-check passes; the snippet check
     // can only pass if the token reached the evidence corpus via caller-impact wiring.
     const brainOutput = makeFakeBrainOutput({
+      findings: [],
       evidence: [{ tool: "ripgrep", file: "src/foo.ts", line: 1, snippet: CALLER_TOKEN }],
     });
 
@@ -613,6 +621,7 @@ describe("runCritic — NORMAL caller-impact wiring", () => {
     // constant on this path and a control asserting a constant is dead.
     let writeCalled = false;
     const brainOutput = makeFakeBrainOutput({
+      findings: [],
       evidence: [{ tool: "ripgrep", file: "src/foo.ts", line: 1, snippet: CALLER_TOKEN }],
     });
     const noBlockDeps = makeCallerImpactDeps();
@@ -644,6 +653,7 @@ describe("runCritic — NORMAL caller-impact wiring", () => {
     // not just a graceful null. Brain cites REAL_SNIPPET (in the tsc corpus) so
     // the run still accepts — proving the throw didn't break the normal phase.
     const brainOutput = makeFakeBrainOutput({
+      findings: [],
       evidence: [{ tool: "tsc", file: "src/foo.ts", line: 10, snippet: REAL_SNIPPET }],
     });
     const throwingDeps = makeCallerImpactDeps();
@@ -668,6 +678,7 @@ describe("runCritic — NORMAL caller-impact wiring", () => {
   test("no callerImpact deps injected → defaults run fail-soft, no block, critic proceeds normally", async () => {
     // Default image reader hits real git on a non-existent path → null → no block.
     const brainOutput = makeFakeBrainOutput({
+      findings: [],
       evidence: [{ tool: "tsc", file: "src/foo.ts", line: 10, snippet: REAL_SNIPPET }],
     });
     const deps: RunCriticDeps = {
@@ -878,6 +889,7 @@ describe("runCritic — tracer spans", () => {
       pose: "base",
       bubble_short: "Clean",
       critique_for_claude: "",
+      findings: [],
       evidence: [],
     });
 
@@ -929,6 +941,7 @@ describe("runCritic — v2 frontmatter (pipelineRan + rubricTriggers)", () => {
 
   test("pipelineRan=true and rubricTriggers array present on NORMAL accepted path", async () => {
     const brainOutput = makeFakeBrainOutput({
+      findings: [],
       evidence: [{ tool: "tsc", file: "src/foo.ts", line: 10, snippet: REAL_SNIPPET }],
     });
 
@@ -1265,6 +1278,7 @@ describe("runCritic — PASSIVE_BUBBLE safety net (defect ②)", () => {
       bubble_long: "",
       critique_for_claude: "",
       severity: "info",
+      findings: [],
       evidence: [],
     });
   }
@@ -1457,6 +1471,7 @@ describe("runCritic — brain.find span records the raw Brain output (AC8)", () 
           bubble_short: "Clean refactor",
           critique_for_claude: "",
           severity: "info",
+          findings: [],
           evidence: [],
         }),
         usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 10, output_tokens: 10, total_cost_usd: 0 },

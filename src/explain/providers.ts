@@ -10,6 +10,12 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
+import {
+  type BrainUsage,
+  extractUsage,
+  findResultEvent,
+  normalizeStreamEnvelope,
+} from "../brain/envelope";
 import type { BrainProvider, SourceProvider } from "./explain";
 
 /** Reads repo-relative (or absolute) source files for the subgraph bundle. */
@@ -100,6 +106,29 @@ export function spawnArchToFile(
   return { proc, resultFilePath };
 }
 
+/**
+ * Turn `claude -p --output-format json` stdout into explain's markdown+usage.
+ *
+ * Exported so the shape handling has a test that runs the real code rather
+ * than a re-implementation of it: this is the delivery half of defect [12] and
+ * used to be inlined in the provider closure, where nothing could reach it
+ * without spawning a paid subprocess.
+ *
+ * Both envelopes are accepted (see `normalizeStreamEnvelope`): the event array
+ * that verbose produces, and the bare `type:"result"` object it does not.
+ * `.slice()` on that bare object used to throw a raw TypeError.
+ */
+export function parseExplainEnvelope(rawStdout: string): {
+  markdown: string;
+  usage: BrainUsage;
+} {
+  const ev = findResultEvent(normalizeStreamEnvelope(JSON.parse(rawStdout)));
+  if (!ev.result) {
+    throw new Error("claude -p result event carried no result text");
+  }
+  return { markdown: ev.result, usage: extractUsage(ev) };
+}
+
 /** Shells out to `claude -p` with a chosen model (the real reviewer subprocess). */
 function makeClaudeProvider(defaultModel: string, envVar: string): BrainProvider {
   return async ({ systemPrompt, contextBundle, signal, onSpawn, resultFilePath }) => {
@@ -113,6 +142,9 @@ function makeClaudeProvider(defaultModel: string, envVar: string): BrainProvider
       systemPrompt,
       "--output-format",
       "json",
+      // Defect [12] — same reason as brain.ts: the array envelope exists only
+      // when verbose is on, and that is the user's setting, not ours.
+      "--verbose",
       "--no-session-persistence",
     ];
     // BF1: a spawn-throw means the paid subprocess never existed ($0 spent) —
@@ -193,35 +225,7 @@ function makeClaudeProvider(defaultModel: string, envVar: string): BrainProvider
       if (outTail) parts.push(`stdout tail: ${outTail}`);
       throw new Error(`claude -p exited ${exitCode}${parts.length ? `: ${parts.join(" | ")}` : ""}`);
     }
-    const events = JSON.parse(rawStdout) as Array<{
-      type?: string;
-      result?: string;
-      total_cost_usd?: number;
-      usage?: {
-        cache_creation_input_tokens?: number;
-        cache_read_input_tokens?: number;
-        input_tokens?: number;
-        output_tokens?: number;
-      };
-    }>;
-    const finalEvent = events
-      .slice()
-      .reverse()
-      .find((e) => e.type === "result");
-    if (!finalEvent || !finalEvent.result) {
-      throw new Error("claude -p stream had no result event");
-    }
-    const usage = finalEvent.usage ?? {};
-    return {
-      markdown: finalEvent.result,
-      usage: {
-        cache_creation_input_tokens: usage.cache_creation_input_tokens ?? 0,
-        cache_read_input_tokens: usage.cache_read_input_tokens ?? 0,
-        input_tokens: usage.input_tokens ?? 0,
-        output_tokens: usage.output_tokens ?? 0,
-        total_cost_usd: finalEvent.total_cost_usd ?? null,
-      },
-    };
+    return parseExplainEnvelope(rawStdout);
   };
 }
 

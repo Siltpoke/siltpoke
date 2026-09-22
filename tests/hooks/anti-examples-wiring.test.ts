@@ -198,6 +198,7 @@ function fakeBrainOutput(): BrainOutput {
     // Evidence guard requires a verbatim substring of the tool corpus; a
     // real snippet keeps this test in the NORMAL/accepted branch rather than
     // being rejected before it tells us anything about wiring.
+    findings: [],
     evidence: [{ tool: "tsc", file: "src/dummy.ts", line: 5, snippet: REAL_SNIPPET }],
     reasoning: "test fixture",
   };

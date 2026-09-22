@@ -6,6 +6,7 @@
  *
  *   GET  /api/brain               -> { authorFamily, roles[], families[] }
  *   POST /api/brain/roles/:role   -> { family, model? }  (secret-gated)
+ *   DELETE /api/brain/roles/:role -> undo that pin       (secret-gated)
  *
  * The POST calls the SAME `runBrainSet` the `/siltpoke-brain` command calls, so
  * the dashboard settings screen and the command write one `brain.roles.<role>`
@@ -17,7 +18,7 @@
  * GET is a read and is not secret-gated, matching the other dashboard reads.
  */
 import type { Hono } from "hono";
-import { brainView, runBrainSet, setReviewByBuilder } from "../../cli/brain-cli";
+import { brainView, runBrainSet, runBrainUnset, setReviewByBuilder } from "../../cli/brain-cli";
 import { isAuthorized } from "../auth";
 
 export interface BrainRouteDeps {
@@ -52,6 +53,23 @@ export function mountBrainRoutes(app: Hono, deps: BrainRouteDeps): void {
 
     // runBrainSet validates role+family and writes nothing on a bad token.
     const result = runBrainSet(deps.homeBase, role, body.family, model);
+    if (!result.ok) {
+      return c.json({ error: result.message }, 400);
+    }
+    return c.json({ ok: true, message: result.message });
+  });
+
+  // Undo a global pin — the dashboard's half of `siltpoke brain unset <role>`.
+  // `brain.roles.review` outranks every per-builder rule, and the dashboard
+  // could set it with no way back, so a user who tried one-reviewer-for-
+  // everything and then switched to per-agent rules got silence rather than an
+  // error (spec brain-select-four-gaps §3.2). Same auth posture as the POSTs:
+  // secret-gated, fail-closed.
+  app.delete("/api/brain/roles/:role", (c) => {
+    if (!isAuthorized(deps.secret, c.req.header("X-Siltpoke-Secret"))) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
+    const result = runBrainUnset(deps.homeBase, c.req.param("role"));
     if (!result.ok) {
       return c.json({ error: result.message }, 400);
     }

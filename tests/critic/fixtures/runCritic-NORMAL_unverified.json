@@ -11,6 +11,7 @@
       "severity": "medium",
       "confidence": "high",
       "xp_earned_events": [],
+      "findings": [],
       "evidence": []
     },
     "usage": {
@@ -35,7 +36,8 @@
     "providerMeta": {
       "name": "claude",
       "billing": "usd",
-      "genAiSystem": "anthropic"
+      "genAiSystem": "anthropic",
+      "acceptsModel": true
     },
     "memoryFunnel": {
       "rules_in_store": 0,

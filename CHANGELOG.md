@@ -6,6 +6,67 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-22
+
+### Added
+
+- **A review comes back as separate findings you can point at**, instead of one
+  paragraph. Each finding carries its own title, severity, file, the lines it is
+  about, and a verbatim quote of the code — and says whether that quote came
+  from this change or from the file around it. A line number is left out rather
+  than guessed.
+- **Code Map indexes the folder you picked**, not the whole repository around
+  it. Indexing a sub-folder of a repo now lands on that repo's map instead of
+  starting a second one.
+- **Chat says which stage it is waiting in** rather than sitting silent, and
+  replies with a faster model by default.
+
+### Changed
+
+- **Nothing is shown as current when it is not.** Stale state on the dashboard
+  is labelled as stale instead of rendered like fresh data.
+- **Setup says what it did.** It used to finish in silence, which read as a
+  failure.
+- The Code Map quiz and the timeline's review-unit control are gone from the UI.
+- The README, the manual and the dashboard no longer say that dismissing a
+  review teaches the reviewer. It does not, yet.
+
+### Fixed
+
+- **The published dashboard shipped without its JavaScript**, so every
+  interaction on it was dead — menus, search, chat, the lot. The browser bundle
+  and its stylesheet now ship with the plugin.
+- **Review, explain and dashboard chat all failed on a clean install.** The
+  reviewer was asked for one shape of output and sent another; nothing on a
+  fresh machine worked until it was fixed.
+- **A review can no longer succeed and say nothing.** An empty critique is
+  reported as empty, with the reason, instead of handing you a blank code block.
+- **A failed review tells you why.** The reason used to be dropped on its way
+  out, and the dashboard pasted raw JSON at you instead.
+- **A brand-new install no longer reports itself broken**: `/siltpoke-doctor`
+  stopped failing a check that is correct to be absent, stopped auditing a host
+  you are not using, and now checks that the statusline it installed can start.
+- **The Windows statusline can start.** It was installed with an interpreter
+  Windows does not have.
+- **The pet no longer calls itself hungry and well-fed on the same screen.**
+- **`/siltpoke-menubar status` tells you whether the pet is actually showing** —
+  whether SwiftBar is running, and which folder it reads — instead of only
+  whether a file exists.
+- **One daemon port**, read the same way everywhere, and Siltpoke no longer
+  mistakes another program holding that port for itself.
+- **Antigravity users get a setup path**, and each host's first-run nudge names
+  a command that host really has.
+- **The Codex install command in the README works when you paste it.**
+- **The dashboard stopped pointing at commands that do not exist.**
+- **A quoted line of real code is no longer thrown out as fabricated** when the
+  quote spans several lines, and the rule engine now passes the code it
+  collected on to the rules that need it.
+- **An empty corpus is reported as "nothing to judge"**, not as a verdict about
+  your code.
+- **Installing gets you the release.** `/plugin install` used to fetch whatever
+  was on the default branch, which could be newer than the release it reported
+  itself as; the marketplace entry now points at the release tag.
+
 ## [1.0.0] - 2026-09-03
 
 ### Added

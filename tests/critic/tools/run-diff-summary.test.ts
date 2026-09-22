@@ -199,8 +199,8 @@ describe("runDiffSummary — array-length coercion (defect ④)", () => {
 
   // Firing evidence for truncArray's `cap < 1` guard. Nothing in the module can
   // reach it — ARRAY_CAPS holds 8/6/40 — so without a direct call the guard is
-  // written, shipped, and never invoked: the "dead" half of the defect family in
-  // docs/lessons.md L3, inside a commit about that very family.
+  // written, shipped, and never invoked: the "dead" half of this repo's
+  // most-repeated defect family, inside a commit about that very family.
   //
   // A mutation run also narrowed what the guard is FOR. Weakening `cap < 1` to
   // `cap < 0` left everything green, because `slice(0, 0)` is already `[]` — a

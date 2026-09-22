@@ -234,6 +234,7 @@ export const sprawlingAbstractionRule: RubricRule = {
         line: decl.startLine,
         end_line: decl.endLine,
         snippet: decl.snippetLine,
+        snippet_is_source: true,
         message:
           `New ${decl.kind === "interface" ? "interface" : "abstract class"} '${name}' has exactly 1 implementation and 1 call site. ` +
           "This may be premature abstraction — consider using a concrete class directly until a second implementation is needed.",

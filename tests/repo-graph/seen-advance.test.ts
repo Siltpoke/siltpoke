@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * Slice ③ Task 4 — watermark advance write-path + `origin:"human_ui"`
+ * Task 4 — watermark advance write-path + `origin:"human_ui"`
  * isolation (spec R5/R7/R13, plan cross-family review C1/C6/C7).
  *
  * Real temp `seen.json` on disk throughout — no in-memory mocking of the

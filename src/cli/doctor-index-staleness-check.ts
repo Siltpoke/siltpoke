@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * Doctor row: repo-graph index staleness (slice ②, R12/R16).
+ * Doctor row: repo-graph index staleness (R12/R16).
  *
  * Warn-only — mirrors `checkDaemonStaleness`: this row's `pass` is ALWAYS
  * true, so it can never fail the doctor exit code. Only `status` carries the

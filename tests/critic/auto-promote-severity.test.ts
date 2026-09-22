@@ -27,6 +27,7 @@ function makeBrainOutput(overrides?: Partial<BrainOutput>): BrainOutput {
     severity: "info",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [],
     ...overrides,
   };

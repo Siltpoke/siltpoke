@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { defaultRepoRoot, runAllChecks } from "../../src/cli/doctor";
+import { defaultRepoRoot, runAllChecks, type CheckResult } from "../../src/cli/doctor";
 import {
   checkBrainRoles,
   defaultEvalProvenancePath,
@@ -32,7 +32,7 @@ describe("doctor — brain role health rows (chat/review/extract)", () => {
 
   test("wired into runAllChecks as three per-role entries", () => {
     const checks = runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome });
-    expect(checks).toHaveLength(14); // the knowledge render-cache row is not in this tree
+    expect(checks).toHaveLength(15); // the knowledge render-cache row is not in this tree
     const names = checks.map((c) => c.name);
     expect(names).toContain("brain role: chat");
     expect(names).toContain("brain role: review");
@@ -229,5 +229,100 @@ describe("doctor — eval-provenance path helpers", () => {
     expect(resolveEvalProvenancePath({ evalProvenancePath: "/explicit/path.json", repoRoot: "/some/repo" })).toBe(
       "/explicit/path.json",
     );
+  });
+});
+
+// Spec brain-select-four-gaps §3.3. `review_by_builder` only resolves when
+// SILTPOKE_HOST names the building family, and doctor runs outside the Stop
+// hook — so its review row showed the claude/config default, "◦ same family as
+// author (claude)", to someone who had just configured Codex to review Claude's
+// work. The mapping was in `siltpoke brain`'s lower section; the most prominent
+// line contradicted it, and that line is what a person checks after configuring.
+describe("doctor — review row surfaces the per-builder mapping (§3.3)", () => {
+  let env: DoctorTmp;
+  beforeEach(() => { env = setupDoctorTmp("c10-rbb-"); });
+  afterEach(() => { teardownDoctorTmp(env); });
+
+  function writeConfig(config: Record<string, unknown>): void {
+    writeFileSync(join(env.siltpokeHome, "config.json"), JSON.stringify(config));
+  }
+
+  function reviewRow(): CheckResult | undefined {
+    return checkBrainRoles({ siltpokeHome: env.siltpokeHome }).find(
+      (r) => r.name === "brain role: review",
+    );
+  }
+
+  test("lists every configured rule when per-builder rules exist", () => {
+    writeConfig({
+      brain: {
+        review_by_builder: {
+          claude: { provider: "codex" },
+          agy: { provider: "claude" },
+        },
+      },
+    });
+    const detail = reviewRow()?.detail ?? "";
+    expect(detail).toContain("claude→codex");
+    expect(detail).toContain("agy→claude");
+    // and it must stop asserting one family as THE reviewer
+    expect(detail).not.toContain("same family as author");
+  });
+
+  test("keeps the plain single-family line when no rule is configured", () => {
+    const detail = reviewRow()?.detail ?? "";
+    expect(detail).not.toContain("→");
+    expect(detail).toContain("family: claude");
+  });
+
+  test("says so when a global pin outranks the per-builder rules", () => {
+    writeConfig({
+      brain: {
+        roles: { review: { provider: "claude" } },
+        review_by_builder: { claude: { provider: "codex" } },
+      },
+    });
+    const detail = reviewRow()?.detail ?? "";
+    // It must say the rules are not running AND how to get them back — a row
+    // that only listed them would read as though they applied.
+    expect(detail).toContain("NOT in effect");
+    expect(detail).toContain("unset review");
+    // the rules are still listed, so the user can see what is being suppressed
+    expect(detail).toContain("claude→codex");
+  });
+
+  // Found in review: the mapping lived inside the claude-only branch, so the
+  // moment review itself resolved to a non-claude family the whole feature went
+  // dark — on a config that is exactly the motivating case (a reviewer pinned by
+  // `reviewer_provider`, with a per-builder rule sitting underneath it).
+  test("the mapping still appears when the review role resolves to a NON-claude family", () => {
+    writeConfig({
+      reviewer_provider: "agy",
+      brain: { review_by_builder: { codex: { provider: "claude" } } },
+    });
+    const detail =
+      checkBrainRoles({
+        siltpokeHome: env.siltpokeHome,
+        reviewerWhichFn: () => "/usr/local/bin/agy",
+      }).find((r) => r.name === "brain role: review")?.detail ?? "";
+    expect(detail).toContain("family: agy");
+    expect(detail).toContain("codex→claude");
+  });
+
+  // `reviewer_provider` outranks review_by_builder in parseBrainConfig's chain
+  // just as `brain.roles.review` does, and the first version of the override
+  // check looked only at the latter — so this rule was not running and nothing
+  // said so.
+  test("a reviewer_provider pin is reported as overriding the per-builder rules", () => {
+    writeConfig({
+      reviewer_provider: "agy",
+      brain: { review_by_builder: { codex: { provider: "claude" } } },
+    });
+    const detail =
+      checkBrainRoles({
+        siltpokeHome: env.siltpokeHome,
+        reviewerWhichFn: () => "/usr/local/bin/agy",
+      }).find((r) => r.name === "brain role: review")?.detail ?? "";
+    expect(detail).toContain("NOT in effect");
   });
 });

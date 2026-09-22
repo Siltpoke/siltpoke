@@ -53,7 +53,7 @@ import {
   type StopHookPair,
   swapStatusLine,
 } from "../installer/settings-mutator";
-import { OLLAMA_MODEL, setupOllamaInteractive } from "../installer/setup-ollama";
+import { OLLAMA_MODEL, type OllamaIo, setupOllamaInteractive } from "../installer/setup-ollama";
 import {
   askYesNo,
   realWizardIO,
@@ -130,6 +130,21 @@ export interface InstallOptions {
   agentFlagUsed?: boolean;
   /** Command-presence probe, injectable for tests. */
   exec?: Exec;
+  /** Local bias-audit model setup — injectable for tests. The real one spawns
+   *  `ollama pull` for a ~4.7 GB model, so a test that reaches it downloads and
+   *  loads that model on the developer's machine. Skipping was gated on
+   *  `CI === "true"` alone, which is set on the runner and unset locally: a
+   *  local `bun test` really pulled the model eight times, and the memory that
+   *  cost repeatedly killed `bun run ci:local` (measured 2026-09-18 with a
+   *  stand-in server on :11434 — `tests/cli/uninstall.test.ts` accounted for
+   *  all eight). Tests pass a no-op here, the same way they do for
+   *  `installAutostartFn`. The structural defense is `shouldSkipOllama`; this
+   *  seam is for a test that wants to observe or shortcut the step itself.
+   *  The `deps` parameter `setupOllamaInteractive` also accepts is omitted on
+   *  purpose — `runInstall` has never passed it, and a test that wants the real
+   *  setup logic with fake deps should call `setupOllamaInteractive` directly
+   *  (`tests/installer/setup-ollama.test.ts` already does). */
+  setupOllamaFn?: (opts: { skip?: boolean; io?: OllamaIo }) => Promise<{ enabled: boolean }>;
 }
 
 export interface InstallResult {
@@ -310,6 +325,31 @@ function noninteractiveAgentTargets(env: NodeJS.ProcessEnv): AgentTarget[] {
     return ["codex"];
   }
   return ["claude-code"];
+}
+
+/**
+ * Should the install skip pulling the local bias-audit model?
+ *
+ * The real setup spawns `ollama pull qwen2.5-coder:7b-instruct-q4_K_M` (~4.7 GB)
+ * and then loads it. This used to be gated on `CI === "true"` alone, which is
+ * set on the runner and unset locally — so a local `bun test` really pulled and
+ * loaded the model, and on a 16 GB machine that resident model repeatedly got
+ * `bun run ci:local` OOM-killed. Measured 2026-09-18 with a stand-in server on
+ * :11434 that logged the calling process: `tests/cli/uninstall.test.ts` alone
+ * accounted for 8 real `ollama` subprocesses per suite run.
+ *
+ * `callerEnv` is the env the caller passed — `runInstall` honours it for every
+ * other decision, so the CI check reads it too. The test-runner check
+ * deliberately reads `process.env` INSTEAD: a test builds its own env object
+ * (`{ HOME: tmp }` inherits nothing), which is exactly why `CI` was absent
+ * there. Reading `callerEnv.NODE_ENV` would be a no-op on the very files this
+ * guards.
+ */
+export function shouldSkipOllama(
+  callerEnv: NodeJS.ProcessEnv,
+  processEnv: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return callerEnv.CI === "true" || processEnv.NODE_ENV === "test";
 }
 
 export async function runInstall(
@@ -661,9 +701,12 @@ export async function runInstall(
     installedClaude = true;
   }
 
-  // Ollama setup for bias audit (skip in CI or when --no-ollama passed).
-  const noOllama = (opts.env ?? process.env).CI === "true";
-  const ollamaResult = await setupOllamaInteractive({
+  // Ollama setup for the bias audit. Skipped on a CI runner and under a test
+  // runner; see shouldSkipOllama for why the second one reads the REAL
+  // process env rather than the caller's.
+  const noOllama = shouldSkipOllama(opts.env ?? process.env);
+  const setupOllama = opts.setupOllamaFn ?? setupOllamaInteractive;
+  const ollamaResult = await setupOllama({
     skip: noOllama,
     io: { write: (s: string) => io.write(s) },
   });

@@ -18,7 +18,12 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveAgyHooksJsonPath, resolveClaudeHome, siltpokeRoot } from "../installer/paths";
+import {
+  resolveAgyHooksJsonPath,
+  resolveClaudeHome,
+  resolveCodexHome,
+  siltpokeRoot,
+} from "../installer/paths";
 import { resolveDaemonProject } from "../memory/active-project";
 import { globalSchema } from "../memory/schema-v3";
 import { checkBrainHealth } from "./doctor-brain-check";
@@ -27,6 +32,7 @@ import { checkIndexStaleness } from "./doctor-index-staleness-check";
 import { pluginOwnsStopHook } from "./doctor-plugin-hook-check";
 import { checkProjectRoots } from "./doctor-project-roots-check";
 import { checkBrainRoles } from "./doctor-reviewer-check";
+import { checkStatuslineInterpreter } from "./doctor-statusline-check";
 
 export function defaultRepoRoot(): string {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -82,10 +88,21 @@ export interface DoctorOptions {
   autostartPath?: string;
   /** Binary-lookup seam for the reviewer-provider check. Defaults to `Bun.which`; tests return null for a missing `codex` binary. */
   reviewerWhichFn?: (cmd: string) => string | null;
+  /** Binary-lookup seam for the statusline-interpreter check. Defaults to `Bun.which`. */
+  statuslineWhichFn?: (cmd: string) => string | null;
+  /** On-disk seam for the statusline-interpreter check (absolute interpreters). Defaults to `existsSync`. */
+  statuslineExistsFn?: (path: string) => boolean;
   /** Override the eval-provenance sidecar path (written by run-eval.ts's `--provider codex`). Defaults to `<repoRoot>/src/eval/caller-impact/verdict.provenance.json`. */
   evalProvenancePath?: string;
   /** Override the agy hooks.json path for the check below. Defaults to resolveAgyHooksJsonPath(). */
   agyHooksJsonPath?: string;
+  /**
+   * Override the codex config.toml path used by host detection. Without this
+   * seam the probe reads the real `~/.codex`, so a developer who happens to
+   * have codex installed gets a different answer from one who does not — the
+   * result would depend on the machine running the test, not on the fixture.
+   */
+  codexConfigPath?: string;
   /**
    * Override the plugin's own hooks.json path for the Stop-hook check.
    * Defaults to `${CLAUDE_PLUGIN_ROOT}/hooks/hooks.json`. For tests.
@@ -113,15 +130,84 @@ function readJson(path: string): { ok: true; value: unknown } | { ok: false; rea
   }
 }
 
+/**
+ * Which host is this user actually running Siltpoke under?
+ *
+ * WHY — audit defect `[16]`: under an agy HOME, `doctor` printed two red rows
+ * about `~/.claude/settings.json` and Claude Code's Stop-hook registration, and
+ * told the user to run `/siltpoke-setup`. agy has neither of those files nor
+ * that command; it is wired through `~/.gemini/config/hooks.json`. So the rows
+ * were both false and unactionable, and `skills/siltpoke/SKILL.md` lists
+ * `doctor` as available, so agy users really do reach them.
+ *
+ * CONSERVATIVE ON PURPOSE: this only ever reports a NON-Claude host on positive
+ * evidence that one is wired. A machine with nothing detected stays
+ * `claude-code`, because "Claude Code user who has not run setup yet" is a real
+ * state that must keep its red row and its `/siltpoke-setup` advice — that row
+ * is what defect `[2]` fixed, and downgrading it here would quietly undo it.
+ */
+export type DoctorHost = "claude-code" | "codex" | "antigravity";
+
+export function detectDoctorHost(opts: DoctorOptions = {}): DoctorHost {
+  if (existsSync(opts.claudeHome ?? resolveClaudeHome())) return "claude-code";
+  if (existsSync(opts.agyHooksJsonPath ?? resolveAgyHooksJsonPath())) return "antigravity";
+  if (existsSync(opts.codexConfigPath ?? join(resolveCodexHome(), "config.toml"))) return "codex";
+  return "claude-code";
+}
+
+/**
+ * The one sentence that tells this host's user how to set Siltpoke up.
+ *
+ * Verbatim from the three Stop-hook nudges (`hooks/stop.sh`,
+ * `hooks/codex-stop.sh`, `hooks/agy-stop.sh`) that defect `[8]` fixed — the
+ * wording was settled there, and a second spelling would be a second thing to
+ * keep in sync. `tests/plugin/host-aware-nudge.test.ts` holds the invariant
+ * that a non-Claude host is never handed a `/siltpoke-` command; doctor was
+ * outside that guard until now.
+ */
+export function setupAdviceFor(host: DoctorHost): string {
+  switch (host) {
+    case "codex":
+      return "Run `/skills` and pick siltpoke";
+    case "antigravity":
+      return 'Ask your agent to "set up Siltpoke"';
+    default:
+      return "Run `/siltpoke-setup`";
+  }
+}
+
+/** Where this host keeps the wiring doctor should be looking at. */
+function hostWiringPath(host: DoctorHost, opts: DoctorOptions): string {
+  switch (host) {
+    case "codex":
+      return join(resolveCodexHome(), "hooks.json");
+    case "antigravity":
+      return opts.agyHooksJsonPath ?? resolveAgyHooksJsonPath();
+    default:
+      return join(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
+  }
+}
+
 function checkSettingsJson(opts: DoctorOptions): CheckResult {
   const path = join(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
   const r = readJson(path);
   const name = "~/.claude/settings.json valid";
+  const host = detectDoctorHost(opts);
+  if (host !== "claude-code") {
+    // Defect [16]: this file is Claude Code's. Asserting on it under another
+    // host is not a softer check, it is a check about the wrong machine.
+    return {
+      name,
+      pass: true,
+      status: "info",
+      detail: `skipped — this is a ${host} install, wired through ${hostWiringPath(host, opts)}, not ${path}`,
+    };
+  }
   if (!r.ok) {
     // Missing settings.json = Siltpoke not installed yet. Soft fail so doctor
     // surfaces the diagnostic without crashing on a clean machine.
     if (r.reason === "missing") {
-      return { name, pass: false, detail: `${path} does not exist — run \`/siltpoke-setup\` to set up Siltpoke` };
+      return { name, pass: false, detail: `${path} does not exist — ${setupAdviceFor(host)} to set Siltpoke up` };
     }
     return { name, pass: false, detail: r.detail };
   }
@@ -142,6 +228,19 @@ interface HookMatcherShape {
 
 function checkStopHook(opts: DoctorOptions): CheckResult {
   const name = "Stop hook registered (curl fast path + command pair)";
+
+  // Defect [16]: everything below reads Claude Code's settings.json. Under a
+  // positively-detected other host that is a question about the wrong machine
+  // — and that host has its own row (checkAgyHooksJson for agy).
+  const host = detectDoctorHost(opts);
+  if (host !== "claude-code") {
+    return {
+      name,
+      pass: true,
+      status: "info",
+      detail: `skipped — this is a ${host} install; its Stop hook lives in ${hostWiringPath(host, opts)}`,
+    };
+  }
 
   // Plugin era: hooks/hooks.json (shipped with the plugin, copied to
   // ${CLAUDE_PLUGIN_ROOT}/hooks/hooks.json on install) owns the Stop hook,
@@ -182,13 +281,13 @@ function checkStopHook(opts: DoctorOptions): CheckResult {
       name,
       pass: true,
       status: "info",
-      detail: "legacy http Stop hook shape detected — run `/siltpoke-setup` to migrate to the silent curl fast path",
+      detail: `legacy http Stop hook shape detected. ${setupAdviceFor(host)} to migrate to the silent curl fast path.`,
     };
   }
   return {
     name,
     pass: false,
-    detail: "no Stop hook matcher contains both the curl fast path (command ~ curl … /hooks/stop) and a command fallback (~ on-stop.ts). Run `/siltpoke-setup` to re-register.",
+    detail: `no Stop hook matcher contains both the curl fast path (command ~ curl … /hooks/stop) and a command fallback (~ on-stop.ts). ${setupAdviceFor(host)} to re-register.`,
   };
 }
 
@@ -263,6 +362,23 @@ function checkGlobalSchema(opts: DoctorOptions): CheckResult {
   const path = join(opts.siltpokeHome ?? siltpokeRoot(), "global.json");
   const r = readJson(path);
   if (!r.ok) {
+    if (r.reason === "missing") {
+      // Absent is the correct state on a fresh install, and this branch is
+      // audit defect [2]. `/siltpoke-setup` never writes this file —
+      // src/cli/install.ts has zero references to it — and src/memory/global.ts
+      // creates it the first time a review awards XP. `readGlobal()` returns
+      // null when it is absent and every caller falls back to defaultGlobal(),
+      // so nothing is broken. Treating absent as a hard failure meant a new
+      // user's very first `/siltpoke-doctor` reported "1 of 18 checks failed"
+      // on a perfectly healthy install. The sibling wake.json and inner.txt
+      // checks have carried this branch all along; this one was missing it.
+      return {
+        name,
+        pass: true,
+        status: "info",
+        detail: `${path} absent — written the first time a review awards XP; nothing has reviewed yet`,
+      };
+    }
     return { name, pass: false, detail: r.detail };
   }
   const parsed = globalSchema.safeParse(r.value);
@@ -277,6 +393,20 @@ function checkGlobalSchema(opts: DoctorOptions): CheckResult {
 }
 
 function checkSlashSymlinks(opts: DoctorOptions): CheckResult {
+  // Defect [16]: slash-command symlinks live under Claude Code's commands dir
+  // and the repair line names a Claude Code command (`/plugin install`).
+  // Neither exists for codex (skills) or agy (its own skill surface), so under
+  // a positively-detected other host this row is a question about the wrong
+  // machine — and its "Reinstall:" advice is unfollowable.
+  const host = detectDoctorHost(opts);
+  if (host !== "claude-code") {
+    return {
+      name: "slash command symlinks intact",
+      pass: true,
+      status: "info",
+      detail: `skipped — a ${host} install has no Claude Code slash-command symlinks. ${setupAdviceFor(host)} if Siltpoke is not wired.`,
+    };
+  }
   const platform = opts.platform ?? process.platform;
   const repoRoot = opts.repoRoot ?? defaultRepoRoot();
   const claudeCommandsDir = join(opts.claudeHome ?? resolveClaudeHome(), "commands");
@@ -396,7 +526,7 @@ function checkAgyHooksJson(opts: DoctorOptions): CheckResult {
       name,
       pass: true,
       status: "info",
-      detail: `${path} absent — Antigravity not wired (optional; agy wiring isn't part of /siltpoke-setup yet — wire it from a source checkout if you want it)`,
+      detail: `${path} absent — Antigravity not wired (optional: it is wired during setup only when agy is present on the machine, same wire-only-if-present rule as codebuddy/qoder)`,
     };
   }
   const r = readJson(path);
@@ -412,7 +542,7 @@ function checkAgyHooksJson(opts: DoctorOptions): CheckResult {
     return {
       name,
       pass: false,
-      detail: `${path} is missing the "siltpoke-review" key (agy wiring isn't part of /siltpoke-setup yet — edit ${path} manually, or re-run the installer from a source checkout).`,
+      detail: `${path} is missing the "siltpoke-review" key. ${setupAdviceFor("antigravity")}, or edit ${path} by hand.`,
     };
   }
   const stop = Array.isArray(entry.Stop) ? entry.Stop : [];
@@ -423,7 +553,7 @@ function checkAgyHooksJson(opts: DoctorOptions): CheckResult {
     return {
       name,
       pass: false,
-      detail: `${path} "siltpoke-review".Stop has no command entry pointing at agy-stop.ts (agy wiring isn't part of /siltpoke-setup yet — edit ${path} manually, or re-run the installer from a source checkout).`,
+      detail: `${path} "siltpoke-review".Stop has no command entry pointing at agy-stop.ts. ${setupAdviceFor("antigravity")}, or edit ${path} by hand.`,
     };
   }
   return { name, pass: true, detail: null };
@@ -488,6 +618,7 @@ export function runAllChecks(opts: DoctorOptions = {}): CheckResult[] {
     ...checkBrainRoles(opts),
     checkAgyHooksJson(opts),
     checkProjectRoots(opts),
+    checkStatuslineInterpreter(opts),
   ];
 }
 
@@ -573,7 +704,7 @@ export async function runDoctorCli(
     await checkProjectResolutionUnderRoot(opts),
     await checkDaemonAlive(opts),
     await checkDaemonStaleness(opts),
-    await checkIndexStaleness(opts), // ← slice ②, warn-only
+    await checkIndexStaleness(opts), // ← warn-only
   ];
   const failCount = results.filter((r) => !r.pass).length;
 

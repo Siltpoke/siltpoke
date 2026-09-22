@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * Tier-1 test-gap rubric — Slice ② (disk-level test-gap + new-vs-modified split).
+ * Tier-1 test-gap rubric (disk-level test-gap + new-vs-modified split).
  *
  * The pre-existing gate is unchanged: source file, `added > THRESHOLD_LINES`, no
  * in-diff matching test. What changes is the FIRE decision once that gate passes:
@@ -99,6 +99,9 @@ function fireMed(src: string, added: number): RubricTrigger {
     severity: "med",
     file: src,
     line: 1,
+    // NO `snippet_is_source` ON PURPOSE — this string is synthesized here, not
+    // read out of `src`. Marking it source would make siltpoke's own line-count
+    // sentence citable as if it were a quote of the code.
     snippet: `+${added} lines added to ${src}`,
     message: "no test in this diff and none on disk",
     suggested_fix: `Add a test in tests/ matching ${src.split("/").pop()}`,
@@ -115,6 +118,9 @@ function softNote(src: string, added: number): RubricTrigger {
     severity: "low",
     file: src,
     line: 1,
+    // NO `snippet_is_source` ON PURPOSE — this string is synthesized here, not
+    // read out of `src`. Marking it source would make siltpoke's own line-count
+    // sentence citable as if it were a quote of the code.
     snippet: `+${added} lines added to ${src}`,
     message: `+${added} lines added to \`${src}\`; its disk test wasn't touched this diff — confirm the new code is covered.`,
     suggested_fix: `Touch the disk test for ${src.split("/").pop()} in this diff, or confirm existing coverage covers the new lines.`,

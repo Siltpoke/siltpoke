@@ -116,6 +116,7 @@ function makeFakeBrainOutput(overrides?: Partial<BrainOutput>): BrainOutput {
     severity: "medium",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [],
     ...overrides,
   };
@@ -170,6 +171,7 @@ test("fired row (NORMAL accepted) carries branch via injected opts.gitBranch sea
           bubble_short: "Type error found",
           severity: "medium",
           confidence: "high",
+          findings: [],
           evidence: [
             {
               tool: "tsc",
@@ -247,6 +249,7 @@ test("fired row carries authorFamily = the builder host (SILTPOKE_HOST)", async 
           bubble_short: "Type error found",
           severity: "medium",
           confidence: "high",
+          findings: [],
           evidence: [{ tool: "tsc", file: "src/dummy.ts", line: 5, snippet: REAL_SNIPPET }],
         }),
         usage: noopUsage,

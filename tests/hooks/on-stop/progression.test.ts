@@ -76,6 +76,7 @@ test("successful Brain call with xp_earned_events bumps progression.xp", async (
       { type: "daily_activity", amount: 10 },
       { type: "found_bug", amount: 15 },
     ],
+    findings: [],
     evidence: [],
       reasoning: "test fixture",
   };
@@ -137,6 +138,7 @@ test("brain output with empty xp_earned_events does not write progression", asyn
     severity: "info",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [],
       reasoning: "test fixture",
   };
@@ -218,6 +220,7 @@ test("new Edit tool_use invalidates skip → Brain re-runs", async () => {
     severity: "info",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [],
       reasoning: "test fixture",
   };
@@ -312,6 +315,7 @@ test("transcript adds more assistant text but no file changes → skips", async 
     severity: "info",
     confidence: "high",
     xp_earned_events: [],
+    findings: [],
     evidence: [],
       reasoning: "test fixture",
   };

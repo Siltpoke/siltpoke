@@ -14,8 +14,8 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadBrainConfigSync } from "../brain/brain-config";
 import type { BrainRole, ProviderFamily } from "../brain/brain-config";
+import { loadBrainConfigSync } from "../brain/brain-config";
 import { CLAUDE_REVIEW_MODELS, familySupportsModelChoice, resolveRoleMeta } from "../brain/registry";
 import { atomicWrite } from "../utils/atomic-write";
 
@@ -43,8 +43,15 @@ export interface BrainBuilderView {
   reviewer: ProviderFamily;
   model?: string;
   configured: boolean;
-  /** whether this builder's REVIEWER supports a model choice (claude only). */
+  /** whether this builder's REVIEWER can be given a model by siltpoke. */
   reviewerSupportsModel: boolean;
+  /**
+   * True when a global `brain.roles.review` pin outranks this rule, so the row
+   * is stored and shown but NOT in effect. Without it, `show` listed overridden
+   * rules identically to live ones — a silent mismatch, harder to diagnose than
+   * an error (spec brain-select-four-gaps §3.2).
+   */
+  overriddenByGlobalPin: boolean;
 }
 
 export interface BrainView {
@@ -55,6 +62,15 @@ export interface BrainView {
   reviewByBuilder: BrainBuilderView[];
   /** Model options offered when the reviewer is claude (v2). */
   claudeModels: readonly string[];
+  /**
+   * The families siltpoke can hand a model to, derived from each provider's argv
+   * (registry `familySupportsModelChoice`). The dashboard hardcoded
+   * `family === "claude"` in two `x-show` expressions and its island's send
+   * filter, which is a third copy of a rule that was wrong for three of the five
+   * families — this field is the one answer all of them read
+   * (spec brain-select-four-gaps §3.1).
+   */
+  modelCapableFamilies: readonly ProviderFamily[];
 }
 
 // Local validation lists — `asFamily` is intentionally not exported from
@@ -85,7 +101,7 @@ function readRawConfig(home: string): Record<string, unknown> {
 }
 
 /**
- * WHY a role resolved to its family — the  the show output must surface
+ * WHY a role resolved to its family — the "来源" the show output must surface
  * (RED ①). Display-only; it mirrors the precedence chain in
  * `brain-config.ts` parseBrainConfig (the routing SoT) without re-deriving the
  * routing decision itself. Order per role must match that function.
@@ -105,6 +121,44 @@ function roleSource(raw: Record<string, unknown>, role: BrainRole): string {
 }
 
 /**
+ * The sources that outrank `review_by_builder`, i.e. that make a configured
+ * per-builder rule stored-but-not-running. Straight off the precedence chain in
+ * `brain-config.ts` parseBrainConfig:
+ *
+ *   env override > brain.roles.review > reviewer_provider > review_by_builder > …
+ *
+ * The first version of the "is it overridden?" check read `brain.roles.review`
+ * ALONE, which left `reviewer_provider` and `SILTPOKE_REVIEWER_PROVIDER` — two
+ * live, supported ways to pin the reviewer — producing exactly the silent
+ * mismatch this feature exists to remove (found in review, 2026-09-12). Every
+ * consumer asks THIS function, so the answer cannot differ between surfaces.
+ */
+const REVIEW_OVERRIDING_SOURCES: readonly string[] = [
+  "env override",
+  "pinned here",
+  "reviewer_provider",
+];
+
+/** `null` when nothing outranks the per-builder rules; otherwise the source
+ * name, which is also what the surfaces print. */
+export function reviewOverrideSource(raw: Record<string, unknown>): string | null {
+  const source = roleSource(raw, "review");
+  return REVIEW_OVERRIDING_SOURCES.includes(source) ? source : null;
+}
+
+/**
+ * Whether a role's `source` means somebody explicitly chose this family, as
+ * opposed to it falling out of a default. The dashboard select must open on the
+ * chosen family in the first case and on "(follow the building agent)" in the
+ * second; reading only `"pinned here"` made a `reviewer_provider` pin look
+ * unset, and an untouched Save then sent a DELETE that removed a key which was
+ * never there — reporting success while the pin stayed (found in review).
+ */
+export function sourceIsExplicitPin(source: string): boolean {
+  return source !== "default" && source !== "follows builder";
+}
+
+/**
  * Print the resolved brain: the builder that authored this run, then each role
  * with its resolved `family · model`. A role with no pinned model shows
  * "(CLI default)" rather than a blank — the CLI account picks the model.
@@ -117,16 +171,29 @@ export function brainView(home: string): BrainView {
     return { role, family: meta.family, model: meta.model, source: roleSource(raw, role) };
   });
   const rbb = config.review_by_builder ?? {};
+  // Three sources outrank review_by_builder, not one — see reviewOverrideSource.
+  // Read from the RAW config: the resolved role always has a provider, so it
+  // cannot tell a pin apart from a default.
+  const reviewIsPinned = reviewOverrideSource(raw) !== null;
   const reviewByBuilder: BrainBuilderView[] = FAMILIES.map((builder) => {
     const entry = rbb[builder];
     const reviewer = entry?.provider ?? builder; // absent → same-family default
-    const model = reviewer === "claude" ? entry?.model : undefined;
+    // Show the model whenever the reviewer's argv can carry it. This read
+    // `reviewer === "claude"` after every writer had moved to the capability
+    // check, so a model genuinely stored AND genuinely sent to agy / qoder /
+    // codebuddy printed as "(CLI default)" — configured, in effect, and shown
+    // as unset (spec brain-select-four-gaps §3.1; found in review).
+    const model = familySupportsModelChoice(reviewer) ? entry?.model : undefined;
     return {
       builder,
       reviewer,
       ...(model !== undefined ? { model } : {}),
       configured: entry !== undefined,
       reviewerSupportsModel: familySupportsModelChoice(reviewer),
+      // A row nobody configured cannot be overridden — it is the default. The
+      // flag was `reviewIsPinned` alone, so with a pin and zero rules the
+      // dashboard marked all five untouched rows "overridden" (found in review).
+      overriddenByGlobalPin: entry !== undefined && reviewIsPinned,
     };
   });
   return {
@@ -135,6 +202,7 @@ export function brainView(home: string): BrainView {
     families: FAMILIES,
     reviewByBuilder,
     claudeModels: CLAUDE_REVIEW_MODELS,
+    modelCapableFamilies: FAMILIES.filter(familySupportsModelChoice),
   };
 }
 
@@ -157,12 +225,17 @@ export function formatBrainShow(home: string): string {
     lines.push("per-builder review overrides (built by → reviewed by):");
     for (const b of configured) {
       const model = b.model ?? (b.reviewerSupportsModel ? "(CLI default)" : "(set in its own config)");
-      lines.push(`  ${b.builder.padEnd(10)} → ${b.reviewer} · ${model}`);
+      const suffix = b.overriddenByGlobalPin ? "   ⚠ OVERRIDDEN by the pinned review brain" : "";
+      lines.push(`  ${b.builder.padEnd(10)} → ${b.reviewer} · ${model}${suffix}`);
+    }
+    if (configured.some((b) => b.overriddenByGlobalPin)) {
+      lines.push("  these rules are stored but NOT in effect — run: siltpoke brain unset review");
     }
     lines.push("");
   }
   lines.push("set with:  siltpoke brain set review <family> [model]");
   lines.push("      or:  siltpoke brain set-builder <builder> <reviewer> [model]");
+  lines.push("   undo:  siltpoke brain unset <role>   (back to following the building agent)");
   lines.push(`families:  ${FAMILIES.join(" / ")}`);
   return lines.join("\n");
 }
@@ -183,6 +256,17 @@ export function runBrainSet(
   }
   if (!isFamily(family)) {
     return { ok: false, message: `unknown family "${family}" — one of: ${FAMILIES.join(" / ")}` };
+  }
+  // Refuse a model the family's argv cannot carry. This writer had no such check
+  // at all, which made POST /api/brain/roles/:role the one way past every guard:
+  // setReviewByBuilder refused it and the dashboard hid the control, but the
+  // dashboard's half is client-side (role-row.ts drops the field) and the route
+  // calls straight into here (spec brain-select-four-gaps §2.5 / AC1 / AC9).
+  if (model !== undefined && model.length > 0 && !familySupportsModelChoice(family)) {
+    return {
+      ok: false,
+      message: `"${family}" does not accept a model from siltpoke — its CLI serves the model set in its own config`,
+    };
   }
 
   const configPath = join(home, "config.json");
@@ -282,8 +366,59 @@ export function setReviewByBuilder(
   return { ok: true, message: `code built by ${builder} → reviewed by ${reviewer}${modelNote}` };
 }
 
+/**
+ * Remove `brain.roles[role]`, leaving every other key intact — the way back from
+ * a global pin. `set review <family>` outranks every per-builder rule, and until
+ * 2026-09-12 nothing undid it: a user who pinned one reviewer for everything and
+ * later switched to per-agent rules got silence, not an error, because the rules
+ * were stored and displayed but never consulted (spec brain-select-four-gaps
+ * §3.2). Unsetting a role that has no pin is a no-op success, so this is safe to
+ * run blind.
+ */
+export function runBrainUnset(home: string, role: string): BrainCliResult {
+  if (!isRole(role)) {
+    return { ok: false, message: `unknown role "${role}" — one of: ${ROLES.join(" / ")}` };
+  }
+
+  const configPath = join(home, "config.json");
+  if (!existsSync(configPath)) {
+    return { ok: true, message: `${role} brain was not pinned — nothing to unset` };
+  }
+  let prior: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(configPath, "utf8"));
+    if (parsed && typeof parsed === "object") prior = parsed as Record<string, unknown>;
+  } catch {
+    // Corrupt config: nothing to remove, and rewriting it would destroy
+    // whatever the user has in there. Report success without touching the file.
+    return { ok: true, message: `${role} brain was not pinned — nothing to unset` };
+  }
+
+  const priorBrain =
+    prior.brain && typeof prior.brain === "object" ? (prior.brain as Record<string, unknown>) : {};
+  const priorRoles =
+    priorBrain.roles && typeof priorBrain.roles === "object"
+      ? (priorBrain.roles as Record<string, unknown>)
+      : {};
+  if (!(role in priorRoles)) {
+    return { ok: true, message: `${role} brain was not pinned — nothing to unset` };
+  }
+
+  const { [role]: _removed, ...remainingRoles } = priorRoles;
+  const next = {
+    ...prior,
+    brain: { ...priorBrain, roles: remainingRoles },
+  };
+  atomicWrite(configPath, `${JSON.stringify(next, null, 2)}\n`);
+  return {
+    ok: true,
+    message: `${role} brain unpinned — it now follows the building agent (and any per-builder rule)`,
+  };
+}
+
 /** Dispatch: no verb / "show" -> show; "set <role> <family> [model]" -> global
- * role pin; "set-builder <builder> <reviewer> [model]" -> per-builder override. */
+ * role pin; "unset <role>" -> drop that pin; "set-builder <builder> <reviewer>
+ * [model]" -> per-builder override. */
 export function runBrainCli(rest: readonly string[], home: string): BrainCliResult {
   const verb = rest[0];
 
@@ -299,6 +434,14 @@ export function runBrainCli(rest: readonly string[], home: string): BrainCliResu
     return runBrainSet(home, role, family, model);
   }
 
+  if (verb === "unset") {
+    const [, role] = rest;
+    if (role === undefined) {
+      return { ok: false, message: "usage: siltpoke brain unset <role>" };
+    }
+    return runBrainUnset(home, role);
+  }
+
   if (verb === "set-builder") {
     const [, builder, reviewer, model] = rest;
     if (builder === undefined || reviewer === undefined) {
@@ -309,6 +452,6 @@ export function runBrainCli(rest: readonly string[], home: string): BrainCliResu
 
   return {
     ok: false,
-    message: `usage: siltpoke brain [show | set <role> <family> [model] | set-builder <builder> <reviewer> [model]] — got "${verb}"`,
+    message: `usage: siltpoke brain [show | set <role> <family> [model] | unset <role> | set-builder <builder> <reviewer> [model]] — got "${verb}"`,
   };
 }

@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { formatBrainShow, runBrainCli, runBrainSet, setReviewByBuilder } from "../../src/cli/brain-cli";
+import { brainView, formatBrainShow, runBrainCli, runBrainSet, setReviewByBuilder } from "../../src/cli/brain-cli";
+import { loadBrainConfigSync } from "../../src/brain/brain-config";
 
 /**
  * Slice C / Task 7 — the `/siltpoke-brain` model-select surface.
@@ -90,6 +91,30 @@ describe("runBrainSet — writes brain.roles.review, preserves everything else",
     expect(res.ok).toBe(false);
     expect(res.message).toMatch(/role/i);
     expect(existsSync(join(home, "config.json"))).toBe(false);
+  });
+
+  // AC1 / AC9 (spec brain-select-four-gaps): this writer had NO model check at
+  // all, while setReviewByBuilder refused one and the dashboard hid the control.
+  // The dashboard's half was client-side only (role-row.ts drops the field), so
+  // POST /api/brain/roles/:role — which calls straight into here — was the way
+  // past every guard. The check belongs here, where all four entry points land.
+  test("rejects a model for codex — its spawn argv never carries one", () => {
+    const res = runBrainSet(home, "review", "codex", "gpt-5.5");
+    expect(res.ok).toBe(false);
+    expect(res.message).toMatch(/model|codex|config/i);
+    expect(existsSync(join(home, "config.json"))).toBe(false);
+  });
+
+  test("accepts a model for every family whose argv carries one", () => {
+    for (const family of ["claude", "agy", "qoder", "codebuddy"] as const) {
+      rmSync(join(home, "config.json"), { force: true });
+      const res = runBrainSet(home, "review", family, "some-model");
+      expect(res.ok).toBe(true);
+      expect((readConfig().brain as any).roles.review).toEqual({
+        provider: family,
+        model: "some-model",
+      });
+    }
   });
 });
 
@@ -216,10 +241,22 @@ describe("setReviewByBuilder — per-builder review overrides (Brain select v2 T
     expect(existsSync(join(home, "config.json"))).toBe(false);
   });
 
-  test("rejects a model on a NON-claude reviewer (auth-fixed), writes nothing", () => {
-    const res = setReviewByBuilder(home, "codex", "agy", "some-model");
+  // Spec 2026-09-12-brain-select-four-gaps §3.1: the rejection follows the
+  // provider's real argv capability, not "is it claude". agy pushes --model, so
+  // this is now a legal pin; codex never passes -m, so that one still refuses.
+  test("accepts a model on a reviewer whose argv carries one (agy)", () => {
+    const res = setReviewByBuilder(home, "codex", "agy", "gemini-3-pro");
+    expect(res.ok).toBe(true);
+    expect((readConfig().brain as any).review_by_builder.codex).toEqual({
+      provider: "agy",
+      model: "gemini-3-pro",
+    });
+  });
+
+  test("rejects a model on codex — its spawn argv has no -m, writes nothing", () => {
+    const res = setReviewByBuilder(home, "agy", "codex", "gpt-5");
     expect(res.ok).toBe(false);
-    expect(res.message).toMatch(/model|claude|auth/i);
+    expect(res.message).toMatch(/model|codex|config/i);
     expect(existsSync(join(home, "config.json"))).toBe(false);
   });
 
@@ -242,8 +279,17 @@ describe("runBrainCli set-builder verb (Brain select v2 T2)", () => {
     });
   });
 
-  test('"set-builder codex agy <model>" rejected (non-claude + model)', () => {
-    const res = runBrainCli(["set-builder", "codex", "agy", "x"], home);
+  test('"set-builder codex agy <model>" accepted — agy\'s argv carries --model', () => {
+    const res = runBrainCli(["set-builder", "codex", "agy", "gemini-3-pro"], home);
+    expect(res.ok).toBe(true);
+    expect((readConfig().brain as any).review_by_builder.codex).toEqual({
+      provider: "agy",
+      model: "gemini-3-pro",
+    });
+  });
+
+  test('"set-builder agy codex <model>" rejected — codex never receives one', () => {
+    const res = runBrainCli(["set-builder", "agy", "codex", "gpt-5"], home);
     expect(res.ok).toBe(false);
     expect(existsSync(join(home, "config.json"))).toBe(false);
   });
@@ -259,5 +305,100 @@ describe("runBrainCli set-builder verb (Brain select v2 T2)", () => {
     const out = formatBrainShow(home);
     expect(out).toMatch(/codex/);
     expect(out).toMatch(/claude-sonnet-4-6/);
+  });
+
+  // Reviewer finding, 2026-09-12: brainView's per-builder row kept the old
+  // `reviewer === "claude"` test after every writer had moved to the capability
+  // check. So a model that was accepted, stored, and genuinely sent to agy's
+  // argv was printed as "(CLI default)" — configured-but-shown-as-unset, the
+  // same silent mismatch this whole track exists to remove. The previous test
+  // above only ever used a claude reviewer, the one case that line got right.
+  // Spec brain-select-four-gaps §3.2: a global `set review <family>` outranks
+  // every per-builder rule, and there was no way back — no `unset` verb, no
+  // dashboard control — so a user who tried "one reviewer for everything" first
+  // and then switched to per-agent rules found the second silently inert, while
+  // `brain show` kept listing those rules as though they applied.
+  test("unset review removes the global pin and lets per-builder rules apply again", () => {
+    setReviewByBuilder(home, "codex", "agy");
+    runBrainSet(home, "review", "qoder");
+    // Pinned: the per-builder rule is overridden.
+    expect(loadBrainConfigSync(home).roles.review.provider).toBe("qoder");
+
+    const res = runBrainCli(["unset", "review"], home);
+    expect(res.ok).toBe(true);
+    expect((readConfig().brain as any).roles?.review).toBeUndefined();
+    // The per-builder rule survived the unset and is live again.
+    expect((readConfig().brain as any).review_by_builder.codex).toEqual({ provider: "agy" });
+  });
+
+  // Safe to run blind: unsetting what was never pinned must not error, and must
+  // not conjure a config file for a user who has none.
+  test("unset on a role with no pin succeeds and creates no config file", () => {
+    const res = runBrainCli(["unset", "review"], home);
+    expect(res.ok).toBe(true);
+    expect(existsSync(join(home, "config.json"))).toBe(false);
+  });
+
+  test("unset leaves an existing config's other keys untouched", () => {
+    writeConfig({ pet: { name: "Rex" }, brain: { roles: { chat: { provider: "claude" } } } });
+    const res = runBrainCli(["unset", "review"], home);
+    expect(res.ok).toBe(true);
+    const cfg = readConfig();
+    expect(cfg.pet).toEqual({ name: "Rex" });
+    expect((cfg.brain as any).roles.chat).toEqual({ provider: "claude" });
+  });
+
+  test("unset rejects an unknown role and writes nothing", () => {
+    const res = runBrainCli(["unset", "banana"], home);
+    expect(res.ok).toBe(false);
+    expect(res.message).toMatch(/role/i);
+    expect(existsSync(join(home, "config.json"))).toBe(false);
+  });
+
+  // Found in review: the flag was set from the pin ALONE, so a pin with zero
+  // per-builder rules came back with all five rows "overridden" — a claim about
+  // rules that do not exist, served to every consumer of GET /api/brain, not
+  // just to the page that happens to filter them out when rendering.
+  test("a row nobody configured is never reported as overridden", () => {
+    runBrainSet(home, "review", "qoder");
+    const rows = brainView(home).reviewByBuilder;
+    expect(rows).toHaveLength(5);
+    expect(rows.every((r) => r.configured === false)).toBe(true);
+    expect(rows.some((r) => r.overriddenByGlobalPin)).toBe(false);
+  });
+
+  // Three sources outrank review_by_builder; the first version of the check saw
+  // only `brain.roles.review`, so a `reviewer_provider` pin left the rule
+  // silently inert and unmarked — the exact fault this feature removes.
+  test("a reviewer_provider pin counts as overriding, not just brain.roles.review", () => {
+    writeConfig({
+      reviewer_provider: "agy",
+      brain: { review_by_builder: { codex: { provider: "claude" } } },
+    });
+    const codexRow = brainView(home).reviewByBuilder.find((r) => r.builder === "codex");
+    expect(codexRow?.configured).toBe(true);
+    expect(codexRow?.overriddenByGlobalPin).toBe(true);
+  });
+
+  test("show marks a per-builder row that the global pin is overriding", () => {
+    setReviewByBuilder(home, "codex", "agy");
+    expect(formatBrainShow(home)).not.toMatch(/overridden/i);
+
+    runBrainSet(home, "review", "qoder");
+    const out = formatBrainShow(home);
+    expect(out).toMatch(/overridden/i);
+    // and it must say what to run to get back
+    expect(out).toMatch(/unset review/);
+  });
+
+  test("show prints a model set on a NON-claude reviewer that really receives it", () => {
+    for (const reviewer of ["agy", "qoder", "codebuddy"] as const) {
+      rmSync(join(home, "config.json"), { force: true });
+      setReviewByBuilder(home, "codex", reviewer, "picked-model");
+      const out = formatBrainShow(home);
+      expect(out).toMatch(new RegExp(reviewer));
+      expect(out).toMatch(/picked-model/);
+      expect(out).not.toMatch(/CLI default/);
+    }
   });
 });

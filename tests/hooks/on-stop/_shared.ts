@@ -84,6 +84,7 @@ export const fakeBrainOutput: BrainOutput = {
   severity: "info",
   confidence: "high",
   xp_earned_events: [],
+  findings: [],
   evidence: [],
   reasoning: "test fixture",
 };

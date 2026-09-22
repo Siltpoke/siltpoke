@@ -4,13 +4,16 @@
 import { spawnSync } from "node:child_process";
 import { existsSync as realExistsSync, writeFileSync } from "node:fs";
 import { basename, join, normalize } from "node:path";
-import { installSwiftbarAutostart } from "./swiftbar-autostart";
+import { installSwiftbarAutostart, SWIFTBAR_APP_PATH } from "./swiftbar-autostart";
 import type { WizardIO } from "./wizard";
 import { askYesNo } from "./wizard";
 
-const SWIFTBAR_APP_PATH = "/Applications/SwiftBar.app";
-const SWIFTBAR_DOWNLOAD_URL = "https://github.com/swiftbar/SwiftBar/releases/latest";
-const SHIM_NAME = "siltpoke.1m.sh";
+export { SWIFTBAR_APP_PATH };
+/** Where to get SwiftBar — printed by every surface that finds it missing. */
+export const SWIFTBAR_DOWNLOAD_URL = "https://github.com/swiftbar/SwiftBar/releases/latest";
+export const SHIM_NAME = "siltpoke.1m.sh";
+/** Wall-clock bound for a read-only probe (`defaults read`, `pgrep`). */
+const PROBE_TIMEOUT_MS = 3000;
 const SWIFTBAR_DEFAULTS_DOMAIN = "com.ameba.SwiftBar";
 const SWIFTBAR_PLUGIN_DIR_KEY = "PluginDirectory";
 
@@ -52,7 +55,7 @@ export interface MenubarSetupResult {
   autostart?: boolean;
 }
 
-function defaultExec(cmd: string, args: string[]): { status: number; stdout: string } {
+export function defaultExec(cmd: string, args: string[]): { status: number; stdout: string } {
   const r = spawnSync(cmd, args, { encoding: "utf8" });
   return { status: r.status ?? 1, stdout: r.stdout ?? "" };
 }
@@ -108,14 +111,121 @@ function resolvePluginDir(
   exec: (cmd: string, args: string[]) => { status: number; stdout: string },
   home: string,
 ): string {
-  const read = exec("defaults", ["read", SWIFTBAR_DEFAULTS_DOMAIN, SWIFTBAR_PLUGIN_DIR_KEY]);
-  const existing = read.status === 0 ? read.stdout.trim() : "";
+  const existing = readPluginDirPref(exec, home);
   if (existing) {
-    return existing.startsWith("~") ? join(home, existing.slice(1)) : existing;
+    return existing;
   }
-  const fallback = join(home, "Library", "Application Support", "SwiftBar", "plugins");
+  const fallback = defaultPluginDir(home);
   exec("defaults", ["write", SWIFTBAR_DEFAULTS_DOMAIN, SWIFTBAR_PLUGIN_DIR_KEY, fallback]);
   return fallback;
+}
+
+/** The plugin folder this installer points a fresh SwiftBar at. */
+function defaultPluginDir(home: string): string {
+  return join(home, "Library", "Application Support", "SwiftBar", "plugins");
+}
+
+/**
+ * Read SwiftBar's configured plugin folder. `null` when the pref is unset.
+ *
+ * Split out of `resolvePluginDir` because every OTHER surface that needs this
+ * path is read-only (`status`, `remove`, the notification gate) and must not
+ * write a pref as a side effect of being asked a question.
+ */
+function readPluginDirPref(
+  exec: ProbeExec,
+  home: string,
+): string | null {
+  const read = exec("defaults", ["read", SWIFTBAR_DEFAULTS_DOMAIN, SWIFTBAR_PLUGIN_DIR_KEY]);
+  const existing = read.status === 0 ? read.stdout.trim() : "";
+  if (!existing) {
+    return null;
+  }
+  return existing.startsWith("~") ? join(home, existing.slice(1)) : existing;
+}
+
+/** A read-only probe: a command run purely to be asked a question. */
+export type ProbeExec = (cmd: string, args: string[]) => { status: number; stdout: string };
+
+/**
+ * The shim path SwiftBar actually OBEYS — the pref when set, otherwise the
+ * default folder. Resolved exactly the way `install` resolves its write
+ * target, minus the `defaults write`, so an installed pet and a `status` that
+ * denies it cannot disagree.
+ *
+ * Deliberately NOT default-folder-first. Checking the default first would save
+ * a subprocess and buy back the bug this whole change is about: install into
+ * the default folder, then point SwiftBar's own UI somewhere else, and the
+ * leftover copy in the default folder answers "installed" for a pet that is
+ * not showing.
+ */
+export function resolveObeyedShimPath(exec: ProbeExec, home: string): string {
+  const pref = readPluginDirPref(exec, home);
+  return join(pref ?? defaultPluginDir(home), SHIM_NAME);
+}
+
+/**
+ * A shim in the default folder that SwiftBar is NOT reading, or `null` when
+ * there is no such thing. Only meaningful when the obeyed path has no shim:
+ * it is what lets `status` say "installed, in a folder SwiftBar ignores"
+ * instead of the flatly wrong "not installed".
+ *
+ * Takes the already-resolved obeyed path instead of resolving it again —
+ * resolving costs a `defaults read`, and every caller of this has one in hand.
+ */
+export function strandedShimPath(
+  obeyedPath: string,
+  home: string,
+  existsSync: (p: string) => boolean,
+): string | null {
+  const defaultPath = join(defaultPluginDir(home), SHIM_NAME);
+  if (obeyedPath === defaultPath) {
+    return null;
+  }
+  return existsSync(defaultPath) ? defaultPath : null;
+}
+
+/**
+ * Did this user opt into the menu-bar pet at all — in either folder?
+ *
+ * A DIFFERENT question from `resolveObeyedShimPath`, which is why it is a
+ * different function: the notification gate only needs consent, not the copy
+ * SwiftBar renders, and it runs on the Stop hook's fired path. So this one
+ * checks the default folder first and asks `defaults read` only when the shim
+ * is not there — which means it costs no subprocess for an installed pet in
+ * the default folder, and one bounded `defaults read` for everyone else,
+ * including the majority who never installed it at all. Measured at 0.00–0.01s
+ * per call, so: a wasted spawn for that population, not a stall.
+ */
+export function anyInstalledShimPath(
+  exec: ProbeExec,
+  home: string,
+  existsSync: (p: string) => boolean,
+): string | null {
+  const defaultPath = join(defaultPluginDir(home), SHIM_NAME);
+  if (existsSync(defaultPath)) {
+    return defaultPath;
+  }
+  const obeyed = resolveObeyedShimPath(exec, home);
+  return obeyed !== defaultPath && existsSync(obeyed) ? obeyed : null;
+}
+
+/**
+ * `defaultExec` with a wall-clock bound, for the read-only probes.
+ *
+ * Separate from `defaultExec` rather than a timeout added to it: that one also
+ * runs `brew install --cask swiftbar`, which legitimately takes minutes, so a
+ * few-second bound there would abort real installs. A question, by contrast,
+ * has no business taking seconds — and `/siltpoke-menubar status` runs inside
+ * an agent turn, where a wedged `defaults`/`pgrep` would hang the turn itself.
+ */
+export function probeExec(cmd: string, args: string[]): { status: number; stdout: string } {
+  try {
+    const r = spawnSync(cmd, args, { encoding: "utf8", timeout: PROBE_TIMEOUT_MS });
+    return { status: r.status ?? 1, stdout: r.stdout ?? "" };
+  } catch {
+    return { status: 1, stdout: "" };
+  }
 }
 
 /**

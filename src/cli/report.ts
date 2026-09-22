@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import { marked } from "marked";
 import { loadPersonality } from "../brain/personality";
 import { setDaemonEnabled } from "../config/write-daemon-enabled";
+import { isSiltpokedPing } from "../daemon/port";
 import { getSpecies } from "../face/species";
 import {
   isLaunchdJobInstalled,
@@ -332,6 +333,29 @@ export interface OpenDashboardOptions {
  * The daemon owns the dashboard; this only makes sure it is up. Throws if the
  * daemon does not answer `/api/ping` within 3s of being spawned.
  */
+/**
+ * True if SILTPOKED — not merely some server — answers at `pingUrl`.
+ *
+ * Lifted out of `openDashboard`'s closure so it is reachable from a test: the
+ * dashboard URL is a module constant with no injection seam, so the identity
+ * check inside had no way to be exercised otherwise.
+ *
+ * WHY the identity check — a bare `r.ok` counted any 2xx, so a stranger holding
+ * the dashboard port made `/siltpoke-dashboard` print that URL and open the
+ * browser at somebody else's app. Audit defect `[5b]`, §26.3.
+ */
+export async function siltpokedAnswersAt(
+  pingUrl: string,
+  timeoutMs: number,
+): Promise<boolean> {
+  try {
+    const r = await fetch(pingUrl, { signal: AbortSignal.timeout(timeoutMs) });
+    return r.ok && isSiltpokedPing(await r.json());
+  } catch {
+    return false;
+  }
+}
+
 export async function openDashboard(opts: OpenDashboardOptions = {}): Promise<void> {
   const homeBase = opts.homeBase ?? siltpokeRoot(process.env);
   const out = opts.out ?? ((s: string) => process.stdout.write(s));
@@ -341,16 +365,8 @@ export async function openDashboard(opts: OpenDashboardOptions = {}): Promise<vo
     "start",
   ];
 
-  async function daemonAlive(timeoutMs: number): Promise<boolean> {
-    try {
-      const r = await fetch(`${DASHBOARD_URL}api/ping`, {
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      return r.ok;
-    } catch {
-      return false;
-    }
-  }
+  const daemonAlive = (timeoutMs: number): Promise<boolean> =>
+    siltpokedAnswersAt(`${DASHBOARD_URL}api/ping`, timeoutMs);
 
   const pidPath = join(homeBase, "siltpoked.pid");
   const alive = existsSync(pidPath) ? await daemonAlive(250) : false;

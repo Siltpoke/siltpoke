@@ -7,8 +7,8 @@
  * `MemoryFunnel` measures four stages: a rule is in the store → survives the
  * scope filter → is selected → its bytes reach the prompt. It stops there. What
  * the OUTPUT did with it has never been observed anywhere, which is why the
- * moat claim ("memory lifts catch rate 0.3 → 0.9") cannot be checked in
- * production at all.
+ * claimed offline lift — a result bounded by that experiment's setup, not a
+ * measured production effect — cannot be checked in production at all.
  *
  * ⚠️ WHAT THIS MEASURES, STATED BEFORE ANYTHING ELSE. On 2026-08-03 this repo
  * misread three separate fields in one day — `duration_ms` (a whole-hook wall
@@ -82,7 +82,7 @@ function escapeRegExp(s: string): string {
 /**
  * Token-bounded containment. A plain `includes` would score `type` inside
  * `TypeScript` — the precise hole an independent review found in the recall
- * grader on 2026-08-03 (see `docs/lessons.md` L4). Boundaries are imposed only
+ * grader on 2026-08-03. Boundaries are imposed only
  * on edges that are themselves word characters, so `foo-bar` and `x.y` still
  * match.
  */

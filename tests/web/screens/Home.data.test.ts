@@ -192,7 +192,11 @@ describe("getHomeData", () => {
     );
   });
 
-  test("vitalsValues.hunger is 'hungry' when today has no feed", async () => {
+  // Audit defect [3]: this asserted "hungry when today has no feed", pinning a
+  // stand-in the data model could not actually support. hunger is now the one
+  // source, so the fixture feeds the pet AND leaves it at the threshold — if
+  // the feed action still counted, this would read "fed".
+  test("vitalsValues.hunger is 'hungry' at the threshold, even after a feed action", async () => {
     writeHomeFixtures(tmp, {
       progression: {
         schemaVersion: 1,
@@ -203,8 +207,11 @@ describe("getHomeData", () => {
         unlocked_titles: ["Hatchling"],
         pet_log: [],
         daily_actions: [
-          { day: "2026-05-18", feed: 0, play: 1, pet: 0, tease: 0 },
+          // Deliberately fed today: under the discarded stand-in that alone
+          // decided the answer. It must not move the verdict any more.
+          { day: "2026-05-18", feed: 2, play: 1, pet: 0, tease: 0 },
         ],
+        stats: { hp: 10, hunger: 4, energy: 5, mood: 5, bond: 5 },
       },
     });
     const data = await getHomeData({ basePath: tmp, now: NOW });
@@ -221,14 +228,31 @@ describe("getHomeData", () => {
     }
   });
 
-  test("topbarBadges.wellFed is true when today has feed > 0", async () => {
-    // Fixture has feed:1 on 2026-05-18
-    writeHomeFixtures(tmp, {});
+  test("topbarBadges.wellFed is true above the threshold, with no feed action today", async () => {
+    // The mirror of the test below. It states hunger explicitly rather than
+    // leaning on the 5 default — not because the old version passed by fluke
+    // (it did not: the deleted helper read daily_actions only, and the default
+    // fixture really does carry feed:1 for NOW's day, so that test passed for
+    // exactly the reason its name gave), but because hunger is the input that
+    // decides this now, and a test should state the input it is about.
+    writeHomeFixtures(tmp, {
+      progression: {
+        schemaVersion: 1,
+        level: 1,
+        xp: 0,
+        xp_to_next_level: 100,
+        unlocked_poses: ["base"],
+        unlocked_titles: ["Hatchling"],
+        pet_log: [],
+        daily_actions: [{ day: "2026-05-18", feed: 0, play: 1, pet: 0, tease: 0 }],
+        stats: { hp: 10, hunger: 9, energy: 5, mood: 5, bond: 5 },
+      },
+    });
     const data = await getHomeData({ basePath: tmp, now: NOW });
     expect(data.topbarBadges.wellFed).toBe(true);
   });
 
-  test("topbarBadges.wellFed is false when today has no feed", async () => {
+  test("topbarBadges.wellFed is false at the threshold, even after a feed action", async () => {
     writeHomeFixtures(tmp, {
       progression: {
         schemaVersion: 1,
@@ -239,8 +263,11 @@ describe("getHomeData", () => {
         unlocked_titles: ["Hatchling"],
         pet_log: [],
         daily_actions: [
-          { day: "2026-05-18", feed: 0, play: 1, pet: 0, tease: 0 },
+          // Deliberately fed today: under the discarded stand-in that alone
+          // decided the answer. It must not move the verdict any more.
+          { day: "2026-05-18", feed: 2, play: 1, pet: 0, tease: 0 },
         ],
+        stats: { hp: 10, hunger: 4, energy: 5, mood: 5, bond: 5 },
       },
     });
     const data = await getHomeData({ basePath: tmp, now: NOW });

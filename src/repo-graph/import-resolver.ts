@@ -184,7 +184,7 @@ function aliasRuleHits(
  * Rules of the source file's NEAREST enclosing config (longest scopeDir) whose
  * prefix matches `rawTarget`, sorted most-specific prefix first.
  */
-function matchingAliasRules(
+export function matchingAliasRules(
   sourceFilePath: string,
   rawTarget: string,
   aliases: AnchorMap["tsAliases"],

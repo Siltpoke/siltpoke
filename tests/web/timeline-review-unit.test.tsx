@@ -14,7 +14,7 @@
  * could reach the control anywhere, while the plan, the close report, and
  * `review-unit-config.ts`'s own doc comment all said "the dashboard writes
  * reviewUnit". The tests could not catch it: they asserted an HTML string,
- * not reachability (memory `signal-decoupled-from-reality`).
+ * not reachability.
  *
  * These assertions are therefore pinned to the LIVE screen — the one
  * `src/web/routes/timeline.tsx` serves at a path that is in the nav — and the
@@ -24,6 +24,7 @@
 import { describe, expect, test } from "bun:test";
 import type { CriticTelemetry } from "../../src/state/api";
 import { TimelineScreen } from "../../src/web/screens/TimelineScreen";
+import { ReviewUnitRow } from "../../src/web/screens/timeline/review-unit-row";
 // From the decision module, NOT from the island: the island registers on
 // `document` at import time and this is not a DOM test. Same list either way —
 // that is the point of moving it there.
@@ -62,8 +63,15 @@ const TELEMETRY: CriticTelemetry = {
   totalInRange: null,
 } as unknown as CriticTelemetry;
 
+/**
+ * The control's own markup. Rendered DIRECTLY, not through TimelineScreen,
+ * since 2026-09-21: the screen no longer mounts it (see the absence test at
+ * the bottom of this file). The component is hidden, not deleted, so its
+ * markup contract is still asserted here — a hidden component that quietly
+ * rots is the thing that makes "unhide it" expensive later.
+ */
 function render(reviewUnit: "commit" | "pr"): string {
-  return String(TimelineScreen({ telemetry: TELEMETRY, secret: "s3cr3t", reviewUnit }));
+  return String(ReviewUnitRow({ secret: "s3cr3t", reviewUnit }));
 }
 
 describe("Timeline screen — review unit", () => {
@@ -138,5 +146,30 @@ describe("Timeline screen — review unit", () => {
     expect(island).not.toBeNull();
     expect(island?.[0]).toContain('data-secret="s3cr3t"');
     expect(island?.[0]).toContain('data-review-unit="commit"');
+  });
+});
+
+describe("Timeline screen — the control is hidden", () => {
+  // Hidden 2026-09-21 on the maintainer's call. This file's own header explains that
+  // it exists because the control was once unreachable while every test stayed
+  // green. It is unreachable again now — on purpose — so the absence is
+  // asserted rather than left to be rediscovered as a regression.
+  //
+  // Absence, not just presence: a test that only checked the markup above
+  // would pass whether or not the screen mounts it (memory
+  // `assert-absence-not-just-presence`).
+  test("TimelineScreen does not mount the review-unit island", () => {
+    const html = String(
+      TimelineScreen({ telemetry: TELEMETRY, secret: "s3cr3t", reviewUnit: "commit" }),
+    );
+    expect(html).not.toContain('x-data="reviewUnitRow"');
+    expect(html).not.toContain("cfg-review-unit");
+  });
+
+  test("the control itself still renders when mounted directly — hidden, not rotted", () => {
+    // Positive control for the assertion above: proves the `not.toContain` is
+    // looking for a string that the component really does emit, so it cannot
+    // pass by searching for something that never existed.
+    expect(render("commit")).toContain('x-data="reviewUnitRow"');
   });
 });

@@ -21,7 +21,7 @@ import type { DiffSummary } from "../tools/run-diff-summary";
 import { heuristicDiffSummary } from "../tools/run-diff-summary";
 import type { runTools } from "../tools/run-tools";
 import type { BrainContext, CriticSource, TimingTrace, V2ResultFields } from "../types";
-import { buildDiffSummarySection, buildRubricEvidenceSection, writeV2Archive } from "./archive";
+import { buildDiffSummarySection, buildRubricEvidenceSection, rubricEvidenceCitationTokens, writeV2Archive } from "./archive";
 import { autoPromoteSeverity } from "./severity-promotion";
 
 export interface NormalPhaseArgs {
@@ -47,7 +47,7 @@ export interface NormalPhaseArgs {
   callerImpact?: CallerImpactDeps;
   /**
    * Injected reverse-deps seams (ripgrep + resolver + listFiles) — critic
-   * disk-awareness slice ①. Defaults applied inside `buildReverseDepsSection`.
+   * disk-awareness. Defaults applied inside `buildReverseDepsSection`.
    */
   reverseDeps?: ImportersDeps;
   /** Resolved reviewer-provider meta (track #7 T3) — span truth + ledger passthrough. */
@@ -112,13 +112,19 @@ export async function runNormalPhase(args: NormalPhaseArgs): Promise<NormalPhase
     callerImpact, reverseDeps, providerMeta, reviewModel,
   } = args;
 
-  const { section, citationSection, evidenceCorpus, diffCoverage } =
+  const { section, citationSection, evidenceCorpus, diffCoverage, budgetCutFiles } =
     buildToolOutputSection(toolResults);
 
   // Inject rubric evidence section into the system prompt if triggers exist.
-  const rubricSection = v2.pipelineRan && v2.rubricTriggers && v2.rubricTriggers.length > 0
-    ? buildRubricEvidenceSection(v2.rubricTriggers)
+  // The section and its citation tokens come from ONE trigger list so the guard
+  // corpus can never certify a line the Brain was not shown.
+  const rubricTriggers = v2.pipelineRan && v2.rubricTriggers ? v2.rubricTriggers : [];
+  const rubricSection = rubricTriggers.length > 0
+    ? buildRubricEvidenceSection(rubricTriggers)
     : "";
+  const rubricCitationTokens = rubricSection === ""
+    ? []
+    : rubricEvidenceCitationTokens(rubricTriggers);
 
   // Await diff_summary (Haiku pre-pass) BEFORE Brain so that
   // risks/intent/key_changes flow into the critique prompt. Previously the
@@ -152,7 +158,7 @@ export async function runNormalPhase(args: NormalPhaseArgs): Promise<NormalPhase
     { diffBody, changedFiles, cwd: brainContext.cwd },
     callerImpact,
   );
-  // Sibling 1-hop block (critic disk-awareness slice ①): "files that import
+  // Sibling 1-hop block (critic disk-awareness): "files that import
   // what you changed", the reverse of caller-impact's "callers of what you
   // changed". Fail-soft inside (never throws) → empty section/tokens on any
   // failure, same posture as caller-impact above.
@@ -177,6 +183,12 @@ export async function runNormalPhase(args: NormalPhaseArgs): Promise<NormalPhase
   }
   if (reverseDepsResult.tokens.length > 0) {
     guardCorpusParts.push(reverseDepsResult.tokens.join("\n"));
+  }
+  // Rubric source lines. Added for the same reason as the two blocks above: the
+  // Brain is shown this text and must be able to cite it. Rule messages are NOT
+  // here — see rubricEvidenceCitationTokens.
+  if (rubricCitationTokens.length > 0) {
+    guardCorpusParts.push(rubricCitationTokens.join("\n"));
   }
   const guardCorpus = guardCorpusParts.join("\n");
 
@@ -316,7 +328,53 @@ export async function runNormalPhase(args: NormalPhaseArgs): Promise<NormalPhase
   // everything else the reviewer said is written and shown, carrying a label
   // that says which parts were checked.
   const changedFilesSet = new Set(changedFiles);
-  const verdict = guardCritique(critique, "NORMAL", guardCorpus, changedFilesSet);
+
+  // guard.corpus span — the guard's INPUTS, which nothing was recording.
+  //
+  // WHY THIS EXISTS. `guardCritique` judges by three things: the model's output,
+  // the citation corpus, and the changed-file set. Only the first was ever
+  // written to a trace — the corpus reaches `brain.find` as the system prompt
+  // and is redacted there, and the changed set survives on the root span as a
+  // COUNT. So a stored review could be replayed but never re-judged, and the
+  // non-regression check this slice needs — run the old guard and the new guard
+  // over the same inputs, compare what each one keeps — had nothing to run
+  // against.
+  //
+  // It is deliberately forward-only. Nothing here reconstructs the corpus for
+  // reviews already on disk, and a reconstruction judged against an
+  // absolute-zero bar would fail or pass on its own fidelity rather than on the
+  // guard's. So this slice installs the pipe and claims no historical evidence;
+  // the first comparison becomes possible once reviews accumulate behind it.
+  if (tracing && tracer && rootSpan) {
+    const corpusSpan = tracer.startSpan({ name: "siltpoke.guard.corpus", kind: "INTERNAL", parent: rootSpan });
+    tracer.setKind(corpusSpan, "parser");
+    tracer.setInput(corpusSpan, { changed_files: [...changedFilesSet].sort() });
+    tracer.setOutput(corpusSpan, { citation_corpus: redactCwdPaths(guardCorpus) });
+    tracer.endSpan(corpusSpan, { status: "OK" });
+    await writeSpan(corpusSpan);
+  }
+  // budgetCutFiles lets the guard say WHY a citation could not be checked:
+  // "this change was too big to read in full" reads differently from "siltpoke
+  // could not read these files", and only one of them is the user's to act on.
+  // Whether a line number derived from these hunks describes the file the user
+  // would actually open. Read off the tool result rather than re-derived here:
+  // only the tool layer knows which of the three git invocations ran. ABSENT IS
+  // FALSE, which is the fail-closed answer for every path that could not work
+  // it out.
+  const gitDiffResult = toolResults["git-diff"];
+  const rangesAnchored =
+    gitDiffResult !== undefined && gitDiffResult.tool === "git-diff"
+      ? gitDiffResult.rangesAnchored === true
+      : false;
+
+  const verdict = guardCritique(
+    critique,
+    "NORMAL",
+    guardCorpus,
+    changedFilesSet,
+    budgetCutFiles,
+    rangesAnchored,
+  );
 
   // Only the confirmed items may travel on as evidence. Assigning back onto
   // `critique` (rather than passing a filtered copy alongside) is deliberate:
@@ -334,6 +392,12 @@ export async function runNormalPhase(args: NormalPhaseArgs): Promise<NormalPhase
   // processing. It is NOT correct for the trace to show it without saying it
   // happened, so the verdict goes on the root span below.
   critique.evidence = verdict.verified;
+  // Same rule, same sentence: only what checked out travels on. A finding whose
+  // quote could not be found is removed here rather than rendered with a
+  // caveat, because AC15 makes the quote the thing that earns a claim the name
+  // "finding" — what is left without one belongs in the prose, which is
+  // untouched.
+  critique.findings = verdict.verifiedFindings;
 
   // Put the verdict where the trace reader is already looking. Counts and the
   // label only — the reasons carry a 60-char snippet preview and belong in the
@@ -342,6 +406,12 @@ export async function runNormalPhase(args: NormalPhaseArgs): Promise<NormalPhase
     tracer.setAttribute(rootSpan, "siltpoke.evidence_label", verdict.label);
     tracer.setAttribute(rootSpan, "siltpoke.evidence_cited", verdict.verified.length + verdict.unverified.length);
     tracer.setAttribute(rootSpan, "siltpoke.evidence_dropped", verdict.unverified.length);
+    // Whether the reviewer's own line numbers are any good. Never measured
+    // before, so a trace reader is looking at a baseline, not at a regression.
+    tracer.setAttribute(rootSpan, "siltpoke.range_agree", verdict.rangeAgreement.agree);
+    tracer.setAttribute(rootSpan, "siltpoke.range_disagree", verdict.rangeAgreement.disagree);
+    tracer.setAttribute(rootSpan, "siltpoke.range_model_silent", verdict.rangeAgreement.model_silent);
+    tracer.setAttribute(rootSpan, "siltpoke.range_code_silent", verdict.rangeAgreement.code_silent);
   }
 
   if (verdict.unverified.length > 0) {

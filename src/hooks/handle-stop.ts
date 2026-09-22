@@ -324,7 +324,7 @@ function captureBranch(
 }
 
 /**
- * Slice ④ task 3 — map the generic `event.siltpoke_host` (stamped by the
+ * Task 3 — map the generic `event.siltpoke_host` (stamped by the
  * per-host Stop normalizers — agy-stop.ts / codex-stop.ts; left undefined by
  * the native claude-code payload, which never sets it) onto the narrower
  * WhyHost union `maybeRecordWhy` expects. handleStopHook is the single
@@ -1702,7 +1702,7 @@ async function runToolAugmentedPath(input: ToolAugmentedPathInput): Promise<void
     // abstaining `no_baseline_sha` forever. See session-baseline.ts.
     const sessionHeadSha = resolveOrCaptureSessionHeadSha(sessionCwd, sessionId);
 
-    // Slice ④ task 3 — record commit→session forward index (WHY ← transcript)
+    // Task 3 — record commit→session forward index (WHY ← transcript)
     // at Stop. Guarded on event.cwd being present: session_id/transcript_path
     // are already guaranteed non-null here by shouldFire's gate at the top of
     // handleStopHook (checkFireGate), but event.cwd is optional (see

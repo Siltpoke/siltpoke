@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import { mountRepoGraphWebRoutes, type RepoGraphWebRouteDeps } from "../../../src/web/routes/repo-graph";
 import type { GitProbe } from "../../../src/daemon/build-state";
+import { emptyCounters } from "../../../src/repo-graph/types";
 
 let cwd: string;
 let home: string;
@@ -82,7 +83,18 @@ describe("GET /repo-graph (SSR shell)", () => {
   test("?repo=<hash> not in the indexed registry → stale banner (2026-07-16: replaces silent keep-hash)", async () => {
     const { status, html } = await getRepoGraph("?repo=abcdef012345");
     expect(status).not.toBe(302);
-    expect(html).toContain("no longer exists");
+    expect(html).toContain("No code map is indexed under this link");
+  });
+
+  test("stale banner does not claim the project is gone, and links back to the Code Map", async () => {
+    // A hash with nothing under it can mean "never indexed" just as well as
+    // "removed" — the page cannot tell which, so it must not assert either.
+    // The old copy ("This project no longer exists") was shown for a project
+    // that had been indexed five seconds earlier (2026-09-13), and offered no
+    // way forward but a menu that was not on the page.
+    const { html } = await getRepoGraph("?repo=abcdef012345");
+    expect(html).not.toContain("no longer exists");
+    expect(html).toContain('href="/repo-graph"');
   });
 
   // ── picker-default dead-hash fallback ──
@@ -90,10 +102,13 @@ describe("GET /repo-graph (SSR shell)", () => {
   // tolerant reader still yields last_indexed_ts (so enumeration + ordering
   // work), while the route's strict readMeta returns null (empty projection,
   // no graph.json needed). These tests assert REPO RESOLUTION, not rendering.
-  function seedIndexedRepo(hash: string, ts: string, root = `/projects/${hash}`): void {
+  function seedIndexedRepo(hash: string, ts: string, root = `/projects/${hash}`, repoRoot?: string): void {
     const dir = join(home, "repo-memory", hash);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "meta.json"), JSON.stringify({ project_root: root, last_indexed_ts: ts }));
+    writeFileSync(
+      join(dir, "meta.json"),
+      JSON.stringify({ project_root: root, last_indexed_ts: ts, ...(repoRoot ? { repo_root: repoRoot } : {}) }),
+    );
   }
 
   /** Extract the picker button's SSR label (`<b id="rg-repo-name">…</b>`). */
@@ -118,6 +133,12 @@ describe("GET /repo-graph (SSR shell)", () => {
     expect(pickerLabel(html)).toBe("alpha-repo");
   });
 
+  test("a sub-folder index → picker label is `repo / sub`", async () => {
+    seedIndexedRepo("b2b2b2b2b2b2", "2026-09-14T00:00:00.000Z", "/projects/kata/TypeScript", "/projects/kata");
+    const { html } = await getRepoGraph("?repo=b2b2b2b2b2b2");
+    expect(pickerLabel(html)).toBe("kata / TypeScript");
+  });
+
   test("no ?repo= + unindexed cwd → falls back to the picker-order first repo (most recent), not the dead cwd hash", async () => {
     seedIndexedRepo("b0b0b0b0b0b0", "2026-06-01T00:00:00.000Z"); // older
     seedIndexedRepo("a1a1a1a1a1a1", "2026-06-09T00:00:00.000Z"); // newest → list top
@@ -130,7 +151,7 @@ describe("GET /repo-graph (SSR shell)", () => {
     seedIndexedRepo("a1a1a1a1a1a1", "2026-06-09T00:00:00.000Z");
     const res = await makeApp().fetch(new Request("http://localhost/repo-graph?repo=deaddeaddead"));
     expect(res.status).not.toBe(302);
-    expect(await res.text()).toContain("no longer exists");
+    expect(await res.text()).toContain("No code map is indexed under this link");
   });
 
   test("toolbar renders all interactive controls (picker / search / help; no hide-links slider)", async () => {
@@ -226,5 +247,38 @@ describe("GET /repo-graph — daemon-staleness strip", () => {
     expect(html).toContain('id="rg-daemon-stale"');
     // the daemon-stale strip carries no dismiss button id.
     expect(html).not.toContain("rg-daemon-stale-dismiss");
+  });
+});
+
+describe("Code Map stats line — imports outside the root", () => {
+  function seedMeta(hash: string, extra: Record<string, unknown>): void {
+    const dir = join(home, "repo-memory", hash);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "meta.json"), JSON.stringify({
+      schemaVersion: 1, project_root: `/projects/kata/TypeScript`, proj_hash: hash,
+      last_indexed_ts: "2026-09-14T00:00:00.000Z", build_duration_ms: 0, counters: emptyCounters(), ...extra,
+    }));
+  }
+
+  test("count > 0 on a sub-folder index → the suffix says 'this folder' and carries the examples as a title", async () => {
+    seedMeta("e5e5e5e5e5e5", { repo_root: "/projects/kata", imports_outside_root: { count: 12, examples: ["app/a.ts → ../../x"] } });
+    const { html } = await getRepoGraph("?repo=e5e5e5e5e5e5");
+    expect(html).toContain("<b>12</b> imports point outside this folder (not shown)");
+    expect(html).toContain('title="app/a.ts → ../../x"');
+  });
+
+  test("count > 0 on a whole-repo index → 'this repo'", async () => {
+    seedMeta("f6f6f6f6f6f6", { imports_outside_root: { count: 2, examples: [] } });
+    expect((await getRepoGraph("?repo=f6f6f6f6f6f6")).html).toContain("imports point outside this repo (not shown)");
+  });
+
+  test("count 0 → nothing", async () => {
+    seedMeta("a7a7a7a7a7a7", { imports_outside_root: { count: 0, examples: [] } });
+    expect((await getRepoGraph("?repo=a7a7a7a7a7a7")).html).not.toContain("imports point outside");
+  });
+
+  test("an index from before the field → nothing, never a '0'", async () => {
+    seedMeta("b8b8b8b8b8b8", {});
+    expect((await getRepoGraph("?repo=b8b8b8b8b8b8")).html).not.toContain("imports point outside");
   });
 });

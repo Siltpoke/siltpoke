@@ -185,7 +185,7 @@ export async function runAgyStopHook(
     return { normalized };
   }
 
-  // Slice ④ task 3 — best-effort, NON-blocking WHY-index recording. This
+  // Task 3 — best-effort, NON-blocking WHY-index recording. This
   // file's whole reason to exist is returning control to agy FAST (see file
   // header: agy's Stop hook is SYNCHRONOUS and blocks the agent loop), so
   // maybeRecordWhy (fs + a git shell-out) must never be awaited here. The

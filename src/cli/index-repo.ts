@@ -13,7 +13,10 @@
  *   bun src/cli/index-repo.ts --force    # full rebuild (ignores cache)
  *   bun src/cli/index-repo.ts --json     # structured output
  *   bun src/cli/index-repo.ts --progress # emit NDJSON progress lines (daemon)
+ *   bun src/cli/index-repo.ts --root <dir>   # index exactly this directory (no walk-up)
  */
+import { realpathSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import { runIndexBuild, type IndexBuildResult } from "../repo-graph/builder";
 import { ensureProject } from "../memory/project";
 import { siltpokeRoot } from "../installer/paths";
@@ -23,13 +26,21 @@ export interface CliOptions {
   json: boolean;
   /** Stream `{"type":"progress","done","total"}` NDJSON to stdout. */
   progress: boolean;
+  /** `--root <dir>`: index exactly this directory (no walk-up). null = resolve from cwd. */
+  root: string | null;
 }
 
 export function parseArgs(argv: readonly string[]): CliOptions {
+  const at = argv.indexOf("--root");
+  const value = at >= 0 ? argv[at + 1] : undefined;
   return {
     force: argv.includes("--force"),
     json: argv.includes("--json"),
     progress: argv.includes("--progress"),
+    // An empty-string value (`--root ""`) is treated as no value — same as
+    // omitting --root's argument — so it hits the "needs a directory" guard
+    // below instead of silently resolving to cwd.
+    root: value !== undefined && value.length > 0 && !value.startsWith("--") ? value : null,
   };
 }
 
@@ -74,8 +85,31 @@ export function formatJson(result: IndexBuildResult): string {
 
 if (import.meta.main) {
   const opts = parseArgs(process.argv.slice(2));
+  if (process.argv.includes("--root") && opts.root === null) {
+    process.stderr.write("siltpoke-index: --root needs a directory\n");
+    process.exit(2);
+  }
+  // The `IndexBuildOptions.root` contract is "realpath-canonical, absolute"
+  // (a relative or symlinked value would hash differently than the same
+  // folder reached another way, and a typo'd path would silently resolve
+  // via resolveProjectRoot's walk-up to whatever ancestor DOES exist —
+  // final-review issue 2). Resolve relative to cwd, then canonicalize and
+  // require a real directory; refuse otherwise instead of building on a
+  // path that doesn't mean what the caller typed.
+  let resolvedRoot: string | null = null;
+  if (opts.root !== null) {
+    try {
+      const abs = resolve(process.cwd(), opts.root);
+      resolvedRoot = realpathSync(abs);
+      if (!statSync(resolvedRoot).isDirectory()) throw new Error("not a directory");
+    } catch {
+      process.stderr.write(`siltpoke-index: --root must be an existing directory: ${opts.root}\n`);
+      process.exit(2);
+    }
+  }
   const result = await runIndexBuild({
     cwd: process.cwd(),
+    ...(resolvedRoot !== null ? { root: resolvedRoot } : {}),
     force: opts.force,
     onProgress: opts.progress
       ? (done, total) => process.stdout.write(`${JSON.stringify({ type: "progress", done, total })}\n`)
@@ -86,6 +120,7 @@ if (import.meta.main) {
   // already succeeded; a failed register (fs error) must never fail the index run,
   // and is self-healing (next index/chat writes it). Create-only inside ensureProject
   // so a re-index never clobbers a fact-bearing store.
+  // ensureProject walks up on purpose: a sub-folder index still registers its repo (decision [3], spec 2026-09-14).
   try {
     await ensureProject(siltpokeRoot(), result.project_root);
   } catch (err) {

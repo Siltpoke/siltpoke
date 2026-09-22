@@ -9,7 +9,7 @@
  *
  * The secret is read from the row's OWN `data-secret` container (closest()
  * includes self) — FloatingChat's data-secret is a sibling, not an ancestor,
- * so a bare closest() would miss (memory `dashboard-write-island-secret-closest`).
+ * so a bare closest() would miss.
  * Initial builder/reviewer/model come from data-* attributes (server-escaped).
  *
  * Registration: document.addEventListener("alpine:init", ...) before
@@ -21,10 +21,12 @@ export interface BuilderRowData {
   builder: string;
   reviewer: string;
   model: string;
+  modelCapable: string[];
   saving: boolean;
   saved: boolean;
   error: string;
   init(): void;
+  acceptsModel(): boolean;
   save(): Promise<void>;
 }
 
@@ -33,6 +35,10 @@ export function makeBuilderRow(): BuilderRowData {
     builder: "",
     reviewer: "",
     model: "",
+    /** Families whose CLI really takes a model, served by the page from the
+     * registry — not a literal claude check, which was wrong for agy / qoder /
+     * codebuddy (spec brain-select-four-gaps §3.1). */
+    modelCapable: [],
     saving: false,
     saved: false,
     error: "",
@@ -42,6 +48,14 @@ export function makeBuilderRow(): BuilderRowData {
       this.builder = el?.dataset.builder ?? "";
       this.reviewer = el?.dataset.reviewer ?? "";
       this.model = (el?.dataset.model ?? "").trim();
+      this.modelCapable = (el?.dataset.modelCapable ?? "")
+        .split(",")
+        .map((f) => f.trim())
+        .filter((f) => f.length > 0);
+    },
+
+    acceptsModel(): boolean {
+      return this.modelCapable.includes(this.reviewer);
     },
 
     async save(): Promise<void> {
@@ -51,8 +65,9 @@ export function makeBuilderRow(): BuilderRowData {
       this.error = "";
       const el = (this as unknown as { $el?: HTMLElement }).$el;
       const secret = el?.closest("[data-secret]")?.getAttribute("data-secret") ?? "";
-      // Model is only meaningful (and accepted by the route) when reviewer=claude.
-      const includeModel = this.reviewer === "claude" && this.model.trim().length > 0;
+      // A model is only sent to a reviewer whose argv can carry it; the server
+      // refuses one otherwise, so this filter is a courtesy, not the guard.
+      const includeModel = this.acceptsModel() && this.model.trim().length > 0;
       try {
         const res = await fetch(`/api/brain/review-by-builder/${encodeURIComponent(this.builder)}`, {
           method: "POST",

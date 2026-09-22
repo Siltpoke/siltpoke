@@ -236,6 +236,7 @@ export const godFunctionRule: RubricRule = {
           line: startLine + 1,
           end_line: endLine + 1,
           snippet: snippetLine,
+          snippet_is_source: true,
           message: `Function '${name}' exceeds threshold: ${reasons.join(", ")}. Consider splitting into smaller, single-purpose functions.`,
           suggested_fix:
             "Extract logical sub-tasks into well-named helper functions. Aim for ≤50 LOC (ESLint default) and cognitive complexity ≤15 (SonarQube default).",

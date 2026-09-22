@@ -20,8 +20,8 @@ const LEGEND = [
  * Right-rail working-memory card + legend (记忆之书 mockup).
  *
  * Display-only, SSR-rendered OUTSIDE the memoryBook Alpine island — no edit /
- * forget controls, no buttons. The  list is fed by real recentChats
- * (sparse OK → honest empty state). There is no real source for an 
+ * forget controls, no buttons. The "跨聊天回忆" list is fed by real recentChats
+ * (sparse OK → honest empty state). There is no real source for an "此刻在想"
  * current-thought, so that sub-block is intentionally omitted rather than faked.
  */
 export function WorkingMemoryPanel({ recentChats }: WorkingMemoryPanelProps) {

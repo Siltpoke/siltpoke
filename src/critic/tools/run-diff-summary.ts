@@ -6,7 +6,7 @@
  * the raw (often truncated) diff body.
  *
  * Why: Brain's prompt was being stuffed with `git log -p` output that
- * the model couldn't fully consume, leading to 
+ * the model couldn't fully consume, leading to "缺差异. 审不了"
  * comments even when concrete changes existed. A Haiku pass turns the
  * diff into a digest Brain can reason about: intent / key changes /
  * risks / per-file purpose.
@@ -53,8 +53,8 @@ export const diffSummarySchema = z.object({
    * version of this fix found three such readers in two files, including one that
    * rendered `${risks.length} risks flagged` into the pet bubble, so a truncated
    * summary told the user "6 risks" when 5 were real and the 6th was the marker.
-   * That is the exact "signal decoupled from reality" shape (`docs/lessons.md` L3)
-   * this truncation exists to avoid, so the honesty signal must not be able to
+   * That is the exact "signal decoupled from reality" shape this truncation
+   * exists to avoid, so the honesty signal must not be able to
    * masquerade as content.
    *
    * Same conclusion, reached independently from prior art:
@@ -263,8 +263,8 @@ const ARRAY_CAPS = {
  *    caught, which is this guard's firing evidence.
  *
  * **Exported solely so that branch has firing evidence.** A guard no test can
- * reach is this repo's most-repeated defect (`docs/lessons.md` L3, "dead" family:
- * written, configured, never actually invoked), and nothing in this module can
+ * reach is this repo's most-repeated defect (the "dead" family: written,
+ * configured, never actually invoked), and nothing in this module can
  * reach it — `ARRAY_CAPS` holds 8/6/40. Not part of the module's real API.
  */
 export function truncArray<T>(arr: T[], cap: number): { kept: T[]; dropped: number } {

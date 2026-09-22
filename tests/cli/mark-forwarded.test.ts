@@ -45,13 +45,16 @@ test("flips status pending -> forwarded for archive id", async () => {
   expect(readFileSync(p, "utf8")).toContain("status: forwarded");
 });
 
-test("returns 'not found' for unknown id without crashing", async () => {
+// On an empty store this now reports the empty store rather than a lookup
+// failure — audit defect `[5c]`. The non-empty wrong-id case is covered in
+// tests/cli/critique-empty-state.test.ts.
+test("an unknown id on an empty store reports the empty store, without crashing", async () => {
   const out = await markForwarded({
     basePath: tmp,
     idOrLatest: "c-zzzz",
     preferenceLogPath: prefLog,
   });
-  expect(out).toContain("not found");
+  expect(out).toMatch(/no reviews yet/i);
 });
 
 test("idempotent: marking already-forwarded stays forwarded", async () => {

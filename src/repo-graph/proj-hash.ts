@@ -29,17 +29,29 @@ export interface RepoGraphLocation {
 }
 
 /**
- * Resolve where to store the repo-graph for the given cwd. Does NOT
- * create the directory — caller is responsible for `mkdir({recursive})`
- * before writing.
+ * The storage location for an index rooted at exactly `projectRoot` — no
+ * walk-up. Used when the root is already known: an explicit `--root`, or a
+ * root read back from a stored index's meta. Re-deriving from a stored root via
+ * `resolveRepoGraphLocation` would walk a sub-folder up to its repo and land on
+ * a different index (spec 2026-09-14 §3.2).
+ */
+export function repoGraphLocationForRoot(
+  projectRoot: string,
+  opts: { home?: string } = {},
+): RepoGraphLocation {
+  const proj_hash = computeProjHash(projectRoot);
+  const home = opts.home ?? siltpokeRoot();
+  return { project_root: projectRoot, proj_hash, storage_dir: join(home, "repo-memory", proj_hash) };
+}
+
+/**
+ * Resolve where to store the repo-graph for the given cwd (marker > git root >
+ * cwd). Does NOT create the directory — caller is responsible for
+ * `mkdir({recursive})` before writing.
  */
 export function resolveRepoGraphLocation(
   cwd: string,
   opts: { home?: string } = {},
 ): RepoGraphLocation {
-  const { project_root } = resolveProjectRoot(cwd);
-  const proj_hash = computeProjHash(project_root);
-  const home = opts.home ?? siltpokeRoot();
-  const storage_dir = join(home, "repo-memory", proj_hash);
-  return { project_root, proj_hash, storage_dir };
+  return repoGraphLocationForRoot(resolveProjectRoot(cwd).project_root, opts);
 }

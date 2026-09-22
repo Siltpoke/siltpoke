@@ -2,7 +2,7 @@ import { afterEach, describe, test, expect } from "bun:test";
 import { __setTestGapDeps, testGapRule } from "../../../../src/critic/rubric/tier1/test-gap";
 
 // This suite pins the pre-existing in-diff gate (threshold + in-diff matching test)
-// unchanged by the Slice ② disk upgrade. It injects `TestGapDeps` so the assertions
+// unchanged by the disk upgrade. It injects `TestGapDeps` so the assertions
 // stay isolated from the real filesystem/git — disk-level behavior (new-vs-modified,
 // downgrade, fail-open) is covered end-to-end in test-gap-disk.test.ts.
 afterEach(() => __setTestGapDeps({}));

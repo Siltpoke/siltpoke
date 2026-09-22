@@ -303,7 +303,7 @@ export function Memory({
             <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
               <MemoryByTypeCards />
               {/* "Since you last looked" — current-repo discovery panel
-                  (slice ③, task 6). Only mounted once a repo has actually
+                  (task 6). Only mounted once a repo has actually
                   resolved; the island's own defensive branch handles "" but
                   there's no reason to render the shell for a session with
                   no repo context at all. */}
