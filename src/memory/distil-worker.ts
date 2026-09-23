@@ -13,6 +13,7 @@ import {
   type WriteOutcome,
 } from "./adjudication-log";
 import { acquireLock, releaseLock, LockHeldError } from "../utils/process-lock";
+import type { LockHandle } from "../utils/process-lock";
 import {
   finalizeCase1,
   gcCase1Candidates,
@@ -239,7 +240,7 @@ export async function runDistilWorker(
   deps: SweepDeps & { lockPath?: string } = {},
 ): Promise<{ written: number; expired: number; pending: number } | { skipped: "locked" }> {
   const lockPath = deps.lockPath ?? join(homeBase, "distil-worker.lock");
-  let handle;
+  let handle: LockHandle;
   try {
     handle = acquireLock(lockPath, { version: LOCK_VERSION, heartbeatMs: HEARTBEAT_MS });
   } catch (e) {

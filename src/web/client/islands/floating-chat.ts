@@ -141,7 +141,7 @@ export function renderMarkdown(src: string): string {
     }
 
     // Unordered list item (- / * / + followed by space)
-    const ulMatch = rawLine.match(/^[\-\*\+] (.*)/);
+    const ulMatch = rawLine.match(/^[-*+] (.*)/);
     if (ulMatch) {
       closeOl();
       if (!inUl) { output.push("<ul class=\"fc-md-ul\">"); inUl = true; }
@@ -180,6 +180,7 @@ export function renderMarkdown(src: string): string {
       if (/^<(pre|ul|ol|li|h[2-6])[\s>]/.test(trimmed)) return trimmed;
       // If the para is a raw fenced-block placeholder (not yet spliced), don't wrap —
       // the placeholder will be replaced with a <pre> in step 5.
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: \x00 is the NUL sentinel wrapping fenced-code placeholders (see step 5 splice below) so it must never collide with real message text.
       if (/^\x00BLOCK\d+\x00$/.test(trimmed)) return trimmed;
       // Replace remaining single \n with <br> inside the paragraph.
       return `<p class="fc-md-p">${trimmed.replace(/\n/g, "<br>")}</p>`;
@@ -188,6 +189,7 @@ export function renderMarkdown(src: string): string {
     .join("\n");
 
   // Step 5: Splice fenced blocks back in.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: \x00 is the NUL sentinel that wraps a fenced-block index (set above) so it can be spliced back in without matching real content.
   joined = joined.replace(/\x00BLOCK(\d+)\x00/g, (_m, idx: string) => blocks[parseInt(idx, 10)] ?? "");
 
   return joined;
@@ -225,6 +227,7 @@ function inlineTransforms(s: string): string {
   });
 
   // Splice inline code back in.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: \x00 is the NUL sentinel that wraps an inline-code index (set above) so it can be spliced back in without matching real content.
   r = r.replace(/\x00CODE(\d+)\x00/g, (_m, idx: string) => codes[parseInt(idx, 10)] ?? "");
 
   return r;
@@ -2080,11 +2083,11 @@ export function registerFloatingChat(Alpine: AlpineGlobal): void {
   Alpine.data("floatingChat", () => makeFloatingChatData());
 }
 
-declare const globalThis: { Alpine?: AlpineGlobal };
-if (globalThis.Alpine) {
-  registerFloatingChat(globalThis.Alpine);
+const alpineHost = globalThis as unknown as { Alpine?: AlpineGlobal };
+if (alpineHost.Alpine) {
+  registerFloatingChat(alpineHost.Alpine);
 } else if (typeof document !== "undefined") {
   document.addEventListener("alpine:init", () => {
-    if (globalThis.Alpine) registerFloatingChat(globalThis.Alpine);
+    if (alpineHost.Alpine) registerFloatingChat(alpineHost.Alpine);
   });
 }

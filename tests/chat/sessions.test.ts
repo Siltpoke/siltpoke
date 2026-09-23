@@ -33,7 +33,7 @@ test("upsertChatSession creates a new entry when none exists", async () => {
   const memory = await readMemory(home);
   expect(memory).not.toBeNull();
   expect(memory?.chat_sessions).toHaveLength(1);
-  const s = memory?.chat_sessions[0]!;
+  const s = memory!.chat_sessions[0]!;
   expect(s.id).toBe("s-1");
   expect(s.started_at).toBe("2026-05-16T10:00:00.000Z");
   expect(s.ended_at).toBe("2026-05-16T10:00:00.000Z");
@@ -48,7 +48,8 @@ test("upsertChatSession increments existing entry by delta", async () => {
   expect(second.created).toBe(false);
   expect(second.message_count).toBe(4);
   const memory = await readMemory(home);
-  const s = memory?.chat_sessions.find((x) => x.id === "s-1")!;
+  expect(memory).not.toBeNull();
+  const s = memory!.chat_sessions.find((x) => x.id === "s-1")!;
   expect(s.started_at).toBe("2026-05-16T10:00:00.000Z");
   expect(s.ended_at).toBe("2026-05-16T11:00:00.000Z");
   expect(s.message_count).toBe(4);
@@ -92,7 +93,8 @@ test("upsertChatSession preserves summary + tags on update", async () => {
   await writeMemory(home, memory);
   await upsertChatSession(home, "s-1", new Date("2026-05-16T10:00:00Z"));
   const after = await readMemory(home);
-  const s = after?.chat_sessions[0]!;
+  expect(after).not.toBeNull();
+  const s = after!.chat_sessions[0]!;
   expect(s.summary).toBe("earlier triage");
   expect(s.tags).toEqual(["debug"]);
   expect(s.message_count).toBe(8);

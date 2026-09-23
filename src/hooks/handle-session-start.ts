@@ -20,6 +20,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { removeAgyLegacyHooks } from "../installer/agy-migration";
 import { removeCcForkLegacyHooks } from "../installer/ccfork-migration";
+import { refreshStaleShims } from "../installer/shim";
 import { removeCodexLegacyHooks } from "../installer/codex-integration";
 import {
   codexHooksJsonPath,
@@ -286,6 +287,19 @@ export async function handleSessionStart(input: SessionStartInput): Promise<void
   // the outer .catch is defense in depth so SessionStart can never be broken
   // by this.
   await maybeMigrateLegacyCodexHooks(env).catch(() => {});
+
+  // Defect [25]: bring ~/.siltpoke/bin/ back in step with the code that
+  // generates it. hooks/*.sh ship with the plugin and are replaced by an
+  // upgrade; the two shims are generated text that only setup ever wrote, so
+  // without this an upgraded install keeps running a months-old statusline.
+  //
+  // Raw env.HOME, not siltpokeRoot(env) — that is where the shims live and where
+  // the statusLine command and the autostart unit point (see installer/shim.ts).
+  // Only refreshes files that already exist, and only on a real content
+  // difference, so this is a no-op for anyone who never opted in and for every
+  // session after the first one following an upgrade.
+  const rawHome = env.HOME;
+  if (rawHome) await refreshStaleShims(rawHome).catch(() => {});
 }
 
 // ---------------------------------------------------------------------------

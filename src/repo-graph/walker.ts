@@ -12,6 +12,7 @@
  * repos without loading the full file list into memory upfront.
  */
 import { readdir, stat } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { join, relative, sep } from "node:path";
 import type { SupportedLang } from "../critic/rubric/tier2/ast-loader";
 
@@ -117,7 +118,7 @@ export async function walkProject(
 
   async function recurse(dir: string): Promise<void> {
     if (capped) return; // hit the file cap — unwind without descending further
-    let entries;
+    let entries: Dirent[];
     try {
       entries = await readdir(dir, { withFileTypes: true });
     } catch {

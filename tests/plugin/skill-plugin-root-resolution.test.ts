@@ -34,6 +34,20 @@ const SHELL = existsSync("/bin/dash") ? "/bin/dash" : "sh";
 // machine actually running this test.
 const SCRUBBED_PATH = "/usr/bin:/bin";
 
+/**
+ * A reachable bun in a fixture HOME.
+ *
+ * The prelude resolves bun as well as the plugin root (defect [22]: a skill-run
+ * shell is not a login shell, so a bare `bun` gave 127 — including on `doctor`).
+ * With SCRUBBED_PATH there is no bun on PATH, so without this the prelude would
+ * correctly complain on stderr and the PLUGIN_ROOT arms would fail for an
+ * unrelated reason.
+ */
+function reachableBun(home: string): void {
+  mkdirSync(join(home, ".siltpoke"), { recursive: true });
+  writeFileSync(join(home, ".siltpoke", "bun-path"), `${process.execPath}\n`);
+}
+
 function extractPlugRootSnippet(): string {
   const md = readFileSync(join(REPO, "skills", "siltpoke", "SKILL.md"), "utf8");
   const sectionStart = md.indexOf("## Resolve the plugin root first");
@@ -75,14 +89,12 @@ describe("skills/siltpoke/SKILL.md plugin-root resolution ladder", () => {
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), "siltpoke-skill-root-"));
   });
-  afterEach(() => {
-    rmSync(home, { recursive: true, force: true });
-  });
 
   test("agy-only arm: no codex on PATH, no env var set, resolves via ~/.gemini/config/plugins/siltpoke (positive control)", () => {
     const pluginDir = join(home, ".gemini", "config", "plugins", "siltpoke");
     mkdirSync(join(pluginDir, "dist"), { recursive: true });
     writeFileSync(join(pluginDir, "dist", "siltpoke-cli.js"), "");
+    reachableBun(home);
     const { stdout, stderr, exitCode } = runSnippet({ HOME: home, PATH: SCRUBBED_PATH });
     expect(exitCode).toBe(0);
     expect(stdout).toBe(pluginDir);
@@ -94,6 +106,7 @@ describe("skills/siltpoke/SKILL.md plugin-root resolution ladder", () => {
     try {
       mkdirSync(join(root, "dist"), { recursive: true });
       writeFileSync(join(root, "dist", "siltpoke-cli.js"), "");
+      reachableBun(home);
       const { stdout, stderr, exitCode } = runSnippet({
         HOME: home,
         PATH: SCRUBBED_PATH,

@@ -16,9 +16,9 @@ var __export = (target, all) => {
 
 // src/hooks/handle-session-start.ts
 import { spawnSync } from "child_process";
-import { existsSync as existsSync3, mkdirSync as mkdirSync3, writeFileSync as writeFileSync2 } from "fs";
-import { mkdir as mkdir4, writeFile as writeFile3 } from "fs/promises";
-import { join as join8 } from "path";
+import { existsSync as existsSync4, mkdirSync as mkdirSync3, writeFileSync as writeFileSync2 } from "fs";
+import { mkdir as mkdir5, writeFile as writeFile4 } from "fs/promises";
+import { join as join9 } from "path";
 
 // src/installer/agy-migration.ts
 import { readFile } from "fs/promises";
@@ -114,14 +114,109 @@ async function removeCcForkLegacyHooks(settingsPath) {
   } catch {}
 }
 
+// src/installer/shim.ts
+import { existsSync, readFileSync, statSync } from "fs";
+import { chmod, mkdir, rename, rm, writeFile } from "fs/promises";
+import { dirname as dirname2, join as join2 } from "path";
+var BUN_RESOLVE_SNIPPET = `# >>> siltpoke bun-resolve (sentinels: tests slice this block out and run it)
+BUN="$(command -v bun 2>/dev/null || true)"
+if [ -z "$BUN" ] && [ -f "\${HOME}/.siltpoke/bun-path" ]; then
+  RECORDED="$(cat "\${HOME}/.siltpoke/bun-path" 2>/dev/null || true)"
+  [ -n "$RECORDED" ] && [ -x "$RECORDED" ] && BUN="$RECORDED"
+fi
+[ -n "$BUN" ] || { [ -x "\${HOME}/.bun/bin/bun" ] && BUN="\${HOME}/.bun/bin/bun"; }
+# <<< siltpoke bun-resolve`;
+function renderStatuslineShim() {
+  return `#!/bin/sh
+set -u
+# Guarded with :- (not bare \${HOME}) \u2014 under set -u a bare reference to an
+# unset HOME is a hard "unbound variable" crash straight to the session's
+# statusline. Same bug class session-start.sh already guards against.
+HOME="\${HOME:-}"
+ROOT_FILE="\${HOME}/.siltpoke/plugin-root"
+[ -f "$ROOT_FILE" ] || exit 0
+ROOT="$(cat "$ROOT_FILE" 2>/dev/null)" || exit 0
+CARD="\${ROOT}/dist/siltpoke-card.js"
+[ -f "$CARD" ] || exit 0
+${BUN_RESOLVE_SNIPPET}
+# Defect [21]: this used to be \`command -v bun \u2026 || exit 0\`, so a user whose bun
+# PATH lives only in ~/.bash_profile got a BLANK statusline with no way to find
+# out why \u2014 the pet simply never appeared. The statusline is the one surface the
+# user looks at every turn, so it is where this gets said out loud (the hook
+# guards stay silent by rule). One short line, no newline of its own.
+[ -n "$BUN" ] || { printf '%s' "siltpoke: can't find bun (not on PATH) \u2014 run /siltpoke-doctor"; exit 0; }
+exec "$BUN" "$CARD" "$@" 2>/dev/null
+`;
+}
+function renderDaemonShim() {
+  return `#!/bin/sh
+set -u
+HOME="\${HOME:-}"
+ROOT_FILE="\${HOME}/.siltpoke/plugin-root"
+DAEMON=""
+if [ -f "$ROOT_FILE" ]; then
+  ROOT="$(cat "$ROOT_FILE" 2>/dev/null || true)"
+  if [ -n "$ROOT" ] && [ -f "\${ROOT}/dist/siltpoke-daemon.js" ]; then
+    DAEMON="\${ROOT}/dist/siltpoke-daemon.js"
+  fi
+fi
+${BUN_RESOLVE_SNIPPET}
+if [ -n "$DAEMON" ] && [ -n "$BUN" ]; then
+  exec "$BUN" "$DAEMON" "$@"
+fi
+# Cannot resolve the daemon right now. Idle rather than exit \u2014 a keep-alive unit
+# would otherwise respawn us every few seconds forever.
+sleep 300
+exit 0
+`;
+}
+function daemonShimPath(home) {
+  return join2(home, ".siltpoke", "bin", "daemon.sh");
+}
+function statuslineShimPath(home) {
+  return join2(home, ".siltpoke", "bin", "statusline.sh");
+}
+var tmpSeq = 0;
+async function writeExecutable(path, body) {
+  await mkdir(dirname2(path), { recursive: true });
+  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${++tmpSeq}`;
+  try {
+    await writeFile(tmpPath, body, { encoding: "utf8", mode: 493 });
+    await chmod(tmpPath, 493);
+    await rename(tmpPath, path);
+  } catch (err) {
+    await rm(tmpPath, { force: true }).catch(() => {});
+    throw err;
+  }
+  return path;
+}
+async function refreshStaleShims(home) {
+  const rewritten = [];
+  const targets = [
+    [statuslineShimPath(home), renderStatuslineShim()],
+    [daemonShimPath(home), renderDaemonShim()]
+  ];
+  for (const [path, wanted] of targets) {
+    try {
+      if (!existsSync(path))
+        continue;
+      if (readFileSync(path, "utf8") === wanted)
+        continue;
+      await writeExecutable(path, wanted);
+      rewritten.push(path);
+    } catch {}
+  }
+  return rewritten;
+}
+
 // src/installer/codex-integration.ts
-import { existsSync } from "fs";
-import { mkdir, readFile as readFile3, rename, writeFile } from "fs/promises";
-import { dirname as dirname2, join as join3 } from "path";
+import { existsSync as existsSync2 } from "fs";
+import { mkdir as mkdir2, readFile as readFile3, rename as rename2, writeFile as writeFile2 } from "fs/promises";
+import { dirname as dirname3, join as join4 } from "path";
 import { randomBytes } from "crypto";
 
 // src/installer/paths.ts
-import { join as join2 } from "path";
+import { join as join3 } from "path";
 
 class PathError extends Error {
 }
@@ -137,52 +232,52 @@ function siltpokeRoot(env = process.env) {
   if (typeof override === "string" && override.length > 0) {
     return override;
   }
-  return join2(homeDir(env), ".siltpoke");
+  return join3(homeDir(env), ".siltpoke");
 }
 function resolveCodexHome(env = process.env) {
   const override = env.CODEX_HOME;
   if (typeof override === "string" && override.length > 0) {
     return override;
   }
-  return join2(homeDir(env), ".codex");
+  return join3(homeDir(env), ".codex");
 }
 function codexHooksJsonPath(env = process.env) {
-  return join2(resolveCodexHome(env), "hooks.json");
+  return join3(resolveCodexHome(env), "hooks.json");
 }
 function resolveCodebuddyHome(env = process.env) {
   const override = env.CODEBUDDY_HOME;
   if (typeof override === "string" && override.length > 0) {
     return override;
   }
-  return join2(homeDir(env), ".codebuddy");
+  return join3(homeDir(env), ".codebuddy");
 }
 function resolveQoderHome(env = process.env) {
   const override = env.QODER_HOME;
   if (typeof override === "string" && override.length > 0) {
     return override;
   }
-  return join2(homeDir(env), ".qoder");
+  return join3(homeDir(env), ".qoder");
 }
 function resolveAgyHooksJsonPath(env = process.env) {
   const override = env.ANTIGRAVITY_HOOKS_HOME;
   if (typeof override === "string" && override.length > 0) {
-    return join2(override, "hooks.json");
+    return join3(override, "hooks.json");
   }
-  return join2(homeDir(env), ".gemini", "config", "hooks.json");
+  return join3(homeDir(env), ".gemini", "config", "hooks.json");
 }
 function hostSettingsJsonPath(home) {
-  return join2(home, "settings.json");
+  return join3(home, "settings.json");
 }
 
 // src/installer/codex-integration.ts
 async function atomicWriteJson(path, data) {
-  await mkdir(dirname2(path), { recursive: true });
+  await mkdir2(dirname3(path), { recursive: true });
   const tmp = `${path}.tmp.${process.pid}.${Date.now()}.${randomBytes(4).toString("hex")}`;
-  await writeFile(tmp, JSON.stringify(data, null, 2), "utf8");
-  await rename(tmp, path);
+  await writeFile2(tmp, JSON.stringify(data, null, 2), "utf8");
+  await rename2(tmp, path);
 }
 async function readJsonOrEmpty(path) {
-  if (!existsSync(path))
+  if (!existsSync2(path))
     return {};
   try {
     const parsed = JSON.parse(await readFile3(path, "utf8"));
@@ -238,11 +333,11 @@ async function removeCodexLegacyHooks(hooksPath) {
 }
 
 // src/memory/distil-launcher.ts
-import { basename as basename2, join as join6 } from "path";
+import { basename as basename2, join as join7 } from "path";
 
 // src/memory/pending-queue.ts
-import { appendFile, readFile as readFile4, writeFile as writeFile2, rename as rename2, mkdir as mkdir2 } from "fs/promises";
-import { dirname as dirname3, join as join4 } from "path";
+import { appendFile, readFile as readFile4, writeFile as writeFile3, rename as rename3, mkdir as mkdir3 } from "fs/promises";
+import { dirname as dirname4, join as join5 } from "path";
 
 // node_modules/zod/v4/classic/external.js
 var exports_external = {};
@@ -14541,7 +14636,7 @@ var pendingCritiqueSchema = exports_external.object({
   capture_id: exports_external.string().regex(/^case1-[a-f0-9]+$/).optional()
 });
 function pendingQueuePath(stateBase) {
-  return join4(stateBase, "pending-critiques.jsonl");
+  return join5(stateBase, "pending-critiques.jsonl");
 }
 async function readPending(queuePath) {
   let text;
@@ -14566,11 +14661,11 @@ async function readPending(queuePath) {
 import {
   mkdirSync as mkdirSync2,
   rmSync,
-  readFileSync,
-  existsSync as existsSync2,
+  readFileSync as readFileSync2,
+  existsSync as existsSync3,
   utimesSync
 } from "fs";
-import { join as join5 } from "path";
+import { join as join6 } from "path";
 function isAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -14580,13 +14675,13 @@ function isAlive(pid) {
   }
 }
 function isLockHeld(lockPath) {
-  if (!existsSync2(lockPath))
+  if (!existsSync3(lockPath))
     return false;
-  const ownerPath = join5(lockPath, "owner.json");
-  if (!existsSync2(ownerPath))
+  const ownerPath = join6(lockPath, "owner.json");
+  if (!existsSync3(ownerPath))
     return false;
   try {
-    const owner = JSON.parse(readFileSync(ownerPath, "utf8"));
+    const owner = JSON.parse(readFileSync2(ownerPath, "utf8"));
     return isAlive(owner.pid);
   } catch {
     return false;
@@ -14607,8 +14702,8 @@ function defaultSpawn(argv) {
 async function maybeLaunchDistilWorker(homeBase, stateBase, cwd, deps = {}) {
   const spawnFn = deps.spawnFn ?? defaultSpawn;
   const isHeld = deps.isLockHeldFn ?? isLockHeld;
-  const lockPath = deps.lockPath ?? join6(homeBase, "distil-worker.lock");
-  const workerPath = deps.workerPath ?? (basename2(import.meta.dir) === "dist" ? join6(import.meta.dir, "siltpoke-distil.js") : join6(import.meta.dir, "..", "hooks", "on-distil-worker.ts"));
+  const lockPath = deps.lockPath ?? join7(homeBase, "distil-worker.lock");
+  const workerPath = deps.workerPath ?? (basename2(import.meta.dir) === "dist" ? join7(import.meta.dir, "siltpoke-distil.js") : join7(import.meta.dir, "..", "hooks", "on-distil-worker.ts"));
   const entries = await readPending(pendingQueuePath(stateBase));
   if (entries.length === 0)
     return { launched: false, reason: "empty" };
@@ -14629,21 +14724,21 @@ function isSiltpokeInternal(env = process.env) {
 
 // src/hooks/session-baseline.ts
 import { createHash } from "crypto";
-import { mkdir as mkdir3, readdir, rm, stat } from "fs/promises";
-import { join as join7 } from "path";
+import { mkdir as mkdir4, readdir, rm as rm2, stat } from "fs/promises";
+import { join as join8 } from "path";
 var BASELINE_RETENTION_DAYS = 7;
 var SAFE_SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
 function isSafeSessionId(sessionId) {
   return SAFE_SESSION_ID.test(sessionId);
 }
 function stateDirFor(cwd) {
-  return join7(cwd, ".siltpoke");
+  return join8(cwd, ".siltpoke");
 }
 function legacyBaselinePath(stateDir) {
-  return join7(stateDir, "baseline.json");
+  return join8(stateDir, "baseline.json");
 }
 function sessionBaselineDir(stateDir) {
-  return join7(stateDir, "baselines");
+  return join8(stateDir, "baselines");
 }
 function idDigest(sessionId) {
   return createHash("sha256").update(sessionId).digest("hex").slice(0, 8);
@@ -14651,11 +14746,11 @@ function idDigest(sessionId) {
 function sessionBaselinePath(stateDir, sessionId) {
   if (!isSafeSessionId(sessionId))
     return null;
-  return join7(sessionBaselineDir(stateDir), `${sessionId}-${idDigest(sessionId)}.json`);
+  return join8(sessionBaselineDir(stateDir), `${sessionId}-${idDigest(sessionId)}.json`);
 }
 async function writeSessionBaseline(cwd, baseline) {
   const stateDir = stateDirFor(cwd);
-  await mkdir3(stateDir, { recursive: true });
+  await mkdir4(stateDir, { recursive: true });
   const payload = JSON.stringify(baseline, null, 2);
   atomicWrite(legacyBaselinePath(stateDir), payload);
   const perSession = sessionBaselinePath(stateDir, baseline.session_id);
@@ -14677,10 +14772,10 @@ async function pruneSessionBaselines(stateDir, now = new Date) {
   for (const name of names) {
     if (!name.endsWith(".json") && !name.startsWith(".tmp-"))
       continue;
-    const file2 = join7(dir, name);
+    const file2 = join8(dir, name);
     try {
       if ((await stat(file2)).mtimeMs < cutoff) {
-        await rm(file2, { force: true });
+        await rm2(file2, { force: true });
         removed++;
       }
     } catch {}
@@ -14693,29 +14788,29 @@ async function maybeMigrateLegacyCodexHooks(env) {
   const home = siltpokeRoot(env);
   if (env.SILTPOKE_HOST === "codex") {
     try {
-      const codexMarker = join8(home, ".codex-migrated");
-      if (!existsSync3(codexMarker)) {
+      const codexMarker = join9(home, ".codex-migrated");
+      if (!existsSync4(codexMarker)) {
         await removeCodexLegacyHooks(codexHooksJsonPath(env));
-        await mkdir4(home, { recursive: true });
-        await writeFile3(codexMarker, "");
+        await mkdir5(home, { recursive: true });
+        await writeFile4(codexMarker, "");
       }
     } catch {}
   }
   try {
-    const ccForkMarker = join8(home, ".ccfork-migrated");
-    if (!existsSync3(ccForkMarker)) {
+    const ccForkMarker = join9(home, ".ccfork-migrated");
+    if (!existsSync4(ccForkMarker)) {
       await removeCcForkLegacyHooks(hostSettingsJsonPath(resolveQoderHome(env)));
       await removeCcForkLegacyHooks(hostSettingsJsonPath(resolveCodebuddyHome(env)));
-      await mkdir4(home, { recursive: true });
-      await writeFile3(ccForkMarker, "");
+      await mkdir5(home, { recursive: true });
+      await writeFile4(ccForkMarker, "");
     }
   } catch {}
   try {
-    const agyMarker = join8(home, ".agy-migrated");
-    if (!existsSync3(agyMarker)) {
+    const agyMarker = join9(home, ".agy-migrated");
+    if (!existsSync4(agyMarker)) {
       await removeAgyLegacyHooks(resolveAgyHooksJsonPath(env));
-      await mkdir4(home, { recursive: true });
-      await writeFile3(agyMarker, "");
+      await mkdir5(home, { recursive: true });
+      await writeFile4(agyMarker, "");
     }
   } catch {}
 }
@@ -14726,14 +14821,14 @@ function codexFirstRunNudge(env) {
     if (env.SILTPOKE_HOST !== "codex")
       return null;
     const root = siltpokeRoot(env);
-    if (existsSync3(join8(root, "config.json")))
+    if (existsSync4(join9(root, "config.json")))
       return null;
-    const marker = join8(root, ".codex-nudged");
-    if (existsSync3(marker))
+    const marker = join9(root, ".codex-nudged");
+    if (existsSync4(marker))
       return null;
     mkdirSync3(root, { recursive: true });
     writeFileSync2(marker, "");
-    if (!existsSync3(marker))
+    if (!existsSync4(marker))
       return null;
     return JSON.stringify({
       systemMessage: 'Siltpoke is installed but has no pet yet \u2014 say "set up my Siltpoke pet" to create one and start reviews.'
@@ -14758,6 +14853,9 @@ async function handleSessionStart(input) {
   const stateBase = dir;
   await maybeLaunchDistilWorker(homeBase, stateBase, input.cwd).catch(() => {});
   await maybeMigrateLegacyCodexHooks(env).catch(() => {});
+  const rawHome = env.HOME;
+  if (rawHome)
+    await refreshStaleShims(rawHome).catch(() => {});
 }
 if (import.meta.main) {
   try {

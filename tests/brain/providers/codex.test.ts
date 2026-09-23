@@ -438,7 +438,10 @@ test("toOpenAiStrictSchema: every property required; optionals become null-union
   ) as Record<string, unknown>;
 
   const walk = (node: unknown): void => {
-    if (Array.isArray(node)) return node.forEach(walk);
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
     if (typeof node !== "object" || node === null) return;
     const obj = node as Record<string, unknown>;
     if (obj.type === "object" && obj.properties && typeof obj.properties === "object") {

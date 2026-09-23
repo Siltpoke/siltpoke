@@ -58,7 +58,16 @@ export function NavItem(props: NavItemProps) {
   // Disabled entries render as non-interactive <span aria-disabled="true">.
   // Active highlight is suppressed — a disabled entry cannot be selected.
   if (disabled) {
+    // A real <a> here would need a href to carry implicit link semantics at
+    // all — but this entry is deliberately non-navigable (no href is
+    // rendered, ever). role="link" + aria-disabled + tabIndex=-1 is the
+    // pinned pattern (NavItem.test.tsx "disabled renders as <span> not <a>"
+    // and "disabled <span> has role='link' for screen-reader correctness")
+    // so a disabled entry still announces the same way its enabled sibling
+    // does, without becoming a dead <a> a screen reader would offer to
+    // activate.
     return (
+      // biome-ignore lint/a11y/useSemanticElements: see comment above — span+role="link" is the pinned, tested pattern, not an oversight.
       <span
         aria-disabled="true"
         role="link"

@@ -198,7 +198,7 @@ const FAILURE_SETUPS: Record<string, () => StreamFactory> = {
 /** Route-catch path: a streamFactory that throws mid-iteration — the real
  * route classifies it as a NO-REASON failure (fallback copy on the client). */
 function throwingStreamFactory(): StreamFactory {
-  // eslint-disable-next-line require-yield
+  // biome-ignore lint/correctness/useYield: a generator that throws before producing a chunk is exactly what this test simulates — a yield would make it a different failure.
   return async function* () {
     throw new Error(`internal kaboom ${RAW_STDERR}`);
   };

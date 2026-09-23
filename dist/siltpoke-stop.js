@@ -31103,7 +31103,7 @@ function collectCalls(root, ctx, fileNodeId) {
   return [...agg.values()];
 }
 function isExported(node) {
-  let parent = node.parent;
+  const parent = node.parent;
   if (parent && parent.type === "export_statement")
     return true;
   for (const c of node.children) {
@@ -39763,7 +39763,6 @@ async function synthesizeEpisodes(memory, opts) {
       });
     } catch (err2) {
       console.error(`[siltpoke memory] episode synthesis: brain call failed for day ${day}; skipping cluster: ${err2 instanceof Error ? err2.message : String(err2)}`);
-      continue;
     }
   }
   return drafts;

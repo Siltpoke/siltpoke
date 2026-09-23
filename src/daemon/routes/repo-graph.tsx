@@ -276,7 +276,9 @@ export async function runIndexerProcess({
         if (done) break;
         buf += dec.decode(value, { stream: true });
         let nl: number;
-        while ((nl = buf.indexOf("\n")) >= 0) {
+        for (;;) {
+          nl = buf.indexOf("\n");
+          if (nl < 0) break;
           const line = buf.slice(0, nl).trim();
           buf = buf.slice(nl + 1);
           if (line.length === 0) continue;

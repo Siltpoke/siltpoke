@@ -53,7 +53,7 @@ interface AlpineGlobal {
   initTree?(rootEl: HTMLElement): void;
 }
 
-declare const globalThis: { Alpine?: AlpineGlobal };
+type GlobalWithAlpine = { Alpine?: AlpineGlobal };
 
 // ─── Data-contract shapes (SSR ArchitectureProjection) ──────────────────────
 
@@ -3570,7 +3570,9 @@ function bootRepoGraph(root: HTMLElement): void {
 
   function render(refit: boolean): void {
     SCENE = buildScene();
-    world.querySelectorAll(".node,.gbox,.c4-node,.c4-boundary,.c4-band,.c4-elab").forEach((n) => n.remove());
+    world.querySelectorAll(".node,.gbox,.c4-node,.c4-boundary,.c4-band,.c4-elab").forEach((n) => {
+      n.remove();
+    });
     viewport.querySelector(".rg-empty-center")?.remove();
     viewport.querySelector(".rg-leaf-note")?.remove();
     while (svg.firstChild) svg.removeChild(svg.firstChild);
@@ -4177,7 +4179,9 @@ function bootRepoGraph(root: HTMLElement): void {
   }
 
   function paintHl(): void {
-    searchResults?.querySelectorAll<HTMLElement>(".res[data-i]").forEach((el, i) => el.classList.toggle("hl", i === hlIdx));
+    searchResults?.querySelectorAll<HTMLElement>(".res[data-i]").forEach((el, i) => {
+      el.classList.toggle("hl", i === hlIdx);
+    });
   }
   searchInput?.addEventListener("input", () => {
     if (searchTimer) clearTimeout(searchTimer);
@@ -4635,7 +4639,9 @@ function bootRepoGraph(root: HTMLElement): void {
         if (done) break;
         buf += dec.decode(value, { stream: true });
         let i: number;
-        while ((i = buf.indexOf("\n\n")) >= 0) {
+        for (;;) {
+          i = buf.indexOf("\n\n");
+          if (i < 0) break;
           const block = buf.slice(0, i);
           buf = buf.slice(i + 2);
           const ev = /event:\s*(.+)/.exec(block)?.[1]?.trim();
@@ -5604,21 +5610,22 @@ export function registerRepoGraph(Alpine: AlpineGlobal): void {
 
 function selfRegister(): void {
   if (typeof globalThis === "undefined") return;
-  if (globalThis.Alpine) {
+  const alpineHost = globalThis as unknown as GlobalWithAlpine;
+  if (alpineHost.Alpine) {
     // hx-boost: Alpine already running; the x-data root was morphed in before
     // this module registered the factory. Replace each stale node with a fresh
     // clone (drops Alpine's _x_dataStack) and initTree it against the now-
     // registered factory.
-    registerRepoGraph(globalThis.Alpine);
+    registerRepoGraph(alpineHost.Alpine);
     if (typeof document !== "undefined") {
       document.querySelectorAll('[x-data="repoGraph"]').forEach((el) => {
         const node = el as HTMLElement;
         if ((node as unknown as { _x_dataStack?: unknown })._x_dataStack && node.parentNode) {
           const fresh = node.cloneNode(true) as HTMLElement;
           node.parentNode.replaceChild(fresh, node);
-          globalThis.Alpine?.initTree?.(fresh);
+          alpineHost.Alpine?.initTree?.(fresh);
         } else {
-          globalThis.Alpine?.initTree?.(node);
+          alpineHost.Alpine?.initTree?.(node);
         }
       });
     }
@@ -5628,7 +5635,7 @@ function selfRegister(): void {
     document.addEventListener(
       "alpine:init",
       () => {
-        if (globalThis.Alpine) registerRepoGraph(globalThis.Alpine);
+        if (alpineHost.Alpine) registerRepoGraph(alpineHost.Alpine);
       },
       { once: true },
     );

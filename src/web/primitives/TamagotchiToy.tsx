@@ -320,7 +320,9 @@ export function TamagotchiToy(props: TamagotchiToyProps) {
                   cursor: "pointer",
                   boxSizing: "border-box",
                 }}
-              />
+              >
+                <span class="sr-only">{`${isActive ? "Selected: " : "Choose "}${s.name} shell`}</span>
+              </a>
             );
           })}
         </div>

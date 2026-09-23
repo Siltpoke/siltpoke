@@ -15172,8 +15172,8 @@ var init_project = __esm(() => {
 });
 
 // src/cli/plugin-cli.ts
-import { existsSync as existsSync21 } from "fs";
-import { join as join33 } from "path";
+import { existsSync as existsSync23 } from "fs";
+import { join as join36 } from "path";
 import { fileURLToPath as fileURLToPath3 } from "url";
 
 // src/installer/personality-seed.ts
@@ -15547,8 +15547,8 @@ function randomName(species, rng = Math.random) {
 }
 
 // src/cli/doctor.ts
-import { existsSync as existsSync13, lstatSync, readdirSync as readdirSync2, readFileSync as readFileSync9, readlinkSync } from "fs";
-import { dirname as dirname5, join as join20, resolve } from "path";
+import { existsSync as existsSync15, lstatSync, readdirSync as readdirSync2, readFileSync as readFileSync11, readlinkSync } from "fs";
+import { dirname as dirname6, join as join23, resolve } from "path";
 import { fileURLToPath } from "url";
 
 // src/installer/paths.ts
@@ -15808,7 +15808,7 @@ function checkBrainHealth(opts) {
 }
 
 // src/cli/doctor-daemon-check.ts
-import { existsSync as existsSync4 } from "fs";
+import { existsSync as existsSync5 } from "fs";
 
 // src/daemon/port.ts
 var DEFAULT_DAEMON_PORT = 9876;
@@ -15862,11 +15862,66 @@ async function loadDaemonConfig(home) {
   }
 }
 
+// src/installer/bun-path.ts
+import { accessSync, constants, readFileSync as readFileSync3 } from "fs";
+import { join as join8 } from "path";
+function bunPathPointerPath(home) {
+  return join8(home, ".siltpoke", "bun-path");
+}
+function isExecutable(path) {
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function resolveBunPath(home, deps = {}) {
+  const lookup = deps.pathLookup ?? (() => Bun.which("bun"));
+  const onPath = lookup();
+  if (onPath && isExecutable(onPath))
+    return onPath;
+  try {
+    const recorded = readFileSync3(bunPathPointerPath(home), "utf8").trim();
+    if (recorded.length > 0 && isExecutable(recorded))
+      return recorded;
+  } catch {}
+  const fallback = join8(home, ".bun", "bin", "bun");
+  return isExecutable(fallback) ? fallback : null;
+}
+
 // src/installer/launchd.ts
-import { join as join8, dirname as dirname3 } from "path";
+import { join as join10, dirname as dirname4 } from "path";
 import { homedir } from "os";
+
+// src/installer/shim.ts
+import { existsSync as existsSync4, readFileSync as readFileSync4, statSync as statSync2 } from "fs";
+import { dirname as dirname3, join as join9 } from "path";
+function pluginRootPointerPath(home) {
+  return join9(home, ".siltpoke", "plugin-root");
+}
+function resolvePluginRoot(home) {
+  let root;
+  try {
+    root = readFileSync4(pluginRootPointerPath(home), "utf8").trim();
+  } catch {
+    return null;
+  }
+  if (root.length === 0)
+    return null;
+  try {
+    return statSync2(root).isDirectory() ? root : null;
+  } catch {
+    return null;
+  }
+}
+function statuslineShimPath(home) {
+  return join9(home, ".siltpoke", "bin", "statusline.sh");
+}
+
+// src/installer/launchd.ts
 function defaultPlistPath() {
-  return join8(homedir(), "Library", "LaunchAgents", "io.siltpoke.daemon.plist");
+  return join10(homedir(), "Library", "LaunchAgents", "io.siltpoke.daemon.plist");
 }
 function loadLaunchAgent(plistPath, label, uid, exec) {
   exec("launchctl", ["bootout", `gui/${uid}/${label}`]);
@@ -15877,10 +15932,10 @@ function loadLaunchAgent(plistPath, label, uid, exec) {
 }
 
 // src/installer/systemd.ts
-import { join as join9, dirname as dirname4 } from "path";
+import { join as join11, dirname as dirname5 } from "path";
 import { homedir as homedir2 } from "os";
 function defaultUnitPath() {
-  return join9(homedir2(), ".config", "systemd", "user", "siltpoked.service");
+  return join11(homedir2(), ".config", "systemd", "user", "siltpoked.service");
 }
 
 // src/cli/doctor-daemon-check.ts
@@ -15995,7 +16050,7 @@ function checkAutostart(opts = {}) {
       detail: `skipped (autostart unsupported on ${platform})`
     };
   }
-  if (existsSync4(artifactPath)) {
+  if (existsSync5(artifactPath)) {
     return {
       name: AUTOSTART_CHECK_NAME,
       pass: true,
@@ -16013,15 +16068,15 @@ function checkAutostart(opts = {}) {
 
 // src/config/repo-graph-config.ts
 init_zod();
-import { existsSync as existsSync5 } from "fs";
+import { existsSync as existsSync6 } from "fs";
 import { readFile as readFile3 } from "fs/promises";
-import { join as join10 } from "path";
+import { join as join12 } from "path";
 var repoGraphConfigSchema = exports_external.object({
   staleness_warn_pct: exports_external.number().min(0).max(1).default(0.2)
 });
 async function loadRepoGraphConfig(home) {
-  const configPath = join10(home, "config.json");
-  if (!existsSync5(configPath))
+  const configPath = join12(home, "config.json");
+  if (!existsSync6(configPath))
     return repoGraphConfigSchema.parse({});
   try {
     const raw = await readFile3(configPath, "utf8");
@@ -16044,9 +16099,9 @@ function computeContentSha(content) {
 }
 
 // src/repo-graph/store.ts
-import { existsSync as existsSync6 } from "fs";
+import { existsSync as existsSync7 } from "fs";
 import { mkdir as mkdir2, readFile as readFile4, rename as rename3, writeFile as writeFile2 } from "fs/promises";
-import { join as join11 } from "path";
+import { join as join13 } from "path";
 
 // src/repo-graph/types.ts
 function emptyFingerprints() {
@@ -16056,7 +16111,7 @@ function emptyFingerprints() {
 // src/repo-graph/store.ts
 var FINGERPRINTS_FILE = "fingerprints.json";
 async function readJsonOr(path, fallback) {
-  if (!existsSync6(path))
+  if (!existsSync7(path))
     return fallback();
   try {
     const raw = await readFile4(path, "utf8");
@@ -16066,7 +16121,7 @@ async function readJsonOr(path, fallback) {
   }
 }
 async function readFingerprints(storageDir) {
-  const parsed = await readJsonOr(join11(storageDir, FINGERPRINTS_FILE), emptyFingerprints);
+  const parsed = await readJsonOr(join13(storageDir, FINGERPRINTS_FILE), emptyFingerprints);
   if (parsed.schemaVersion !== 1 || typeof parsed.files !== "object" || parsed.files === null) {
     return emptyFingerprints();
   }
@@ -16075,7 +16130,7 @@ async function readFingerprints(storageDir) {
 
 // src/repo-graph/walker.ts
 import { readdir as readdir2, stat } from "fs/promises";
-import { join as join12, relative, sep } from "path";
+import { join as join14, relative, sep } from "path";
 var SOURCE_EXT_TO_LANG = {
   ts: "ts",
   tsx: "tsx",
@@ -16133,7 +16188,7 @@ async function walkProject(projectRoot, opts = {}) {
       if (capped)
         return;
       const name = entry.name;
-      const abs = join12(dir, name);
+      const abs = join14(dir, name);
       if (entry.isDirectory()) {
         if (SKIP_DIRS.has(name) || name.startsWith("."))
           continue;
@@ -16322,9 +16377,29 @@ async function checkIndexStaleness(opts = {}) {
   return { name: CHECK_NAME2, pass: true, status: "warn", detail };
 }
 
+// src/cli/doctor-plugin-install.ts
+import { realpathSync as realpathSync2 } from "fs";
+import { homedir as homedir3 } from "os";
+function isPluginInstall(opts) {
+  if (opts.pluginInstall !== undefined)
+    return opts.pluginInstall;
+  const pointed = resolvePluginRoot(opts.home ?? homedir3());
+  if (pointed !== null) {
+    const here = opts.repoRoot ?? defaultRepoRoot();
+    try {
+      if (realpathSync2(pointed) === realpathSync2(here))
+        return true;
+    } catch {}
+  }
+  return Boolean(process.env.CLAUDE_PLUGIN_ROOT);
+}
+
+// src/cli/doctor-stop-hook-check.ts
+import { join as join16 } from "path";
+
 // src/cli/doctor-plugin-hook-check.ts
-import { existsSync as existsSync7, readFileSync as readFileSync3 } from "fs";
-import { join as join13 } from "path";
+import { existsSync as existsSync8, readFileSync as readFileSync5 } from "fs";
+import { join as join15 } from "path";
 function resolvePluginHooksJsonPath(opts) {
   if (typeof opts.pluginHooksJsonPath === "string" && opts.pluginHooksJsonPath.length > 0) {
     return opts.pluginHooksJsonPath;
@@ -16332,15 +16407,15 @@ function resolvePluginHooksJsonPath(opts) {
   const root = process.env.CLAUDE_PLUGIN_ROOT;
   if (typeof root !== "string" || root.length === 0)
     return null;
-  return join13(root, "hooks", "hooks.json");
+  return join15(root, "hooks", "hooks.json");
 }
 function pluginOwnsStopHook(opts) {
   const path = resolvePluginHooksJsonPath(opts);
-  if (path === null || !existsSync7(path))
+  if (path === null || !existsSync8(path))
     return false;
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync3(path, "utf8"));
+    parsed = JSON.parse(readFileSync5(path, "utf8"));
   } catch {
     return false;
   }
@@ -16352,16 +16427,82 @@ function pluginOwnsStopHook(opts) {
   return stop.some((m) => Array.isArray(m?.hooks) && m.hooks.some((h) => h?.type === "command" && typeof h.command === "string" && h.command.length > 0));
 }
 
+// src/cli/doctor-stop-hook-check.ts
+function checkStopHook(opts) {
+  const name = "Stop hook registered (curl fast path + command pair)";
+  const host = detectDoctorHost(opts);
+  if (host !== "claude-code") {
+    return {
+      name,
+      pass: true,
+      status: "info",
+      detail: `skipped \u2014 this is a ${host} install; its Stop hook lives in ${hostWiringPath(host, opts)}`
+    };
+  }
+  if (isPluginInstall(opts) && pluginOwnsStopHook(opts)) {
+    return {
+      name,
+      pass: true,
+      status: "info",
+      detail: "plugin-owned \u2014 hooks/hooks.json declares the Stop hook (settings.json hooks.Stop[] is expected empty)"
+    };
+  }
+  const path = join16(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
+  const r = readJson(path);
+  if (!r.ok) {
+    return { name, pass: false, detail: `${path} not readable \u2014 settings.json must exist first` };
+  }
+  if (typeof r.value !== "object" || r.value === null || Array.isArray(r.value)) {
+    return { name, pass: false, detail: `${path} root is not a JSON object \u2014 cannot read hooks.Stop` };
+  }
+  const settings = r.value;
+  const stopArr = settings.hooks?.Stop;
+  if (!Array.isArray(stopArr) || stopArr.length === 0) {
+    return { name, pass: false, detail: "hooks.Stop[] is missing or empty in settings.json" };
+  }
+  const shape = scanStopMatchers(stopArr);
+  if (shape === "curl")
+    return { name, pass: true, detail: null };
+  if (shape === "legacy") {
+    return {
+      name,
+      pass: true,
+      status: "info",
+      detail: `legacy http Stop hook shape detected. ${setupAdviceFor(host)} to migrate to the silent curl fast path.`
+    };
+  }
+  return {
+    name,
+    pass: false,
+    detail: `no Stop hook matcher contains both the curl fast path (command ~ curl \u2026 /hooks/stop) and a command fallback (~ on-stop.ts). ${setupAdviceFor(host)} to re-register.`
+  };
+}
+function scanStopMatchers(matchers) {
+  let sawLegacyPair = false;
+  for (const m of matchers) {
+    const hooks = Array.isArray(m?.hooks) ? m.hooks : [];
+    const cmds = hooks.filter((h) => h.type === "command" && typeof h.command === "string").map((h) => h.command);
+    const hasCurl = cmds.some((c) => c.includes("curl") && c.includes("/hooks/stop"));
+    const hasCmd = cmds.some((c) => c.includes("on-stop.ts"));
+    const hasHttp = hooks.some((h) => h.type === "http" && typeof h.url === "string" && h.url.includes("/hooks/stop"));
+    if (hasCurl && hasCmd)
+      return "curl";
+    if (hasHttp && hasCmd)
+      sawLegacyPair = true;
+  }
+  return sawLegacyPair ? "legacy" : "none";
+}
+
 // src/cli/doctor-project-roots-check.ts
-import { existsSync as existsSync8, readdirSync, readFileSync as readFileSync4 } from "fs";
-import { join as join14 } from "path";
+import { existsSync as existsSync9, readdirSync, readFileSync as readFileSync6 } from "fs";
+import { join as join17 } from "path";
 function describe3(b) {
   return b.reason === "dead-root" ? `${b.label} \u2192 ${b.detail}` : `${b.label} \u2014 ${b.detail}`;
 }
 function readStore(memoryPath) {
   let text;
   try {
-    text = readFileSync4(memoryPath, "utf8");
+    text = readFileSync6(memoryPath, "utf8");
   } catch (e) {
     const code = e.code;
     if (code === "ENOENT" || code === "ENOTDIR")
@@ -16376,8 +16517,8 @@ function readStore(memoryPath) {
 }
 function checkProjectRoots(opts = {}) {
   const name = "registered project roots still exist";
-  const projectsDir = join14(opts.siltpokeHome ?? siltpokeRoot(), "projects");
-  if (!existsSync8(projectsDir)) {
+  const projectsDir = join17(opts.siltpokeHome ?? siltpokeRoot(), "projects");
+  if (!existsSync9(projectsDir)) {
     return { name, pass: true, detail: null };
   }
   let entries;
@@ -16391,7 +16532,7 @@ function checkProjectRoots(opts = {}) {
   for (const id of entries) {
     let store;
     try {
-      store = readStore(join14(projectsDir, id, "memory.json"));
+      store = readStore(join17(projectsDir, id, "memory.json"));
     } catch (e) {
       total += 1;
       broken.push({ label: id, reason: "unreadable", detail: `unreadable memory.json (${e instanceof Error ? e.message : String(e)})` });
@@ -16405,7 +16546,7 @@ function checkProjectRoots(opts = {}) {
       broken.push({ label: id, reason: "no-root-field", detail: "memory.json has no project_root" });
       continue;
     }
-    if (!existsSync8(root)) {
+    if (!existsSync9(root)) {
       const display = store.display_name;
       broken.push({
         label: typeof display === "string" && display.length > 0 ? display : id,
@@ -16432,8 +16573,8 @@ function checkProjectRoots(opts = {}) {
 }
 
 // src/cli/doctor-reviewer-check.ts
-import { existsSync as existsSync11, readFileSync as readFileSync7 } from "fs";
-import { join as join18 } from "path";
+import { existsSync as existsSync12, readFileSync as readFileSync9 } from "fs";
+import { join as join21 } from "path";
 
 // src/brain/agy-honesty.ts
 var CLAUDE_FAMILY_PREFIXES = ["Claude ", "claude-"];
@@ -16442,8 +16583,8 @@ function isClaudeFamilyModel(model) {
 }
 
 // src/brain/brain-config.ts
-import { existsSync as existsSync9, readFileSync as readFileSync5 } from "fs";
-import { join as join15 } from "path";
+import { existsSync as existsSync10, readFileSync as readFileSync7 } from "fs";
+import { join as join18 } from "path";
 var FAMILIES = ["claude", "codex", "agy", "qoder", "codebuddy"];
 function asFamily(value) {
   return typeof value === "string" && FAMILIES.includes(value) ? value : undefined;
@@ -16530,11 +16671,11 @@ function envForRead() {
   };
 }
 function loadBrainConfigSync(homeBase) {
-  const path = join15(homeBase, "config.json");
-  if (!existsSync9(path))
+  const path = join18(homeBase, "config.json");
+  if (!existsSync10(path))
     return parseBrainConfig(null, envForRead());
   try {
-    return parseBrainConfig(readFileSync5(path, "utf8"), envForRead());
+    return parseBrainConfig(readFileSync7(path, "utf8"), envForRead());
   } catch {
     return parseBrainConfig(null, envForRead());
   }
@@ -16553,9 +16694,9 @@ var FAMILY_ACCEPTS_MODEL = {
 var DEFAULT_MIN_AGE_MS = 24 * 60 * 60 * 1000;
 
 // src/brain/providers/codex.ts
-import { homedir as homedir3, tmpdir } from "os";
-import { join as join16 } from "path";
-var SCHEMA_CACHE_DIR = join16(tmpdir(), "siltpoke-codex-schemas");
+import { homedir as homedir4, tmpdir } from "os";
+import { join as join19 } from "path";
+var SCHEMA_CACHE_DIR = join19(tmpdir(), "siltpoke-codex-schemas");
 
 // src/brain/registry.ts
 var CLAUDE_PINNED = "claude-haiku-4-5-20251001";
@@ -16595,8 +16736,8 @@ function resolveRoleMeta(config2, role) {
 }
 
 // src/cli/brain-cli.ts
-import { existsSync as existsSync10, readFileSync as readFileSync6 } from "fs";
-import { join as join17 } from "path";
+import { existsSync as existsSync11, readFileSync as readFileSync8 } from "fs";
+import { join as join20 } from "path";
 var FAMILIES2 = ["claude", "codex", "agy", "qoder", "codebuddy"];
 var ROLES = ["chat", "review", "extract"];
 function isFamily(x) {
@@ -16606,11 +16747,11 @@ function isRole(x) {
   return ROLES.includes(x);
 }
 function readRawConfig(home) {
-  const configPath = join17(home, "config.json");
-  if (!existsSync10(configPath))
+  const configPath = join20(home, "config.json");
+  if (!existsSync11(configPath))
     return {};
   try {
-    const parsed = JSON.parse(readFileSync6(configPath, "utf8"));
+    const parsed = JSON.parse(readFileSync8(configPath, "utf8"));
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     return {};
@@ -16716,11 +16857,11 @@ function runBrainSet(home, role, family, model) {
       message: `"${family}" does not accept a model from siltpoke \u2014 its CLI serves the model set in its own config`
     };
   }
-  const configPath = join17(home, "config.json");
+  const configPath = join20(home, "config.json");
   let prior = {};
-  if (existsSync10(configPath)) {
+  if (existsSync11(configPath)) {
     try {
-      const parsed = JSON.parse(readFileSync6(configPath, "utf8"));
+      const parsed = JSON.parse(readFileSync8(configPath, "utf8"));
       if (parsed && typeof parsed === "object")
         prior = parsed;
     } catch {}
@@ -16757,11 +16898,11 @@ function setReviewByBuilder(home, builder, reviewer, model) {
       message: `"${reviewer}"'s review model is set in its own CLI config \u2014 only claude's model is chosen here`
     };
   }
-  const configPath = join17(home, "config.json");
+  const configPath = join20(home, "config.json");
   let prior = {};
-  if (existsSync10(configPath)) {
+  if (existsSync11(configPath)) {
     try {
-      const parsed = JSON.parse(readFileSync6(configPath, "utf8"));
+      const parsed = JSON.parse(readFileSync8(configPath, "utf8"));
       if (parsed && typeof parsed === "object")
         prior = parsed;
     } catch {}
@@ -16785,13 +16926,13 @@ function runBrainUnset(home, role) {
   if (!isRole(role)) {
     return { ok: false, message: `unknown role "${role}" \u2014 one of: ${ROLES.join(" / ")}` };
   }
-  const configPath = join17(home, "config.json");
-  if (!existsSync10(configPath)) {
+  const configPath = join20(home, "config.json");
+  if (!existsSync11(configPath)) {
     return { ok: true, message: `${role} brain was not pinned \u2014 nothing to unset` };
   }
   let prior = {};
   try {
-    const parsed = JSON.parse(readFileSync6(configPath, "utf8"));
+    const parsed = JSON.parse(readFileSync8(configPath, "utf8"));
     if (parsed && typeof parsed === "object")
       prior = parsed;
   } catch {
@@ -16847,11 +16988,14 @@ function runBrainCli(rest, home) {
 }
 
 // src/cli/doctor-reviewer-check.ts
+function reviewerAdviceFor(host) {
+  return host === "claude-code" ? "run `/siltpoke-brain set-builder <builder> <reviewer>` \u2014 e.g. `set-builder claude codex` when you build in Claude Code" : "ask your agent to have Siltpoke use a different reviewer for the agent you build with";
+}
 function readEvalProvenance(path) {
-  if (!existsSync11(path))
+  if (!existsSync12(path))
     return null;
   try {
-    const parsed = JSON.parse(readFileSync7(path, "utf8"));
+    const parsed = JSON.parse(readFileSync9(path, "utf8"));
     if (typeof parsed !== "object" || parsed === null)
       return null;
     return parsed;
@@ -16860,7 +17004,7 @@ function readEvalProvenance(path) {
   }
 }
 function defaultEvalProvenancePath(repoRoot) {
-  return join18(repoRoot, "src", "eval", "caller-impact", "verdict.provenance.json");
+  return join21(repoRoot, "src", "eval", "caller-impact", "verdict.provenance.json");
 }
 function resolveEvalProvenancePath(opts) {
   return opts.evalProvenancePath ?? defaultEvalProvenancePath(opts.repoRoot ?? defaultRepoRoot());
@@ -16909,7 +17053,7 @@ function checkBrainRoles(opts) {
       if (builderMapping !== null) {
         return { name, pass: true, status: "info", detail: builderMapping };
       }
-      const builderNote = " (at review time this defaults to the building host's CLI family; set brain.roles.review to pin one.)";
+      const builderNote = ` (at review time this defaults to the building host's CLI family; to have another family review it, ${reviewerAdviceFor(detectDoctorHost(opts))}.)`;
       const detail = `family: claude. model=${modelLabel}. ${crossFamilyNote(family, config2.authorFamily, resolved.model)}${builderNote}`;
       return { name, pass: true, status: "info", detail };
     }
@@ -16934,8 +17078,8 @@ function checkBrainRoles(opts) {
 }
 
 // src/cli/doctor-statusline-check.ts
-import { existsSync as existsSync12, readFileSync as readFileSync8 } from "fs";
-import { join as join19 } from "path";
+import { existsSync as existsSync13, readFileSync as readFileSync10 } from "fs";
+import { join as join22 } from "path";
 
 // src/installer/statusline-interpreter.ts
 function splitInterpreter(command) {
@@ -16958,7 +17102,7 @@ function splitInterpreter(command) {
 var CHECK_NAME3 = "statusline interpreter runnable";
 function readStatuslineCommand(path) {
   try {
-    const parsed = JSON.parse(readFileSync8(path, "utf8"));
+    const parsed = JSON.parse(readFileSync10(path, "utf8"));
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
       return null;
     const statusLine = parsed.statusLine;
@@ -17005,12 +17149,12 @@ function interpreterToCheck(opts, path) {
   return interpreter;
 }
 function checkStatuslineInterpreter(opts = {}) {
-  const path = join19(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
+  const path = join22(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
   const decided = interpreterToCheck(opts, path);
   if (typeof decided !== "string")
     return decided;
   const isPath = decided.includes("/") || decided.includes("\\");
-  const found = isPath ? (opts.statuslineExistsFn ?? existsSync12)(decided) : (opts.statuslineWhichFn ?? ((c) => Bun.which(c)))(decided) !== null;
+  const found = isPath ? (opts.statuslineExistsFn ?? existsSync13)(decided) : (opts.statuslineWhichFn ?? ((c) => Bun.which(c)))(decided) !== null;
   if (found) {
     return { name: CHECK_NAME3, pass: true, detail: null };
   }
@@ -17021,17 +17165,76 @@ function checkStatuslineInterpreter(opts = {}) {
   };
 }
 
+// src/cli/doctor-statusline-run-check.ts
+import { existsSync as existsSync14 } from "fs";
+import { homedir as homedir5 } from "os";
+var CHECK_NAME4 = "statusline renders (real run)";
+var SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
+function defaultRunShim(shim, path, home) {
+  const r = Bun.spawnSync(["/bin/sh", shim], {
+    env: { HOME: home, PATH: path },
+    stdin: new TextEncoder().encode("{}")
+  });
+  return new TextDecoder().decode(r.stdout);
+}
+function rendered(out) {
+  if (out.trim().length === 0)
+    return false;
+  return !out.includes("can't find bun");
+}
+function checkStatuslineRenders(opts = {}, deps = {}) {
+  const host = detectDoctorHost(opts);
+  if (host !== "claude-code") {
+    return {
+      name: CHECK_NAME4,
+      pass: true,
+      status: "info",
+      detail: `skipped \u2014 a ${host} install has no Claude Code statusline`
+    };
+  }
+  const home = opts.home ?? homedir5();
+  const shim = statuslineShimPath(home);
+  if (!existsSync14(shim)) {
+    return {
+      name: CHECK_NAME4,
+      pass: true,
+      status: "info",
+      detail: "no statusline shim on disk \u2014 the pet's statusline is opt-in"
+    };
+  }
+  const run = deps.runShim ?? defaultRunShim;
+  const inherited = rendered(run(shim, process.env.PATH ?? SYSTEM_PATH, home));
+  const systemOnly = rendered(run(shim, SYSTEM_PATH, home));
+  if (inherited && systemOnly)
+    return { name: CHECK_NAME4, pass: true, detail: null };
+  const withoutPath = resolveBunPath(home, { pathLookup: () => null });
+  const route = withoutPath === null ? `no PATH-independent route to bun (nothing at ${bunPathPointerPath(home)}, nothing at ~/.bun/bin/bun)` : `bun reachable without PATH at ${withoutPath}`;
+  if (inherited) {
+    return {
+      name: CHECK_NAME4,
+      pass: true,
+      status: "warn",
+      detail: "renders from this shell, but NOT from a shell carrying only the system PATH \u2014 " + "and that is the shell the host runs the statusline and the Stop hook in, so " + `reviews may never fire. ${route}. ` + "Re-run `/siltpoke-setup` to record bun's absolute path."
+    };
+  }
+  return {
+    name: CHECK_NAME4,
+    pass: false,
+    detail: `${shim} produced no pet on either run (this shell's PATH, and the system PATH alone). ` + `${route}. \`/siltpoke-setup\` records bun's absolute path, or install bun so ` + "that ~/.bun/bin/bun exists."
+  };
+}
+
 // src/cli/doctor.ts
 function defaultRepoRoot() {
-  const here = dirname5(fileURLToPath(import.meta.url));
+  const here = dirname6(fileURLToPath(import.meta.url));
   return resolve(here, "..", "..");
 }
 function readJson(path) {
-  if (!existsSync13(path))
+  if (!existsSync15(path))
     return { ok: false, reason: "missing", detail: `${path} does not exist` };
   let raw;
   try {
-    raw = readFileSync9(path, "utf8");
+    raw = readFileSync11(path, "utf8");
   } catch (e) {
     return { ok: false, reason: "unreadable", detail: `${path} not readable (${e.message})` };
   }
@@ -17042,11 +17245,11 @@ function readJson(path) {
   }
 }
 function detectDoctorHost(opts = {}) {
-  if (existsSync13(opts.claudeHome ?? resolveClaudeHome()))
+  if (existsSync15(opts.claudeHome ?? resolveClaudeHome()))
     return "claude-code";
-  if (existsSync13(opts.agyHooksJsonPath ?? resolveAgyHooksJsonPath()))
+  if (existsSync15(opts.agyHooksJsonPath ?? resolveAgyHooksJsonPath()))
     return "antigravity";
-  if (existsSync13(opts.codexConfigPath ?? join20(resolveCodexHome(), "config.toml")))
+  if (existsSync15(opts.codexConfigPath ?? join23(resolveCodexHome(), "config.toml")))
     return "codex";
   return "claude-code";
 }
@@ -17063,15 +17266,15 @@ function setupAdviceFor(host) {
 function hostWiringPath(host, opts) {
   switch (host) {
     case "codex":
-      return join20(resolveCodexHome(), "hooks.json");
+      return join23(resolveCodexHome(), "hooks.json");
     case "antigravity":
       return opts.agyHooksJsonPath ?? resolveAgyHooksJsonPath();
     default:
-      return join20(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
+      return join23(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
   }
 }
 function checkSettingsJson(opts) {
-  const path = join20(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
+  const path = join23(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
   const r = readJson(path);
   const name = "~/.claude/settings.json valid";
   const host = detectDoctorHost(opts);
@@ -17094,79 +17297,14 @@ function checkSettingsJson(opts) {
   }
   return { name, pass: true, detail: null };
 }
-function checkStopHook(opts) {
-  const name = "Stop hook registered (curl fast path + command pair)";
-  const host = detectDoctorHost(opts);
-  if (host !== "claude-code") {
-    return {
-      name,
-      pass: true,
-      status: "info",
-      detail: `skipped \u2014 this is a ${host} install; its Stop hook lives in ${hostWiringPath(host, opts)}`
-    };
-  }
-  const isPluginInstall = opts.pluginInstall ?? Boolean(process.env.CLAUDE_PLUGIN_ROOT);
-  if (isPluginInstall && pluginOwnsStopHook(opts)) {
-    return {
-      name,
-      pass: true,
-      status: "info",
-      detail: "plugin-owned \u2014 hooks/hooks.json declares the Stop hook (settings.json hooks.Stop[] is expected empty)"
-    };
-  }
-  const path = join20(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
-  const r = readJson(path);
-  if (!r.ok) {
-    return { name, pass: false, detail: `${path} not readable \u2014 settings.json must exist first` };
-  }
-  if (typeof r.value !== "object" || r.value === null || Array.isArray(r.value)) {
-    return { name, pass: false, detail: `${path} root is not a JSON object \u2014 cannot read hooks.Stop` };
-  }
-  const settings = r.value;
-  const stopArr = settings.hooks?.Stop;
-  if (!Array.isArray(stopArr) || stopArr.length === 0) {
-    return { name, pass: false, detail: "hooks.Stop[] is missing or empty in settings.json" };
-  }
-  const shape = scanStopMatchers(stopArr);
-  if (shape === "curl")
-    return { name, pass: true, detail: null };
-  if (shape === "legacy") {
-    return {
-      name,
-      pass: true,
-      status: "info",
-      detail: `legacy http Stop hook shape detected. ${setupAdviceFor(host)} to migrate to the silent curl fast path.`
-    };
-  }
-  return {
-    name,
-    pass: false,
-    detail: `no Stop hook matcher contains both the curl fast path (command ~ curl \u2026 /hooks/stop) and a command fallback (~ on-stop.ts). ${setupAdviceFor(host)} to re-register.`
-  };
-}
-function scanStopMatchers(matchers) {
-  let sawLegacyPair = false;
-  for (const m of matchers) {
-    const hooks = Array.isArray(m?.hooks) ? m.hooks : [];
-    const cmds = hooks.filter((h) => h.type === "command" && typeof h.command === "string").map((h) => h.command);
-    const hasCurl = cmds.some((c) => c.includes("curl") && c.includes("/hooks/stop"));
-    const hasCmd = cmds.some((c) => c.includes("on-stop.ts"));
-    const hasHttp = hooks.some((h) => h.type === "http" && typeof h.url === "string" && h.url.includes("/hooks/stop"));
-    if (hasCurl && hasCmd)
-      return "curl";
-    if (hasHttp && hasCmd)
-      sawLegacyPair = true;
-  }
-  return sawLegacyPair ? "legacy" : "none";
-}
 function checkInnerTxt(opts) {
   const name = "~/.siltpoke/inner.txt readable";
-  const path = join20(opts.siltpokeHome ?? siltpokeRoot(), "inner.txt");
-  if (!existsSync13(path)) {
+  const path = join23(opts.siltpokeHome ?? siltpokeRoot(), "inner.txt");
+  if (!existsSync15(path)) {
     return { name, pass: true, detail: null };
   }
   try {
-    readFileSync9(path, "utf8");
+    readFileSync11(path, "utf8");
     return { name, pass: true, detail: null };
   } catch (e) {
     return { name, pass: false, detail: `${path} not readable (${e.message})` };
@@ -17174,8 +17312,8 @@ function checkInnerTxt(opts) {
 }
 function checkWakeJson(opts) {
   const name = "~/.siltpoke/wake.json healthy (absent OK)";
-  const path = join20(opts.siltpokeHome ?? siltpokeRoot(), "wake.json");
-  if (!existsSync13(path)) {
+  const path = join23(opts.siltpokeHome ?? siltpokeRoot(), "wake.json");
+  if (!existsSync15(path)) {
     return { name, pass: true, detail: null };
   }
   const r = readJson(path);
@@ -17196,7 +17334,7 @@ function checkWakeJson(opts) {
 }
 function checkGlobalSchema(opts) {
   const name = "~/.siltpoke/global.json schema v3 current";
-  const path = join20(opts.siltpokeHome ?? siltpokeRoot(), "global.json");
+  const path = join23(opts.siltpokeHome ?? siltpokeRoot(), "global.json");
   const r = readJson(path);
   if (!r.ok) {
     if (r.reason === "missing") {
@@ -17230,9 +17368,9 @@ function checkSlashSymlinks(opts) {
   }
   const platform = opts.platform ?? process.platform;
   const repoRoot = opts.repoRoot ?? defaultRepoRoot();
-  const claudeCommandsDir = join20(opts.claudeHome ?? resolveClaudeHome(), "commands");
-  const pluginCommandsDir = join20(repoRoot, ".claude-plugin", "commands");
-  if (opts.pluginInstall ?? Boolean(process.env.CLAUDE_PLUGIN_ROOT)) {
+  const claudeCommandsDir = join23(opts.claudeHome ?? resolveClaudeHome(), "commands");
+  const pluginCommandsDir = join23(repoRoot, ".claude-plugin", "commands");
+  if (isPluginInstall(opts)) {
     return {
       name: "slash commands",
       pass: true,
@@ -17240,7 +17378,7 @@ function checkSlashSymlinks(opts) {
       detail: "shipped with the plugin \u2014 no symlinks to verify"
     };
   }
-  if (!existsSync13(pluginCommandsDir)) {
+  if (!existsSync15(pluginCommandsDir)) {
     return {
       name: "slash command symlinks intact",
       pass: false,
@@ -17251,9 +17389,9 @@ function checkSlashSymlinks(opts) {
   const total = sourceFiles.length;
   const broken = [];
   for (const f of sourceFiles) {
-    const linkPath = join20(claudeCommandsDir, f);
-    const expectedTarget = join20(pluginCommandsDir, f);
-    if (!existsSync13(linkPath)) {
+    const linkPath = join23(claudeCommandsDir, f);
+    const expectedTarget = join23(pluginCommandsDir, f);
+    if (!existsSync15(linkPath)) {
       broken.push(`${f} (missing)`);
       continue;
     }
@@ -17296,7 +17434,7 @@ function checkSlashSymlinks(opts) {
 }
 function checkConfigJson(opts) {
   const name = "~/.siltpoke/config.json valid";
-  const path = join20(opts.siltpokeHome ?? siltpokeRoot(), "config.json");
+  const path = join23(opts.siltpokeHome ?? siltpokeRoot(), "config.json");
   const r = readJson(path);
   if (!r.ok) {
     return { name, pass: false, detail: r.detail };
@@ -17316,7 +17454,7 @@ function checkConfigJson(opts) {
 function checkAgyHooksJson(opts) {
   const name = "~/.gemini/config/hooks.json siltpoke-review Stop registered (agy)";
   const path = opts.agyHooksJsonPath ?? resolveAgyHooksJsonPath();
-  if (!existsSync13(path)) {
+  if (!existsSync15(path)) {
     return {
       name,
       pass: true,
@@ -17378,7 +17516,8 @@ function runAllChecks(opts = {}) {
     ...checkBrainRoles(opts),
     checkAgyHooksJson(opts),
     checkProjectRoots(opts),
-    checkStatuslineInterpreter(opts)
+    checkStatuslineInterpreter(opts),
+    checkStatuslineRenders(opts)
   ];
 }
 function formatChecklist(results, opts = {}) {
@@ -17445,8 +17584,8 @@ import { readFile as readFile7 } from "fs/promises";
 
 // src/state/critique-status.ts
 import { readFile as readFile6, writeFile as writeFile3, readdir as readdir3 } from "fs/promises";
-import { existsSync as existsSync14 } from "fs";
-import { join as join21 } from "path";
+import { existsSync as existsSync16 } from "fs";
+import { join as join24 } from "path";
 var STATUS_LINE = /^status:\s*(\S+)\s*$/m;
 var CRITIQUE_ID_LINE = /^critique_id:\s*(\S+)\s*$/m;
 async function readCritiqueId(critiquePath) {
@@ -17485,22 +17624,22 @@ async function setStatus(critiquePath, next) {
   }
 }
 async function findCritiqueByIdOrLatest(basePath, idOrLatest) {
-  const critiqueRoot = join21(basePath, "critiques");
+  const critiqueRoot = join24(basePath, "critiques");
   if (idOrLatest === "latest") {
-    const latestPath = join21(critiqueRoot, "latest.md");
-    return existsSync14(latestPath) ? latestPath : null;
+    const latestPath = join24(critiqueRoot, "latest.md");
+    return existsSync16(latestPath) ? latestPath : null;
   }
-  const archiveRoot = join21(critiqueRoot, "archive");
-  if (!existsSync14(archiveRoot))
+  const archiveRoot = join24(critiqueRoot, "archive");
+  if (!existsSync16(archiveRoot))
     return null;
   try {
     const dates = await readdir3(archiveRoot);
     for (const date5 of dates.sort().reverse()) {
-      const dateDir = join21(archiveRoot, date5);
+      const dateDir = join24(archiveRoot, date5);
       const files = await readdir3(dateDir);
       const match = files.find((f) => f === `${idOrLatest}.md`);
       if (match)
-        return join21(dateDir, match);
+        return join24(dateDir, match);
     }
     return null;
   } catch {
@@ -17509,15 +17648,15 @@ async function findCritiqueByIdOrLatest(basePath, idOrLatest) {
 }
 
 // src/cli/critique-absent.ts
-import { existsSync as existsSync15 } from "fs";
+import { existsSync as existsSync17 } from "fs";
 import { readdir as readdir4 } from "fs/promises";
-import { join as join22 } from "path";
+import { join as join25 } from "path";
 async function hasNoCritiquesAtAll(basePath) {
-  const critiqueRoot = join22(basePath, "critiques");
-  if (existsSync15(join22(critiqueRoot, "latest.md")))
+  const critiqueRoot = join25(basePath, "critiques");
+  if (existsSync17(join25(critiqueRoot, "latest.md")))
     return false;
-  const archiveRoot = join22(critiqueRoot, "archive");
-  if (!existsSync15(archiveRoot))
+  const archiveRoot = join25(critiqueRoot, "archive");
+  if (!existsSync17(archiveRoot))
     return true;
   let dates;
   try {
@@ -17527,12 +17666,10 @@ async function hasNoCritiquesAtAll(basePath) {
   }
   for (const date5 of dates) {
     try {
-      const files = await readdir4(join22(archiveRoot, date5));
+      const files = await readdir4(join25(archiveRoot, date5));
       if (files.some((f) => f.endsWith(".md")))
         return false;
-    } catch {
-      continue;
-    }
+    } catch {}
   }
   return true;
 }
@@ -17684,8 +17821,8 @@ import { readFile as readFile9 } from "fs/promises";
 
 // src/state/progression.ts
 import { readFile as readFile8, writeFile as writeFile4, rename as rename4, mkdir as mkdir3 } from "fs/promises";
-import { existsSync as existsSync16 } from "fs";
-import { join as join23 } from "path";
+import { existsSync as existsSync18 } from "fs";
+import { join as join26 } from "path";
 import { randomBytes as randomBytes2 } from "crypto";
 var DEFAULT_STATS = {
   hp: 10,
@@ -17800,7 +17937,7 @@ function addXp(progression, amount) {
 }
 var FILENAME2 = "progression.json";
 function progressionPath(basePath) {
-  return join23(basePath, FILENAME2);
+  return join26(basePath, FILENAME2);
 }
 function isLegacyProgression(value) {
   if (typeof value !== "object" || value === null)
@@ -17840,7 +17977,7 @@ function migrateToV2(parsed, now) {
 }
 async function readProgression(basePath) {
   const path = progressionPath(basePath);
-  if (!existsSync16(path))
+  if (!existsSync18(path))
     return { ...DEFAULT_PROGRESSION, stats_last_tick_at: new Date().toISOString() };
   try {
     const raw = await readFile8(path, "utf8");
@@ -17871,8 +18008,8 @@ async function writeProgression(basePath, progression) {
 
 // src/preference-log/writer.ts
 import { appendFile, mkdir as mkdir4 } from "fs/promises";
-import { dirname as dirname6, join as join24 } from "path";
-var DEFAULT_PATH = join24(siltpokeRoot(), "preference-log.jsonl");
+import { dirname as dirname7, join as join27 } from "path";
+var DEFAULT_PATH = join27(siltpokeRoot(), "preference-log.jsonl");
 async function appendPreferenceEntry(entry, opts = {}) {
   const path = opts.path ?? DEFAULT_PATH;
   const fullEntry = {
@@ -17885,7 +18022,7 @@ async function appendPreferenceEntry(entry, opts = {}) {
     intent_at_critique: entry.intent_at_critique ?? null,
     reflexion_rule_fired: entry.reflexion_rule_fired ?? null
   };
-  await mkdir4(dirname6(path), { recursive: true });
+  await mkdir4(dirname7(path), { recursive: true });
   await appendFile(path, `${JSON.stringify(fullEntry)}
 `);
 }
@@ -17932,20 +18069,20 @@ async function markForwarded(opts) {
 if (false) {}
 
 // src/state/mute.ts
-import { readFileSync as readFileSync10, existsSync as existsSync17, unlinkSync } from "fs";
-import { join as join25 } from "path";
+import { readFileSync as readFileSync12, existsSync as existsSync19, unlinkSync } from "fs";
+import { join as join28 } from "path";
 var MUTE_FILENAME = "mute.json";
 var MUTE_SCHEMA_VERSION = 1;
 function mutePath(homeBase) {
-  return join25(homeBase, MUTE_FILENAME);
+  return join28(homeBase, MUTE_FILENAME);
 }
 function readMute(homeBase) {
   const path = mutePath(homeBase);
-  if (!existsSync17(path))
+  if (!existsSync19(path))
     return null;
   let raw;
   try {
-    raw = readFileSync10(path, "utf8");
+    raw = readFileSync12(path, "utf8");
   } catch {
     return null;
   }
@@ -17987,7 +18124,7 @@ function writeMute(homeBase, mute) {
 }
 function clearMute(homeBase) {
   const path = mutePath(homeBase);
-  if (!existsSync17(path))
+  if (!existsSync19(path))
     return false;
   try {
     unlinkSync(path);
@@ -18199,18 +18336,18 @@ function computeQuizDials(raw, matchModeOverride) {
 
 // src/cli/report.ts
 import { spawnSync as spawnSync6 } from "child_process";
-import { existsSync as existsSync20 } from "fs";
-import { basename as basename4, dirname as dirname8, join as join31 } from "path";
+import { existsSync as existsSync22 } from "fs";
+import { basename as basename4, dirname as dirname9, join as join34 } from "path";
 import { fileURLToPath as fileURLToPath2 } from "url";
 
 // src/config/write-daemon-enabled.ts
-import { existsSync as existsSync18 } from "fs";
+import { existsSync as existsSync20 } from "fs";
 import { readFile as readFile10 } from "fs/promises";
-import { join as join26 } from "path";
+import { join as join29 } from "path";
 async function setDaemonEnabled(home, enabled) {
-  const configPath = join26(home, "config.json");
+  const configPath = join29(home, "config.json");
   let obj = {};
-  if (existsSync18(configPath)) {
+  if (existsSync20(configPath)) {
     try {
       obj = JSON.parse(await readFile10(configPath, "utf8"));
     } catch {
@@ -18231,13 +18368,13 @@ import { spawnSync as spawnSync4 } from "child_process";
 // src/installer/menubar-setup.ts
 import { spawnSync as spawnSync3 } from "child_process";
 import { existsSync as realExistsSync2, writeFileSync as writeFileSync3 } from "fs";
-import { basename as basename3, join as join28, normalize } from "path";
+import { basename as basename3, join as join31, normalize } from "path";
 
 // src/installer/swiftbar-autostart.ts
 import { spawnSync as spawnSync2 } from "child_process";
 import { mkdirSync as mkdirSync2, existsSync as realExistsSync, rmSync, writeFileSync as writeFileSync2 } from "fs";
-import { homedir as homedir4 } from "os";
-import { dirname as dirname7, join as join27 } from "path";
+import { homedir as homedir6 } from "os";
+import { dirname as dirname8, join as join30 } from "path";
 var SWIFTBAR_APP_PATH = "/Applications/SwiftBar.app";
 var SWIFTBAR_LABEL = "io.siltpoke.swiftbar";
 function renderSwiftbarPlist() {
@@ -18257,7 +18394,7 @@ function renderSwiftbarPlist() {
 </plist>`;
 }
 function defaultPlistPath2(home) {
-  return join27(home, "Library", "LaunchAgents", "io.siltpoke.swiftbar.plist");
+  return join30(home, "Library", "LaunchAgents", "io.siltpoke.swiftbar.plist");
 }
 var realExec = (cmd, args) => spawnSync2(cmd, args, { stdio: "ignore" });
 function installSwiftbarAutostart(opts = {}) {
@@ -18265,17 +18402,17 @@ function installSwiftbarAutostart(opts = {}) {
   if (platform !== "darwin") {
     return { installed: false, reason: "not-darwin" };
   }
-  const existsSync19 = opts.existsSync ?? realExistsSync;
-  if (!existsSync19(SWIFTBAR_APP_PATH)) {
+  const existsSync21 = opts.existsSync ?? realExistsSync;
+  if (!existsSync21(SWIFTBAR_APP_PATH)) {
     return { installed: false, reason: "swiftbar-absent" };
   }
-  const home = opts.home ?? homedir4();
+  const home = opts.home ?? homedir6();
   const plistPath = opts.plistPath ?? defaultPlistPath2(home);
   const writeFile5 = opts.writeFile ?? ((p, c) => writeFileSync2(p, c));
   const exec = opts.exec ?? realExec;
   const uid = opts.uid ?? process.getuid?.() ?? 0;
   const mkdir5 = opts.mkdirSync ?? ((dir) => mkdirSync2(dir, { recursive: true }));
-  mkdir5(dirname7(plistPath));
+  mkdir5(dirname8(plistPath));
   writeFile5(plistPath, renderSwiftbarPlist());
   loadLaunchAgent(plistPath, SWIFTBAR_LABEL, uid, exec);
   return { installed: true, reason: "ok" };
@@ -18423,11 +18560,11 @@ function defaultExec(cmd, args) {
 }
 function resolveWrapperPath(hereDir = import.meta.dir) {
   if (basename3(hereDir) === "dist") {
-    return normalize(join28(hereDir, "siltpoke-card.js"));
+    return normalize(join31(hereDir, "siltpoke-card.js"));
   }
-  return normalize(join28(hereDir, "..", "face", "wrapper.ts"));
+  return normalize(join31(hereDir, "..", "face", "wrapper.ts"));
 }
-function resolveBunPath(exec) {
+function resolveBunPath2(exec) {
   const which = exec("which", ["bun"]);
   const trimmed = which.stdout.trim();
   return trimmed || "bun";
@@ -18447,7 +18584,7 @@ function resolvePluginDir(exec, home) {
   return fallback;
 }
 function defaultPluginDir(home) {
-  return join28(home, "Library", "Application Support", "SwiftBar", "plugins");
+  return join31(home, "Library", "Application Support", "SwiftBar", "plugins");
 }
 function readPluginDirPref(exec, home) {
   const read = exec("defaults", ["read", SWIFTBAR_DEFAULTS_DOMAIN, SWIFTBAR_PLUGIN_DIR_KEY]);
@@ -18455,18 +18592,18 @@ function readPluginDirPref(exec, home) {
   if (!existing) {
     return null;
   }
-  return existing.startsWith("~") ? join28(home, existing.slice(1)) : existing;
+  return existing.startsWith("~") ? join31(home, existing.slice(1)) : existing;
 }
 function resolveObeyedShimPath(exec, home) {
   const pref = readPluginDirPref(exec, home);
-  return join28(pref ?? defaultPluginDir(home), SHIM_NAME);
+  return join31(pref ?? defaultPluginDir(home), SHIM_NAME);
 }
-function strandedShimPath(obeyedPath, home, existsSync19) {
-  const defaultPath = join28(defaultPluginDir(home), SHIM_NAME);
+function strandedShimPath(obeyedPath, home, existsSync21) {
+  const defaultPath = join31(defaultPluginDir(home), SHIM_NAME);
   if (obeyedPath === defaultPath) {
     return null;
   }
-  return existsSync19(defaultPath) ? defaultPath : null;
+  return existsSync21(defaultPath) ? defaultPath : null;
 }
 function probeExec(cmd, args) {
   try {
@@ -18485,8 +18622,8 @@ async function runMenubarSetup(deps) {
   const home = deps.home ?? process.env.HOME ?? "";
   const exec = deps.exec ?? defaultExec;
   const writeFile5 = deps.writeFile ?? ((p, c) => writeFileSync3(p, c));
-  const existsSync19 = deps.existsSync ?? realExistsSync2;
-  const swiftBarAppPresent = existsSync19(SWIFTBAR_APP_PATH);
+  const existsSync21 = deps.existsSync ?? realExistsSync2;
+  const swiftBarAppPresent = existsSync21(SWIFTBAR_APP_PATH);
   const swiftBarCaskInstalled = swiftBarAppPresent || exec("brew", ["list", "--cask", "swiftbar"]).status === 0;
   if (!swiftBarCaskInstalled) {
     if (deps.nonInteractive) {
@@ -18509,8 +18646,8 @@ async function runMenubarSetup(deps) {
   }
   const pluginDir = resolvePluginDir(exec, home);
   exec("mkdir", ["-p", pluginDir]);
-  const shimPath = join28(pluginDir, SHIM_NAME);
-  const bunPath = resolveBunPath(exec);
+  const shimPath = join31(pluginDir, SHIM_NAME);
+  const bunPath = resolveBunPath2(exec);
   const wrapperPath = deps.rendererPath ?? resolveWrapperPath();
   writeFile5(shimPath, renderShim(bunPath, wrapperPath));
   exec("chmod", ["+x", shimPath]);
@@ -18519,7 +18656,7 @@ async function runMenubarSetup(deps) {
   const auto = installSwiftbarAutostart({
     platform,
     exec: (cmd, argv) => ({ status: exec(cmd, argv).status }),
-    existsSync: existsSync19,
+    existsSync: existsSync21,
     home,
     writeFile: writeFile5,
     mkdirSync: (dir) => {
@@ -18547,10 +18684,10 @@ function refreshMenubar(deps = {}) {
 }
 
 // src/cli/restart-outcome.ts
-import { readFileSync as readFileSync11, writeFileSync as writeFileSync4, mkdirSync as mkdirSync3 } from "fs";
-import { join as join29 } from "path";
+import { readFileSync as readFileSync13, writeFileSync as writeFileSync4, mkdirSync as mkdirSync3 } from "fs";
+import { join as join32 } from "path";
 function restartOutcomePath(homeBase) {
-  return join29(homeBase, "last-restart.json");
+  return join32(homeBase, "last-restart.json");
 }
 function writeRestartOutcome(homeBase, outcome) {
   try {
@@ -20157,17 +20294,17 @@ var POSE_KEYS = new Set([
 ]);
 var ANIMATED_MOODS = new Set(["idle", "watching"]);
 // src/cli/report-stop.ts
-import { existsSync as existsSync19, readFileSync as readFileSync12 } from "fs";
-import { join as join30 } from "path";
+import { existsSync as existsSync21, readFileSync as readFileSync14 } from "fs";
+import { join as join33 } from "path";
 var BASE = siltpokeRoot();
-var PID_PATHS = [join30(BASE, "siltpoked.pid"), join30(BASE, "report.pid")];
+var PID_PATHS = [join33(BASE, "siltpoked.pid"), join33(BASE, "report.pid")];
 function stopReport(pidPaths = PID_PATHS) {
   for (const p of pidPaths) {
-    if (!existsSync19(p))
+    if (!existsSync21(p))
       continue;
     let pid;
     try {
-      pid = Number(readFileSync12(p, "utf8").trim());
+      pid = Number(readFileSync14(p, "utf8").trim());
     } catch (err) {
       return {
         killed: false,
@@ -21226,8 +21363,8 @@ async function openDashboard(opts = {}) {
     "start"
   ];
   const daemonAlive = (timeoutMs) => siltpokedAnswersAt(`${DASHBOARD_URL}api/ping`, timeoutMs);
-  const pidPath = join31(homeBase, "siltpoked.pid");
-  const alive = existsSync20(pidPath) ? await daemonAlive(250) : false;
+  const pidPath = join34(homeBase, "siltpoked.pid");
+  const alive = existsSync22(pidPath) ? await daemonAlive(250) : false;
   if (!alive) {
     await setDaemonEnabled(homeBase, true);
     const proc = Bun.spawn([...daemonArgv], {
@@ -21264,7 +21401,7 @@ async function restartDashboard(opts = {}) {
     return;
   }
   const homeBase = opts.homeBase ?? siltpokeRoot(process.env);
-  stopReport([join31(homeBase, "siltpoked.pid"), join31(homeBase, "report.pid")]);
+  stopReport([join34(homeBase, "siltpoked.pid"), join34(homeBase, "report.pid")]);
   for (let i = 0;i < 30; i++) {
     try {
       const r = await fetch(`${DASHBOARD_URL}api/ping`, {
@@ -21329,12 +21466,12 @@ function handleStatus(deps, write) {
 `);
     return 0;
   }
-  const existsSync21 = deps.existsSync ?? realExistsSync3;
+  const existsSync23 = deps.existsSync ?? realExistsSync3;
   const exec = deps.exec ?? probeExec;
   const home = deps.home ?? process.env.HOME ?? "";
   const obeyed = obeyedShimPath(deps);
-  if (!existsSync21(obeyed)) {
-    const stranded = strandedShimPath(obeyed, home, existsSync21);
+  if (!existsSync23(obeyed)) {
+    const stranded = strandedShimPath(obeyed, home, existsSync23);
     if (stranded) {
       write(`menu-bar pet: installed at ${stranded}, but SwiftBar is now reading ${obeyed} \u2014 the menu bar stays empty. Re-run install to put it where SwiftBar looks.
 `);
@@ -21355,7 +21492,7 @@ function handleStatus(deps, write) {
 `);
     return 0;
   }
-  if (!existsSync21(SWIFTBAR_APP_PATH)) {
+  if (!existsSync23(SWIFTBAR_APP_PATH)) {
     write(`menu-bar pet: installed, but I cannot find SwiftBar at ${SWIFTBAR_APP_PATH} \u2014 nothing can draw the pet. If you don't have it:
   ${SWIFTBAR_DOWNLOAD_URL}
 `);
@@ -21372,12 +21509,12 @@ function handleRemove(deps, write) {
 `);
     return 0;
   }
-  const existsSync21 = deps.existsSync ?? realExistsSync3;
+  const existsSync23 = deps.existsSync ?? realExistsSync3;
   const exec = deps.exec ?? probeExec;
   const home = deps.home ?? process.env.HOME ?? "";
   const rm = deps.rm ?? ((p) => unlinkSync2(p));
   const obeyed = obeyedShimPath(deps);
-  const path = existsSync21(obeyed) ? obeyed : strandedShimPath(obeyed, home, existsSync21);
+  const path = existsSync23(obeyed) ? obeyed : strandedShimPath(obeyed, home, existsSync23);
   if (!path) {
     write(`menu-bar pet: not installed (nothing to remove)
 `);
@@ -21427,11 +21564,11 @@ if (false) {}
 
 // src/cli/wake.ts
 import { mkdir as mkdir5, writeFile as writeFile5, readFile as readFile11, unlink } from "fs/promises";
-import { join as join32 } from "path";
+import { join as join35 } from "path";
 var FILENAME3 = "wake.json";
 var DEFAULT_TTL_MS = 5 * 60 * 1000;
 function wakePath(homeBase) {
-  return join32(homeBase, FILENAME3);
+  return join35(homeBase, FILENAME3);
 }
 async function runWake(opts = {}) {
   const homeBase = opts.homeBase ?? siltpokeRoot();
@@ -21482,6 +21619,17 @@ function formatWakeJson(result) {
 }
 if (false) {}
 
+// src/cli/brain-detect.ts
+function detectInstalledReviewers(which = (cmd) => Bun.which(cmd)) {
+  return FAMILIES.filter((family) => {
+    const bin = familyBinary(family);
+    return bin !== null && which(bin) !== null;
+  });
+}
+function formatDetect(which) {
+  return JSON.stringify({ installed: detectInstalledReviewers(which) });
+}
+
 // src/cli/plugin-cli.ts
 var REAL_IO = {
   stdout: (s) => process.stdout.write(s),
@@ -21495,22 +21643,22 @@ function resolveDaemonArgv() {
   const root = pluginRoot();
   const candidates = [
     fileURLToPath3(new URL("./siltpoke-daemon.js", import.meta.url)),
-    ...root ? [join33(root, "dist", "siltpoke-daemon.js")] : [],
+    ...root ? [join36(root, "dist", "siltpoke-daemon.js")] : [],
     fileURLToPath3(new URL("./daemon.ts", import.meta.url))
   ];
-  const found = candidates.find((p) => existsSync21(p));
+  const found = candidates.find((p) => existsSync23(p));
   return found ? ["bun", found, "start"] : undefined;
 }
 function resolveCardPath() {
   const root = pluginRoot();
   const candidates = [
     fileURLToPath3(new URL("./siltpoke-card.js", import.meta.url)),
-    ...root ? [join33(root, "dist", "siltpoke-card.js")] : []
+    ...root ? [join36(root, "dist", "siltpoke-card.js")] : []
   ];
-  return candidates.find((p) => existsSync21(p));
+  return candidates.find((p) => existsSync23(p));
 }
 function projectBase() {
-  return join33(process.cwd(), ".siltpoke");
+  return join36(process.cwd(), ".siltpoke");
 }
 function positional(rest) {
   return rest.find((a) => !a.startsWith("--"));
@@ -21581,6 +21729,11 @@ var HANDLERS = {
     return 0;
   },
   brain: (rest, io) => {
+    if (rest[0] === "detect") {
+      io.stdout(`${formatDetect()}
+`);
+      return 0;
+    }
     const result = runBrainCli(rest, siltpokeRoot(process.env));
     io[result.ok ? "stdout" : "stderr"](`${result.message}
 `);

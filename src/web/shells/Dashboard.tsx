@@ -114,9 +114,8 @@ export function Dashboard(props: DashboardProps) {
             re-attaches via x-data="sidebar" on each nav; $nav nanostore
             preserves the collapsed state across navigation (state lives in
             the store, not in the DOM, so sidebar destruction is safe). */}
-        <aside
+        <nav
           id="dashboard-sidebar"
-          role="navigation"
           aria-label="Sidebar"
           data-sidebar
           x-data="sidebar"
@@ -183,6 +182,7 @@ export function Dashboard(props: DashboardProps) {
               </span>
             )}
             <button
+              type="button"
               aria-label="Toggle sidebar"
               data-sidebar-collapse
               x-on:click="toggle()"
@@ -371,7 +371,7 @@ export function Dashboard(props: DashboardProps) {
             }}
             x-text="line.text"
           />
-        </aside>
+        </nav>
 
         {/* Main content area */}
         <main

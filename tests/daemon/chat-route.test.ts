@@ -203,6 +203,7 @@ describe("POST /api/chat", () => {
       index: idx,
       secret: TEST_SECRET,
       resolveProject: ELIGIBLE_PROJECT,
+      // biome-ignore lint/correctness/useYield: mocks a stream factory that fails before producing any chunk — no yield is the point (asserts the error event surfaces).
       streamFactory: async function* () {
         throw new Error("boom");
       },
@@ -259,7 +260,8 @@ describe("POST /api/chat", () => {
     await r2.text();
 
     const memory = await readMemory(home);
-    const session = memory?.chat_sessions.find((s) => s.id === "s-same")!;
+    expect(memory).not.toBeNull();
+    const session = memory!.chat_sessions.find((s) => s.id === "s-same")!;
     expect(session.message_count).toBe(4);
   });
 });

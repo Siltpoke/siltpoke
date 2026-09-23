@@ -88,7 +88,7 @@ describe("captureGitBaseline", () => {
     expect(result).not.toBeNull();
     expect(result?.entries.has("dirty.ts")).toBe(true);
     // Unstaged modification → " M" (working tree modified)
-    const code = result?.entries.get("dirty.ts")!;
+    const code = result!.entries.get("dirty.ts")!;
     expect(code).toContain("M");
   });
 
@@ -106,7 +106,7 @@ describe("captureGitBaseline", () => {
     expect(result).not.toBeNull();
     expect(result?.entries.has("staged.ts")).toBe(true);
     // Staged modification → "M " (index modified)
-    const code = result?.entries.get("staged.ts")!;
+    const code = result!.entries.get("staged.ts")!;
     expect(code).toContain("M");
   });
 

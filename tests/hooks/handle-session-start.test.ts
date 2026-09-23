@@ -21,7 +21,7 @@ describe("handleSessionStart", () => {
     writeFileSync(join(dir, "a.txt"), "a");
     spawnSync("git", ["add", "."], { cwd: dir });
     spawnSync("git", ["-c", "user.email=t@t.t", "-c", "user.name=t", "commit", "-m", "init"], { cwd: dir });
-    await handleSessionStart({ cwd: dir, session_id: "test-session" });
+    await handleSessionStart({ cwd: dir, session_id: "test-session", env: { ...process.env, HOME: dir, SILTPOKE_HOME: join(dir, ".siltpoke") } }); // isolated env is mandatory — see session-start-env-isolation.test.ts
     const baselinePath = join(dir, ".siltpoke", "baseline.json");
     expect(existsSync(baselinePath)).toBe(true);
     const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
@@ -33,7 +33,7 @@ describe("handleSessionStart", () => {
   test("non-git directory → writes baseline with head_sha=null", async () => {
     const dir = join(tmpdir(), `siltpoke-nogit-${Date.now()}`);
     mkdirSync(dir, { recursive: true });
-    await handleSessionStart({ cwd: dir, session_id: "test-2" });
+    await handleSessionStart({ cwd: dir, session_id: "test-2", env: { ...process.env, HOME: dir, SILTPOKE_HOME: join(dir, ".siltpoke") } });
     const baseline = JSON.parse(readFileSync(join(dir, ".siltpoke", "baseline.json"), "utf8"));
     expect(baseline.head_sha).toBeNull();
     rmSync(dir, { recursive: true });

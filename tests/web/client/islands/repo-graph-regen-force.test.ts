@@ -46,7 +46,9 @@ afterAll(async () => {
 });
 afterEach(() => {
   window.history.replaceState(null, "", "/repo-graph");
-  document.querySelectorAll("[data-confirm-modal]").forEach((el) => el.remove());
+  document.querySelectorAll("[data-confirm-modal]").forEach((el) => {
+    el.remove();
+  });
   document.body.style.overflow = "";
 });
 

@@ -63,7 +63,13 @@ function contentToString(content: unknown): string {
   return JSON.stringify(content);
 }
 
-function MessageCard({ role, content }: { role: string; content: unknown }) {
+// `speaker` — not `role` — is deliberate: a bare JSX prop literally named
+// `role` on ANY element (including a custom, non-exported component like this
+// one) reads to biome's lint/a11y/useValidAriaRole as an ARIA role attribute,
+// and "assistant" / "user" / "tool" / "system" aren't valid ARIA role values.
+// The prop has nothing to do with ARIA — it's the chat message's speaker —
+// so the fix is the name, not a suppression comment.
+function MessageCard({ speaker, content }: { speaker: string; content: unknown }) {
   const text = contentToString(content);
   const truncated = text.length > 2000 ? text.slice(0, 2000) + "… [truncated]" : text;
 
@@ -73,7 +79,7 @@ function MessageCard({ role, content }: { role: string; content: unknown }) {
         marginBottom: 10,
         borderRadius: tokens.radius.md,
         border: `1px solid ${tokens.color.edge}`,
-        background: roleBg(role),
+        background: roleBg(speaker),
         overflow: "hidden",
       }}
     >
@@ -91,13 +97,13 @@ function MessageCard({ role, content }: { role: string; content: unknown }) {
           style={{
             fontFamily: tokens.font.mono,
             fontSize: 10,
-            color: roleColor(role),
+            color: roleColor(speaker),
             fontWeight: "bold",
             textTransform: "uppercase",
             letterSpacing: "0.06em",
           }}
         >
-          {role}
+          {speaker}
         </span>
       </div>
       {/* Content */}
@@ -162,7 +168,7 @@ export function MessagesView({ inputJson, outputJson }: MessagesViewProps) {
       {hasMessages ? (
         <>
           {messages.map((m, i) => (
-            <MessageCard key={i} role={String(m.role)} content={m.content} />
+            <MessageCard key={i} speaker={String(m.role)} content={m.content} />
           ))}
           {outputJson && outputJson !== "" && outputJson !== "null" && (
             <>
@@ -179,7 +185,7 @@ export function MessagesView({ inputJson, outputJson }: MessagesViewProps) {
               >
                 Response
               </div>
-              <MessageCard role="assistant" content={parseOutput(outputJson)} />
+              <MessageCard speaker="assistant" content={parseOutput(outputJson)} />
             </>
           )}
         </>

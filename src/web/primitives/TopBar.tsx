@@ -168,6 +168,7 @@ export function TopBar(props: TopBarProps) {
       {profile && (
         <div
           class="topbar__profile"
+          role="img"
           title={profile.name ?? profile.initials}
           aria-label={`Profile: ${profile.name ?? profile.initials}`}
           data-profile-name={profile.name ?? ""}

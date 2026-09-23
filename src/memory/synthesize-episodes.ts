@@ -268,7 +268,6 @@ export async function synthesizeEpisodes(
           err instanceof Error ? err.message : String(err)
         }`,
       );
-      continue;
     }
   }
 

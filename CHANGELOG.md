@@ -6,6 +6,50 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-23
+
+### Added
+
+- **Setup asks whether another company's model should review Claude's code.**
+  If `codex`, `agy`, `qodercli` or `codebuddy` is on your PATH, setup offers it
+  once as the reviewer — a second opinion that does not share Claude's blind
+  spots, paid from that CLI's own quota. It also says what is not known: reviews
+  stop if you log out of that CLI, and siltpoke has not yet measured how good
+  each reviewer is. Picking agy adds one caveat — agy can run Claude models, and
+  if it does, it is still Claude reviewing Claude. Express setup does not ask; it
+  names the command in its closing report.
+
+### Fixed
+
+- **Codex can install siltpoke again.** Since 1.1.0 `codex plugin add
+  siltpoke@siltpoke` failed with "plugin `siltpoke` was not found in
+  marketplace `siltpoke`". The repository now also carries a Codex-specific
+  marketplace file, which Codex reads first.
+- **Reviews now fire on machines where bun is not on the PATH your hooks get.**
+  bun's installer writes its PATH line into `~/.bash_profile`, which only a
+  login shell reads — and the host runs hooks in a non-login shell. So the hook
+  exited in silence on every single turn: no review, ever, while the pet, the
+  config file and the statusline all said the install was fine. Setup now
+  records bun's absolute path, and every hook looks there before giving up.
+- **A statusline that cannot find bun says so, instead of rendering nothing.**
+  Previously the pet simply never appeared, with no way to learn why.
+- **Upgrading the plugin now reaches your statusline.** The two small scripts
+  under `~/.siltpoke/bin/` are generated, and only setup ever wrote them — so a
+  fix could ship while your machine kept running a months-old copy. A session
+  now brings them back in step whenever they differ from the current version.
+- **Every command siltpoke writes into a host's config names bun by absolute
+  path.** Seven places wrote a bare `bun`, including the diagnostic command
+  whose whole job is to explain what is broken; all of them are run later by the
+  host, in the same non-login shell that could not find bun in the first place.
+- **Installing the background service no longer claims "bun not found in PATH"
+  while bun is plainly running.** It asked the installing shell where bun was,
+  instead of the process it was running inside.
+- **The diagnostic stops reporting a healthy plugin install as broken**, and it
+  now runs the statusline for real — twice, once with your shell's PATH and once
+  with only the system PATH — so it catches a pet that works when you try it by
+  hand and not when the host does it.
+- **The hook no longer tells you to run setup when setup is not the problem.**
+
 ## [1.1.0] - 2026-09-22
 
 ### Added

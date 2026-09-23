@@ -43,7 +43,37 @@ nudge_once() {
 PAYLOAD="$(cat 2>/dev/null)"
 
 [ -f "${SILTPOKE_DIR}/config.json" ] || { nudge_once; exit 0; }
-command -v bun > /dev/null 2>&1 || { nudge_once; exit 0; }
+
+# Defect [20]/[21]: a bare `command -v bun` here made review silently never fire
+# for any user whose bun PATH lives only in ~/.bash_profile — Claude Code's hook
+# shell is non-login and never reads it. hooks/lib/resolve-bun.sh also accepts
+# the absolute path setup recorded and bun's default install location.
+#
+# Sourced through $0's own directory, with an inline PATH-only fallback so a
+# missing lib degrades to the old behaviour instead of killing the guard.
+BUN=""
+# -r, not -f: `.` (dot/source) is a POSIX SPECIAL BUILTIN, so under dash a
+# failure to open the file terminates the whole script — with an error line, in
+# the user's session. Same hazard class as the `: >` vs `touch` note above. A
+# file that exists but cannot be read (a botched extraction, wrong permissions)
+# must therefore fall through to the PATH-only fallback, not abort the guard.
+#
+# ${0%/*}, not $(dirname "$0"): dirname is an EXTERNAL command, so on a
+# maximally-broken PATH it is itself unresolvable and prints
+# "dirname: not found" straight into the user's session — the one thing
+# this guard may never do. Parameter expansion is a shell builtin.
+SILTPOKE_RESOLVE_LIB="${0%/*}/lib/resolve-bun.sh"
+if [ -r "$SILTPOKE_RESOLVE_LIB" ]; then
+  # shellcheck source=lib/resolve-bun.sh
+  . "$SILTPOKE_RESOLVE_LIB"
+  BUN="$(siltpoke_resolve_bun || true)"
+fi
+[ -n "$BUN" ] || BUN="$(command -v bun 2>/dev/null || true)"
+# NO nudge on this path. config.json exists, so setup has already run, and
+# "Run /siltpoke-setup to meet your pet" cannot put bun on a non-login shell's
+# PATH — it just sends the user to re-do the one step that already worked.
+# /siltpoke-doctor and the statusline are the surfaces that report this.
+[ -n "$BUN" ] || exit 0
 
 # Guarded with :- (not bare ${CLAUDE_PLUGIN_ROOT}) — under `set -u` an unset var
 # is a hard crash with a stderr line, and the whole point of this script is that
@@ -71,7 +101,7 @@ SILTPOKE_HOST_FAMILY=""
 [ -z "$SILTPOKE_HOST_FAMILY" ] && [ -n "${CODEBUDDY_PLUGIN_ROOT:-}" ] && SILTPOKE_HOST_FAMILY="codebuddy"
 [ -z "$SILTPOKE_HOST_FAMILY" ] && [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && SILTPOKE_HOST_FAMILY="claude"
 
-printf '%s' "$PAYLOAD" | SILTPOKE_HOST="$SILTPOKE_HOST_FAMILY" bun "${PLUGIN_ROOT}/dist/siltpoke-stop.js"
+printf '%s' "$PAYLOAD" | SILTPOKE_HOST="$SILTPOKE_HOST_FAMILY" "$BUN" "${PLUGIN_ROOT}/dist/siltpoke-stop.js"
 
 # Deliberate: even a crashing bundle must not surface an error in the user's
 # session. The bundle logs its own fatals to ~/.siltpoke/.

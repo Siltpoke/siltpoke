@@ -50,7 +50,9 @@ afterAll(async () => {
 afterEach(() => {
   window.history.replaceState(null, "", "/repo-graph");
   // Remove any confirm-modal overlays left by failed tests.
-  document.querySelectorAll("[data-confirm-modal]").forEach((el) => el.remove());
+  document.querySelectorAll("[data-confirm-modal]").forEach((el) => {
+    el.remove();
+  });
   document.body.style.overflow = "";
 });
 

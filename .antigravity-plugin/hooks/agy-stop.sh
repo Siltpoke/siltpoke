@@ -43,7 +43,17 @@ nudge_once() {
 
 PAYLOAD="$(cat 2>/dev/null)"
 [ -f "${SILTPOKE_DIR}/config.json" ] || { nudge_once; exit 0; }
-command -v bun >/dev/null 2>&1 || { nudge_once; exit 0; }
+# Defect [20]/[21]: PATH alone loses bun in a non-login shell. No nudge on the
+# unresolved path — setup already ran (config.json exists) and cannot fix PATH.
+BUN=""
+# ${0%/*}, not $(dirname "$0"): dirname is an EXTERNAL command, so on a
+# maximally-broken PATH it is itself unresolvable and prints
+# "dirname: not found" straight into the user's session — the one thing
+# this guard may never do. Parameter expansion is a shell builtin.
+SILTPOKE_RESOLVE_LIB="${0%/*}/lib/resolve-bun.sh"
+[ -r "$SILTPOKE_RESOLVE_LIB" ] && . "$SILTPOKE_RESOLVE_LIB" && BUN="$(siltpoke_resolve_bun || true)"
+[ -n "$BUN" ] || BUN="$(command -v bun 2>/dev/null || true)"
+[ -n "$BUN" ] || exit 0
 PLUGIN_ROOT="${ANTIGRAVITY_PLUGIN_ROOT:-}"
 [ -n "$PLUGIN_ROOT" ] || PLUGIN_ROOT="${AGY_PLUGIN_ROOT:-}"
 [ -n "$PLUGIN_ROOT" ] || PLUGIN_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." 2>/dev/null && pwd)"
@@ -51,5 +61,5 @@ PLUGIN_ROOT="${ANTIGRAVITY_PLUGIN_ROOT:-}"
 [ -f "${PLUGIN_ROOT}/dist/agy-stop.js" ] || exit 0
 # SILTPOKE_HOST=agy tells brain-config the builder family this run (Slice A):
 # review defaults to the agy family. Inherited by the spawned reviewer child.
-printf '%s' "$PAYLOAD" | SILTPOKE_HOST=agy bun "${PLUGIN_ROOT}/dist/agy-stop.js"
+printf '%s' "$PAYLOAD" | SILTPOKE_HOST=agy "$BUN" "${PLUGIN_ROOT}/dist/agy-stop.js"
 exit 0

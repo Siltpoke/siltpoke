@@ -38,8 +38,8 @@ var init_paths = __esm(() => {
 });
 
 // src/installer/shim.ts
-import { readFileSync, statSync } from "fs";
-import { chmod, mkdir as mkdir2, rename, writeFile } from "fs/promises";
+import { existsSync as existsSync3, readFileSync, statSync } from "fs";
+import { chmod, mkdir as mkdir2, rename, rm, writeFile } from "fs/promises";
 import { dirname, join as join3 } from "path";
 function renderStatuslineShim() {
   return `#!/bin/sh
@@ -53,8 +53,14 @@ ROOT_FILE="\${HOME}/.siltpoke/plugin-root"
 ROOT="$(cat "$ROOT_FILE" 2>/dev/null)" || exit 0
 CARD="\${ROOT}/dist/siltpoke-card.js"
 [ -f "$CARD" ] || exit 0
-command -v bun > /dev/null 2>&1 || exit 0
-exec bun "$CARD" "$@" 2>/dev/null
+${BUN_RESOLVE_SNIPPET}
+# Defect [21]: this used to be \`command -v bun \u2026 || exit 0\`, so a user whose bun
+# PATH lives only in ~/.bash_profile got a BLANK statusline with no way to find
+# out why \u2014 the pet simply never appeared. The statusline is the one surface the
+# user looks at every turn, so it is where this gets said out loud (the hook
+# guards stay silent by rule). One short line, no newline of its own.
+[ -n "$BUN" ] || { printf '%s' "siltpoke: can't find bun (not on PATH) \u2014 run /siltpoke-doctor"; exit 0; }
+exec "$BUN" "$CARD" "$@" 2>/dev/null
 `;
 }
 function renderDaemonShim() {
@@ -69,8 +75,9 @@ if [ -f "$ROOT_FILE" ]; then
     DAEMON="\${ROOT}/dist/siltpoke-daemon.js"
   fi
 fi
-if [ -n "$DAEMON" ] && command -v bun > /dev/null 2>&1; then
-  exec bun "$DAEMON" "$@"
+${BUN_RESOLVE_SNIPPET}
+if [ -n "$DAEMON" ] && [ -n "$BUN" ]; then
+  exec "$BUN" "$DAEMON" "$@"
 fi
 # Cannot resolve the daemon right now. Idle rather than exit \u2014 a keep-alive unit
 # would otherwise respawn us every few seconds forever.
@@ -104,10 +111,15 @@ function statuslineShimPath(home) {
 }
 async function writeExecutable(path, body) {
   await mkdir2(dirname(path), { recursive: true });
-  const tmpPath = `${path}.tmp`;
-  await writeFile(tmpPath, body, { encoding: "utf8", mode: 493 });
-  await chmod(tmpPath, 493);
-  await rename(tmpPath, path);
+  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${++tmpSeq}`;
+  try {
+    await writeFile(tmpPath, body, { encoding: "utf8", mode: 493 });
+    await chmod(tmpPath, 493);
+    await rename(tmpPath, path);
+  } catch (err) {
+    await rm(tmpPath, { force: true }).catch(() => {});
+    throw err;
+  }
   return path;
 }
 async function writeShim(home) {
@@ -116,11 +128,60 @@ async function writeShim(home) {
 async function writeDaemonShim(home) {
   return writeExecutable(daemonShimPath(home), renderDaemonShim());
 }
+var BUN_RESOLVE_SNIPPET = `# >>> siltpoke bun-resolve (sentinels: tests slice this block out and run it)
+BUN="$(command -v bun 2>/dev/null || true)"
+if [ -z "$BUN" ] && [ -f "\${HOME}/.siltpoke/bun-path" ]; then
+  RECORDED="$(cat "\${HOME}/.siltpoke/bun-path" 2>/dev/null || true)"
+  [ -n "$RECORDED" ] && [ -x "$RECORDED" ] && BUN="$RECORDED"
+fi
+[ -n "$BUN" ] || { [ -x "\${HOME}/.bun/bin/bun" ] && BUN="\${HOME}/.bun/bin/bun"; }
+# <<< siltpoke bun-resolve`, tmpSeq = 0;
 var init_shim = () => {};
 
+// src/utils/atomic-write.ts
+import { writeFileSync, renameSync, mkdirSync } from "fs";
+import { dirname as dirname2, basename, join as join4 } from "path";
+function atomicWrite(path, data, opts) {
+  const dir = dirname2(path);
+  mkdirSync(dir, { recursive: true });
+  const tmp = join4(dir, `.tmp-${basename(path)}-${process.pid}-${Date.now()}`);
+  writeFileSync(tmp, data, opts?.mode !== undefined ? { mode: opts.mode } : undefined);
+  renameSync(tmp, path);
+}
+var init_atomic_write = () => {};
+
+// src/installer/bun-path.ts
+import { accessSync, constants, readFileSync as readFileSync2 } from "fs";
+import { join as join5 } from "path";
+function bunPathPointerPath(home) {
+  return join5(home, ".siltpoke", "bun-path");
+}
+function isExecutable(path) {
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function recordBunPath(home, candidate = process.execPath) {
+  if (!candidate || !isExecutable(candidate))
+    return null;
+  const pointer = bunPathPointerPath(home);
+  atomicWrite(pointer, `${candidate}
+`);
+  return pointer;
+}
+function bunForCommandString() {
+  return process.execPath;
+}
+var init_bun_path = __esm(() => {
+  init_atomic_write();
+});
+
 // src/installer/daemon-path.ts
-import { existsSync as existsSync3 } from "fs";
-import { basename as basename2, join as join5, dirname as dirname3 } from "path";
+import { existsSync as existsSync4 } from "fs";
+import { basename as basename2, join as join6, dirname as dirname3 } from "path";
 import { homedir } from "os";
 import { spawnSync } from "child_process";
 function defaultWhich2(bin) {
@@ -145,7 +206,7 @@ function resolveDaemonPath(deps = {}) {
       warnings.push(`${bin} not found on PATH at install time; the daemon PATH relies on fallback dirs`);
     }
   }
-  dirs.push(join5(home, ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin", join5(home, ".bun", "bin"), "/usr/bin", "/bin");
+  dirs.push(join6(home, ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin", join6(home, ".bun", "bin"), "/usr/bin", "/bin");
   const seen = new Set;
   const deduped = dirs.filter((d) => {
     if (seen.has(d))
@@ -157,13 +218,13 @@ function resolveDaemonPath(deps = {}) {
 }
 function resolveDaemonEntry(hereDir) {
   if (basename2(hereDir) === "dist") {
-    return join5(hereDir, "siltpoke-daemon.js");
+    return join6(hereDir, "siltpoke-daemon.js");
   }
-  return join5(hereDir, "..", "cli", "daemon.ts");
+  return join6(hereDir, "..", "cli", "daemon.ts");
 }
 function resolveDaemonLauncher(bunPath, repoScript, home = homedir()) {
   const shim = daemonShimPath(home);
-  if (existsSync3(shim) && resolvePluginRoot(home) !== null) {
+  if (existsSync4(shim) && resolvePluginRoot(home) !== null) {
     return { program: "/bin/sh", script: shim, viaShim: true };
   }
   return { program: bunPath, script: repoScript, viaShim: false };
@@ -181,12 +242,12 @@ __export(exports_launchd, {
   installAutostart: () => installAutostart,
   defaultPlistPath: () => defaultPlistPath
 });
-import { writeFileSync as writeFileSync2, mkdirSync as mkdirSync2, existsSync as existsSync4, rmSync } from "fs";
-import { join as join6, dirname as dirname4 } from "path";
+import { writeFileSync as writeFileSync2, mkdirSync as mkdirSync2, existsSync as existsSync5, rmSync } from "fs";
+import { join as join7, dirname as dirname4 } from "path";
 import { homedir as homedir2 } from "os";
 import { spawnSync as spawnSync2 } from "child_process";
 function defaultPlistPath() {
-  return join6(homedir2(), "Library", "LaunchAgents", "io.siltpoke.daemon.plist");
+  return join7(homedir2(), "Library", "LaunchAgents", "io.siltpoke.daemon.plist");
 }
 function xmlEscape(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
@@ -233,11 +294,7 @@ async function installAutostart(home = homedir2()) {
 `);
     process.exit(2);
   }
-  const which = spawnSync2("which", ["bun"], { encoding: "utf8" });
-  const bunPath = (which.stdout || "").trim();
-  if (!bunPath) {
-    throw new Error("bun not found in PATH");
-  }
+  const bunPath = bunForCommandString();
   const launcher = resolveDaemonLauncher(bunPath, resolveDaemonEntry(import.meta.dir), home);
   const { path: daemonPath, warnings } = resolveDaemonPath();
   for (const w of warnings) {
@@ -252,7 +309,7 @@ async function installAutostart(home = homedir2()) {
   const plistPath = defaultPlistPath();
   mkdirSync2(dirname4(plistPath), { recursive: true });
   writeFileSync2(plistPath, xml);
-  mkdirSync2(join6(siltpokeRoot(), "logs"), { recursive: true });
+  mkdirSync2(join7(siltpokeRoot(), "logs"), { recursive: true });
   const exec = (cmd, args) => spawnSync2(cmd, args, { stdio: "ignore" });
   loadLaunchAgent(plistPath, "io.siltpoke.daemon", process.getuid?.() ?? 0, exec);
   process.stdout.write(`Installed LaunchAgent at ${plistPath}
@@ -260,7 +317,7 @@ async function installAutostart(home = homedir2()) {
 }
 async function uninstallAutostart(opts = {}) {
   const plistPath = opts.plistPath ?? defaultPlistPath();
-  if (!existsSync4(plistPath)) {
+  if (!existsSync5(plistPath)) {
     return { removed: false };
   }
   const exec = opts.exec ?? ((cmd, args) => spawnSync2(cmd, args, { stdio: "ignore" }));
@@ -272,6 +329,7 @@ async function uninstallAutostart(opts = {}) {
   return { removed: true };
 }
 var init_launchd = __esm(() => {
+  init_bun_path();
   init_daemon_path();
   init_paths();
 });
@@ -284,12 +342,12 @@ __export(exports_systemd, {
   installAutostart: () => installAutostart2,
   defaultUnitPath: () => defaultUnitPath
 });
-import { writeFileSync as writeFileSync3, mkdirSync as mkdirSync3, existsSync as existsSync5, rmSync as rmSync2 } from "fs";
-import { join as join7, dirname as dirname5 } from "path";
+import { writeFileSync as writeFileSync3, mkdirSync as mkdirSync3, existsSync as existsSync6, rmSync as rmSync2 } from "fs";
+import { join as join8, dirname as dirname5 } from "path";
 import { homedir as homedir3 } from "os";
 import { spawnSync as spawnSync3 } from "child_process";
 function defaultUnitPath() {
-  return join7(homedir3(), ".config", "systemd", "user", "siltpoked.service");
+  return join8(homedir3(), ".config", "systemd", "user", "siltpoked.service");
 }
 function escapeExecPath(s) {
   return s.replace(/ /g, "\\x20");
@@ -322,11 +380,7 @@ async function installAutostart2(home = homedir3()) {
 `);
     process.exit(2);
   }
-  const which = spawnSync3("which", ["bun"], { encoding: "utf8" });
-  const bunPath = (which.stdout || "").trim();
-  if (!bunPath) {
-    throw new Error("bun not found in PATH");
-  }
+  const bunPath = bunForCommandString();
   const launcher = resolveDaemonLauncher(bunPath, resolveDaemonEntry(import.meta.dir), home);
   const { path: daemonPath, warnings } = resolveDaemonPath();
   for (const w of warnings) {
@@ -341,7 +395,7 @@ async function installAutostart2(home = homedir3()) {
   const unitPath = defaultUnitPath();
   mkdirSync3(dirname5(unitPath), { recursive: true });
   writeFileSync3(unitPath, unit);
-  mkdirSync3(join7(siltpokeRoot(), "logs"), { recursive: true });
+  mkdirSync3(join8(siltpokeRoot(), "logs"), { recursive: true });
   spawnSync3("systemctl", ["--user", "daemon-reload"], { stdio: "inherit" });
   const r = spawnSync3("systemctl", ["--user", "enable", "--now", "siltpoked.service"], { stdio: "inherit" });
   if (r.status !== 0) {
@@ -352,7 +406,7 @@ async function installAutostart2(home = homedir3()) {
 }
 async function uninstallAutostart2(opts = {}) {
   const unitPath = opts.unitPath ?? defaultUnitPath();
-  if (!existsSync5(unitPath)) {
+  if (!existsSync6(unitPath)) {
     return { removed: false };
   }
   const exec = opts.exec ?? ((cmd, args) => spawnSync3(cmd, args, { stdio: "ignore" }));
@@ -364,6 +418,7 @@ async function uninstallAutostart2(opts = {}) {
   return { removed: true };
 }
 var init_systemd = __esm(() => {
+  init_bun_path();
   init_daemon_path();
   init_paths();
 });
@@ -416,9 +471,9 @@ async function uninstallAutostartForPlatform(opts = {}) {
 }
 
 // src/cli/configure.ts
-import { existsSync as existsSync6 } from "fs";
-import { readFile as readFile2, rm } from "fs/promises";
-import { join as join8 } from "path";
+import { existsSync as existsSync7 } from "fs";
+import { readFile as readFile2, rm as rm2 } from "fs/promises";
+import { join as join9 } from "path";
 
 // src/brain/personality.ts
 var SPECIES_PROFILES = {
@@ -14958,17 +15013,44 @@ function buildStatuslineCommand(shimPath, deps = {}) {
 
 // src/cli/configure.ts
 init_shim();
+init_bun_path();
 
-// src/utils/atomic-write.ts
-import { writeFileSync, renameSync, mkdirSync } from "fs";
-import { dirname as dirname2, basename, join as join4 } from "path";
-function atomicWrite(path, data, opts) {
-  const dir = dirname2(path);
-  mkdirSync(dir, { recursive: true });
-  const tmp = join4(dir, `.tmp-${basename(path)}-${process.pid}-${Date.now()}`);
-  writeFileSync(tmp, data, opts?.mode !== undefined ? { mode: opts.mode } : undefined);
-  renameSync(tmp, path);
+// src/cli/configure-legacy-sweep.ts
+function isLegacySiltpokeStopEntry(h) {
+  const command = h.command ?? "";
+  const url2 = h.url ?? "";
+  if (h.type === "http" && url2.includes("/hooks/stop"))
+    return true;
+  const secretInCommand = command.toLowerCase().includes("x-siltpoke-secret");
+  const secretInHeaders = Object.keys(h.headers ?? {}).some((k) => k.toLowerCase() === "x-siltpoke-secret");
+  if (secretInCommand || secretInHeaders)
+    return true;
+  if (command.startsWith("curl ") && command.includes("/hooks/stop"))
+    return true;
+  return command.includes("hooks/on-stop.ts");
 }
+function describeHookEntry(h) {
+  return h.command ?? h.url ?? JSON.stringify(h);
+}
+function removeLegacyStopHook(settings, onRemove = () => {}) {
+  const s = settings;
+  const stop = s.hooks?.Stop;
+  if (!Array.isArray(stop))
+    return settings;
+  const kept = stop.map((m) => ({
+    ...m,
+    hooks: (m.hooks ?? []).filter((h) => {
+      if (!isLegacySiltpokeStopEntry(h))
+        return true;
+      onRemove(describeHookEntry(h));
+      return false;
+    })
+  })).filter((m) => (m.hooks ?? []).length > 0);
+  return { ...settings, hooks: { ...s.hooks, Stop: kept } };
+}
+
+// src/cli/configure.ts
+init_atomic_write();
 
 // src/cli/configure-input.ts
 import { readFile } from "fs/promises";
@@ -15221,38 +15303,6 @@ function dialsFor(opts) {
   }
   return PERSONALITY_PRESETS[opts.personality] ?? speciesDefaults(opts.species);
 }
-function isLegacySiltpokeStopEntry(h) {
-  const command = h.command ?? "";
-  const url2 = h.url ?? "";
-  if (h.type === "http" && url2.includes("/hooks/stop"))
-    return true;
-  const secretInCommand = command.toLowerCase().includes("x-siltpoke-secret");
-  const secretInHeaders = Object.keys(h.headers ?? {}).some((k) => k.toLowerCase() === "x-siltpoke-secret");
-  if (secretInCommand || secretInHeaders)
-    return true;
-  if (command.startsWith("curl ") && command.includes("/hooks/stop"))
-    return true;
-  return command.includes("hooks/on-stop.ts");
-}
-function describeHookEntry(h) {
-  return h.command ?? h.url ?? JSON.stringify(h);
-}
-function removeLegacyStopHook(settings, onRemove = () => {}) {
-  const s = settings;
-  const stop = s.hooks?.Stop;
-  if (!Array.isArray(stop))
-    return settings;
-  const kept = stop.map((m) => ({
-    ...m,
-    hooks: (m.hooks ?? []).filter((h) => {
-      if (!isLegacySiltpokeStopEntry(h))
-        return true;
-      onRemove(describeHookEntry(h));
-      return false;
-    })
-  })).filter((m) => (m.hooks ?? []).length > 0);
-  return { ...settings, hooks: { ...s.hooks, Stop: kept } };
-}
 function buildConfig(opts) {
   const dials = dialsFor(opts);
   return {
@@ -15265,10 +15315,11 @@ function buildConfig(opts) {
     ...dials
   };
 }
-async function writeConfig(dir, opts) {
-  const configPath = join8(dir, "config.json");
+async function writeConfig(dir, opts, home) {
+  recordBunPath(home);
+  const configPath = join9(dir, "config.json");
   const fresh = buildConfig(opts);
-  if (!existsSync6(configPath)) {
+  if (!existsSync7(configPath)) {
     atomicWrite(configPath, `${JSON.stringify(fresh, null, 2)}
 `);
     return;
@@ -15295,14 +15346,14 @@ async function swapInStatusline(settings, home, siltpokeDir, warn, interpreterDe
   const old = swapped.oldStatusLineCommand;
   const isSelf = old !== null && (old.includes("siltpoke") || old.includes("face/wrapper"));
   if (old && !isSelf) {
-    atomicWrite(join8(siltpokeDir, "inner.txt"), old);
+    atomicWrite(join9(siltpokeDir, "inner.txt"), old);
   }
   return swapped.next;
 }
 async function wireSettings(home, siltpokeDir, wantStatusline, warn, interpreterDeps = {}) {
-  const claudeHome = join8(home, ".claude");
-  const settingsPath = join8(claudeHome, "settings.json");
-  const hasSettings = existsSync6(settingsPath);
+  const claudeHome = join9(home, ".claude");
+  const settingsPath = join9(claudeHome, "settings.json");
+  const hasSettings = existsSync7(settingsPath);
   if (!hasSettings && !wantStatusline)
     return;
   let current = {};
@@ -15336,7 +15387,7 @@ async function configure(opts, home, deps = {}) {
 `));
   const siltpokeDir = siltpokeRoot({ ...process.env, HOME: home });
   validateOptions(opts);
-  await writeConfig(siltpokeDir, opts);
+  await writeConfig(siltpokeDir, opts, home);
   let statusline = opts.statusline ? "installed" : "skipped";
   try {
     await wireSettings(home, siltpokeDir, opts.statusline, warn, deps.statuslineInterpreter);
@@ -15370,7 +15421,7 @@ async function configure(opts, home, deps = {}) {
   return {
     name: opts.name,
     species: opts.species,
-    configPath: join8(siltpokeDir, "config.json"),
+    configPath: join9(siltpokeDir, "config.json"),
     statusline,
     autostart
   };
@@ -15417,7 +15468,7 @@ async function runConfigureCli(argv, home, deps = {}) {
     throw err;
   }
   if (answers !== null)
-    await rm(answers, { force: true });
+    await rm2(answers, { force: true });
   for (const line of summarize(result))
     out(line);
   return 0;

@@ -41,8 +41,16 @@ mv "$TMP_FILE" "$FINAL_FILE" 2>/dev/null || rm -f "$TMP_FILE" 2>/dev/null || tru
 # like hooks/stop.sh: missing config.json / bun / bundle => no-op. Running
 # this on plain Claude Code too is harmless — CC's legacy entries are
 # already swept by configure.ts, so it's a no-op there.
-if [ -f "${SILTPOKE_DIR}/config.json" ] && command -v bun >/dev/null 2>&1 \
+BUN=""
+# ${0%/*}, not $(dirname "$0"): dirname is an EXTERNAL command, so on a
+# maximally-broken PATH it is itself unresolvable and prints
+# "dirname: not found" straight into the user's session — the one thing
+# this guard may never do. Parameter expansion is a shell builtin.
+SILTPOKE_RESOLVE_LIB="${0%/*}/lib/resolve-bun.sh"
+[ -r "$SILTPOKE_RESOLVE_LIB" ] && . "$SILTPOKE_RESOLVE_LIB" && BUN="$(siltpoke_resolve_bun || true)"
+[ -n "$BUN" ] || BUN="$(command -v bun 2>/dev/null || true)"
+if [ -f "${SILTPOKE_DIR}/config.json" ] && [ -n "$BUN" ] \
    && [ -f "${PLUGIN_ROOT}/dist/handle-session-start.js" ]; then
-  printf '%s' "$PAYLOAD" | bun "${PLUGIN_ROOT}/dist/handle-session-start.js" >/dev/null 2>&1 || true
+  printf '%s' "$PAYLOAD" | "$BUN" "${PLUGIN_ROOT}/dist/handle-session-start.js" >/dev/null 2>&1 || true
 fi
 exit 0

@@ -1,8 +1,36 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
-import { readFileSync, statSync } from "node:fs";
-import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+
+/**
+ * The bun lookup both shims use, as ONE string so the two can never drift.
+ *
+ * Same three steps, same order as hooks/lib/resolve-bun.sh: PATH → the path
+ * setup recorded in ~/.siltpoke/bun-path → bun's default install location.
+ * Deliberately INLINE rather than sourcing that lib: these shims live in
+ * ~/.siltpoke/bin and run at moments when the plugin root may be missing or
+ * mid-upgrade, and the first draft — which sourced the lib and only fell back
+ * to a PATH lookup — silently ignored the recorded pointer whenever the lib
+ * could not be found, i.e. exactly when it was needed most.
+ *
+ * Two copies of three steps is the cost; tests/installer/bun-resolution-parity
+ * .test.ts drives BOTH implementations over the same cases and asserts they
+ * agree, which catches drift that sharing the code would only have hidden.
+ *
+ * Needs $HOME set; leaves $BUN empty when bun is unreachable — each caller
+ * decides what to do about that, and they differ: the statusline says so out
+ * loud, the daemon shim idles.
+ */
+const BUN_RESOLVE_SNIPPET = `# >>> siltpoke bun-resolve (sentinels: tests slice this block out and run it)
+BUN="$(command -v bun 2>/dev/null || true)"
+if [ -z "$BUN" ] && [ -f "\${HOME}/.siltpoke/bun-path" ]; then
+  RECORDED="$(cat "\${HOME}/.siltpoke/bun-path" 2>/dev/null || true)"
+  [ -n "$RECORDED" ] && [ -x "$RECORDED" ] && BUN="$RECORDED"
+fi
+[ -n "$BUN" ] || { [ -x "\${HOME}/.bun/bin/bun" ] && BUN="\${HOME}/.bun/bin/bun"; }
+# <<< siltpoke bun-resolve`;
 
 /**
  * The statusLine command and the daemon autostart unit can only hold an absolute
@@ -26,8 +54,14 @@ ROOT_FILE="\${HOME}/.siltpoke/plugin-root"
 ROOT="$(cat "$ROOT_FILE" 2>/dev/null)" || exit 0
 CARD="\${ROOT}/dist/siltpoke-card.js"
 [ -f "$CARD" ] || exit 0
-command -v bun > /dev/null 2>&1 || exit 0
-exec bun "$CARD" "$@" 2>/dev/null
+${BUN_RESOLVE_SNIPPET}
+# Defect [21]: this used to be \`command -v bun … || exit 0\`, so a user whose bun
+# PATH lives only in ~/.bash_profile got a BLANK statusline with no way to find
+# out why — the pet simply never appeared. The statusline is the one surface the
+# user looks at every turn, so it is where this gets said out loud (the hook
+# guards stay silent by rule). One short line, no newline of its own.
+[ -n "$BUN" ] || { printf '%s' "siltpoke: can't find bun (not on PATH) — run /siltpoke-doctor"; exit 0; }
+exec "$BUN" "$CARD" "$@" 2>/dev/null
 `;
 }
 
@@ -57,8 +91,9 @@ if [ -f "$ROOT_FILE" ]; then
     DAEMON="\${ROOT}/dist/siltpoke-daemon.js"
   fi
 fi
-if [ -n "$DAEMON" ] && command -v bun > /dev/null 2>&1; then
-  exec bun "$DAEMON" "$@"
+${BUN_RESOLVE_SNIPPET}
+if [ -n "$DAEMON" ] && [ -n "$BUN" ]; then
+  exec "$BUN" "$DAEMON" "$@"
 fi
 # Cannot resolve the daemon right now. Idle rather than exit — a keep-alive unit
 # would otherwise respawn us every few seconds forever.
@@ -119,13 +154,79 @@ export function statuslineShimPath(home: string): string {
  * mode: 0o755 on create is umask-masked; chmod after is not — belt and
  * suspenders so the shim is executable regardless of the caller's umask.
  */
+/**
+ * Monotonic suffix for the tmp names below. pid + timestamp alone is NOT unique:
+ * two calls in the same process inside the same millisecond — which is exactly
+ * what two shims refreshed in parallel look like — would collide.
+ */
+let tmpSeq = 0;
+
 async function writeExecutable(path: string, body: string): Promise<string> {
   await mkdir(dirname(path), { recursive: true });
-  const tmpPath = `${path}.tmp`;
-  await writeFile(tmpPath, body, { encoding: "utf8", mode: 0o755 });
-  await chmod(tmpPath, 0o755);
-  await rename(tmpPath, path);
+  // Unique tmp name, not a fixed `<path>.tmp`. This used to run once, at setup;
+  // defect [25] made it run on every SessionStart, and this machine routinely
+  // has two sessions open. With a shared tmp path the interleaving
+  // A-writes-tmp / B-writes-tmp / A-renames publishes B's HALF-WRITTEN file as
+  // the live shim — the one outcome the tmp+rename dance exists to prevent.
+  // Same shape as utils/atomic-write.ts's tmp naming, for the same reason.
+  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${++tmpSeq}`;
+  try {
+    await writeFile(tmpPath, body, { encoding: "utf8", mode: 0o755 });
+    await chmod(tmpPath, 0o755);
+    await rename(tmpPath, path);
+  } catch (err) {
+    // Never leave the scratch file behind for the next reader to trip over.
+    await rm(tmpPath, { force: true }).catch(() => {});
+    throw err;
+  }
   return path;
+}
+
+/**
+ * Bring existing shims back in step with the code that generates them.
+ *
+ * Defect [25]: `hooks/*.sh` ship with the plugin, so a `claude plugin update`
+ * replaces them. The two shims do NOT ship — they are generated text, written
+ * only by setup. So every upgrade left `~/.siltpoke/bin/` executing whatever
+ * setup wrote, however long ago, and nothing said so. Measured on the
+ * maintainer's own machine right after the bun-PATH fix (#804) merged: the
+ * statusline shim was two months old and still carried the very line that fix
+ * removed. The fix shipped; the machine kept the bug.
+ *
+ * Two constraints, both deliberate:
+ *
+ *   1. **Refresh only what already exists.** A user who never opted into the
+ *      statusline must not find a shim appearing: `resolveDaemonLauncher` and
+ *      the doctor rows change their answer when these files exist, so creating
+ *      one speculatively would be a behaviour change dressed as a fix.
+ *   2. **Write only on a real difference.** This is called from SessionStart,
+ *      i.e. once per session forever; an unconditional write would be pure
+ *      churn. Keying on CONTENT rather than a version stamp also self-corrects
+ *      a hand-edited shim, and cannot be fooled by a stamp that lies.
+ *
+ * Fail-soft throughout: a read or write that fails is skipped, never thrown —
+ * nothing here may break a SessionStart. Returns the paths actually rewritten.
+ */
+export async function refreshStaleShims(home: string): Promise<string[]> {
+  const rewritten: string[] = [];
+  const targets: Array<[string, string]> = [
+    [statuslineShimPath(home), renderStatuslineShim()],
+    [daemonShimPath(home), renderDaemonShim()],
+  ];
+  for (const [path, wanted] of targets) {
+    try {
+      // Constraint 1. Belt and braces: readFileSync below would throw into the
+      // catch anyway, but relying on that means the guarantee lives in an
+      // accident rather than in a line you can read.
+      if (!existsSync(path)) continue;
+      if (readFileSync(path, "utf8") === wanted) continue; // no churn — constraint 2
+      await writeExecutable(path, wanted);
+      rewritten.push(path);
+    } catch {
+      // Unreadable, unwritable, vanished mid-check: leave it and move on.
+    }
+  }
+  return rewritten;
 }
 
 export async function writeShim(home: string): Promise<string> {

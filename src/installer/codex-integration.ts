@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 import { existsSync } from "node:fs";
+import { bunForCommandString } from "./bun-path";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -151,8 +152,10 @@ export async function installCodexIntegration(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<CodexIntegrationResult> {
   const hooksPath = codexHooksJsonPath(env);
-  const stopCommand = `bun ${join(repoRoot, "src", "hooks", "codex-stop.ts")}`;
-  const sessionStartCommand = `bun ${join(repoRoot, "src", "hooks", "handle-session-start.ts")}`;
+  // Absolute bun (defect [22] family) — codex runs these in a non-login shell.
+  const bun = bunForCommandString();
+  const stopCommand = `${bun} ${join(repoRoot, "src", "hooks", "codex-stop.ts")}`;
+  const sessionStartCommand = `${bun} ${join(repoRoot, "src", "hooks", "handle-session-start.ts")}`;
 
   let config = await readJsonOrEmpty(hooksPath);
   config = ensureCommandHook(config, "SessionStart", "startup|resume", {

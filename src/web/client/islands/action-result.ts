@@ -154,7 +154,9 @@ function showBanner(payload: ActionResultPayload): void {
   if (!hero) return;
 
   // Remove any prior banner so rapid clicks don't stack.
-  hero.querySelectorAll(".action-banner").forEach((n) => n.remove());
+  hero.querySelectorAll(".action-banner").forEach((n) => {
+    n.remove();
+  });
 
   const action = payload.action ?? "";
   const awarded = typeof payload.awarded === "number" ? payload.awarded : 0;

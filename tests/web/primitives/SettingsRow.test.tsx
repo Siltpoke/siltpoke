@@ -28,7 +28,14 @@ describe("SettingsRow", () => {
 
   test("stacked mode renders right slot JSX", () => {
     const html = String(
-      <SettingsRow label="Feature" right={<button id="ctrl">toggle</button>} />,
+      <SettingsRow
+        label="Feature"
+        right={
+          <button type="button" id="ctrl">
+            toggle
+          </button>
+        }
+      />,
     );
     expect(html).toContain("toggle");
     expect(html).toContain('id="ctrl"');

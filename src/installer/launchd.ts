@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 import { writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
+import { bunForCommandString } from "./bun-path";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
@@ -98,11 +99,13 @@ export async function installAutostart(home: string = homedir()): Promise<void> 
     );
     process.exit(2);
   }
-  const which = spawnSync("which", ["bun"], { encoding: "utf8" });
-  const bunPath = (which.stdout || "").trim();
-  if (!bunPath) {
-    throw new Error("bun not found in PATH");
-  }
+  // `which bun` was wrong twice over (defect [22] family). It asks the
+  // INSTALLER's shell where bun is, so launching setup by absolute path from a
+  // shell with no bun on PATH threw "bun not found in PATH" while bun was
+  // plainly the process running the code. And the answer it produced is only as
+  // good as that shell. The code writing this unit runs under bun: the
+  // interpreter it wants is the one executing it.
+  const bunPath = bunForCommandString();
   // Plugin install ⇒ exec the shim (version-proof); repo install ⇒ exec the
   // checkout's daemon entry directly, as before. `home` is threaded from the
   // caller (cli/configure.ts writes the shim under the SAME home) rather than

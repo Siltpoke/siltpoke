@@ -203,6 +203,7 @@ if (import.meta.main) {
     check: args.includes("--check"),
     yes: args.includes("--yes"),
   });
+  // biome-ignore lint/suspicious/noConsole: this IS the CLI's output — `siltpoke bootstrap` prints its plan and exit status for a human to read.
   console.log(`siltpoke bootstrap plan:\n- ${res.plan.join("\n- ")}\n→ ${res.status}`);
   process.exit(res.status === "refused" || res.status === "rolled-back" ? 1 : 0);
 }

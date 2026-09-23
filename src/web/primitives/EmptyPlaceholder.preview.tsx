@@ -16,6 +16,7 @@ const stories: PreviewStory[] = [
         sub="siltpoke ran tsc · eslint · git diff · ripgrep. 0 findings. suspicious."
         action={
           <button
+            type="button"
             style={{
               padding: "6px 12px",
               background: tokens.color.terra,

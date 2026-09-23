@@ -48,7 +48,7 @@ export function mountMemoryRoutes(app: Hono, deps: MemoryRouteDeps = {}): void {
     // critiques + learned_rules) and the working-memory panel (chat_sessions).
     // Injecting the cached result into loadMemoryEvents avoids a second disk
     // round-trip and prevents snapshot inconsistency between the two panels.
-    let memory = await readMemory(homeBase, scope).catch(() => null);
+    const memory = await readMemory(homeBase, scope).catch(() => null);
 
     let events: MemoryEvent[];
     try {

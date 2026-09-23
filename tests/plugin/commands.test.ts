@@ -309,3 +309,82 @@ describe("/siltpoke-setup command", () => {
     expect(setup).toContain("EACCES");
   });
 });
+
+describe("/siltpoke-setup §8 — offers cross-family review only when another CLI is really installed", () => {
+  const section = (() => {
+    const start = setup.indexOf("## 8.");
+    const end = setup.indexOf("## 9.");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    return setup.slice(start, end);
+  })();
+
+  test("detects via the brain CLI, not by guessing", () => {
+    expect(section).toContain(`"$\{CLAUDE_PLUGIN_ROOT}/dist/siltpoke-cli.js" brain detect`);
+  });
+
+  test("writes the per-builder rule, never the global review pin", () => {
+    expect(section).toContain(`brain set-builder claude "<family>"`);
+    // The only mention of `brain set review` is the instruction NOT to use it.
+    expect(section).toMatch(/Do not use `brain set review`/);
+    expect(section).not.toMatch(/siltpoke-cli\.js" brain set review/);
+  });
+
+  test("the family on the command line comes from detect's output, not user text", () => {
+    expect(section).toContain("copied from");
+    expect(section).toContain("never by text the user typed");
+  });
+
+  test("an empty list skips silently, and express does not ask", () => {
+    expect(section).toContain(`"installed":[]`);
+    expect(section.toLowerCase()).toContain("skip this whole step silently");
+    expect(section).toMatch(/Express path[\s\S]*do NOT ask/);
+  });
+
+  test("the custom path DOES ask, once, and a no keeps the default", () => {
+    expect(section).toMatch(/Custom path, one or more found[^\n]*— ask ONCE/);
+    expect(section).toContain("If they say no, move on");
+  });
+
+  test("states the cost, and that neither detect nor doctor checks login", () => {
+    expect(section.toLowerCase()).toContain("quota");
+    expect(section).toContain("does NOT check that the user is logged in");
+    expect(section).toContain("it does NOT check the login");
+  });
+});
+
+// The offer used to read "a reviewer without Claude's blind spots" and stop —
+// more certain than anything measured. The user decides from this message
+// alone, so it must say why, and what is not known.
+describe("/siltpoke-setup §8 — the offer tells the user why, and what is not known", () => {
+  const section = setup.slice(setup.indexOf("## 8."), setup.indexOf("## 9."));
+
+  test("explains WHY in everyday words, and forbids cutting it down to the bare question", () => {
+    expect(section).toContain("Why it can help");
+    expect(section).toContain("proofreading their own text");
+    expect(section).toContain("Do not shorten it to the question");
+  });
+
+  test("says the reviewer's quality is unmeasured — not a guaranteed improvement", () => {
+    expect(section).toContain("Siltpoke has not measured this reviewer's review quality yet");
+    expect(section).toContain("not a guaranteed improvement");
+  });
+
+  test("warns about Claude models for agy, and only for agy", () => {
+    expect(section).toContain("**agy only:**");
+    expect(section).toContain("NOT set to a Claude model");
+    expect(section).toContain("Do not add this line for the others");
+  });
+
+  test("does not promise codebuddy is Claude-free — its aliases are opaque", () => {
+    expect(section).toContain("aliases do not say which");
+    expect(section).not.toMatch(/codebuddy do not list\s+Claude models/);
+  });
+
+  test("names the company behind each CLI", () => {
+    const flat = section.replace(/\s+/g, " ");
+    for (const pair of ["codex (OpenAI)", "agy (Google", "qoder (Alibaba)", "codebuddy (Tencent)"]) {
+      expect(flat).toContain(pair);
+    }
+  });
+});

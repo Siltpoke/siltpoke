@@ -818,7 +818,7 @@ export function RepoGraph(props: RepoGraphScreenProps) {
           <h1>Code map</h1>
           <div class="repo-pick-wrap">
             <button class="repo-pick" id="rg-repo-pick" type="button" aria-label="Switch repository">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
                 <path d="M1.5 4 C1.5 3 2 2.5 3 2.5 L6 2.5 L7.5 4 L13 4 C14 4 14.5 4.5 14.5 5.5 L14.5 12 C14.5 13 14 13.5 13 13.5 L3 13.5 C2 13.5 1.5 13 1.5 12 Z" />
               </svg>
               <b id="rg-repo-name">{repoLabel}</b>
@@ -890,7 +890,7 @@ export function RepoGraph(props: RepoGraphScreenProps) {
           <div class="crumbs" id="rg-crumbs"></div>
           <div class="search">
             <span class="si">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true" focusable="false">
                 <circle cx="7" cy="7" r="4.5" />
                 <path d="M11 11 L14 14" stroke-linecap="round" />
               </svg>
@@ -919,10 +919,10 @@ export function RepoGraph(props: RepoGraphScreenProps) {
           <div class="ph-bar" id="rg-phbar"></div>
           <div class="help-pop" id="rg-help-pop">
             <h5>How to read this graph</h5>
-            <div class="hrow"><span class="hic"><svg width="22" height="10"><circle cx="11" cy="5" r="3" fill="none" stroke="var(--ink3)" stroke-width="1.6" /></svg></span><span>The canvas is calm by default. <b>Hover or click a module</b> to reveal its <b>import lines</b>.</span></div>
-            <div class="hrow"><span class="hic"><svg width="22" height="10"><line x1="1" y1="5" x2="16" y2="5" stroke="var(--ink3)" stroke-width="2" /><path d="M14 2 L20 5 L14 8" fill="none" stroke="var(--ink3)" stroke-width="1.6" /></svg></span><span>The <b>arrow</b> points at what's imported — <code>A → B</code> means A imports B.</span></div>
+            <div class="hrow"><span class="hic"><svg width="22" height="10" aria-hidden="true" focusable="false"><circle cx="11" cy="5" r="3" fill="none" stroke="var(--ink3)" stroke-width="1.6" /></svg></span><span>The canvas is calm by default. <b>Hover or click a module</b> to reveal its <b>import lines</b>.</span></div>
+            <div class="hrow"><span class="hic"><svg width="22" height="10" aria-hidden="true" focusable="false"><line x1="1" y1="5" x2="16" y2="5" stroke="var(--ink3)" stroke-width="2" /><path d="M14 2 L20 5 L14 8" fill="none" stroke="var(--ink3)" stroke-width="1.6" /></svg></span><span>The <b>arrow</b> points at what's imported — <code>A → B</code> means A imports B.</span></div>
             <div class="hrow"><span class="hic" style="font-family:var(--mono);color:var(--ink);font-weight:600">28</span><span>The <b>number</b> = how many <b>import statements</b> cross that link. <b>High</b> = tightly coupled (changing one likely affects the other); <b>low</b> = a light, incidental dependency.</span></div>
-            <div class="hrow"><span class="hic"><svg width="22" height="10"><line x1="1" y1="5" x2="21" y2="5" stroke="var(--terra)" stroke-width="3.5" /></svg></span><span><b>Red, thicker</b> lines are <b>strong</b> — more than 15 imports.</span></div>
+            <div class="hrow"><span class="hic"><svg width="22" height="10" aria-hidden="true" focusable="false"><line x1="1" y1="5" x2="21" y2="5" stroke="var(--terra)" stroke-width="3.5" /></svg></span><span><b>Red, thicker</b> lines are <b>strong</b> — more than 15 imports.</span></div>
             <div class="hrow"><span class="hic"><span style="font-family:var(--mono);font-size:9px;color:var(--ink3);border:1px solid var(--edge);border-radius:999px;padding:1px 5px">44</span></span><span>The <b>number on a module card</b> is its <b>file count</b> (LOC + symbols deeper in).</span></div>
           </div>
         </div>
@@ -931,7 +931,7 @@ export function RepoGraph(props: RepoGraphScreenProps) {
         <div class="stage" id="rg-stage">
           <div class="viewport" id="rg-viewport">
             <div class="world" id="rg-world">
-              <svg class="edges" id="rg-edges"></svg>
+              <svg class="edges" id="rg-edges" aria-hidden="true" focusable="false"></svg>
             </div>
           </div>
           <div class="empty-hint" id="rg-hint" style={hasGraph ? "" : "display:none"}>Click a module to inspect · click again to drill into files</div>

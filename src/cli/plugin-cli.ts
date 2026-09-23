@@ -37,6 +37,7 @@ import { runMenubarCli } from "./menubar";
 import { formatUnmuteHuman, formatUnmuteJson, runUnmute } from "./unmute";
 import { formatWakeHuman, formatWakeJson, runWake } from "./wake";
 import { runBrainCli } from "./brain-cli";
+import { formatDetect } from "./brain-detect";
 import { siltpokeRoot } from "../installer/paths";
 
 export interface CliIo {
@@ -188,6 +189,12 @@ const HANDLERS: Record<string, Handler> = {
   },
 
   brain: (rest, io) => {
+    // `detect` is read-only and config-free, so it lives beside the config
+    // verbs rather than inside them. /siltpoke-setup §8 is its caller.
+    if (rest[0] === "detect") {
+      io.stdout(`${formatDetect()}\n`);
+      return 0;
+    }
     const result = runBrainCli(rest, siltpokeRoot(process.env));
     io[result.ok ? "stdout" : "stderr"](`${result.message}\n`);
     return result.ok ? 0 : 1;

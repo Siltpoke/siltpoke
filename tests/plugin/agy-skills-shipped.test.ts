@@ -66,6 +66,10 @@ describe("copyAgyPluginSelfContained skills copy is rm-then-cp, not a merge", ()
     writeFileSync(join(root, "dist", "siltpoke-stop.js"), "// stub dist entry\n");
     mkdirSync(join(root, "hooks"), { recursive: true });
     writeFileSync(join(root, "hooks", "agy-stop.sh"), "#!/bin/sh\necho stub\n");
+    // agy-stop.sh sources this (defect [20]/[21]); the build copies it, so the
+    // fixture has to carry it too.
+    mkdirSync(join(root, "hooks", "lib"), { recursive: true });
+    writeFileSync(join(root, "hooks", "lib", "resolve-bun.sh"), "# stub\n");
     mkdirSync(join(root, "skills", "probeskill"), { recursive: true });
     writeFileSync(join(root, "skills", "probeskill", "SKILL.md"), "# probe skill\n");
     mkdirSync(join(root, ".antigravity-plugin"), { recursive: true });

@@ -18935,7 +18935,7 @@ function collectCalls(root, ctx, fileNodeId) {
   return [...agg.values()];
 }
 function isExported(node) {
-  let parent = node.parent;
+  const parent = node.parent;
   if (parent && parent.type === "export_statement")
     return true;
   for (const c of node.children) {

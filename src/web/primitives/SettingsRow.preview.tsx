@@ -7,6 +7,7 @@ import { SettingsRow } from "./SettingsRow";
 
 const Toggle = () => (
   <button
+    type="button"
     style={{
       width: 36,
       height: 20,

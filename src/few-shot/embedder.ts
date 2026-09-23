@@ -36,6 +36,7 @@ export function createStubEmbedder(dim = 384): Embedder {
  */
 export async function createFastEmbedEmbedder(): Promise<Embedder | null> {
   try {
+    // biome-ignore lint/suspicious/noTsIgnore: the directive's necessity is environment-dependent — with the optional package installed there is no error to expect, so @ts-expect-error reddens tsc (measured 2026-09-22)
     // @ts-ignore - dynamic import; package may not be present
     const { FlagEmbedding, EmbeddingModel } = await import("fastembed");
     const model = await FlagEmbedding.init({

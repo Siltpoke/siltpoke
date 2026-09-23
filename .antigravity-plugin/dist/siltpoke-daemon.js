@@ -16064,7 +16064,8 @@ async function aggregatePreferenceStats(opts = {}) {
       continue;
     out2.total++;
     out2[e.signal]++;
-    const c = out2.byCritique[e.critique_id] ??= { ack: 0, dismiss: 0, forward: 0, feedback: 0 };
+    out2.byCritique[e.critique_id] ??= { ack: 0, dismiss: 0, forward: 0, feedback: 0 };
+    const c = out2.byCritique[e.critique_id];
     c[e.signal]++;
     if (out2.windowStart === null || e.ts < out2.windowStart)
       out2.windowStart = e.ts;
@@ -18091,6 +18092,18 @@ var init_brain = __esm(() => {
   };
   FENCED_JSON = /```(?:json)?\s*([\s\S]*?)\s*```/;
 });
+
+// src/utils/atomic-write.ts
+import { writeFileSync, renameSync, mkdirSync as mkdirSync3 } from "fs";
+import { dirname as dirname3, basename as basename2, join as join23 } from "path";
+function atomicWrite(path, data, opts) {
+  const dir = dirname3(path);
+  mkdirSync3(dir, { recursive: true });
+  const tmp = join23(dir, `.tmp-${basename2(path)}-${process.pid}-${Date.now()}`);
+  writeFileSync(tmp, data, opts?.mode !== undefined ? { mode: opts.mode } : undefined);
+  renameSync(tmp, path);
+}
+var init_atomic_write = () => {};
 
 // node_modules/shell-quote/quote.js
 var require_quote = __commonJS((exports, module2) => {
@@ -27312,8 +27325,16 @@ function findNearest(queryEmbedding, index, k = 3) {
   })).sort((a, b) => b.similarity - a.similarity).slice(0, k);
 }
 
+// src/installer/bun-path.ts
+function bunForCommandString() {
+  return process.execPath;
+}
+var init_bun_path = __esm(() => {
+  init_atomic_write();
+});
+
 // src/installer/shim.ts
-import { readFileSync as readFileSync17, statSync as statSync4 } from "fs";
+import { existsSync as existsSync48, readFileSync as readFileSync17, statSync as statSync4 } from "fs";
 import { dirname as dirname16, join as join61 } from "path";
 function daemonShimPath(home) {
   return join61(home, ".siltpoke", "bin", "daemon.sh");
@@ -27339,7 +27360,7 @@ function resolvePluginRoot(home) {
 var init_shim = () => {};
 
 // src/installer/daemon-path.ts
-import { existsSync as existsSync48 } from "fs";
+import { existsSync as existsSync49 } from "fs";
 import { basename as basename9, join as join62, dirname as dirname17 } from "path";
 import { homedir as homedir2 } from "os";
 import { spawnSync as spawnSync2 } from "child_process";
@@ -27383,7 +27404,7 @@ function resolveDaemonEntry(hereDir) {
 }
 function resolveDaemonLauncher(bunPath, repoScript, home = homedir2()) {
   const shim = daemonShimPath(home);
-  if (existsSync48(shim) && resolvePluginRoot(home) !== null) {
+  if (existsSync49(shim) && resolvePluginRoot(home) !== null) {
     return { program: "/bin/sh", script: shim, viaShim: true };
   }
   return { program: bunPath, script: repoScript, viaShim: false };
@@ -27401,7 +27422,7 @@ __export(exports_launchd, {
   installAutostart: () => installAutostart,
   defaultPlistPath: () => defaultPlistPath
 });
-import { writeFileSync as writeFileSync2, mkdirSync as mkdirSync5, existsSync as existsSync49, rmSync as rmSync5 } from "fs";
+import { writeFileSync as writeFileSync2, mkdirSync as mkdirSync5, existsSync as existsSync50, rmSync as rmSync5 } from "fs";
 import { join as join63, dirname as dirname18 } from "path";
 import { homedir as homedir3 } from "os";
 import { spawnSync as spawnSync3 } from "child_process";
@@ -27453,11 +27474,7 @@ async function installAutostart(home = homedir3()) {
 `);
     process.exit(2);
   }
-  const which = spawnSync3("which", ["bun"], { encoding: "utf8" });
-  const bunPath = (which.stdout || "").trim();
-  if (!bunPath) {
-    throw new Error("bun not found in PATH");
-  }
+  const bunPath = bunForCommandString();
   const launcher = resolveDaemonLauncher(bunPath, resolveDaemonEntry(import.meta.dir), home);
   const { path: daemonPath, warnings } = resolveDaemonPath();
   for (const w of warnings) {
@@ -27480,7 +27497,7 @@ async function installAutostart(home = homedir3()) {
 }
 async function uninstallAutostart(opts = {}) {
   const plistPath = opts.plistPath ?? defaultPlistPath();
-  if (!existsSync49(plistPath)) {
+  if (!existsSync50(plistPath)) {
     return { removed: false };
   }
   const exec = opts.exec ?? ((cmd, args2) => spawnSync3(cmd, args2, { stdio: "ignore" }));
@@ -27492,6 +27509,7 @@ async function uninstallAutostart(opts = {}) {
   return { removed: true };
 }
 var init_launchd = __esm(() => {
+  init_bun_path();
   init_daemon_path();
   init_paths();
 });
@@ -27504,7 +27522,7 @@ __export(exports_systemd, {
   installAutostart: () => installAutostart2,
   defaultUnitPath: () => defaultUnitPath
 });
-import { writeFileSync as writeFileSync4, mkdirSync as mkdirSync7, existsSync as existsSync86, rmSync as rmSync7 } from "fs";
+import { writeFileSync as writeFileSync4, mkdirSync as mkdirSync7, existsSync as existsSync87, rmSync as rmSync7 } from "fs";
 import { join as join117, dirname as dirname31 } from "path";
 import { homedir as homedir13 } from "os";
 import { spawnSync as spawnSync8 } from "child_process";
@@ -27542,11 +27560,7 @@ async function installAutostart2(home = homedir13()) {
 `);
     process.exit(2);
   }
-  const which = spawnSync8("which", ["bun"], { encoding: "utf8" });
-  const bunPath = (which.stdout || "").trim();
-  if (!bunPath) {
-    throw new Error("bun not found in PATH");
-  }
+  const bunPath = bunForCommandString();
   const launcher = resolveDaemonLauncher(bunPath, resolveDaemonEntry(import.meta.dir), home);
   const { path: daemonPath, warnings } = resolveDaemonPath();
   for (const w of warnings) {
@@ -27572,7 +27586,7 @@ async function installAutostart2(home = homedir13()) {
 }
 async function uninstallAutostart2(opts = {}) {
   const unitPath = opts.unitPath ?? defaultUnitPath();
-  if (!existsSync86(unitPath)) {
+  if (!existsSync87(unitPath)) {
     return { removed: false };
   }
   const exec = opts.exec ?? ((cmd, args2) => spawnSync8(cmd, args2, { stdio: "ignore" }));
@@ -27584,12 +27598,13 @@ async function uninstallAutostart2(opts = {}) {
   return { removed: true };
 }
 var init_systemd = __esm(() => {
+  init_bun_path();
   init_daemon_path();
   init_paths();
 });
 
 // src/daemon/server.ts
-import { existsSync as existsSync85, mkdirSync as mkdirSync6, readFileSync as readFileSync32, unlinkSync as unlinkSync3 } from "fs";
+import { existsSync as existsSync86, mkdirSync as mkdirSync6, readFileSync as readFileSync32, unlinkSync as unlinkSync3 } from "fs";
 import { basename as basename13, join as join116 } from "path";
 
 // node_modules/hono/dist/compose.js
@@ -30579,7 +30594,7 @@ function makeArchBrainProvider() {
 // src/hooks/handle-stop.ts
 init_brain();
 import { spawnSync as spawnSync7 } from "child_process";
-import { existsSync as existsSync52 } from "fs";
+import { existsSync as existsSync53 } from "fs";
 import { appendFile as appendFile7, mkdir as mkdir25, readFile as readFile52 } from "fs/promises";
 import { join as join68 } from "path";
 
@@ -30825,23 +30840,11 @@ function isClaudeFamilyModel(model) {
 init_failure_reason();
 
 // src/state/brain-health.ts
+init_atomic_write();
+init_budget_config();
 import { readFileSync as readFileSync5 } from "fs";
 import { readFile as readFile21 } from "fs/promises";
 import { join as join25 } from "path";
-
-// src/utils/atomic-write.ts
-import { writeFileSync, renameSync, mkdirSync as mkdirSync3 } from "fs";
-import { dirname as dirname3, basename as basename2, join as join23 } from "path";
-function atomicWrite(path, data, opts) {
-  const dir = dirname3(path);
-  mkdirSync3(dir, { recursive: true });
-  const tmp = join23(dir, `.tmp-${basename2(path)}-${process.pid}-${Date.now()}`);
-  writeFileSync(tmp, data, opts?.mode !== undefined ? { mode: opts.mode } : undefined);
-  renameSync(tmp, path);
-}
-
-// src/state/brain-health.ts
-init_budget_config();
 
 // src/state/usage.ts
 import { appendFile as appendFile3, mkdir as mkdir8, readFile as readFile20, writeFile as writeFile6, rename as rename7 } from "fs/promises";
@@ -32721,6 +32724,7 @@ import { existsSync as existsSync26 } from "fs";
 import { join as join30 } from "path";
 
 // src/state/mute.ts
+init_atomic_write();
 import { readFileSync as readFileSync6, existsSync as existsSync25, unlinkSync } from "fs";
 import { join as join29 } from "path";
 var MUTE_FILENAME = "mute.json";
@@ -32958,6 +32962,7 @@ import { existsSync as existsSync30, readFileSync as readFileSync8, rmSync } fro
 import { join as join33 } from "path";
 
 // src/brain/reviewer-session-registry.ts
+init_atomic_write();
 import { existsSync as existsSync29, readFileSync as readFileSync7 } from "fs";
 import { resolve as resolve3, sep as sep2 } from "path";
 var STRICT_UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -33500,11 +33505,12 @@ function makeCodeBuddyProvider() {
 
 // src/brain/providers/codex.ts
 init_zod();
+init_atomic_write();
+init_brain();
 import { createHash as createHash2 } from "crypto";
 import { existsSync as existsSync32, readFileSync as readFileSync9 } from "fs";
 import { homedir, tmpdir as tmpdir2 } from "os";
 import { join as join36 } from "path";
-init_brain();
 init_schema();
 var DEFAULT_CODEX_TIMEOUT_MS = 120000;
 var MAX_SYSTEM_PROMPT_CHARS = 200000;
@@ -36231,7 +36237,7 @@ function collectCalls(root, ctx, fileNodeId) {
   return [...agg.values()];
 }
 function isExported(node) {
-  let parent = node.parent;
+  const parent = node.parent;
   if (parent && parent.type === "export_statement")
     return true;
   for (const c of node.children) {
@@ -43047,6 +43053,7 @@ var ALL_RUBRIC_RULES = [
 ];
 
 // src/critic/rubric/dedup.ts
+init_atomic_write();
 import { createHash as createHash6 } from "crypto";
 import { existsSync as existsSync37, readFileSync as readFileSync13 } from "fs";
 import { join as join47 } from "path";
@@ -43945,6 +43952,7 @@ async function captureCase1Pre(input, config2, env2, deps) {
 }
 
 // src/memory/case1-capture-node-deps.ts
+init_atomic_write();
 import { open as open3, readdir as readdir8, readFile as readFile44, stat as stat3, unlink as unlink4 } from "fs/promises";
 import { execFile as execFile2 } from "child_process";
 import { promisify as promisify2 } from "util";
@@ -44791,7 +44799,6 @@ async function synthesizeEpisodes(memory, opts) {
       });
     } catch (err2) {
       console.error(`[siltpoke memory] episode synthesis: brain call failed for day ${day}; skipping cluster: ${err2 instanceof Error ? err2.message : String(err2)}`);
-      continue;
     }
   }
   return drafts;
@@ -45174,6 +45181,7 @@ async function readPending(queuePath) {
 }
 
 // src/utils/process-lock.ts
+init_atomic_write();
 import {
   mkdirSync as mkdirSync4,
   rmSync as rmSync4,
@@ -45183,6 +45191,7 @@ import {
 } from "fs";
 import { join as join53 } from "path";
 import { hostname as hostname3 } from "os";
+
 class LockHeldError extends Error {
   pid;
   constructor(pid) {
@@ -45715,6 +45724,7 @@ function anyCodeChanged(changedFiles) {
 // src/router/git-facts.ts
 import { join as join58 } from "path";
 import { existsSync as existsSync45, readFileSync as readFileSync16, statSync as statSync3 } from "fs";
+init_atomic_write();
 
 // src/router/review-unit.ts
 var NUDGE_UNCOMMITTED_LINES = 200;
@@ -45999,13 +46009,13 @@ function resolveObeyedShimPath(exec, home) {
   const pref = readPluginDirPref(exec, home);
   return join64(pref ?? defaultPluginDir(home), SHIM_NAME);
 }
-function anyInstalledShimPath(exec, home, existsSync50) {
+function anyInstalledShimPath(exec, home, existsSync51) {
   const defaultPath = join64(defaultPluginDir(home), SHIM_NAME);
-  if (existsSync50(defaultPath)) {
+  if (existsSync51(defaultPath)) {
     return defaultPath;
   }
   const obeyed = resolveObeyedShimPath(exec, home);
-  return obeyed !== defaultPath && existsSync50(obeyed) ? obeyed : null;
+  return obeyed !== defaultPath && existsSync51(obeyed) ? obeyed : null;
 }
 function probeExec(cmd, args2) {
   try {
@@ -46021,10 +46031,10 @@ var NOTIFICATION_COMMENT_MAX_LEN = 120;
 var EXEC_TIMEOUT_MS = 3000;
 function defaultShimExists(deps = {}) {
   const home = deps.home ?? process.env.HOME ?? "";
-  const existsSync50 = deps.existsSync ?? realExistsSync;
+  const existsSync51 = deps.existsSync ?? realExistsSync;
   const exec = deps.exec ?? probeExec;
   try {
-    return anyInstalledShimPath(exec, home, existsSync50) !== null;
+    return anyInstalledShimPath(exec, home, existsSync51) !== null;
   } catch {
     return false;
   }
@@ -46060,7 +46070,7 @@ function notifyReview(comment, muted, deps = {}) {
 }
 
 // src/hooks/resolve-host-cwd.ts
-import { existsSync as existsSync50 } from "fs";
+import { existsSync as existsSync51 } from "fs";
 import { dirname as dirname19, isAbsolute as isAbsolute9, join as join65 } from "path";
 function findGitRoot(startDir, exists) {
   let dir = startDir;
@@ -46080,7 +46090,7 @@ function cwdContains(cwd, file2) {
   const base = cwd.endsWith("/") ? cwd : `${cwd}/`;
   return file2.startsWith(base);
 }
-function resolveHostCwd(opts, exists = existsSync50) {
+function resolveHostCwd(opts, exists = existsSync51) {
   const { host, payloadCwd, changedFiles } = opts;
   if (host !== "antigravity")
     return payloadCwd;
@@ -46100,9 +46110,10 @@ function resolveHostCwd(opts, exists = existsSync50) {
 }
 
 // src/hooks/session-baseline.ts
+init_atomic_write();
 import { spawnSync as spawnSync6 } from "child_process";
 import { createHash as createHash10 } from "crypto";
-import { existsSync as existsSync51, readFileSync as readFileSync18 } from "fs";
+import { existsSync as existsSync52, readFileSync as readFileSync18 } from "fs";
 import { mkdir as mkdir23, readdir as readdir10, rm as rm3, stat as stat4 } from "fs/promises";
 import { join as join66 } from "path";
 var BASELINE_RETENTION_DAYS = 7;
@@ -46161,7 +46172,7 @@ function readSessionBaseline(cwd, sessionId) {
   return parseBaselineFile(legacyBaselinePath(stateDir), sessionId);
 }
 function parseBaselineFile(file2, sessionId) {
-  if (!existsSync51(file2))
+  if (!existsSync52(file2))
     return null;
   try {
     const persisted = JSON.parse(readFileSync18(file2, "utf8"));
@@ -46563,7 +46574,7 @@ async function checkBudgetGate(event, env2, homeBase, now, wakeBypass, stateBase
 }
 async function checkCodeChangeGate(event, env2, homeBase, stateBase, wakeBypass, changedFiles) {
   if (!wakeBypass && changedFiles.length === 0) {
-    const neverReacted = !existsSync52(join68(stateBase, "state.json")) && !existsSync52(join68(homeBase, "state.json"));
+    const neverReacted = !existsSync53(join68(stateBase, "state.json")) && !existsSync53(join68(homeBase, "state.json"));
     if (neverReacted) {
       await writeState(stateBase, {
         schemaVersion: 1,
@@ -47448,7 +47459,7 @@ async function migrateFactsToGlobal(homeBase) {
 
 // src/observability/retention.ts
 init_paths();
-import { readdirSync as readdirSync2, statSync as statSync5, unlinkSync as unlinkSync2, existsSync as existsSync53, rmSync as rmSync6 } from "fs";
+import { readdirSync as readdirSync2, statSync as statSync5, unlinkSync as unlinkSync2, existsSync as existsSync54, rmSync as rmSync6 } from "fs";
 import { join as join69 } from "path";
 var DEFAULT_TRACES_DIR = join69(siltpokeRoot(), "traces");
 function parseDateFromFile(name2) {
@@ -47500,7 +47511,7 @@ function runRetention(opts = {}) {
   const dir = opts.dir ?? DEFAULT_TRACES_DIR;
   const retentionDays = opts.retentionDays ?? 30;
   const maxStorageMB = opts.maxStorageMB;
-  if (!existsSync53(dir)) {
+  if (!existsSync54(dir)) {
     return { deletedFiles: 0, freedBytes: 0 };
   }
   let deletedFiles = 0;
@@ -47529,7 +47540,7 @@ function runRetention(opts = {}) {
     entries.push({ path: fullPath, date: dateStr, sizeBytes, fileCount: 1, kind: "jsonl" });
   }
   const spilloverRoot = join69(dir, "spillover");
-  if (existsSync53(spilloverRoot)) {
+  if (existsSync54(spilloverRoot)) {
     let names = [];
     try {
       names = readdirSync2(spilloverRoot);
@@ -47559,7 +47570,7 @@ function runRetention(opts = {}) {
       }
     }
   }
-  entries = entries.filter((e) => e.date >= cutoffStr && existsSync53(e.path));
+  entries = entries.filter((e) => e.date >= cutoffStr && existsSync54(e.path));
   const maxBytes = maxStorageMB === undefined ? null : maxStorageMB * 1024 * 1024;
   let totalBytes = entries.reduce((acc, e) => acc + e.sizeBytes, 0);
   if (maxBytes !== null && totalBytes > maxBytes) {
@@ -47579,7 +47590,7 @@ function runRetention(opts = {}) {
 
 // src/repo-graph/repo-registry.ts
 init_paths();
-import { existsSync as existsSync54 } from "fs";
+import { existsSync as existsSync55 } from "fs";
 import { mkdir as mkdir26, readFile as readFile53, readdir as readdir11, rename as rename16, rm as rm4, stat as stat5 } from "fs/promises";
 import { join as join70 } from "path";
 var PROJ_HASH_RE = /^[0-9a-f]{12}$/;
@@ -47597,7 +47608,7 @@ function deriveStatus(meta3) {
   return "not-indexed";
 }
 async function readMetaTolerant(path5) {
-  if (!existsSync54(path5))
+  if (!existsSync55(path5))
     return null;
   try {
     const raw2 = await readFile53(path5, "utf8");
@@ -47611,7 +47622,7 @@ async function resolveRepoByHash(projHash, opts = {}) {
     return null;
   const home = opts.home ?? siltpokeRoot();
   const storage_dir = join70(home, "repo-memory", projHash);
-  if (!existsSync54(storage_dir))
+  if (!existsSync55(storage_dir))
     return null;
   const meta3 = await readMetaTolerant(join70(storage_dir, "meta.json"));
   return {
@@ -47629,7 +47640,7 @@ function makeIndexLocationResolver(home) {
 async function enumerateRepos(opts = {}) {
   const home = opts.home ?? siltpokeRoot();
   const root = join70(home, "repo-memory");
-  if (!existsSync54(root))
+  if (!existsSync55(root))
     return [];
   let names;
   try {
@@ -47678,7 +47689,7 @@ async function discardFailedBuild(projHash, opts = {}) {
     return "absent";
   const home = opts.home ?? siltpokeRoot();
   const storage_dir = join70(home, "repo-memory", projHash);
-  if (!existsSync54(storage_dir))
+  if (!existsSync55(storage_dir))
     return "absent";
   const meta3 = await readMetaTolerant(join70(storage_dir, "meta.json"));
   const ts = meta3?.last_indexed_ts;
@@ -47698,17 +47709,17 @@ async function removeRepoIndex(projHash, opts = {}) {
   const home = opts.home ?? siltpokeRoot();
   const storage_dir = join70(home, "repo-memory", projHash);
   if (opts.purge) {
-    const had = existsSync54(storage_dir);
+    const had = existsSync55(storage_dir);
     await rm4(storage_dir, { recursive: true, force: true });
     await rm4(preservedDir(home, projHash), { recursive: true, force: true });
     return had;
   }
-  if (!existsSync54(storage_dir))
+  if (!existsSync55(storage_dir))
     return false;
   const stash = preservedDir(home, projHash);
   for (const f of PRESERVED_ARCH_FILES) {
     const src = join70(storage_dir, f);
-    if (!existsSync54(src))
+    if (!existsSync55(src))
       continue;
     await mkdir26(stash, { recursive: true });
     await rename16(src, join70(stash, f));
@@ -47726,16 +47737,16 @@ async function restorePreservedArchModel(projHash, opts = {}) {
   const home = opts.home ?? siltpokeRoot();
   const storage_dir = join70(home, "repo-memory", projHash);
   const stash = preservedDir(home, projHash);
-  if (!existsSync54(stash) || !existsSync54(storage_dir))
+  if (!existsSync55(stash) || !existsSync55(storage_dir))
     return false;
   let anyMoved = false;
   let anySkipped = false;
   for (const f of PRESERVED_ARCH_FILES) {
     const src = join70(stash, f);
-    if (!existsSync54(src))
+    if (!existsSync55(src))
       continue;
     const dest = join70(storage_dir, f);
-    if (existsSync54(dest)) {
+    if (existsSync55(dest)) {
       anySkipped = true;
       continue;
     }
@@ -47750,6 +47761,7 @@ async function restorePreservedArchModel(projHash, opts = {}) {
 // src/daemon/server.ts
 init_budget_config();
 init_quiet_hours();
+init_atomic_write();
 
 // src/web/tokens/categorical.ts
 var graphPalette = {
@@ -48788,6 +48800,7 @@ function Icon(props) {
   const { name: name2, size = 16, decorative = true, ariaLabel } = props;
   if (!KNOWN.has(name2)) {
     return /* @__PURE__ */ jsxDEV("span", {
+      role: "img",
       "aria-hidden": decorative ? "true" : undefined,
       "aria-label": !decorative ? ariaLabel : undefined,
       style: {
@@ -49055,9 +49068,8 @@ function Dashboard(props) {
     children: /* @__PURE__ */ jsxDEV("div", {
       style: { display: "flex", height: "100%" },
       children: [
-        /* @__PURE__ */ jsxDEV("aside", {
+        /* @__PURE__ */ jsxDEV("nav", {
           id: "dashboard-sidebar",
-          role: "navigation",
           "aria-label": "Sidebar",
           "data-sidebar": true,
           "x-data": "sidebar",
@@ -49113,6 +49125,7 @@ function Dashboard(props) {
                   children: `L${level}`
                 }, undefined, false, undefined, this),
                 /* @__PURE__ */ jsxDEV("button", {
+                  type: "button",
                   "aria-label": "Toggle sidebar",
                   "data-sidebar-collapse": true,
                   "x-on:click": "toggle()",
@@ -49483,11 +49496,12 @@ function BrandIcons() {
 
 // src/chat/recall.ts
 init_zod();
+init_atomic_write();
+init_memory();
+init_project();
 import { createHash as createHash11 } from "crypto";
 import { join as join71 } from "path";
 import { readFile as readFile54 } from "fs/promises";
-init_memory();
-init_project();
 var RECALL_SURFACE_ENABLED = false;
 var summaryIndexEntrySchema = exports_external.object({
   session_id: exports_external.string(),
@@ -49819,7 +49833,7 @@ function FloatingChat({ secret } = {}) {
                       children: /* @__PURE__ */ jsxDEV("div", {
                         ...{ ":data-recall-open": "m.session_id" },
                         role: "button",
-                        tabindex: 0,
+                        tabIndex: 0,
                         class: "flex items-start gap-2 px-3 py-2 border-b border-b-[color-mix(in_srgb,var(--color-ink)_6%,transparent)] cursor-pointer hover:bg-[color-mix(in_srgb,var(--color-ink)_3%,transparent)] last:border-b-0",
                         children: [
                           /* @__PURE__ */ jsxDEV("span", {
@@ -50462,7 +50476,7 @@ function mountChatWebRoutes(app, deps = {}) {
 
 // src/web/routes/critic.tsx
 import { appendFile as appendFile8, mkdir as mkdir27, readFile as readFile55, writeFile as writeFile19 } from "fs/promises";
-import { existsSync as existsSync55 } from "fs";
+import { existsSync as existsSync56 } from "fs";
 import { join as join72 } from "path";
 import { homedir as homedir4 } from "os";
 
@@ -50584,6 +50598,7 @@ function BudgetGauge({ telemetry }) {
             style: { width: `${pct}%`, height: "100%", background: barColor }
           }, undefined, false, undefined, this),
           /* @__PURE__ */ jsxDEV("div", {
+            role: "img",
             "aria-label": "soft threshold",
             style: {
               position: "absolute",
@@ -50595,6 +50610,7 @@ function BudgetGauge({ telemetry }) {
             }
           }, undefined, false, undefined, this),
           /* @__PURE__ */ jsxDEV("div", {
+            role: "img",
             "aria-label": "hard threshold",
             style: {
               position: "absolute",
@@ -53446,7 +53462,7 @@ function mountCriticRoutes(app, deps = {}) {
       return c.text("invalid critique_id", 400);
     }
     const callsPath = join72(homeBase, "brain-calls.jsonl");
-    if (!existsSync55(callsPath))
+    if (!existsSync56(callsPath))
       return c.text("not found", 404);
     let raw2;
     try {
@@ -53473,7 +53489,7 @@ function mountCriticRoutes(app, deps = {}) {
       return c.text("invalid snapshot id", 400);
     }
     const filePath = join72(homeBase, "critic-snapshots", snapshotId);
-    if (!existsSync55(filePath))
+    if (!existsSync56(filePath))
       return c.text("snapshot file missing", 404);
     const MAX_BYTES2 = 512 * 1024;
     let body2;
@@ -53538,7 +53554,7 @@ diff --git `);
     }
     const configPath = join72(homeBase, "config.json");
     let current = {};
-    if (existsSync55(configPath)) {
+    if (existsSync56(configPath)) {
       try {
         current = JSON.parse(await readFile55(configPath, "utf8"));
       } catch {
@@ -54861,7 +54877,7 @@ init_api2();
 init_api2();
 init_paths();
 import { readFile as readFile56, stat as stat6 } from "fs/promises";
-import { existsSync as existsSync56 } from "fs";
+import { existsSync as existsSync57 } from "fs";
 import { join as join73 } from "path";
 import { homedir as homedir5 } from "os";
 
@@ -54925,7 +54941,7 @@ function factsCreatedToday(facts, now) {
 }
 async function loadConfigWithMtime(basePath) {
   const configPath = join73(basePath, "config.json");
-  if (!existsSync56(configPath))
+  if (!existsSync57(configPath))
     return { cfg: {}, mtimeMs: null };
   try {
     const [raw2, stats] = await Promise.all([
@@ -54939,7 +54955,7 @@ async function loadConfigWithMtime(basePath) {
   }
 }
 async function loadRubricSummary(calibrationPath) {
-  if (!existsSync56(calibrationPath))
+  if (!existsSync57(calibrationPath))
     return null;
   try {
     const text2 = await readFile56(calibrationPath, "utf8");
@@ -54965,14 +54981,14 @@ async function loadRubricSummary(calibrationPath) {
   }
 }
 async function loadFewShotStats(indexPath3, daemonCwd) {
-  if (!existsSync56(indexPath3))
+  if (!existsSync57(indexPath3))
     return null;
   try {
     const raw2 = await readFile56(indexPath3, "utf8");
     const entries = JSON.parse(raw2);
     const firstEmbedding = entries[0]?.embedding;
     const dim = Array.isArray(firstEmbedding) ? firstEmbedding.length : 384;
-    const hasFastembed = existsSync56(join73(daemonCwd, "node_modules", "fastembed"));
+    const hasFastembed = existsSync57(join73(daemonCwd, "node_modules", "fastembed"));
     return {
       entries: entries.length,
       dim,
@@ -54983,7 +54999,7 @@ async function loadFewShotStats(indexPath3, daemonCwd) {
   }
 }
 async function loadRepoMemoryStats(indexPath3) {
-  if (!existsSync56(indexPath3))
+  if (!existsSync57(indexPath3))
     return null;
   try {
     const raw2 = await readFile56(indexPath3, "utf8");
@@ -55194,7 +55210,7 @@ async function getHomeData(deps) {
 }
 
 // src/memory/active-project.ts
-import { existsSync as existsSync57 } from "fs";
+import { existsSync as existsSync58 } from "fs";
 import { join as join74 } from "path";
 init_project();
 var NONE = {
@@ -55210,7 +55226,7 @@ function isWriteEligible(source) {
 function hasContent(home, p) {
   if (p.fact_count > 0)
     return true;
-  return existsSync57(join74(home, "repo-memory", computeProjHash(p.project_root)));
+  return existsSync58(join74(home, "repo-memory", computeProjHash(p.project_root)));
 }
 function toDaemonProject(p, source) {
   return {
@@ -55222,7 +55238,7 @@ function toDaemonProject(p, source) {
   };
 }
 function matchLive(projects, projHash) {
-  return projects.find((p) => existsSync57(p.project_root) && computeProjHash(p.project_root) === projHash);
+  return projects.find((p) => existsSync58(p.project_root) && computeProjHash(p.project_root) === projHash);
 }
 async function resolveDaemonProject(input2, deps = { listActiveProjects }) {
   const { home, explicitProjHash, pinnedProjHash } = input2;
@@ -55238,7 +55254,7 @@ async function resolveDaemonProject(input2, deps = { listActiveProjects }) {
     if (match2)
       return toDaemonProject(match2, "sticky");
   }
-  const live = projects.filter((p) => existsSync57(p.project_root) && hasContent(home, p)).sort((a, b) => {
+  const live = projects.filter((p) => existsSync58(p.project_root) && hasContent(home, p)).sort((a, b) => {
     if (a.last_active_at === b.last_active_at)
       return a.project_id < b.project_id ? -1 : 1;
     if (a.last_active_at === "")
@@ -55256,6 +55272,7 @@ async function resolveDaemonProject(input2, deps = { listActiveProjects }) {
 // src/state/project-pin.ts
 import { readFile as readFile57 } from "fs/promises";
 import { join as join75 } from "path";
+init_atomic_write();
 function pinPath(home) {
   return join75(home, "active-project.json");
 }
@@ -58270,11 +58287,11 @@ init_memory();
 init_project();
 
 // src/repo-graph/repo-card.ts
-import { existsSync as existsSync59, readFileSync as readFileSync21 } from "fs";
+import { existsSync as existsSync60, readFileSync as readFileSync21 } from "fs";
 import { join as join78 } from "path";
 
 // src/explain/arch-reconcile.ts
-import { existsSync as existsSync58, readFileSync as readFileSync20 } from "fs";
+import { existsSync as existsSync59, readFileSync as readFileSync20 } from "fs";
 import { join as join77 } from "path";
 function tokens2(s) {
   return new Set(s.toLowerCase().split(/[^a-z0-9]+/i).filter(Boolean));
@@ -58303,7 +58320,7 @@ function externalScopeOf(externals) {
 }
 function anchorResolves(repoRoot, e) {
   const path5 = join77(repoRoot, e.evidenceFile);
-  if (!existsSync58(path5))
+  if (!existsSync59(path5))
     return false;
   try {
     return readFileSync20(path5, "utf8").includes(e.evidenceToken);
@@ -58317,7 +58334,7 @@ function scopeExternalsToRepo(externals, repoRoot) {
   return externals.filter((e) => anchorResolves(repoRoot, e));
 }
 function resolveExternalScope(repoRoot) {
-  if (!repoRoot || !existsSync58(repoRoot))
+  if (!repoRoot || !existsSync59(repoRoot))
     return UNRESOLVED_EXTERNAL_SCOPE;
   return externalScopeOf(scopeExternalsToRepo(listReviewerExternals(), repoRoot));
 }
@@ -58448,7 +58465,7 @@ function reconcileReviewerExternals(doc2, scope, priorCounts) {
 // src/repo-graph/repo-card.ts
 var REPO_MEMORY_DIR = "repo-memory";
 function readJsonObject(path5) {
-  if (!existsSync59(path5))
+  if (!existsSync60(path5))
     return null;
   try {
     const parsed = JSON.parse(readFileSync21(path5, "utf8"));
@@ -58510,7 +58527,7 @@ function mountMemoryRoutes(app, deps = {}) {
       return c.redirect(`${c.req.path}?repo=${proj.proj_hash}`, 302);
     }
     const scope = proj.project_root ?? GLOBAL_ONLY;
-    let memory = await readMemory(homeBase, scope).catch(() => null);
+    const memory = await readMemory(homeBase, scope).catch(() => null);
     let events;
     try {
       events = await loadMemoryEvents(homeBase, {
@@ -58989,7 +59006,7 @@ function mountPreviewRoutes(app, opts = {}) {
 }
 
 // src/web/routes/repo-graph.tsx
-import { existsSync as existsSync62 } from "fs";
+import { existsSync as existsSync63 } from "fs";
 import { readFile as readFile60 } from "fs/promises";
 import { join as join84 } from "path";
 
@@ -59828,6 +59845,8 @@ function RepoGraph(props) {
                         "stroke-width": "1.5",
                         "stroke-linecap": "round",
                         "stroke-linejoin": "round",
+                        "aria-hidden": "true",
+                        focusable: "false",
                         children: /* @__PURE__ */ jsxDEV("path", {
                           d: "M1.5 4 C1.5 3 2 2.5 3 2.5 L6 2.5 L7.5 4 L13 4 C14 4 14.5 4.5 14.5 5.5 L14.5 12 C14.5 13 14 13.5 13 13.5 L3 13.5 C2 13.5 1.5 13 1.5 12 Z"
                         }, undefined, false, undefined, this)
@@ -59978,6 +59997,8 @@ function RepoGraph(props) {
                       fill: "none",
                       stroke: "currentColor",
                       "stroke-width": "1.6",
+                      "aria-hidden": "true",
+                      focusable: "false",
                       children: [
                         /* @__PURE__ */ jsxDEV("circle", {
                           cx: "7",
@@ -60058,6 +60079,8 @@ function RepoGraph(props) {
                         children: /* @__PURE__ */ jsxDEV("svg", {
                           width: "22",
                           height: "10",
+                          "aria-hidden": "true",
+                          focusable: "false",
                           children: /* @__PURE__ */ jsxDEV("circle", {
                             cx: "11",
                             cy: "5",
@@ -60091,6 +60114,8 @@ function RepoGraph(props) {
                         children: /* @__PURE__ */ jsxDEV("svg", {
                           width: "22",
                           height: "10",
+                          "aria-hidden": "true",
+                          focusable: "false",
                           children: [
                             /* @__PURE__ */ jsxDEV("line", {
                               x1: "1",
@@ -60163,6 +60188,8 @@ function RepoGraph(props) {
                         children: /* @__PURE__ */ jsxDEV("svg", {
                           width: "22",
                           height: "10",
+                          "aria-hidden": "true",
+                          focusable: "false",
                           children: /* @__PURE__ */ jsxDEV("line", {
                             x1: "1",
                             y1: "5",
@@ -60228,7 +60255,9 @@ function RepoGraph(props) {
                   id: "rg-world",
                   children: /* @__PURE__ */ jsxDEV("svg", {
                     class: "edges",
-                    id: "rg-edges"
+                    id: "rg-edges",
+                    "aria-hidden": "true",
+                    focusable: "false"
                   }, undefined, false, undefined, this)
                 }, undefined, false, undefined, this)
               }, undefined, false, undefined, this),
@@ -60736,8 +60765,9 @@ function projectArchitecture(graph, overlay, meta4) {
 init_paths();
 
 // src/explain/arch-cache.ts
+init_atomic_write();
 import { createHash as createHash12 } from "crypto";
-import { existsSync as existsSync60 } from "fs";
+import { existsSync as existsSync61 } from "fs";
 import { readFile as readFile59 } from "fs/promises";
 import { join as join82 } from "path";
 
@@ -60851,7 +60881,7 @@ function computeRepoFingerprint(fp) {
 async function readArchModel(storageDir, curFingerprint, curGraphIndexedTs, repoRoot) {
   const mPath = archModelPath(storageDir);
   const metaPath = archMetaPath(storageDir);
-  if (!existsSync60(mPath) || !existsSync60(metaPath))
+  if (!existsSync61(mPath) || !existsSync61(metaPath))
     return null;
   try {
     const [rawModel, rawMeta] = await Promise.all([
@@ -61001,7 +61031,7 @@ function createPageCache(ttlMs = DEFAULT_PAGE_CACHE_TTL_MS) {
 
 // src/daemon/build-state.ts
 import { execFileSync } from "child_process";
-import { existsSync as existsSync61 } from "fs";
+import { existsSync as existsSync62 } from "fs";
 import { dirname as dirname21, join as join83 } from "path";
 function computeStaleness(bootSha, headSha, probe) {
   if (!bootSha || !headSha) {
@@ -61034,7 +61064,7 @@ function stalenessBannerSignal(state, commitsBehind) {
 function findSourceRepoRoot(startDir) {
   let dir = startDir;
   for (;; ) {
-    if (existsSync61(join83(dir, ".git")))
+    if (existsSync62(join83(dir, ".git")))
       return dir;
     const parent = dirname21(dir);
     if (parent === dir)
@@ -61104,7 +61134,7 @@ async function readClaudeMd(projectRoot) {
   if (!projectRoot)
     return null;
   const path5 = join84(projectRoot, "CLAUDE.md");
-  if (!existsSync62(path5))
+  if (!existsSync63(path5))
     return null;
   try {
     return await readFile60(path5, "utf8");
@@ -61512,7 +61542,7 @@ function mountRepoMemoryRoutes(app, deps = {}) {
 
 // src/web/routes/rubric.tsx
 import { readFile as readFile61 } from "fs/promises";
-import { existsSync as existsSync63 } from "fs";
+import { existsSync as existsSync64 } from "fs";
 import { join as join85, dirname as dirname22 } from "path";
 import { fileURLToPath as fileURLToPath4 } from "url";
 
@@ -61723,7 +61753,7 @@ function RubricList({ rules, calibration }) {
 // src/web/routes/rubric.tsx
 var CALIBRATION_DOC = join85(dirname22(fileURLToPath4(import.meta.url)), "../../../../docs/RUBRIC-CALIBRATION.md");
 async function loadCalibration() {
-  if (!existsSync63(CALIBRATION_DOC))
+  if (!existsSync64(CALIBRATION_DOC))
     return {};
   try {
     const text2 = await readFile61(CALIBRATION_DOC, "utf8");
@@ -61757,12 +61787,12 @@ function mountRubricRoutes(app, deps = {}) {
 }
 
 // src/web/routes/static.ts
-import { existsSync as existsSync65, readFileSync as readFileSync23, readdirSync as readdirSync3, statSync as statSync6 } from "fs";
+import { existsSync as existsSync66, readFileSync as readFileSync23, readdirSync as readdirSync3, statSync as statSync6 } from "fs";
 import { join as join88, dirname as dirname25 } from "path";
 import { fileURLToPath as fileURLToPath7 } from "url";
 
 // scripts/build-tokens.ts
-import { writeFileSync as writeFileSync3, readFileSync as readFileSync22, existsSync as existsSync64 } from "fs";
+import { writeFileSync as writeFileSync3, readFileSync as readFileSync22, existsSync as existsSync65 } from "fs";
 import { join as join86, dirname as dirname23 } from "path";
 import { fileURLToPath as fileURLToPath5 } from "url";
 var here = dirname23(fileURLToPath5(import.meta.url));
@@ -61770,7 +61800,7 @@ var tokensCssPath = join86(here, "..", "src", "web", "tokens", "tokens.css");
 var tailwindCssPath = join86(here, "..", "src", "web", "tokens", "tailwind.css");
 function buildTokensCss(targetPath = tokensCssPath) {
   const desired = tokensToCss();
-  if (existsSync64(targetPath)) {
+  if (existsSync65(targetPath)) {
     const current = readFileSync22(targetPath, "utf8");
     if (current === desired)
       return { wrote: false, path: targetPath };
@@ -61809,7 +61839,7 @@ if (false) {}
 // src/web/routes/static.ts
 function resolveRepoRoot(here3) {
   let dir = here3;
-  while (!existsSync65(join88(dir, "package.json"))) {
+  while (!existsSync66(join88(dir, "package.json"))) {
     const parent = dirname25(dir);
     if (parent === dir)
       return join88(here3, "..", "..", "..");
@@ -61839,9 +61869,9 @@ function newestMtimeMs(dir) {
   return newest;
 }
 function bundleStale(bundlePath, srcDir = clientSrcDir()) {
-  if (!existsSync65(bundlePath))
+  if (!existsSync66(bundlePath))
     return true;
-  if (!existsSync65(srcDir))
+  if (!existsSync66(srcDir))
     return false;
   try {
     return newestMtimeMs(srcDir) > statSync6(bundlePath).mtimeMs;
@@ -61852,7 +61882,7 @@ function bundleStale(bundlePath, srcDir = clientSrcDir()) {
 async function ensureClientBundle(opts = {}) {
   const path5 = opts.bundlePath ?? clientBundlePath();
   const isStale = opts.isStale ?? (() => bundleStale(path5));
-  if (existsSync65(path5) && !isStale())
+  if (existsSync66(path5) && !isStale())
     return { built: false };
   const build = opts.build ?? (() => buildClient({ minify: true }));
   try {
@@ -61875,7 +61905,7 @@ function readBinary2(path5) {
 function mountIcon(app, route, file2, type) {
   app.get(route, (c) => {
     const path5 = assetPath(file2);
-    if (!existsSync65(path5))
+    if (!existsSync66(path5))
       return c.notFound();
     return c.body(readBinary2(path5), 200, {
       "Content-Type": type,
@@ -61887,7 +61917,7 @@ function mountStaticRoutes(app) {
   app.get("/static/tokens.css", (c) => {
     buildTokensCss();
     const path5 = tokensCssPath2();
-    if (!existsSync65(path5)) {
+    if (!existsSync66(path5)) {
       return c.text("/* tokens.css missing \u2014 run bun scripts/build-tokens.ts */", 503, {
         "Content-Type": "text/css"
       });
@@ -61899,7 +61929,7 @@ function mountStaticRoutes(app) {
   });
   app.get("/static/tailwind.css", (c) => {
     const path5 = tailwindCssPath2();
-    if (!existsSync65(path5)) {
+    if (!existsSync66(path5)) {
       return c.text("/* tailwind.css missing \u2014 run `bun run build:tailwind` */", 503, { "Content-Type": "text/css" });
     }
     return c.body(readFileSync23(path5, "utf8"), 200, {
@@ -61909,7 +61939,7 @@ function mountStaticRoutes(app) {
   });
   app.get("/static/index.js", (c) => {
     const path5 = clientBundlePath();
-    if (!existsSync65(path5)) {
+    if (!existsSync66(path5)) {
       return c.text("// client bundle missing \u2014 run `bun scripts/build-client.ts`", 503, { "Content-Type": "application/javascript" });
     }
     return c.body(readFileSync23(path5, "utf8"), 200, {
@@ -61927,7 +61957,7 @@ function mountStaticRoutes(app) {
       return c.notFound();
     }
     const path5 = join88(repoRoot2, "public", "static", filename);
-    if (!existsSync65(path5))
+    if (!existsSync66(path5))
       return c.notFound();
     return c.body(readFileSync23(path5, "utf8"), 200, {
       "Content-Type": "application/javascript; charset=utf-8",
@@ -64043,17 +64073,17 @@ function TraceTabFragment({ traces }) {
 
 // src/web/routes/trace-cost.ts
 import { Database as Database3 } from "bun:sqlite";
-import { existsSync as existsSync66, readFileSync as readFileSync24 } from "fs";
+import { existsSync as existsSync67, readFileSync as readFileSync24 } from "fs";
 import { join as join89 } from "path";
 function openIndexDb(homeBase) {
   const dbPath = join89(homeBase, "traces", "index.sqlite");
-  if (!existsSync66(dbPath))
+  if (!existsSync67(dbPath))
     return null;
   return new Database3(dbPath, { readonly: true });
 }
 function loadFullSpans(homeBase, day, traceId) {
   const file2 = join89(homeBase, "traces", `${day}.jsonl`);
-  if (!existsSync66(file2))
+  if (!existsSync67(file2))
     return [];
   try {
     return readFileSync24(file2, "utf8").trim().split(`
@@ -64268,7 +64298,7 @@ function mountTimelineRoutes(app, deps = {}) {
 }
 
 // src/web/routes/traces.tsx
-import { existsSync as existsSync67 } from "fs";
+import { existsSync as existsSync68 } from "fs";
 import { homedir as homedir10 } from "os";
 import { join as join91 } from "path";
 
@@ -64419,7 +64449,7 @@ function contentToString(content) {
   }
   return JSON.stringify(content);
 }
-function MessageCard({ role, content }) {
+function MessageCard({ speaker, content }) {
   const text2 = contentToString(content);
   const truncated = text2.length > 2000 ? text2.slice(0, 2000) + "\u2026 [truncated]" : text2;
   return /* @__PURE__ */ jsxDEV("div", {
@@ -64427,7 +64457,7 @@ function MessageCard({ role, content }) {
       marginBottom: 10,
       borderRadius: tokens.radius.md,
       border: `1px solid ${tokens.color.edge}`,
-      background: roleBg(role),
+      background: roleBg(speaker),
       overflow: "hidden"
     },
     children: [
@@ -64443,12 +64473,12 @@ function MessageCard({ role, content }) {
           style: {
             fontFamily: tokens.font.mono,
             fontSize: 10,
-            color: roleColor(role),
+            color: roleColor(speaker),
             fontWeight: "bold",
             textTransform: "uppercase",
             letterSpacing: "0.06em"
           },
-          children: role
+          children: speaker
         }, undefined, false, undefined, this)
       }, undefined, false, undefined, this),
       /* @__PURE__ */ jsxDEV("pre", {
@@ -64492,7 +64522,7 @@ function MessagesView({ inputJson, outputJson }) {
     children: hasMessages ? /* @__PURE__ */ jsxDEV(Fragment, {
       children: [
         messages.map((m, i2) => /* @__PURE__ */ jsxDEV(MessageCard, {
-          role: String(m.role),
+          speaker: String(m.role),
           content: m.content
         }, i2, false, undefined, this)),
         outputJson && outputJson !== "" && outputJson !== "null" && /* @__PURE__ */ jsxDEV(Fragment, {
@@ -64510,7 +64540,7 @@ function MessagesView({ inputJson, outputJson }) {
               children: "Response"
             }, undefined, false, undefined, this),
             /* @__PURE__ */ jsxDEV(MessageCard, {
-              role: "assistant",
+              speaker: "assistant",
               content: parseOutput(outputJson)
             }, undefined, false, undefined, this)
           ]
@@ -65971,7 +66001,7 @@ function mountTraceWebRoutes(app, deps = {}) {
       return c.text("invalid role", 400);
     const { readdir: readdir12, readFile: readFile62 } = await import("fs/promises");
     const root = join91(homeBase, "traces", "spillover");
-    if (!existsSync67(root))
+    if (!existsSync68(root))
       return c.text("not found", 404);
     let days;
     try {
@@ -65981,7 +66011,7 @@ function mountTraceWebRoutes(app, deps = {}) {
     }
     for (const day of days.sort().reverse()) {
       const file2 = join91(root, day, `${traceId}-${spanId}-${role}.json`);
-      if (!existsSync67(file2))
+      if (!existsSync68(file2))
         continue;
       try {
         const body2 = await readFile62(file2, "utf8");
@@ -66084,8 +66114,9 @@ function isSiltpokedPing(body2) {
 }
 
 // src/cli/brain-cli.ts
-import { existsSync as existsSync68, readFileSync as readFileSync25 } from "fs";
+import { existsSync as existsSync69, readFileSync as readFileSync25 } from "fs";
 import { join as join92 } from "path";
+init_atomic_write();
 var FAMILIES2 = ["claude", "codex", "agy", "qoder", "codebuddy"];
 var ROLES = ["chat", "review", "extract"];
 function isFamily(x) {
@@ -66096,7 +66127,7 @@ function isRole(x) {
 }
 function readRawConfig(home) {
   const configPath = join92(home, "config.json");
-  if (!existsSync68(configPath))
+  if (!existsSync69(configPath))
     return {};
   try {
     const parsed = JSON.parse(readFileSync25(configPath, "utf8"));
@@ -66175,7 +66206,7 @@ function runBrainSet(home, role, family, model) {
   }
   const configPath = join92(home, "config.json");
   let prior = {};
-  if (existsSync68(configPath)) {
+  if (existsSync69(configPath)) {
     try {
       const parsed = JSON.parse(readFileSync25(configPath, "utf8"));
       if (parsed && typeof parsed === "object")
@@ -66216,7 +66247,7 @@ function setReviewByBuilder(home, builder, reviewer, model) {
   }
   const configPath = join92(home, "config.json");
   let prior = {};
-  if (existsSync68(configPath)) {
+  if (existsSync69(configPath)) {
     try {
       const parsed = JSON.parse(readFileSync25(configPath, "utf8"));
       if (parsed && typeof parsed === "object")
@@ -66243,7 +66274,7 @@ function runBrainUnset(home, role) {
     return { ok: false, message: `unknown role "${role}" \u2014 one of: ${ROLES.join(" / ")}` };
   }
   const configPath = join92(home, "config.json");
-  if (!existsSync68(configPath)) {
+  if (!existsSync69(configPath)) {
     return { ok: true, message: `${role} brain was not pinned \u2014 nothing to unset` };
   }
   let prior = {};
@@ -66356,7 +66387,8 @@ function mountBrainHealthRoute(app, deps = {}) {
 }
 
 // src/chat/anchor-store.ts
-import { existsSync as existsSync69 } from "fs";
+init_atomic_write();
+import { existsSync as existsSync70 } from "fs";
 import { readFile as readFile62, rm as rm5 } from "fs/promises";
 import { join as join93 } from "path";
 var CHATS_DIRNAME2 = "chats";
@@ -66371,7 +66403,7 @@ async function deleteAnchorContext(homeBase, sessionId) {
 }
 async function readAnchorContext(homeBase, sessionId) {
   const path5 = anchorPath(homeBase, sessionId);
-  if (!existsSync69(path5))
+  if (!existsSync70(path5))
     return null;
   try {
     return JSON.parse(await readFile62(path5, "utf8"));
@@ -66614,7 +66646,7 @@ async function reanchorChatSession(homeBase, sessionId, anchor) {
 
 // src/config/repo-graph-config.ts
 init_zod();
-import { existsSync as existsSync70 } from "fs";
+import { existsSync as existsSync71 } from "fs";
 import { readFile as readFile63 } from "fs/promises";
 import { join as join94 } from "path";
 var repoGraphConfigSchema = exports_external.object({
@@ -66622,7 +66654,7 @@ var repoGraphConfigSchema = exports_external.object({
 });
 async function loadRepoGraphConfig(home) {
   const configPath = join94(home, "config.json");
-  if (!existsSync70(configPath))
+  if (!existsSync71(configPath))
     return repoGraphConfigSchema.parse({});
   try {
     const raw2 = await readFile63(configPath, "utf8");
@@ -68532,16 +68564,16 @@ import { homedir as homedir11 } from "os";
 
 // src/state/critique-status.ts
 import { readFile as readFile65, writeFile as writeFile20, readdir as readdir13 } from "fs/promises";
-import { existsSync as existsSync71 } from "fs";
+import { existsSync as existsSync72 } from "fs";
 import { join as join96 } from "path";
 async function findCritiqueByIdOrLatest(basePath, idOrLatest) {
   const critiqueRoot = join96(basePath, "critiques");
   if (idOrLatest === "latest") {
     const latestPath = join96(critiqueRoot, "latest.md");
-    return existsSync71(latestPath) ? latestPath : null;
+    return existsSync72(latestPath) ? latestPath : null;
   }
   const archiveRoot = join96(critiqueRoot, "archive");
-  if (!existsSync71(archiveRoot))
+  if (!existsSync72(archiveRoot))
     return null;
   try {
     const dates = await readdir13(archiveRoot);
@@ -69240,13 +69272,13 @@ function mountDaemonHealthRoute(app, deps = {}) {
 // src/daemon/routes/dashboard.ts
 init_progression();
 import { readFile as readFile68, writeFile as writeFile22, mkdir as mkdir30 } from "fs/promises";
-import { existsSync as existsSync73 } from "fs";
+import { existsSync as existsSync74 } from "fs";
 import { join as join99 } from "path";
 
 // src/state/vitalsWriter.ts
 init_progression();
 import { readFile as readFile67, writeFile as writeFile21, mkdir as mkdir29 } from "fs/promises";
-import { existsSync as existsSync72 } from "fs";
+import { existsSync as existsSync73 } from "fs";
 import { join as join98 } from "path";
 var VITALS_RETENTION = 30;
 var VITALS_FILE2 = "vitals.jsonl";
@@ -69259,7 +69291,7 @@ function yesterdayOf(now) {
   return d.toISOString().slice(0, 10);
 }
 async function readLines(path5) {
-  if (!existsSync72(path5))
+  if (!existsSync73(path5))
     return [];
   try {
     const raw2 = await readFile67(path5, "utf8");
@@ -69422,7 +69454,7 @@ function sanitizeConfigPatch(patch) {
 }
 async function loadConfig(homeBase) {
   const path5 = join99(homeBase, "config.json");
-  if (!existsSync73(path5))
+  if (!existsSync74(path5))
     return {};
   try {
     return JSON.parse(await readFile68(path5, "utf8"));
@@ -69690,7 +69722,7 @@ var streamSSE = (c, cb, onError) => {
 
 // src/explain/store.ts
 import { createHash as createHash14, randomBytes as randomBytes16 } from "crypto";
-import { existsSync as existsSync74 } from "fs";
+import { existsSync as existsSync75 } from "fs";
 import { mkdir as mkdir31, readFile as readFile69, readdir as readdir14, rename as rename17, writeFile as writeFile23 } from "fs/promises";
 import { join as join100 } from "path";
 
@@ -69732,7 +69764,7 @@ async function writeExplanation(cwd, key, markdown, meta4) {
 }
 async function listExplanations(cwd) {
   const dir = explanationDir(cwd);
-  if (!existsSync74(dir))
+  if (!existsSync75(dir))
     return [];
   let names;
   try {
@@ -69767,7 +69799,7 @@ async function listExplanations(cwd) {
 }
 async function readExplanation(cwd, key) {
   const { mdPath, metaPath } = explanationPaths(cwd, key);
-  if (!existsSync74(mdPath) || !existsSync74(metaPath))
+  if (!existsSync75(mdPath) || !existsSync75(metaPath))
     return null;
   try {
     const [markdown, metaRaw] = await Promise.all([
@@ -70687,7 +70719,7 @@ import { dirname as dirname27 } from "path";
 
 // src/config/index-config.ts
 init_zod();
-import { existsSync as existsSync75 } from "fs";
+import { existsSync as existsSync76 } from "fs";
 import { readFile as readFile70 } from "fs/promises";
 import { homedir as homedir12 } from "os";
 import { join as join102 } from "path";
@@ -70700,7 +70732,7 @@ function resolveAllowRoots(cfg) {
 }
 async function loadIndexConfig(home) {
   const configPath = join102(home, "config.json");
-  if (!existsSync75(configPath))
+  if (!existsSync76(configPath))
     return indexConfigSchema.parse({});
   try {
     const raw2 = await readFile70(configPath, "utf8");
@@ -70866,8 +70898,9 @@ function mountFsRoutes(app, deps) {
 }
 
 // src/daemon/marker.ts
+init_atomic_write();
 import { createHash as createHash15 } from "crypto";
-import { closeSync as closeSync2, existsSync as existsSync76, openSync as openSync2, readFileSync as readFileSync26, writeSync } from "fs";
+import { closeSync as closeSync2, existsSync as existsSync77, openSync as openSync2, readFileSync as readFileSync26, writeSync } from "fs";
 import { join as join104 } from "path";
 function markerKey(input2) {
   return createHash15("sha256").update(`${input2.session_id}|${input2.content_hash}`).digest("hex").slice(0, 32);
@@ -70912,7 +70945,7 @@ function claimMarker(dir, key) {
 }
 function completeMarker(dir, key) {
   const path5 = markerPath(dir, key);
-  if (!existsSync76(path5))
+  if (!existsSync77(path5))
     return;
   const body2 = JSON.parse(readFileSync26(path5, "utf8"));
   const next = { ...body2, state: "done", doneAt: Date.now() };
@@ -71004,13 +71037,13 @@ function mountPreferenceLogApiRoutes(app) {
 }
 
 // src/daemon/routes/repo-graph.tsx
-import { existsSync as existsSync81 } from "fs";
+import { existsSync as existsSync82 } from "fs";
 import { readFile as readFile71 } from "fs/promises";
 import { basename as basename12, join as join110 } from "path";
 
 // src/explain/cache-lifecycle.ts
 import { readdir as readdir15 } from "fs/promises";
-import { existsSync as existsSync77 } from "fs";
+import { existsSync as existsSync78 } from "fs";
 var NODE_ID_FILE_RE = /^[^:]+:([^:]+):/;
 function fileFromNodeId(nodeId2) {
   const m = NODE_ID_FILE_RE.exec(nodeId2);
@@ -71019,7 +71052,7 @@ function fileFromNodeId(nodeId2) {
 async function deriveCacheState(targetNodeId, cwd, currentFingerprints) {
   const key = cacheKey(targetNodeId);
   const { metaPath } = explanationPaths(cwd, key);
-  if (!existsSync77(metaPath)) {
+  if (!existsSync78(metaPath)) {
     return { state: "NoCache" /* NoCache */, reason: null };
   }
   const cached2 = await readExplanation(cwd, key);
@@ -71060,7 +71093,7 @@ function classifyAgainstFingerprints(meta4, fingerprints) {
 async function cascadeStaleSubdir(subdirPath, cwd, currentFingerprints) {
   const subdir = subdirPath.endsWith("/") ? subdirPath : `${subdirPath}/`;
   const dir = explanationDir(cwd);
-  if (!existsSync77(dir)) {
+  if (!existsSync78(dir)) {
     return { invalidatedFiles: [], invalidatedSymbols: [] };
   }
   let names;
@@ -71094,7 +71127,7 @@ async function cascadeStaleSubdir(subdirPath, cwd, currentFingerprints) {
 }
 
 // src/explain/explain.ts
-import { existsSync as existsSync78 } from "fs";
+import { existsSync as existsSync79 } from "fs";
 import { join as join106 } from "path";
 init_paths();
 
@@ -71313,7 +71346,7 @@ async function runExplain(opts, ctx) {
   const softCap = ctx.costSoftCapUsd ?? DEFAULT_SOFT_CAP_USD;
   const hardCap = ctx.costHardCapUsd ?? DEFAULT_HARD_CAP_USD;
   const now = ctx.now ?? (() => new Date);
-  if (!existsSync78(join106(ctx.graphStorageDir, "meta.json"))) {
+  if (!existsSync79(join106(ctx.graphStorageDir, "meta.json"))) {
     return {
       kind: "pre_check_failed",
       message: "No repo-graph found. Open Code Map and pick this repo to build the structural index."
@@ -71440,7 +71473,7 @@ async function runExplain(opts, ctx) {
 }
 
 // src/explain/arch-generate.ts
-import { existsSync as existsSync79 } from "fs";
+import { existsSync as existsSync80 } from "fs";
 import { join as join107 } from "path";
 
 // src/explain/arch-context.ts
@@ -71944,7 +71977,7 @@ function estimateArchCostUsd(inputTokens, model) {
   return (inputTokens + EST_CLI_CONTEXT_TOKENS) / 1e6 * rate.cacheWrite1h + EST_OUTPUT_TOKENS / 1e6 * rate.out;
 }
 async function loadArchInputs(ctx) {
-  if (!existsSync79(join107(ctx.graphStorageDir, "meta.json"))) {
+  if (!existsSync80(join107(ctx.graphStorageDir, "meta.json"))) {
     return { ok: false, message: "No repo-graph found. Open Code Map and pick this repo to index it." };
   }
   try {
@@ -72157,8 +72190,9 @@ function parseUsageFromTail(text2) {
 init_paths();
 
 // src/daemon/task-registry.ts
-import { existsSync as existsSync80, readdirSync as readdirSync5, readFileSync as readFileSync28, statSync as statSync9 } from "fs";
+import { existsSync as existsSync81, readdirSync as readdirSync5, readFileSync as readFileSync28, statSync as statSync9 } from "fs";
 import { join as join108 } from "path";
+init_atomic_write();
 
 // src/daemon/result-classifier.ts
 import { readFileSync as readFileSync27, statSync as statSync8 } from "fs";
@@ -72499,7 +72533,7 @@ class TaskRegistry {
   }
   load() {
     let prior = [];
-    if (existsSync80(this.path)) {
+    if (existsSync81(this.path)) {
       try {
         prior = JSON.parse(readFileSync28(this.path, "utf8"));
       } catch {
@@ -72530,7 +72564,7 @@ class TaskRegistry {
   reconcileDead(rec) {
     rec.endedTs = rec.endedTs ?? this.now();
     const file2 = this.resultFilePathFor(rec.id);
-    if (!existsSync80(file2)) {
+    if (!existsSync81(file2)) {
       rec.status = "crashed";
       return;
     }
@@ -72542,7 +72576,7 @@ class TaskRegistry {
     }
   }
   scavenge() {
-    if (!existsSync80(this.tasksDir))
+    if (!existsSync81(this.tasksDir))
       return false;
     let entries;
     try {
@@ -73249,8 +73283,11 @@ async function runIndexerProcess({
           break;
         buf += dec.decode(value, { stream: true });
         let nl;
-        while ((nl = buf.indexOf(`
-`)) >= 0) {
+        for (;; ) {
+          nl = buf.indexOf(`
+`);
+          if (nl < 0)
+            break;
           const line = buf.slice(0, nl).trim();
           buf = buf.slice(nl + 1);
           if (line.length === 0)
@@ -73293,7 +73330,7 @@ async function resolveActiveRepo2(repo, deps) {
 }
 async function loadOverlay(projectRoot) {
   const claudeMd = join110(projectRoot, "CLAUDE.md");
-  if (!existsSync81(claudeMd))
+  if (!existsSync82(claudeMd))
     return null;
   try {
     return parseArchitectureSection(await readFile71(claudeMd, "utf8"));
@@ -73687,7 +73724,7 @@ function mountRepoGraphRoutes(app, deps) {
       const absPath = join110(active.project_root, n.path);
       let desc = "";
       let loc = locOf(n);
-      if (existsSync81(absPath)) {
+      if (existsSync82(absPath)) {
         try {
           const src = await readFile71(absPath, "utf8");
           desc = parseFirstDocComment(src);
@@ -73747,7 +73784,7 @@ function mountRepoGraphRoutes(app, deps) {
     let desc = "";
     let loc = locOf(fileNode);
     const absPath = join110(active.project_root, file2);
-    if (existsSync81(absPath)) {
+    if (existsSync82(absPath)) {
       try {
         const src = await readFile71(absPath, "utf8");
         desc = parseFirstDocComment(src);
@@ -74276,6 +74313,7 @@ function mountRepoMemoryApiRoutes(app, deps = {}) {
 import { join as join112 } from "path";
 
 // src/repo-graph/repo-summary-gen.ts
+init_atomic_write();
 import { join as join111 } from "path";
 var REPO_MEMORY_DIR2 = "repo-memory";
 var SUMMARY_FILE = "repo-summary.json";
@@ -74404,12 +74442,12 @@ function mountRepoSummaryRoute(app, deps) {
 
 // src/daemon/routes/rubric.ts
 import { readFile as readFile72 } from "fs/promises";
-import { existsSync as existsSync82 } from "fs";
+import { existsSync as existsSync83 } from "fs";
 import { join as join113, dirname as dirname28 } from "path";
 import { fileURLToPath as fileURLToPath8 } from "url";
 var CALIBRATION_DOC2 = join113(dirname28(fileURLToPath8(import.meta.url)), "../../../../docs/RUBRIC-CALIBRATION.md");
 async function loadCalibration2() {
-  if (!existsSync82(CALIBRATION_DOC2))
+  if (!existsSync83(CALIBRATION_DOC2))
     return {};
   try {
     const text2 = await readFile72(CALIBRATION_DOC2, "utf8");
@@ -74444,7 +74482,7 @@ function mountRubricApiRoutes(app) {
 init_paths();
 
 // src/repo-graph/seen-advance.ts
-import { existsSync as existsSync83 } from "fs";
+import { existsSync as existsSync84 } from "fs";
 import { copyFile as copyFile2 } from "fs/promises";
 import { join as join114 } from "path";
 
@@ -74538,7 +74576,7 @@ function canonicalizeCurrentFiles(current) {
 }
 async function backupSeenIfPresent(storageDir) {
   const seenPath = join114(storageDir, SEEN_FILE2);
-  if (!existsSync83(seenPath))
+  if (!existsSync84(seenPath))
     return;
   await copyFile2(seenPath, join114(storageDir, SEEN_BACKUP_FILE));
 }
@@ -75018,7 +75056,7 @@ function mountTracesRoutes(app, deps = {}) {
 // src/build-stamp/capture.ts
 import { execFileSync as execFileSync2 } from "child_process";
 import { createHash as createHash16 } from "crypto";
-import { existsSync as existsSync84, readFileSync as readFileSync31 } from "fs";
+import { existsSync as existsSync85, readFileSync as readFileSync31 } from "fs";
 import { dirname as dirname29, isAbsolute as isAbsolute11, join as join115, relative as relative8, resolve as resolve12 } from "path";
 function gitBlobOid(bytes) {
   return createHash16("sha1").update(`blob ${bytes.byteLength}\x00`).update(bytes).digest("hex");
@@ -75114,7 +75152,7 @@ var realBuildStampIo = {
   findRepoRoot: (startDir) => {
     let dir = startDir;
     for (;; ) {
-      if (existsSync84(join115(dir, ".git")))
+      if (existsSync85(join115(dir, ".git")))
         return dir;
       const parent = dirname29(dir);
       if (parent === dir)
@@ -75261,7 +75299,7 @@ function isAddrInUse(err2, port) {
 }
 async function resolveBindFailure(err2, ctx) {
   releaseLock(ctx.lock);
-  if (existsSync85(ctx.pidPath)) {
+  if (existsSync86(ctx.pidPath)) {
     try {
       unlinkSync3(ctx.pidPath);
     } catch {}
@@ -75279,7 +75317,7 @@ async function resolveBindFailure(err2, ctx) {
 }
 async function evictPriorPortHolder(opts) {
   const { pidPath, hostname: hostname4, port } = opts;
-  if (!existsSync85(pidPath))
+  if (!existsSync86(pidPath))
     return;
   let priorPid;
   try {
@@ -75574,7 +75612,7 @@ async function stopDaemon(handle2) {
     } catch {}
   }
   releaseLock(handle2.lock);
-  if (existsSync85(handle2.pidPath)) {
+  if (existsSync86(handle2.pidPath)) {
     try {
       unlinkSync3(handle2.pidPath);
     } catch {}
@@ -75582,7 +75620,8 @@ async function stopDaemon(handle2) {
 }
 
 // src/cli/daemon.ts
-import { readFileSync as readFileSync34, existsSync as existsSync87 } from "fs";
+init_atomic_write();
+import { readFileSync as readFileSync34, existsSync as existsSync88 } from "fs";
 import { join as join119 } from "path";
 
 // src/cli/daemon-stop-guard.ts
@@ -75817,7 +75856,7 @@ init_paths();
 var BASE = siltpokeRoot();
 function loadOrCreateSecret() {
   const path5 = join119(BASE, "secret");
-  if (existsSync87(path5))
+  if (existsSync88(path5))
     return readFileSync34(path5, "utf8").trim();
   const s = generateSecret();
   atomicWrite(path5, s, { mode: 384 });
@@ -75858,7 +75897,7 @@ async function cmdStart(detach) {
 }
 async function cmdStop(force) {
   const pidPath = join119(BASE, "siltpoked.pid");
-  if (!existsSync87(pidPath)) {
+  if (!existsSync88(pidPath)) {
     process.stderr.write(`siltpoked: no pidfile, not running
 `);
     process.exit(1);
@@ -75884,7 +75923,7 @@ async function cmdStop(force) {
 }
 function cmdStatus() {
   const pidPath = join119(BASE, "siltpoked.pid");
-  if (!existsSync87(pidPath)) {
+  if (!existsSync88(pidPath)) {
     process.stdout.write(`siltpoked: not running
 `);
     return;

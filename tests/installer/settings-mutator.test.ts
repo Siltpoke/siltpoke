@@ -94,8 +94,9 @@ test("unregisterStopHook removes only our entry", () => {
   };
   const out = unregisterStopHook(input, HOOK);
   expect(hasStopHook(out, HOOK)).toBe(false);
-  const remaining = (out as { hooks: { Stop: { hooks: unknown[] }[] } })
-    .hooks.Stop[0]?.hooks!;
+  const stopEntries = (out as { hooks: { Stop: { hooks: unknown[] }[] } }).hooks.Stop;
+  expect(stopEntries[0]).toBeDefined();
+  const remaining = stopEntries[0]!.hooks;
   expect(remaining).toHaveLength(1);
   expect((remaining[0] as { command: string }).command).toBe("some-other-cmd");
 });

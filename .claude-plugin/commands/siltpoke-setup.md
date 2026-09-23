@@ -26,8 +26,9 @@ Before anything else, offer ONE fork, in the user's language:
   `species: "slime"`, `language: <inferred>`, the chosen `name`, **no `dials`
   block**, `"statusline": true`, `"daemon": false`. That is the whole express path
   — one confirmation, then the §5 kernel run. After it succeeds, still close the
-  loop with §9's report-back — above all, tell them to **restart Claude Code** so
-  the pet's face appears in the statusline (§8's menu-bar offer is optional).
+  loop with §10's report-back — above all, tell them to **restart Claude Code** so
+  the pet's face appears in the statusline (§9's menu-bar offer is optional; §8
+  runs its detect but does not ask — see §8).
 - **Custom (自己捏)** — meet the pet properly: walk §1–§5 below as written.
 
 If they don't choose, or seem unsure, default to **Custom** (the richer, safer
@@ -312,7 +313,73 @@ dump the raw trace:
   write failed. Report the path verbatim and suggest checking permissions on
   `~/.siltpoke/` and `~/.claude/` (and disk space).
 
-## 8. Offer the menu-bar pet (macOS only)
+## 8. Offer a second opinion from another AI family
+
+By default the code Claude writes is reviewed by Claude. A reviewer from a
+**different AI family** (OpenAI's Codex, Google's Antigravity, …) catches a
+different kind of mistake — the ones a model shares with its own family. The
+user may already have one of those CLIs installed and not know Siltpoke can use
+it. Find out — never guess:
+
+```bash
+bun "${CLAUDE_PLUGIN_ROOT}/dist/siltpoke-cli.js" brain detect
+```
+
+It prints one JSON line, e.g. `{"installed":["codex","agy"]}`. It only checks
+that the command is **on PATH** — it does NOT check that the user is logged in.
+
+- **`"installed":[]`** — skip this whole step silently. No mention, no command.
+- **Express path (§0)** — do NOT ask here; express means no questions. Instead,
+  add one line to the §10 report naming what was found and the command below.
+- **Custom path, one or more found** — ask ONCE, in the user's language and in
+  plain words. The user must be able to decide from your message alone, so it
+  carries all four parts below — the question, WHY, what to know, and that no
+  is fine. Do not shorten it to the question.
+
+  1. **The question.** Name what was found and ask, e.g. "You have codex
+     installed. Want it to review the code Claude writes?"
+  2. **Why it can help — say this in everyday words, not jargon.** A model
+     checking its own family's work tends to miss the mistakes that family
+     makes, the way an author proofreading their own text skips the same typo
+     every time. A reviewer from another company thinks differently, so it is
+     more likely to catch what Claude missed.
+  3. **What to know before saying yes:**
+     - each review spends that CLI's own account quota, not Claude's;
+     - it only works while they stay logged in to that CLI — otherwise
+       reviews stop;
+     - Siltpoke has not measured this reviewer's review quality yet. It is a
+       different point of view, not a guaranteed improvement.
+     - **agy only:** agy can run Claude models too. Tell them to make sure agy
+       is NOT set to a Claude model — otherwise it is still Claude reviewing
+       Claude under another name. Do not add this line for the others: codex
+       and qoder offer no Claude models. codebuddy's named models are not
+       Claude either, but its `default-model`-style aliases do not say which
+       model they map to — if the user asks, say that plainly rather than
+       promising it is not Claude.
+  4. **No is fine.** Say that keeping the default (Claude reviews Claude) is a
+     working setup, not a lesser one.
+
+  If more than one was found, name each with the company behind it — codex
+  (OpenAI), agy (Google, can also run Claude), qoder (Alibaba), codebuddy
+  (Tencent) — and let them pick ONE. If they say no, move on.
+
+On a yes, run exactly this, with `<family>` replaced by ONE value copied from
+the `installed` list the command printed — never by text the user typed:
+
+```bash
+bun "${CLAUDE_PLUGIN_ROOT}/dist/siltpoke-cli.js" brain set-builder claude "<family>"
+```
+
+This is the per-builder rule: code written in Claude Code is reviewed by
+`<family>`, and code written in any other host still follows its own default.
+Do not use `brain set review` here — that pins one reviewer for every host.
+Report the one line it prints. Then tell them: they can undo or change it any
+time with `/siltpoke-brain`, and if reviews go quiet after this, the likely
+cause is that CLI's login — run that CLI once on its own to check.
+`/siltpoke-doctor` shows which reviewer is configured and that its command is
+on PATH; it does NOT check the login.
+
+## 9. Offer the menu-bar pet (macOS only)
 
 Once the kernel run in §5 succeeded, offer ONE optional extra: the pet in the
 macOS menu bar (a separate surface from the statusline and the dashboard, via
@@ -324,7 +391,7 @@ platform, check with `uname -s` (`Darwin` = macOS); on anything else, skip
 this whole step silently — no mention, no command.
 
 Ask, in the user's language, whether they'd also like the pet in their menu
-bar. If they decline, move on to §9. If they say yes, run exactly this — one
+bar. If they decline, move on to §10. If they say yes, run exactly this — one
 fixed command, zero user data on the line:
 
 ```bash
@@ -348,7 +415,7 @@ the one line it prints; don't dump raw output:
 The menu bar is optional — a "no" here costs nothing, the pet already lives in
 the statusline and dashboard.
 
-## 9. Report back
+## 10. Report back
 
 Tell the user, in their chosen language:
 
@@ -364,4 +431,8 @@ Tell the user, in their chosen language:
   `claude -p` subprocess reading over your shoulder, so the Brain model you
   already have is what powers it out of the box. A local model (Ollama) is
   available if you ask for it instead, but it is not part of this setup and
-  downloads several GB — only bring it up if the user asks.
+  downloads several GB — only bring it up if the user asks. If §8 switched
+  the reviewer to another family, say that instead of "your existing `claude`".
+  If §8 found another CLI on the express path, add one line: "you also have
+  `<family>` installed — `/siltpoke-brain set-builder claude <family>` makes it
+  review Claude's code."

@@ -93,6 +93,8 @@ codex plugin list                         # verify: siltpoke … installed, enab
 
 The **`@siltpoke` marketplace qualifier is required** — a bare `codex plugin add siltpoke` fails with `plugin requires --marketplace unless passed as <plugin>@<marketplace>`.
 
+Unlike the Claude Code install, which gets the latest release tag, a Codex install gets the repository's default branch as it is when you run `marketplace add`.
+
 This installs Siltpoke with reviews included — the review Stop hook + SessionStart baseline hook ride the plugin itself, no source clone needed. You'll need Bun installed (`curl -fsSL https://bun.sh/install | bash`) since the bundled hooks are Bun-compiled, but that's the only external dependency.
 
 **From source (alternative path):**

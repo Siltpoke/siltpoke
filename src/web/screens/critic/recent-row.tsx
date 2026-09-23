@@ -102,6 +102,7 @@ export function RecentRow({ c, now, homeBasename, preferenceStats }: {
         >
           {c.status === "fired" && (
             <span
+              role="img"
               aria-label={c.speech_kind ? `kind: ${c.speech_kind}` : ""}
               title={c.speech_kind ?? ""}
               style={{

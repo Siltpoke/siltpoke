@@ -222,10 +222,17 @@ export function FloatingChat({ secret }: FloatingChatProps = {}) {
             class="absolute left-3 right-3 top-[52px] z-10 max-h-[60%] overflow-y-auto bg-cream border border-[color-mix(in_srgb,var(--color-ink)_12%,transparent)] rounded-[12px] shadow-[var(--shadow-lg)]"
           >
             <template x-for="m in recallMatches" {...{ ":key": "m.session_id" }}>
+              {/* A real <button> here would double-fire: floating-chat.ts's document-level
+                  keydown handler already drives Enter/Space activation for this
+                  role="button" pattern (delegated via the [data-recall-open] attribute, not
+                  the tag), and a native button's own Enter→click synthesis would call
+                  openConversation() a second time. That handler lives in a .ts file outside
+                  this pass's scope, so role="button" + tabIndex stays the correct fix here. */}
+              {/* biome-ignore lint/a11y/useSemanticElements: see comment above — div+role="button" is deliberate, not an oversight. */}
               <div
                 {...{ ":data-recall-open": "m.session_id" }}
                 role="button"
-                tabindex={0}
+                tabIndex={0}
                 class="flex items-start gap-2 px-3 py-2 border-b border-b-[color-mix(in_srgb,var(--color-ink)_6%,transparent)] cursor-pointer hover:bg-[color-mix(in_srgb,var(--color-ink)_3%,transparent)] last:border-b-0"
               >
                 <span class="shrink-0 text-violet text-[10px] pt-[2px]">↳</span>

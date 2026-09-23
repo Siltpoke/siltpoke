@@ -33,7 +33,16 @@ import { familyBinary, resolveRoleMeta } from "../brain/registry";
 import { siltpokeRoot } from "../installer/paths";
 import { brainView } from "./brain-cli";
 import type { CheckResult, DoctorOptions } from "./doctor";
-import { defaultRepoRoot } from "./doctor";
+import { defaultRepoRoot, type DoctorHost, detectDoctorHost } from "./doctor";
+
+/** How this host's user switches the reviewer. Only Claude Code has the
+ * `/siltpoke-brain` slash command; the [16] invariant forbids handing any
+ * other host a `/siltpoke-` command, so they are pointed at their agent. */
+function reviewerAdviceFor(host: DoctorHost): string {
+  return host === "claude-code"
+    ? "run `/siltpoke-brain set-builder <builder> <reviewer>` — e.g. `set-builder claude codex` when you build in Claude Code"
+    : "ask your agent to have Siltpoke use a different reviewer for the agent you build with";
+}
 
 /** Sidecar written by run-eval.ts's `--provider codex` execute path
  * (src/eval/caller-impact/verdict-writer.ts's VerdictProvenance, T5 AC12). */
@@ -177,7 +186,7 @@ export function checkBrainRoles(opts: DoctorOptions): CheckResult[] {
         return { name, pass: true, status: "info", detail: builderMapping };
       }
       const builderNote =
-        " (at review time this defaults to the building host's CLI family; set brain.roles.review to pin one.)";
+        ` (at review time this defaults to the building host's CLI family; to have another family review it, ${reviewerAdviceFor(detectDoctorHost(opts))}.)`;
       const detail = `family: claude. model=${modelLabel}. ${crossFamilyNote(family, config.authorFamily, resolved.model)}${builderNote}`;
       return { name, pass: true, status: "info", detail };
     }

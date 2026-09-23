@@ -1420,7 +1420,7 @@ describe("FE dead-anchor terminal state", () => {
 
 // ── FE budget + quiet-hours blocked notice ───────────────────────────────────
 
-import { type BlockedCta } from "../../../../src/web/client/islands/floating-chat";
+import type { BlockedCta } from "../../../../src/web/client/islands/floating-chat";
 
 describe("FE budget/quiet-hours blocked notice", () => {
   /** Helper: fake fetch returning a blocked signal. */

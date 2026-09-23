@@ -37,9 +37,9 @@ describe("doctor — orchestration", () => {
   // 15 → 16 on 2026-09-20 (statusline interpreter runnable — install-audit
   // defect [10]: doctor was green on a Windows box whose statusline could
   // never start, because nothing checked the interpreter it names).
-  test("runAllChecks returns 15 entries (one per check)", () => {
+  test("runAllChecks returns 16 entries (one per check)", () => {
     const results = runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome });
-    expect(results).toHaveLength(15);
+    expect(results).toHaveLength(16);
     for (const r of results) {
       expect(typeof r.name).toBe("string");
       expect(typeof r.pass).toBe("boolean");

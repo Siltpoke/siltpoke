@@ -4,9 +4,14 @@
 // Threshold: <400 LOC typical (warn), <800 LOC max (error).
 // Configurable via SILTPOKE_FILE_WARN + SILTPOKE_FILE_MAX env vars.
 //
-// Ratchet: files listed in .lint-files-grandfather.json are warn-only
-// at the 400 threshold (one-way ratchet — additions require reviewer
-// sign-off). Any NEW file >400 LOC that isn't on the list is an ERROR.
+// Ratchet: .lint-files-grandfather.json pins each grandfathered file at the
+// size it had when it was frozen. Going OVER that pin is an error at any
+// size — including above MAX, which the old list could not cover, so 28 files
+// >800 LOC were permanent errors and the whole gate was left informational.
+// A file not on the list is an error over WARN. `--capture` re-pins every
+// current offender (that is also how the list shrinks: split a file, re-pin).
+//
+// The rule this encodes: existing debt is frozen, new debt is red.
 //
 // Scans src/, tests/, scripts/ — total raw line count per file (no AST,
 // quick wall-clock). Reports sorted descending.
@@ -20,16 +25,24 @@ const ROOTS = ["src", "tests", "scripts"];
 const GRANDFATHER_FILE = ".lint-files-grandfather.json";
 
 interface GrandfatherFile {
-  files: string[];
+  /** path -> the line count this file is pinned at. */
+  pinned?: Record<string, number>;
+  /** Pre-2026-09 shape: a bare list, read as "pinned at MAX". */
+  files?: string[];
 }
 
-let grandfather: Set<string> = new Set();
+const CAPTURE = process.argv.includes("--capture");
+let pinned = new Map<string, number>();
 try {
   const raw = await readFile(GRANDFATHER_FILE, "utf8");
   const parsed = JSON.parse(raw) as GrandfatherFile;
-  grandfather = new Set(parsed.files);
+  if (parsed.pinned) {
+    pinned = new Map(Object.entries(parsed.pinned));
+  } else if (parsed.files) {
+    pinned = new Map(parsed.files.map((f) => [f, MAX]));
+  }
 } catch {
-  // No grandfather file — strict mode (every >400 file is an error).
+  // No grandfather file — strict mode (every >WARN file is an error).
 }
 
 type Row = { file: string; lines: number };
@@ -45,19 +58,51 @@ for (const root of ROOTS) {
 
 rows.sort((a, b) => b.lines - a.lines);
 
-const overMax = rows.filter((r) => r.lines > MAX);
-const overWarnNotGrandfathered = rows.filter((r) => r.lines > WARN && r.lines <= MAX && !grandfather.has(r.file));
-const overWarnGrandfathered = rows.filter((r) => r.lines > WARN && r.lines <= MAX && grandfather.has(r.file));
+if (CAPTURE) {
+  const offenders = rows.filter((r) => r.lines > WARN);
+  const next: Record<string, number> = {};
+  for (const r of [...offenders].sort((a, b) => a.file.localeCompare(b.file))) next[r.file] = r.lines;
+  await Bun.write(
+    GRANDFATHER_FILE,
+    `${JSON.stringify(
+      {
+        _description:
+          "File-length ratchet. Each entry pins a file at the size it was frozen at: going OVER the pin is an error, at any size. A file not listed here is an error over the 400-LOC threshold. Shrink a file and re-run with --capture to lower its pin; that is the only direction this list is meant to move.",
+        _locked_at: new Date().toISOString().slice(0, 10),
+        pinned: next,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  console.log(`captured ${offenders.length} file(s) to ${GRANDFATHER_FILE}`);
+  process.exit(0);
+}
 
-const errs = [...overMax, ...overWarnNotGrandfathered];
+/** Over its own pin (grandfathered), or over WARN with no pin at all. */
+const grew = rows.filter((r) => {
+  const pin = pinned.get(r.file);
+  return pin !== undefined && r.lines > pin;
+});
+const overWarnNotGrandfathered = rows.filter((r) => r.lines > WARN && !pinned.has(r.file));
+const overMax = rows.filter((r) => r.lines > MAX && !pinned.has(r.file));
+const overWarnGrandfathered = rows.filter((r) => r.lines > WARN && pinned.has(r.file) && r.lines <= (pinned.get(r.file) ?? 0));
+
+const errs = [...grew, ...overWarnNotGrandfathered];
 
 console.log(`lint:files — ${rows.length} files scanned`);
 console.log(`  threshold: warn >${WARN}, error >${MAX}`);
-console.log(`  grandfather list: ${grandfather.size} files (warn-only at ${WARN}–${MAX} LOC)`);
+console.log(`  pinned: ${pinned.size} file(s) frozen at their current size (over the pin = error)`);
 console.log(`  result: ${errs.length} errors, ${overWarnGrandfathered.length} grandfathered warnings`);
 
+if (grew.length > 0) {
+  console.error(`\nERROR — ${grew.length} grandfathered file(s) grew past their pin:`);
+  for (const r of grew) console.error(`  ${r.lines.toString().padStart(5)}  ${r.file} (pinned at ${pinned.get(r.file)})`);
+  console.error(`\n  Bring it back under the pin, or split it. Raising a pin is debt, not maintenance.`);
+}
+
 if (overMax.length > 0) {
-  console.error(`\nERROR — ${overMax.length} file(s) exceed ${MAX} LOC:`);
+  console.error(`\nERROR — ${overMax.length} unpinned file(s) exceed ${MAX} LOC:`);
   for (const r of overMax) console.error(`  ${r.lines.toString().padStart(5)}  ${r.file}`);
 }
 
@@ -69,7 +114,7 @@ if (overWarnNotGrandfathered.length > 0) {
 }
 
 if (overWarnGrandfathered.length > 0) {
-  console.warn(`\nWARN — ${overWarnGrandfathered.length} grandfathered file(s) exceed ${WARN} LOC:`);
+  console.warn(`\nWARN — ${overWarnGrandfathered.length} pinned file(s) over ${WARN} LOC (frozen, not growing):`);
   for (const r of overWarnGrandfathered.slice(0, 30)) console.warn(`  ${r.lines.toString().padStart(5)}  ${r.file}`);
   if (overWarnGrandfathered.length > 30) console.warn(`  ... and ${overWarnGrandfathered.length - 30} more.`);
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matches the ESC (\x1b) control byte that starts every ANSI escape sequence, so it can be stripped before measuring visible width.
 const ANSI_PATTERN = /\x1b\[[0-9;]*[A-Za-z]/g;
 
 export function stripAnsi(s: string): string {

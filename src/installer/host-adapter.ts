@@ -16,6 +16,7 @@ import {
   resolveQoderHome,
 } from "./paths";
 import { registerSessionStartHook } from "./register-session-start";
+import { bunForCommandString } from "./bun-path";
 import { registerStopHookPair, type StopHookPair } from "./settings-mutator";
 
 /** Daemon Stop endpoint — same contract for every host (src/daemon/routes/hooks.ts). */
@@ -48,7 +49,10 @@ export interface HostAdapter {
 }
 
 function bunHookCommand(repoRoot: string, script: string): string {
-  return `bun ${join(repoRoot, "src", "hooks", script)}`;
+  // Absolute bun, not a bare `bun` (defect [22] family): the host runs this
+  // command in a non-login shell, where bun's ~/.bash_profile PATH line is
+  // never read — the hook would report 127, or silently never fire.
+  return `${bunForCommandString()} ${join(repoRoot, "src", "hooks", script)}`;
 }
 
 function readJsonOrEmpty(path: string): Record<string, unknown> {
@@ -234,7 +238,7 @@ export const agyHostAdapter: HostAdapter = {
     const hooksPath = resolveAgyHooksJsonPath(env);
     const settingsPath = join(resolveAntigravityHome(env), "settings.json");
     const stopCommand = bunHookCommand(ctx.repoRoot, "agy-stop.ts");
-    const wrapperCommand = `bun ${join(ctx.repoRoot, "src", "face", "wrapper.ts")} --agent antigravity`;
+    const wrapperCommand = `${bunForCommandString()} ${join(ctx.repoRoot, "src", "face", "wrapper.ts")} --agent antigravity`;
     await writeAgyHooksJson(hooksPath, stopCommand);
     await cleanAgyOrphanSettings(settingsPath, wrapperCommand);
     return { path: hooksPath };

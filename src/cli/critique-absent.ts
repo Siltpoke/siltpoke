@@ -58,8 +58,9 @@ export async function hasNoCritiquesAtAll(basePath: string): Promise<boolean> {
       if (files.some((f) => f.endsWith(".md"))) return false;
     } catch {
       // Unreadable — skip it and keep looking, rather than concluding "empty"
-      // from a directory we never actually read.
-      continue;
+      // from a directory we never actually read. (The `continue` that used to
+      // say this was the loop's last statement, so biome removed it; the
+      // reason it existed is the part worth keeping.)
     }
   }
   return true;

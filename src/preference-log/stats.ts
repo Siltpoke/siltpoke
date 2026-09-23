@@ -46,7 +46,8 @@ export async function aggregatePreferenceStats(opts: {
     if (Number.isNaN(ts) || ts < cutoff) continue;
     out.total++;
     out[e.signal]++;
-    const c = (out.byCritique[e.critique_id] ??= { ack: 0, dismiss: 0, forward: 0, feedback: 0 });
+    out.byCritique[e.critique_id] ??= { ack: 0, dismiss: 0, forward: 0, feedback: 0 };
+    const c = out.byCritique[e.critique_id];
     c[e.signal]++;
     if (out.windowStart === null || e.ts < out.windowStart) out.windowStart = e.ts;
     if (out.windowEnd === null || e.ts > out.windowEnd) out.windowEnd = e.ts;

@@ -237,3 +237,18 @@ describe("plugin-cli dispatcher", () => {
   // injection seam), so a test could SIGTERM a daemon the developer is running.
   // Their proof is the end-to-end run from a copied plugin cache (task 6b report).
 });
+
+describe("plugin-cli brain detect — the verb /siltpoke-setup §8 calls", () => {
+  // brain-detect.test.ts proves the filter; this proves the dispatcher reaches
+  // it. The content depends on this machine's PATH, so assert the shape, and
+  // that it never falls through to the config verbs' usage error.
+  test("prints one JSON line with an installed array and exits 0", async () => {
+    const c = captureIo();
+    const code = await runPluginCli(["brain", "detect"], c.io);
+    expect(code).toBe(0);
+    expect(c.err()).toBe("");
+    const parsed = JSON.parse(c.out());
+    expect(Array.isArray(parsed.installed)).toBe(true);
+    expect(parsed.installed).not.toContain("claude");
+  });
+});

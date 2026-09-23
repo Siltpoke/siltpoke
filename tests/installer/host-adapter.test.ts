@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+
+// Absolute bun in every command string (defect [22]): the host runs these in a
+// non-login shell, where bun's ~/.bash_profile PATH line is never read.
+const WRAPPER_ARGS = "/repo/src/face/wrapper.ts --agent antigravity";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentPresence } from "../../src/installer/agent-detect";
@@ -116,7 +120,7 @@ describe("agyHostAdapter", () => {
     expect(res.path).toBe(join(home, ".gemini", "config", "hooks.json"));
     const written = JSON.parse(readFileSync(res.path, "utf8"));
     expect(written["siltpoke-review"].Stop).toEqual([
-      { type: "command", command: "bun /repo/src/hooks/agy-stop.ts", timeout: 30 },
+      { type: "command", command: `${process.execPath} /repo/src/hooks/agy-stop.ts`, timeout: 30 },
     ]);
   });
 
@@ -164,7 +168,7 @@ describe("agyHostAdapter", () => {
     expect(written.model).toEqual({ name: "performance" });
     expect(written.statusLine).toEqual({
       type: "command",
-      command: "bun /repo/src/face/wrapper.ts --agent antigravity",
+      command: `${process.execPath} ${WRAPPER_ARGS}`,
     });
   });
 
@@ -175,7 +179,9 @@ describe("agyHostAdapter", () => {
     const settingsPath = join(home, ".gemini", "antigravity-cli", "settings.json");
     expect(existsSync(settingsPath)).toBe(true);
     const written = JSON.parse(readFileSync(settingsPath, "utf8"));
-    expect(written.statusLine.command).toBe("bun /repo/src/face/wrapper.ts --agent antigravity");
+    // Absolute bun, not a bare `bun` (defect [22]): agy runs this command in a
+    // non-login shell. process.execPath is the bun writing the command.
+    expect(written.statusLine.command).toBe(`${process.execPath} ${WRAPPER_ARGS}`);
   });
 
   test("adapter metadata: id/label/probeBin/presenceKey/detect", () => {

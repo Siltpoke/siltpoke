@@ -51,7 +51,17 @@ PAYLOAD="$(cat 2>/dev/null)"
 # An internal codex-reviewer spawn carries SILTPOKE_INTERNAL=1 — must not re-fire.
 [ "${SILTPOKE_INTERNAL:-}" = "1" ] && exit 0
 [ -f "${SILTPOKE_DIR}/config.json" ] || { nudge_once; exit 0; }
-command -v bun > /dev/null 2>&1 || { nudge_once; exit 0; }
+# Defect [20]/[21]: PATH alone loses bun in a non-login shell. No nudge on the
+# unresolved path — setup already ran (config.json exists) and cannot fix PATH.
+BUN=""
+# ${0%/*}, not $(dirname "$0"): dirname is an EXTERNAL command, so on a
+# maximally-broken PATH it is itself unresolvable and prints
+# "dirname: not found" straight into the user's session — the one thing
+# this guard may never do. Parameter expansion is a shell builtin.
+SILTPOKE_RESOLVE_LIB="${0%/*}/lib/resolve-bun.sh"
+[ -r "$SILTPOKE_RESOLVE_LIB" ] && . "$SILTPOKE_RESOLVE_LIB" && BUN="$(siltpoke_resolve_bun || true)"
+[ -n "$BUN" ] || BUN="$(command -v bun 2>/dev/null || true)"
+[ -n "$BUN" ] || exit 0
 
 # Command runs with cwd = plugin root, so the bundle is at ./dist/codex-stop.js.
 HERE="$(dirname "$0")/.."
@@ -59,5 +69,5 @@ HERE="$(dirname "$0")/.."
 # SILTPOKE_HOST=codex tells brain-config the builder family this run (Slice A):
 # review defaults to the codex family instead of claude. Inherited by the spawned
 # reviewer child (same env-passthrough as SILTPOKE_INTERNAL above).
-printf '%s' "$PAYLOAD" | SILTPOKE_HOST=codex bun "${HERE}/dist/codex-stop.js"
+printf '%s' "$PAYLOAD" | SILTPOKE_HOST=codex "$BUN" "${HERE}/dist/codex-stop.js"
 exit 0

@@ -261,6 +261,15 @@ export function copyAgyPluginSelfContained(): void {
   copyFileSync("hooks/agy-stop.sh", join(hooksDir, "agy-stop.sh"));
   console.log("copied .antigravity-plugin/hooks/agy-stop.sh");
 
+  // agy-stop.sh sources hooks/lib/resolve-bun.sh (defect [20]/[21]: bun is not
+  // on a non-login shell's PATH). Same self-contained rule as the dist/ tree
+  // above — an agy install sees ONLY this subdir, so the lib has to travel with
+  // the wrapper. Without it the wrapper still runs (it falls back to a PATH-only
+  // lookup) but agy users would silently keep the bug this fix exists to close.
+  mkdirSync(join(hooksDir, "lib"), { recursive: true });
+  copyFileSync("hooks/lib/resolve-bun.sh", join(hooksDir, "lib", "resolve-bun.sh"));
+  console.log("copied .antigravity-plugin/hooks/lib/resolve-bun.sh");
+
   // agy `plugin install <repo>/.antigravity-plugin` copies ONLY that subdir
   // (same fact as the dist/ comment above), and plugin.json now declares
   // "skills": "./skills/" (audit defect [9]: without this the manifest points

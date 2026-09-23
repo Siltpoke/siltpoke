@@ -74,7 +74,7 @@ describe("doctor — check 2: Stop hook registered", () => {
     writeFileSync(join(env.claudeHome, "settings.json"), JSON.stringify(body));
   }
   function hookCheck(): CheckResult {
-    return runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome })[1]!;
+    return runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome, home: env.claudeHome, pluginInstall: false })[1]!; // pins: see doctor-plugin-install.ts
   }
 
   // Post-track-#6 canonical shape: curl fast path (type:"command") + on-stop
@@ -408,7 +408,7 @@ describe("doctor — check 6: slash command symlinks", () => {
     }
   }
   function symlinksCheck(): CheckResult {
-    return runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome, repoRoot: fakeRepo })[5]!;
+    return runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome, home: env.claudeHome, pluginInstall: false, repoRoot: fakeRepo })[5]!; // pins: see doctor-plugin-install.ts
   }
 
   test("passes when all symlinks exist with correct targets", () => {
@@ -452,7 +452,7 @@ describe("doctor — check 6: slash command symlinks", () => {
     for (const name of ["alpha.md", "beta.md", "gamma.md"]) {
       writeFileSync(join(env.claudeHome, "commands", name), "x");
     }
-    const r = runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome, repoRoot: fakeRepo, platform: "win32" })[5]!;
+    const r = runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome, home: env.claudeHome, pluginInstall: false, repoRoot: fakeRepo, platform: "win32" })[5]!;
     expect(r.pass).toBe(true);
     expect(r.name).toContain("3/3");
     expect(r.name).toContain("files");
@@ -462,7 +462,7 @@ describe("doctor — check 6: slash command symlinks", () => {
     writeFileSync(join(env.claudeHome, "commands", "alpha.md"), "x");
     writeFileSync(join(env.claudeHome, "commands", "beta.md"), "x");
     // gamma.md is missing
-    const r = runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome, repoRoot: fakeRepo, platform: "win32" })[5]!;
+    const r = runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome, home: env.claudeHome, pluginInstall: false, repoRoot: fakeRepo, platform: "win32" })[5]!;
     expect(r.pass).toBe(false);
     expect(r.detail).toContain("missing");
   });
@@ -471,7 +471,7 @@ describe("doctor — check 6: slash command symlinks", () => {
     writeFileSync(join(env.claudeHome, "commands", "alpha.md"), "x");
     mkdirSync(join(env.claudeHome, "commands", "beta.md"));
     writeFileSync(join(env.claudeHome, "commands", "gamma.md"), "x");
-    const r = runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome, repoRoot: fakeRepo, platform: "win32" })[5]!;
+    const r = runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome, home: env.claudeHome, pluginInstall: false, repoRoot: fakeRepo, platform: "win32" })[5]!;
     expect(r.pass).toBe(false);
     expect(r.detail).toContain("not a regular file");
   });

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 import { readFile, readdir, stat } from "node:fs/promises";
+import type { Stats } from "node:fs";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { z } from "zod";
@@ -533,7 +534,7 @@ async function walk(
   for (const name of entries) {
     if (acc.length >= maxFiles) return;
     const full = join(dir, name);
-    let st;
+    let st: Stats;
     try {
       st = await stat(full);
     } catch {

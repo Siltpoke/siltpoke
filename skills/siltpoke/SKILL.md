@@ -47,6 +47,25 @@ fi
 if [ -z "$PLUGIN_ROOT" ]; then
   printf '%s\n' "Could not find a Siltpoke plugin install (checked ANTIGRAVITY_PLUGIN_ROOT / AGY_PLUGIN_ROOT / CLAUDE_PLUGIN_ROOT, codex plugin list, and ~/.gemini/config/plugins/siltpoke)." >&2
 fi
+
+# Resolve bun the same way, and for the same reason (defect [22]). A skill-run
+# shell is NOT a login shell, so bun's installer line in ~/.bash_profile is
+# never read and a bare `bun` gives 127 — including on `doctor`, the one command
+# whose whole job is to explain what is broken.
+BUN=""
+if [ -n "$PLUGIN_ROOT" ] && [ -f "$PLUGIN_ROOT/hooks/lib/resolve-bun.sh" ]; then
+  . "$PLUGIN_ROOT/hooks/lib/resolve-bun.sh"
+  BUN="$(siltpoke_resolve_bun || true)"
+fi
+[ -n "$BUN" ] || BUN="$(command -v bun 2>/dev/null || true)"
+if [ -z "$BUN" ] && [ -n "${HOME:-}" ] && [ -f "${HOME}/.siltpoke/bun-path" ]; then
+  _recorded="$(cat "${HOME}/.siltpoke/bun-path" 2>/dev/null || true)"
+  [ -n "$_recorded" ] && [ -x "$_recorded" ] && BUN="$_recorded"
+fi
+[ -n "$BUN" ] || { [ -n "${HOME:-}" ] && [ -x "${HOME}/.bun/bin/bun" ] && BUN="${HOME}/.bun/bin/bun"; }
+if [ -z "$BUN" ]; then
+  printf '%s\n' "Could not find bun (not on this shell's PATH, no ~/.siltpoke/bun-path, no ~/.bun/bin/bun). Siltpoke needs it to run." >&2
+fi
 ```
 
 Rungs, in order: **(a)** an env var already set for this host —
@@ -71,7 +90,7 @@ If every rung fails, `PLUGIN_ROOT` stays empty and the snippet says so on
 stderr. **Stop there and tell the user plainly that their Siltpoke install
 couldn't be found automatically, and ask where it's installed** — do not
 proceed with an empty `$PLUGIN_ROOT`. Once resolved, every command in this
-skill is `bun "$PLUGIN_ROOT/dist/<entrypoint>"`.
+skill is `"$BUN" "$PLUGIN_ROOT/dist/<entrypoint>"`.
 
 ## Create your pet (first-time setup)
 
@@ -101,7 +120,7 @@ skill is `bun "$PLUGIN_ROOT/dist/<entrypoint>"`.
      words above (never other user-typed text, since it lands on a live
      command line):
      ```bash
-     bun "$PLUGIN_ROOT/dist/siltpoke-cli.js" random-name <species>
+     "$BUN" "$PLUGIN_ROOT/dist/siltpoke-cli.js" random-name <species>
      ```
      Show the result; re-roll as many times as they like by running it again.
 
@@ -170,7 +189,7 @@ skill is `bun "$PLUGIN_ROOT/dist/<entrypoint>"`.
    the command line:
 
    ```bash
-   bun "$PLUGIN_ROOT/dist/siltpoke-configure.js" --answers-file "$HOME/.siltpoke/.setup-answers.json"
+   "$BUN" "$PLUGIN_ROOT/dist/siltpoke-configure.js" --answers-file "$HOME/.siltpoke/.setup-answers.json"
    ```
 
    It validates `species` against the 5-item list and each dial as an
@@ -203,15 +222,15 @@ Everything below routes through the same bundled entrypoint (matching how
 Siltpoke's own shipped plugin commands invoke it), using the `$PLUGIN_ROOT`
 resolved above:
 
-- Open dashboard: `bun "$PLUGIN_ROOT/dist/siltpoke-cli.js" dashboard`
-- Restart dashboard/daemon: `bun "$PLUGIN_ROOT/dist/siltpoke-cli.js" restart-daemon`
-- Check install health: `bun "$PLUGIN_ROOT/dist/siltpoke-cli.js" doctor`
-- Surface the most recent review: `bun "$PLUGIN_ROOT/dist/siltpoke-cli.js" last`
-- Forward a review into chat: `bun "$PLUGIN_ROOT/dist/siltpoke-cli.js" mark-forwarded <id-or-latest>`
-- Mute reviews: `bun "$PLUGIN_ROOT/dist/siltpoke-cli.js" mute "<duration>"`
-- Unmute reviews: `bun "$PLUGIN_ROOT/dist/siltpoke-cli.js" unmute`
-- Menu-bar pet (macOS only): `bun "$PLUGIN_ROOT/dist/siltpoke-cli.js" menubar <install|status|remove>`
-- Manual / command list: `bun "$PLUGIN_ROOT/dist/siltpoke-cli.js" help`
+- Open dashboard: `"$BUN" "$PLUGIN_ROOT/dist/siltpoke-cli.js" dashboard`
+- Restart dashboard/daemon: `"$BUN" "$PLUGIN_ROOT/dist/siltpoke-cli.js" restart-daemon`
+- Check install health: `"$BUN" "$PLUGIN_ROOT/dist/siltpoke-cli.js" doctor`
+- Surface the most recent review: `"$BUN" "$PLUGIN_ROOT/dist/siltpoke-cli.js" last`
+- Forward a review into chat: `"$BUN" "$PLUGIN_ROOT/dist/siltpoke-cli.js" mark-forwarded <id-or-latest>`
+- Mute reviews: `"$BUN" "$PLUGIN_ROOT/dist/siltpoke-cli.js" mute "<duration>"`
+- Unmute reviews: `"$BUN" "$PLUGIN_ROOT/dist/siltpoke-cli.js" unmute`
+- Menu-bar pet (macOS only): `"$BUN" "$PLUGIN_ROOT/dist/siltpoke-cli.js" menubar <install|status|remove>`
+- Manual / command list: `"$BUN" "$PLUGIN_ROOT/dist/siltpoke-cli.js" help`
 
 **Not yet available to a plugin-native install:** listing/dismissing pending
 reviews, `remember`, repo indexing, and the code-map/`explain` workflow are

@@ -1,6 +1,6 @@
 {
   "name": "siltpoke",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
@@ -38,7 +38,7 @@
     "lint:files": "bun scripts/lint-file-length.ts",
     "lint:colors": "bun scripts/lint-no-hardcoded-color.ts",
     "audit:dup": "jscpd src --min-tokens 50 --min-lines 5 --reporters consoleFull",
-    "audit:cycles": "dpdm --exit-code circular:1 src/cli/daemon.ts src/hooks/handle-stop.ts src/cli/report.ts",
+    "audit:cycles": "dpdm -T --skip-dynamic-imports circular --exit-code circular:1 src/cli/daemon.ts src/hooks/handle-stop.ts src/cli/report.ts",
     "audit:arch": "depcruise --config .dependency-cruiser.cjs src",
     "test:coverage": "bun test --coverage",
     "test:coverage:check": "bun test --coverage 2>&1 | tee /tmp/cov.txt && (grep -E 'All files.*\\| ([0-9]+\\.?[0-9]*)' /tmp/cov.txt | awk -F'|' '{print $4}' | awk '{ gsub(/^ +| +$/,\"\"); if ($1 < 80) { print \"Coverage \" $1 \" < 80 threshold\"; exit 1 } else { print \"Coverage \" $1 \" OK\" } }')"

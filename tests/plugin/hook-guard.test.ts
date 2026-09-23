@@ -328,12 +328,12 @@ describe("plugin root resolution fallback ($0)", () => {
 describe("stop wrappers export SILTPOKE_HOST (builder-family wiring)", () => {
   test("codex-stop.sh sets SILTPOKE_HOST=codex on the bun invocation", () => {
     const s = readFileSync(join(REPO, "hooks", "codex-stop.sh"), "utf8");
-    expect(s).toMatch(/SILTPOKE_HOST=codex\s+bun\b/);
+    expect(s).toMatch(/SILTPOKE_HOST=codex\s+("\$BUN"|bun\b)/);
   });
 
   test("agy-stop.sh sets SILTPOKE_HOST=agy on the bun invocation", () => {
     const s = readFileSync(join(REPO, "hooks", "agy-stop.sh"), "utf8");
-    expect(s).toMatch(/SILTPOKE_HOST=agy\s+bun\b/);
+    expect(s).toMatch(/SILTPOKE_HOST=agy\s+("\$BUN"|bun\b)/);
   });
 
   test("stop.sh derives SILTPOKE_HOST from the fork's *_PLUGIN_ROOT and passes it to bun", () => {
@@ -344,8 +344,11 @@ describe("stop wrappers export SILTPOKE_HOST (builder-family wiring)", () => {
     expect(s).toMatch(/SILTPOKE_HOST_FAMILY="qoder"/);
     expect(s).toMatch(/SILTPOKE_HOST_FAMILY="codebuddy"/);
     expect(s).toMatch(/SILTPOKE_HOST_FAMILY="claude"/);
-    // and it is passed to the reviewer bun invocation
-    expect(s).toMatch(/SILTPOKE_HOST="\$SILTPOKE_HOST_FAMILY"\s+bun\b/);
+    // and it is passed to the reviewer bun invocation. The interpreter is now
+    // "$BUN" (resolved by hooks/lib/resolve-bun.sh, defect [20]/[21]) rather
+    // than a bare `bun` off PATH — accept either so this assertion is about
+    // SILTPOKE_HOST reaching the child, not about how bun was located.
+    expect(s).toMatch(/SILTPOKE_HOST="\$SILTPOKE_HOST_FAMILY"\s+("\$BUN"|bun\b)/);
   });
 
   // Runtime precedence — mirrors the "REACHED" sentinel test above (real bun runs

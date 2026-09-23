@@ -16,6 +16,7 @@
  *   --quiet   Suppress per-check output; print 1-line summary
  */
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
+import type { Stats } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -30,9 +31,12 @@ import { checkBrainHealth } from "./doctor-brain-check";
 import { checkAutostart, checkDaemonAlive, checkDaemonStaleness } from "./doctor-daemon-check";
 import { checkIndexStaleness } from "./doctor-index-staleness-check";
 import { pluginOwnsStopHook } from "./doctor-plugin-hook-check";
+import { isPluginInstall } from "./doctor-plugin-install";
+import { checkStopHook } from "./doctor-stop-hook-check";
 import { checkProjectRoots } from "./doctor-project-roots-check";
 import { checkBrainRoles } from "./doctor-reviewer-check";
 import { checkStatuslineInterpreter } from "./doctor-statusline-check";
+import { checkStatuslineRenders } from "./doctor-statusline-run-check";
 
 export function defaultRepoRoot(): string {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -60,12 +64,14 @@ export interface DoctorOptions {
   claudeHome?: string;
   /** Override siltpoke home (defaults to env). For tests. */
   siltpokeHome?: string;
+  /** Override the user's HOME (the pointer files live under it). For tests. */
+  home?: string;
   /** Override repo root (used for slash symlink target verification). */
   repoRoot?: string;
   /**
    * True when running as an installed plugin (`/plugin install`), where the
    * host loads commands from the plugin dir and no symlinks exist. Defaults to
-   * "is CLAUDE_PLUGIN_ROOT set". Turns the symlink check into an info row.
+   * `isPluginInstall` below. Turns the symlink check into an info row.
    */
   pluginInstall?: boolean;
   /** Deterministic Brain re-verify — defaults to "claude resolvable on PATH". For tests. */
@@ -115,7 +121,7 @@ export interface DoctorOptions {
 // ---------------------------------------------------------------------------
 
 /** Parse a JSON file, returning either a parsed value or a structured error. */
-function readJson(path: string): { ok: true; value: unknown } | { ok: false; reason: "missing" | "corrupt" | "unreadable"; detail: string } {
+export function readJson(path: string): { ok: true; value: unknown } | { ok: false; reason: "missing" | "corrupt" | "unreadable"; detail: string } {
   if (!existsSync(path)) return { ok: false, reason: "missing", detail: `${path} does not exist` };
   let raw: string;
   try {
@@ -177,7 +183,7 @@ export function setupAdviceFor(host: DoctorHost): string {
 }
 
 /** Where this host keeps the wiring doctor should be looking at. */
-function hostWiringPath(host: DoctorHost, opts: DoctorOptions): string {
+export function hostWiringPath(host: DoctorHost, opts: DoctorOptions): string {
   switch (host) {
     case "codex":
       return join(resolveCodexHome(), "hooks.json");
@@ -217,102 +223,6 @@ function checkSettingsJson(opts: DoctorOptions): CheckResult {
   return { name, pass: true, detail: null };
 }
 
-interface HookEntryShape {
-  type?: unknown;
-  url?: unknown;
-  command?: unknown;
-}
-interface HookMatcherShape {
-  hooks?: HookEntryShape[];
-}
-
-function checkStopHook(opts: DoctorOptions): CheckResult {
-  const name = "Stop hook registered (curl fast path + command pair)";
-
-  // Defect [16]: everything below reads Claude Code's settings.json. Under a
-  // positively-detected other host that is a question about the wrong machine
-  // — and that host has its own row (checkAgyHooksJson for agy).
-  const host = detectDoctorHost(opts);
-  if (host !== "claude-code") {
-    return {
-      name,
-      pass: true,
-      status: "info",
-      detail: `skipped — this is a ${host} install; its Stop hook lives in ${hostWiringPath(host, opts)}`,
-    };
-  }
-
-  // Plugin era: hooks/hooks.json (shipped with the plugin, copied to
-  // ${CLAUDE_PLUGIN_ROOT}/hooks/hooks.json on install) owns the Stop hook,
-  // not settings.json — same "plugin owns this, not settings.json" pattern
-  // as checkSlashSymlinks below. A healthy plugin install has an EMPTY
-  // settings.json hooks.Stop[]; asserting on it here would fail every
-  // correct plugin install. Only fall through to the legacy settings.json
-  // check when the plugin manifest itself doesn't declare a Stop hook.
-  const isPluginInstall = opts.pluginInstall ?? Boolean(process.env.CLAUDE_PLUGIN_ROOT);
-  if (isPluginInstall && pluginOwnsStopHook(opts)) {
-    return {
-      name,
-      pass: true,
-      status: "info",
-      detail: "plugin-owned — hooks/hooks.json declares the Stop hook (settings.json hooks.Stop[] is expected empty)",
-    };
-  }
-
-  const path = join(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
-  const r = readJson(path);
-  if (!r.ok) {
-    return { name, pass: false, detail: `${path} not readable — settings.json must exist first` };
-  }
-  if (typeof r.value !== "object" || r.value === null || Array.isArray(r.value)) {
-    return { name, pass: false, detail: `${path} root is not a JSON object — cannot read hooks.Stop` };
-  }
-  const settings = r.value as { hooks?: { Stop?: unknown } };
-  const stopArr = settings.hooks?.Stop;
-  if (!Array.isArray(stopArr) || stopArr.length === 0) {
-    return { name, pass: false, detail: "hooks.Stop[] is missing or empty in settings.json" };
-  }
-  const shape = scanStopMatchers(stopArr as HookMatcherShape[]);
-  if (shape === "curl") return { name, pass: true, detail: null };
-  if (shape === "legacy") {
-    // Pre-track-#6 http fast path still works but prints Claude Code's red
-    // ECONNREFUSED when the daemon is down — healthy, migration recommended.
-    return {
-      name,
-      pass: true,
-      status: "info",
-      detail: `legacy http Stop hook shape detected. ${setupAdviceFor(host)} to migrate to the silent curl fast path.`,
-    };
-  }
-  return {
-    name,
-    pass: false,
-    detail: `no Stop hook matcher contains both the curl fast path (command ~ curl … /hooks/stop) and a command fallback (~ on-stop.ts). ${setupAdviceFor(host)} to re-register.`,
-  };
-}
-
-/**
- * Scan Stop matchers for the canonical curl+on-stop pair (track #6; written by
- * settings-mutator.ts buildStopCurlCommand) or the legacy http+on-stop pair.
- * Shape check, not content check — doctor doesn't know the secret.
- */
-function scanStopMatchers(matchers: HookMatcherShape[]): "curl" | "legacy" | "none" {
-  let sawLegacyPair = false;
-  for (const m of matchers) {
-    const hooks = Array.isArray(m?.hooks) ? m.hooks : [];
-    const cmds = hooks
-      .filter((h) => h.type === "command" && typeof h.command === "string")
-      .map((h) => h.command as string);
-    const hasCurl = cmds.some((c) => c.includes("curl") && c.includes("/hooks/stop"));
-    const hasCmd = cmds.some((c) => c.includes("on-stop.ts"));
-    const hasHttp = hooks.some(
-      (h) => h.type === "http" && typeof h.url === "string" && h.url.includes("/hooks/stop"),
-    );
-    if (hasCurl && hasCmd) return "curl";
-    if (hasHttp && hasCmd) sawLegacyPair = true;
-  }
-  return sawLegacyPair ? "legacy" : "none";
-}
 
 function checkInnerTxt(opts: DoctorOptions): CheckResult {
   const name = "~/.siltpoke/inner.txt readable";
@@ -418,7 +328,7 @@ function checkSlashSymlinks(opts: DoctorOptions): CheckResult {
   // are running AS the plugin, this check has nothing to verify — and asserting
   // on it would fail every healthy plugin install (0/8 "broken" links that were
   // never supposed to exist).
-  if (opts.pluginInstall ?? Boolean(process.env.CLAUDE_PLUGIN_ROOT)) {
+  if (isPluginInstall(opts)) {
     return {
       name: "slash commands",
       pass: true,
@@ -445,7 +355,7 @@ function checkSlashSymlinks(opts: DoctorOptions): CheckResult {
       broken.push(`${f} (missing)`);
       continue;
     }
-    let stat;
+    let stat: Stats;
     try {
       stat = lstatSync(linkPath);
     } catch {
@@ -467,7 +377,7 @@ function checkSlashSymlinks(opts: DoctorOptions): CheckResult {
       broken.push(`${f} (regular file, not a symlink)`);
       continue;
     }
-    let target;
+    let target: string;
     try {
       target = readlinkSync(linkPath);
     } catch {
@@ -619,6 +529,7 @@ export function runAllChecks(opts: DoctorOptions = {}): CheckResult[] {
     checkAgyHooksJson(opts),
     checkProjectRoots(opts),
     checkStatuslineInterpreter(opts),
+    checkStatuslineRenders(opts),
   ];
 }
 

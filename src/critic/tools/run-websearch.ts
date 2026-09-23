@@ -23,6 +23,7 @@ export async function createAnthropicWebSearchClient(): Promise<WebSearchClient 
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) return null;
   try {
+    // biome-ignore lint/suspicious/noTsIgnore: the directive's necessity is environment-dependent — with the optional package installed there is no error to expect, so @ts-expect-error reddens tsc (measured 2026-09-22)
     // @ts-ignore - SDK dynamically imported; may not be installed
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
     const client = new Anthropic({ apiKey: key });
@@ -37,6 +38,7 @@ export async function createAnthropicWebSearchClient(): Promise<WebSearchClient 
       const sources: WebSource[] = [];
       for (const block of response.content) {
         if (block.type === "web_search_tool_result") {
+          // biome-ignore lint/suspicious/noTsIgnore: the directive's necessity is environment-dependent — with the optional package installed there is no error to expect, so @ts-expect-error reddens tsc (measured 2026-09-22)
           // @ts-ignore - shape per Anthropic docs
           for (const item of (block.content ?? []) as Array<{ url?: string; title?: string; encrypted_content?: string }>) {
             if (item.url && item.title) {

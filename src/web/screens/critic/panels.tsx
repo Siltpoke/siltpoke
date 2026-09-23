@@ -149,6 +149,7 @@ export function BudgetGauge({ telemetry }: { telemetry: CriticTelemetry }) {
       >
         <div style={{ width: `${pct}%`, height: "100%", background: barColor }} />
         <div
+          role="img"
           aria-label="soft threshold"
           style={{
             position: "absolute",
@@ -160,6 +161,7 @@ export function BudgetGauge({ telemetry }: { telemetry: CriticTelemetry }) {
           }}
         />
         <div
+          role="img"
           aria-label="hard threshold"
           style={{
             position: "absolute",

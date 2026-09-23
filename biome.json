@@ -8,7 +8,9 @@
       "!build/**",
       "!coverage/**",
       "!.siltpoke/**",
-      "!tests/fixtures/**"
+      "!tests/fixtures/**",
+      "!**/*.html",
+      "!src/web/tokens/tailwind.css"
     ]
   },
   "linter": {
@@ -53,6 +55,21 @@
         "rules": {
           "suspicious": {
             "noExplicitAny": "off"
+          },
+          "complexity": {
+            "noExcessiveCognitiveComplexity": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "scripts/**"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
           },
           "complexity": {
             "noExcessiveCognitiveComplexity": "off"

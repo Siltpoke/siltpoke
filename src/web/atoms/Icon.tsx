@@ -96,6 +96,7 @@ export function Icon(props: IconProps) {
     // Back-compat fallback: render the raw string (emoji / single char).
     return (
       <span
+        role="img"
         aria-hidden={decorative ? "true" : undefined}
         aria-label={!decorative ? ariaLabel : undefined}
         style={{

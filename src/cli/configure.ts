@@ -28,6 +28,8 @@ import {
   type StatuslineInterpreterDeps,
 } from "../installer/statusline-interpreter";
 import { resolvePluginRoot, writeDaemonShim, writeShim } from "../installer/shim";
+import { recordBunPath } from "../installer/bun-path";
+import { removeLegacyStopHook, type Settings } from "./configure-legacy-sweep";
 import { atomicWrite } from "../utils/atomic-write";
 import {
   answersFilePath,
@@ -118,101 +120,8 @@ function dialsFor(opts: ConfigureOptions): DialSet {
   return PERSONALITY_PRESETS[opts.personality] ?? speciesDefaults(opts.species);
 }
 
-interface HookEntry {
-  type?: string;
-  command?: string;
-  url?: string;
-  headers?: Record<string, string>;
-}
-interface HookMatcher {
-  matcher?: string;
-  hooks?: HookEntry[];
-}
-interface Settings {
-  statusLine?: { type?: string; command?: unknown };
-  hooks?: { Stop?: HookMatcher[] } & Record<string, unknown>;
-  [k: string]: unknown;
-}
+export { removeLegacyStopHook };
 
-/**
- * True ONLY for Stop-hook entries a pre-plugin siltpoke install actually wrote.
- * The shapes are enumerated by the code that writes them —
- * installer/settings-mutator.ts (registerStopHookPair / buildStopCurlCommand):
- *
- *   1. `type: "http"` + a url ending in `/hooks/stop`  (oldest fast-path)
- *   2. a `curl … -H "X-Siltpoke-Secret: …" … /hooks/stop` command  (current fast-path)
- *   3. a command running `…/src/hooks/on-stop.ts`  (the Brain-call entry)
- *
- * We match on those STRUCTURAL anchors and nothing else.
- *
- * We deliberately do NOT match a bare "siltpoke" substring. It is not an anchor,
- * it is a coincidence: the word shows up in any path under a siltpoke checkout
- * or notes dir, so it silently deleted hooks that were never ours —
- *   `cd ~/dev/siltpoke && make lint-notify`      (the user's own hook)
- *   `otherpet --log ~/siltpoke-notes/x.log`      (another tool entirely)
- * — destroying user config with only the timestamped backup to fall back on.
- * An anchor has to be something ONLY our installer could have written.
- */
-function isLegacySiltpokeStopEntry(h: HookEntry): boolean {
-  const command = h.command ?? "";
-  const url = h.url ?? "";
-
-  // (1) the stale type:"http" entry — no `command` string at all.
-  if (h.type === "http" && url.includes("/hooks/stop")) return true;
-
-  // (2) the curl fast-path. Its unforgeable tell is our auth header (which the
-  //     http entry also carried, in `headers`); the route is the corroborator.
-  const secretInCommand = command.toLowerCase().includes("x-siltpoke-secret");
-  const secretInHeaders = Object.keys(h.headers ?? {}).some(
-    (k) => k.toLowerCase() === "x-siltpoke-secret",
-  );
-  if (secretInCommand || secretInHeaders) return true;
-  if (command.startsWith("curl ") && command.includes("/hooks/stop")) return true;
-
-  // (3) the Brain-call entry. `hooks/on-stop.ts` is OUR file name — this anchor
-  //     is location-independent, so a fork cloned to any directory still matches.
-  return command.includes("hooks/on-stop.ts");
-}
-
-/** Human-readable one-liner for a removed entry, for the warn log. */
-function describeHookEntry(h: HookEntry): string {
-  return h.command ?? h.url ?? JSON.stringify(h);
-}
-
-/**
- * The plugin's hooks.json now owns the Stop hook. A leftover settings.json entry
- * from a pre-plugin install would fire a SECOND review every turn — two Brain
- * calls, double spend. Strip ours; leave every other tool's Stop hook (and every
- * other hook event) exactly as it was.
- *
- * `onRemove` is called once per stripped entry: deleting lines from a file the
- * user owns must be VISIBLE, not something they reconstruct from a backup after
- * noticing their own hook stopped firing.
- *
- * Pure: the input object is never mutated.
- */
-export function removeLegacyStopHook<T extends object>(
-  settings: T,
-  onRemove: (description: string) => void = () => {},
-): T {
-  const s = settings as Settings;
-  const stop = s.hooks?.Stop;
-  if (!Array.isArray(stop)) return settings;
-  const kept = stop
-    // Filter per HOOK, not per matcher: a matcher can hold our entry next to a
-    // foreign one, and dropping the whole matcher would take the user's hook
-    // down with it.
-    .map((m) => ({
-      ...m,
-      hooks: (m.hooks ?? []).filter((h) => {
-        if (!isLegacySiltpokeStopEntry(h)) return true;
-        onRemove(describeHookEntry(h));
-        return false;
-      }),
-    }))
-    .filter((m) => (m.hooks ?? []).length > 0);
-  return { ...settings, hooks: { ...s.hooks, Stop: kept } };
-}
 
 function buildConfig(opts: ConfigureOptions): Record<string, unknown> {
   const dials = dialsFor(opts);
@@ -252,7 +161,16 @@ function buildConfig(opts: ConfigureOptions): Record<string, unknown> {
  * (level, xp, biasAudit, agents, …) is preserved. The prior file is backed up
  * first.
  */
-async function writeConfig(dir: string, opts: ConfigureOptions): Promise<void> {
+async function writeConfig(
+  dir: string,
+  opts: ConfigureOptions,
+  home: string,
+): Promise<void> {
+  // Where bun lives, recorded from setup's own process.execPath — the hooks and
+  // both shims read this pointer and cannot work it out themselves (defect
+  // [20]/[21]; see installer/bun-path.ts). It rides along with config.json
+  // because the two are the files ~/.siltpoke must carry after any setup.
+  recordBunPath(home);
   const configPath = join(dir, "config.json");
   const fresh = buildConfig(opts);
   if (!existsSync(configPath)) {
@@ -392,7 +310,7 @@ export async function configure(
 
   // 1. The pet first — config.json must exist before the statusline starts
   //    rendering, or the card briefly shows a default pet the user never made.
-  await writeConfig(siltpokeDir, opts);
+  await writeConfig(siltpokeDir, opts, home);
 
   // 2. settings.json: legacy Stop-hook sweep (always) + statusLine (opt-in).
   //    A failure here must not take the pet down with it — the config is

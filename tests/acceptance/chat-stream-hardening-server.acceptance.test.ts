@@ -557,6 +557,7 @@ describe("client disconnect during a failing stream", () => {
     });
     // Factory that throws only after the test has disconnected the client —
     // so the catch-path error enqueue hits a cancelled controller and throws.
+    // biome-ignore lint/correctness/useYield: mocks a backend stream that fails before producing any chunk — no yield is the point of this fixture (asserts on the zero-output cancelled-row path).
     const app = appWith(home, idx, async function* () {
       await gate;
       throw new Error("backend exploded mid-stream");
@@ -594,6 +595,7 @@ describe("unclassified stream throw: raw exception text is daemon-log-only", () 
     // never reach the store or the wire — same containment as stderr_tail.
     const RAW_MARKER = "raw_exception_canary_9b1f";
     const RAW_MSG = `ENOENT /Users/nobody/.secrets/${RAW_MARKER} split mid-frame`;
+    // biome-ignore lint/correctness/useYield: mocks a backend stream that fails immediately — no yield is the point (asserts the raw exception text never reaches the store/wire).
     const app = appWith(home, idx, async function* () {
       throw new Error(RAW_MSG);
     });

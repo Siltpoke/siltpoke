@@ -32,7 +32,7 @@ describe("doctor — brain role health rows (chat/review/extract)", () => {
 
   test("wired into runAllChecks as three per-role entries", () => {
     const checks = runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome });
-    expect(checks).toHaveLength(15); // the knowledge render-cache row is not in this tree
+    expect(checks).toHaveLength(16); // the knowledge render-cache row is not in this tree
     const names = checks.map((c) => c.name);
     expect(names).toContain("brain role: chat");
     expect(names).toContain("brain role: review");
@@ -324,5 +324,26 @@ describe("doctor — review row surfaces the per-builder mapping (§3.3)", () =>
         reviewerWhichFn: () => "/usr/local/bin/agy",
       }).find((r) => r.name === "brain role: review")?.detail ?? "";
     expect(detail).toContain("NOT in effect");
+  });
+});
+
+// /siltpoke-setup §8 writes the per-builder rule and says not to use the global
+// pin. This row used to advise the global pin, so the two surfaces a new user
+// reads on day one gave opposite instructions. Doctor runs outside the Stop
+// hook and cannot see the real builder, so the advice names the builder as a
+// placeholder: a hardcoded `claude` would be a rule that never fires for a
+// codex/qoder/agy builder (found in review).
+describe("doctor — the default review row points at the per-builder rule", () => {
+  let env: DoctorTmp;
+  beforeEach(() => { env = setupDoctorTmp("c10-advice-"); });
+  afterEach(() => { teardownDoctorTmp(env); });
+
+  test("names set-builder with a builder placeholder, and no longer advises the global pin", () => {
+    const review = checkBrainRoles({ siltpokeHome: env.siltpokeHome }).find(
+      (r) => r.name === "brain role: review",
+    )!;
+    expect(review.detail).toContain("/siltpoke-brain set-builder <builder> <reviewer>");
+    expect(review.detail).not.toContain("set-builder claude <family>");
+    expect(review.detail).not.toContain("set brain.roles.review to pin one");
   });
 });

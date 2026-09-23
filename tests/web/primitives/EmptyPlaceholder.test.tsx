@@ -58,7 +58,11 @@ describe("EmptyPlaceholder", () => {
       <EmptyPlaceholder
         headline="h"
         sub="s"
-        action={<button id="cta">run anyway</button>}
+        action={
+          <button type="button" id="cta">
+            run anyway
+          </button>
+        }
       />,
     );
     expect(html).toContain('id="cta"');

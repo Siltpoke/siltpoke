@@ -51,7 +51,9 @@ afterEach(async () => {
   // Close any open popover + nuke stale DOM so tests are fully isolated.
   getPopover()?.remove();
   document.body.innerHTML = "";
-  document.head.querySelectorAll("style[data-anchor-popover-style]").forEach((s) => s.remove());
+  document.head.querySelectorAll("style[data-anchor-popover-style]").forEach((s) => {
+    s.remove();
+  });
   await tick();
 });
 

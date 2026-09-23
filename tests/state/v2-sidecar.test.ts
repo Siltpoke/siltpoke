@@ -129,9 +129,10 @@ test("parses v2 sidecar — evidence block (2 triggers)", async () => {
   writeArchiveFile(dayDir, "c-demo-001.md", DEMO_V2);
 
   const result = await loadV2Sidecar("c-demo-001", null, tmp);
+  expect(result).not.toBeNull();
   expect(result?.rubric_triggers).toHaveLength(2);
 
-  const first = result?.rubric_triggers[0]!;
+  const first = result!.rubric_triggers[0]!;
   expect(first.rule_id).toBe("aws-access-key");
   expect(first.tier).toBe(1);
   expect(first.file).toBe("src/auth.ts");
@@ -139,7 +140,7 @@ test("parses v2 sidecar — evidence block (2 triggers)", async () => {
   expect(first.snippet).toContain("AKIAIOSFODNN7EXAMPLE");
   expect(first.signal_source).toBe("secrets-scan");
 
-  const second = result?.rubric_triggers[1]!;
+  const second = result!.rubric_triggers[1]!;
   expect(second.rule_id).toBe("god-file");
   expect(second.tier).toBe(1);
 });
