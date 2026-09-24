@@ -15038,14 +15038,14 @@ var init_schema_v3 = __esm(() => {
 
 // src/memory/project.ts
 import { writeFile, rename as rename2, readFile, mkdir, readdir } from "fs/promises";
-import { existsSync, readFileSync, statSync } from "fs";
-import { dirname, join as join2, basename } from "path";
+import { existsSync as existsSync2, readFileSync, statSync } from "fs";
+import { dirname, join as join4, basename } from "path";
 import { createHash, randomBytes } from "crypto";
 function hashId(input) {
   return createHash("sha256").update(input).digest("hex").slice(0, 16);
 }
 function tryReadMarker(path) {
-  if (!existsSync(path))
+  if (!existsSync2(path))
     return null;
   try {
     const raw = readFileSync(path, "utf8");
@@ -15066,7 +15066,7 @@ function isDir(path) {
 function resolveProjectRoot(cwd) {
   let dir = cwd;
   while (true) {
-    const markerPath = join2(dir, MARKER_DIR, MARKER_FILENAME);
+    const markerPath = join4(dir, MARKER_DIR, MARKER_FILENAME);
     const marker = tryReadMarker(markerPath);
     if (marker) {
       return {
@@ -15076,7 +15076,7 @@ function resolveProjectRoot(cwd) {
         source: "marker"
       };
     }
-    if (isDir(join2(dir, ".git"))) {
+    if (isDir(join4(dir, ".git"))) {
       return {
         project_id: hashId(dir),
         project_root: dir,
@@ -15097,14 +15097,14 @@ function resolveProjectRoot(cwd) {
   };
 }
 function projectDir(home, projectId) {
-  return join2(home, PROJECTS_DIR, projectId);
+  return join4(home, PROJECTS_DIR, projectId);
 }
 function projectPath(home, projectId) {
-  return join2(projectDir(home, projectId), FILENAME);
+  return join4(projectDir(home, projectId), FILENAME);
 }
 async function readProject(home, projectId) {
   const path = projectPath(home, projectId);
-  if (!existsSync(path))
+  if (!existsSync2(path))
     return null;
   let parsed;
   try {
@@ -15122,7 +15122,7 @@ async function readProject(home, projectId) {
   return result.data;
 }
 async function listActiveProjects(home) {
-  const root = join2(home, PROJECTS_DIR);
+  const root = join4(home, PROJECTS_DIR);
   const entries = await readdir(root, { withFileTypes: true }).catch(() => null);
   if (!entries)
     return [];
@@ -15172,8 +15172,8 @@ var init_project = __esm(() => {
 });
 
 // src/cli/plugin-cli.ts
-import { existsSync as existsSync23 } from "fs";
-import { join as join36 } from "path";
+import { existsSync as existsSync24 } from "fs";
+import { join as join38 } from "path";
 import { fileURLToPath as fileURLToPath3 } from "url";
 
 // src/installer/personality-seed.ts
@@ -15547,8 +15547,8 @@ function randomName(species, rng = Math.random) {
 }
 
 // src/cli/doctor.ts
-import { existsSync as existsSync15, lstatSync, readdirSync as readdirSync2, readFileSync as readFileSync11, readlinkSync } from "fs";
-import { dirname as dirname6, join as join23, resolve } from "path";
+import { existsSync as existsSync16, lstatSync, readdirSync as readdirSync2, readFileSync as readFileSync11, readlinkSync } from "fs";
+import { dirname as dirname6, join as join25, resolve } from "path";
 import { fileURLToPath } from "url";
 
 // src/installer/paths.ts
@@ -15592,14 +15592,59 @@ function resolveAgyHooksJsonPath(env = process.env) {
   return join(homeDir(env), ".gemini", "config", "hooks.json");
 }
 
+// src/config/update-check-config.ts
+init_zod();
+import { existsSync } from "fs";
+import { join as join2 } from "path";
+var updateCheckConfigSchema = exports_external.object({
+  enabled: exports_external.boolean().default(true)
+});
+function loadUpdateCheckConfigSync(home, readFileSyncFn) {
+  const configPath = join2(home, "config.json");
+  if (!existsSync(configPath))
+    return updateCheckConfigSchema.parse({});
+  try {
+    return parseSection(readFileSyncFn(configPath, "utf8"));
+  } catch {
+    return updateCheckConfigSchema.parse({});
+  }
+}
+function parseSection(raw) {
+  const parsed = JSON.parse(raw);
+  const result = updateCheckConfigSchema.safeParse(parsed.updateCheck ?? {});
+  return result.success ? result.data : updateCheckConfigSchema.parse({});
+}
+
+// src/update/check.ts
+import { join as join3 } from "path";
+var CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+var CACHE_BASENAME = "update-check.json";
+function cachePath(home) {
+  return join3(home, CACHE_BASENAME);
+}
+function parseCache(raw) {
+  try {
+    const o = JSON.parse(raw);
+    if (typeof o.checkedAtMs !== "number" || !Number.isFinite(o.checkedAtMs))
+      return null;
+    return {
+      checkedAtMs: o.checkedAtMs,
+      latestVersion: typeof o.latestVersion === "string" ? o.latestVersion : null,
+      headline: typeof o.headline === "string" ? o.headline : null
+    };
+  } catch {
+    return null;
+  }
+}
+
 // src/memory/active-project.ts
-import { existsSync as existsSync2 } from "fs";
-import { join as join4 } from "path";
+import { existsSync as existsSync3 } from "fs";
+import { join as join6 } from "path";
 
 // src/repo-graph/proj-hash.ts
 init_project();
 import { createHash as createHash2 } from "crypto";
-import { join as join3 } from "path";
+import { join as join5 } from "path";
 var PROJ_HASH_LEN = 12;
 function computeProjHash(projectRoot) {
   return createHash2("sha256").update(projectRoot).digest("hex").slice(0, PROJ_HASH_LEN);
@@ -15607,7 +15652,7 @@ function computeProjHash(projectRoot) {
 function repoGraphLocationForRoot(projectRoot, opts = {}) {
   const proj_hash = computeProjHash(projectRoot);
   const home = opts.home ?? siltpokeRoot();
-  return { project_root: projectRoot, proj_hash, storage_dir: join3(home, "repo-memory", proj_hash) };
+  return { project_root: projectRoot, proj_hash, storage_dir: join5(home, "repo-memory", proj_hash) };
 }
 function resolveRepoGraphLocation(cwd, opts = {}) {
   return repoGraphLocationForRoot(resolveProjectRoot(cwd).project_root, opts);
@@ -15625,7 +15670,7 @@ var NONE = {
 function hasContent(home, p) {
   if (p.fact_count > 0)
     return true;
-  return existsSync2(join4(home, "repo-memory", computeProjHash(p.project_root)));
+  return existsSync3(join6(home, "repo-memory", computeProjHash(p.project_root)));
 }
 function toDaemonProject(p, source) {
   return {
@@ -15637,7 +15682,7 @@ function toDaemonProject(p, source) {
   };
 }
 function matchLive(projects, projHash) {
-  return projects.find((p) => existsSync2(p.project_root) && computeProjHash(p.project_root) === projHash);
+  return projects.find((p) => existsSync3(p.project_root) && computeProjHash(p.project_root) === projHash);
 }
 async function resolveDaemonProject(input, deps = { listActiveProjects }) {
   const { home, explicitProjHash, pinnedProjHash } = input;
@@ -15653,7 +15698,7 @@ async function resolveDaemonProject(input, deps = { listActiveProjects }) {
     if (match)
       return toDaemonProject(match, "sticky");
   }
-  const live = projects.filter((p) => existsSync2(p.project_root) && hasContent(home, p)).sort((a, b) => {
+  const live = projects.filter((p) => existsSync3(p.project_root) && hasContent(home, p)).sort((a, b) => {
     if (a.last_active_at === b.last_active_at)
       return a.project_id < b.project_id ? -1 : 1;
     if (a.last_active_at === "")
@@ -15673,15 +15718,15 @@ init_schema_v3();
 
 // src/state/brain-health.ts
 import { readFileSync as readFileSync2 } from "fs";
-import { join as join6 } from "path";
+import { join as join8 } from "path";
 
 // src/utils/atomic-write.ts
 import { writeFileSync, renameSync, mkdirSync } from "fs";
-import { dirname as dirname2, basename as basename2, join as join5 } from "path";
+import { dirname as dirname2, basename as basename2, join as join7 } from "path";
 function atomicWrite(path, data, opts) {
   const dir = dirname2(path);
   mkdirSync(dir, { recursive: true });
-  const tmp = join5(dir, `.tmp-${basename2(path)}-${process.pid}-${Date.now()}`);
+  const tmp = join7(dir, `.tmp-${basename2(path)}-${process.pid}-${Date.now()}`);
   writeFileSync(tmp, data, opts?.mode !== undefined ? { mode: opts.mode } : undefined);
   renameSync(tmp, path);
 }
@@ -15761,14 +15806,14 @@ function parseBrainHealth(raw) {
 }
 function readBrainHealth(basePath) {
   try {
-    return parseBrainHealth(readFileSync2(join6(basePath, FILE), "utf8"));
+    return parseBrainHealth(readFileSync2(join8(basePath, FILE), "utf8"));
   } catch {
     return freshBrainHealth();
   }
 }
 function writeBrainHealth(basePath, health) {
   try {
-    atomicWrite(join6(basePath, FILE), `${JSON.stringify(health, null, 2)}
+    atomicWrite(join8(basePath, FILE), `${JSON.stringify(health, null, 2)}
 `);
   } catch {}
 }
@@ -15808,7 +15853,7 @@ function checkBrainHealth(opts) {
 }
 
 // src/cli/doctor-daemon-check.ts
-import { existsSync as existsSync5 } from "fs";
+import { existsSync as existsSync6 } from "fs";
 
 // src/daemon/port.ts
 var DEFAULT_DAEMON_PORT = 9876;
@@ -15842,15 +15887,15 @@ function parseJsonOrNull(text) {
 
 // src/config/daemon-config.ts
 init_zod();
-import { existsSync as existsSync3 } from "fs";
+import { existsSync as existsSync4 } from "fs";
 import { readFile as readFile2 } from "fs/promises";
-import { join as join7 } from "path";
+import { join as join9 } from "path";
 var daemonConfigSchema = exports_external.object({
   enabled: exports_external.boolean().default(false)
 });
 async function loadDaemonConfig(home) {
-  const configPath = join7(home, "config.json");
-  if (!existsSync3(configPath))
+  const configPath = join9(home, "config.json");
+  if (!existsSync4(configPath))
     return daemonConfigSchema.parse({});
   try {
     const raw = await readFile2(configPath, "utf8");
@@ -15864,9 +15909,9 @@ async function loadDaemonConfig(home) {
 
 // src/installer/bun-path.ts
 import { accessSync, constants, readFileSync as readFileSync3 } from "fs";
-import { join as join8 } from "path";
+import { join as join10 } from "path";
 function bunPathPointerPath(home) {
-  return join8(home, ".siltpoke", "bun-path");
+  return join10(home, ".siltpoke", "bun-path");
 }
 function isExecutable(path) {
   try {
@@ -15886,19 +15931,19 @@ function resolveBunPath(home, deps = {}) {
     if (recorded.length > 0 && isExecutable(recorded))
       return recorded;
   } catch {}
-  const fallback = join8(home, ".bun", "bin", "bun");
+  const fallback = join10(home, ".bun", "bin", "bun");
   return isExecutable(fallback) ? fallback : null;
 }
 
 // src/installer/launchd.ts
-import { join as join10, dirname as dirname4 } from "path";
+import { join as join12, dirname as dirname4 } from "path";
 import { homedir } from "os";
 
 // src/installer/shim.ts
-import { existsSync as existsSync4, readFileSync as readFileSync4, statSync as statSync2 } from "fs";
-import { dirname as dirname3, join as join9 } from "path";
+import { existsSync as existsSync5, readFileSync as readFileSync4, statSync as statSync2 } from "fs";
+import { dirname as dirname3, join as join11 } from "path";
 function pluginRootPointerPath(home) {
-  return join9(home, ".siltpoke", "plugin-root");
+  return join11(home, ".siltpoke", "plugin-root");
 }
 function resolvePluginRoot(home) {
   let root;
@@ -15916,12 +15961,12 @@ function resolvePluginRoot(home) {
   }
 }
 function statuslineShimPath(home) {
-  return join9(home, ".siltpoke", "bin", "statusline.sh");
+  return join11(home, ".siltpoke", "bin", "statusline.sh");
 }
 
 // src/installer/launchd.ts
 function defaultPlistPath() {
-  return join10(homedir(), "Library", "LaunchAgents", "io.siltpoke.daemon.plist");
+  return join12(homedir(), "Library", "LaunchAgents", "io.siltpoke.daemon.plist");
 }
 function loadLaunchAgent(plistPath, label, uid, exec) {
   exec("launchctl", ["bootout", `gui/${uid}/${label}`]);
@@ -15932,10 +15977,10 @@ function loadLaunchAgent(plistPath, label, uid, exec) {
 }
 
 // src/installer/systemd.ts
-import { join as join11, dirname as dirname5 } from "path";
+import { join as join13, dirname as dirname5 } from "path";
 import { homedir as homedir2 } from "os";
 function defaultUnitPath() {
-  return join11(homedir2(), ".config", "systemd", "user", "siltpoked.service");
+  return join13(homedir2(), ".config", "systemd", "user", "siltpoked.service");
 }
 
 // src/cli/doctor-daemon-check.ts
@@ -16050,7 +16095,7 @@ function checkAutostart(opts = {}) {
       detail: `skipped (autostart unsupported on ${platform})`
     };
   }
-  if (existsSync5(artifactPath)) {
+  if (existsSync6(artifactPath)) {
     return {
       name: AUTOSTART_CHECK_NAME,
       pass: true,
@@ -16068,15 +16113,15 @@ function checkAutostart(opts = {}) {
 
 // src/config/repo-graph-config.ts
 init_zod();
-import { existsSync as existsSync6 } from "fs";
+import { existsSync as existsSync7 } from "fs";
 import { readFile as readFile3 } from "fs/promises";
-import { join as join12 } from "path";
+import { join as join14 } from "path";
 var repoGraphConfigSchema = exports_external.object({
   staleness_warn_pct: exports_external.number().min(0).max(1).default(0.2)
 });
 async function loadRepoGraphConfig(home) {
-  const configPath = join12(home, "config.json");
-  if (!existsSync6(configPath))
+  const configPath = join14(home, "config.json");
+  if (!existsSync7(configPath))
     return repoGraphConfigSchema.parse({});
   try {
     const raw = await readFile3(configPath, "utf8");
@@ -16099,9 +16144,9 @@ function computeContentSha(content) {
 }
 
 // src/repo-graph/store.ts
-import { existsSync as existsSync7 } from "fs";
+import { existsSync as existsSync8 } from "fs";
 import { mkdir as mkdir2, readFile as readFile4, rename as rename3, writeFile as writeFile2 } from "fs/promises";
-import { join as join13 } from "path";
+import { join as join15 } from "path";
 
 // src/repo-graph/types.ts
 function emptyFingerprints() {
@@ -16111,7 +16156,7 @@ function emptyFingerprints() {
 // src/repo-graph/store.ts
 var FINGERPRINTS_FILE = "fingerprints.json";
 async function readJsonOr(path, fallback) {
-  if (!existsSync7(path))
+  if (!existsSync8(path))
     return fallback();
   try {
     const raw = await readFile4(path, "utf8");
@@ -16121,7 +16166,7 @@ async function readJsonOr(path, fallback) {
   }
 }
 async function readFingerprints(storageDir) {
-  const parsed = await readJsonOr(join13(storageDir, FINGERPRINTS_FILE), emptyFingerprints);
+  const parsed = await readJsonOr(join15(storageDir, FINGERPRINTS_FILE), emptyFingerprints);
   if (parsed.schemaVersion !== 1 || typeof parsed.files !== "object" || parsed.files === null) {
     return emptyFingerprints();
   }
@@ -16130,7 +16175,7 @@ async function readFingerprints(storageDir) {
 
 // src/repo-graph/walker.ts
 import { readdir as readdir2, stat } from "fs/promises";
-import { join as join14, relative, sep } from "path";
+import { join as join16, relative, sep } from "path";
 var SOURCE_EXT_TO_LANG = {
   ts: "ts",
   tsx: "tsx",
@@ -16188,7 +16233,7 @@ async function walkProject(projectRoot, opts = {}) {
       if (capped)
         return;
       const name = entry.name;
-      const abs = join14(dir, name);
+      const abs = join16(dir, name);
       if (entry.isDirectory()) {
         if (SKIP_DIRS.has(name) || name.startsWith("."))
           continue;
@@ -16395,11 +16440,11 @@ function isPluginInstall(opts) {
 }
 
 // src/cli/doctor-stop-hook-check.ts
-import { join as join16 } from "path";
+import { join as join18 } from "path";
 
 // src/cli/doctor-plugin-hook-check.ts
-import { existsSync as existsSync8, readFileSync as readFileSync5 } from "fs";
-import { join as join15 } from "path";
+import { existsSync as existsSync9, readFileSync as readFileSync5 } from "fs";
+import { join as join17 } from "path";
 function resolvePluginHooksJsonPath(opts) {
   if (typeof opts.pluginHooksJsonPath === "string" && opts.pluginHooksJsonPath.length > 0) {
     return opts.pluginHooksJsonPath;
@@ -16407,11 +16452,11 @@ function resolvePluginHooksJsonPath(opts) {
   const root = process.env.CLAUDE_PLUGIN_ROOT;
   if (typeof root !== "string" || root.length === 0)
     return null;
-  return join15(root, "hooks", "hooks.json");
+  return join17(root, "hooks", "hooks.json");
 }
 function pluginOwnsStopHook(opts) {
   const path = resolvePluginHooksJsonPath(opts);
-  if (path === null || !existsSync8(path))
+  if (path === null || !existsSync9(path))
     return false;
   let parsed;
   try {
@@ -16447,7 +16492,7 @@ function checkStopHook(opts) {
       detail: "plugin-owned \u2014 hooks/hooks.json declares the Stop hook (settings.json hooks.Stop[] is expected empty)"
     };
   }
-  const path = join16(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
+  const path = join18(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
   const r = readJson(path);
   if (!r.ok) {
     return { name, pass: false, detail: `${path} not readable \u2014 settings.json must exist first` };
@@ -16494,8 +16539,8 @@ function scanStopMatchers(matchers) {
 }
 
 // src/cli/doctor-project-roots-check.ts
-import { existsSync as existsSync9, readdirSync, readFileSync as readFileSync6 } from "fs";
-import { join as join17 } from "path";
+import { existsSync as existsSync10, readdirSync, readFileSync as readFileSync6 } from "fs";
+import { join as join19 } from "path";
 function describe3(b) {
   return b.reason === "dead-root" ? `${b.label} \u2192 ${b.detail}` : `${b.label} \u2014 ${b.detail}`;
 }
@@ -16517,8 +16562,8 @@ function readStore(memoryPath) {
 }
 function checkProjectRoots(opts = {}) {
   const name = "registered project roots still exist";
-  const projectsDir = join17(opts.siltpokeHome ?? siltpokeRoot(), "projects");
-  if (!existsSync9(projectsDir)) {
+  const projectsDir = join19(opts.siltpokeHome ?? siltpokeRoot(), "projects");
+  if (!existsSync10(projectsDir)) {
     return { name, pass: true, detail: null };
   }
   let entries;
@@ -16532,7 +16577,7 @@ function checkProjectRoots(opts = {}) {
   for (const id of entries) {
     let store;
     try {
-      store = readStore(join17(projectsDir, id, "memory.json"));
+      store = readStore(join19(projectsDir, id, "memory.json"));
     } catch (e) {
       total += 1;
       broken.push({ label: id, reason: "unreadable", detail: `unreadable memory.json (${e instanceof Error ? e.message : String(e)})` });
@@ -16546,7 +16591,7 @@ function checkProjectRoots(opts = {}) {
       broken.push({ label: id, reason: "no-root-field", detail: "memory.json has no project_root" });
       continue;
     }
-    if (!existsSync9(root)) {
+    if (!existsSync10(root)) {
       const display = store.display_name;
       broken.push({
         label: typeof display === "string" && display.length > 0 ? display : id,
@@ -16573,8 +16618,8 @@ function checkProjectRoots(opts = {}) {
 }
 
 // src/cli/doctor-reviewer-check.ts
-import { existsSync as existsSync12, readFileSync as readFileSync9 } from "fs";
-import { join as join21 } from "path";
+import { existsSync as existsSync13, readFileSync as readFileSync9 } from "fs";
+import { join as join23 } from "path";
 
 // src/brain/agy-honesty.ts
 var CLAUDE_FAMILY_PREFIXES = ["Claude ", "claude-"];
@@ -16583,8 +16628,8 @@ function isClaudeFamilyModel(model) {
 }
 
 // src/brain/brain-config.ts
-import { existsSync as existsSync10, readFileSync as readFileSync7 } from "fs";
-import { join as join18 } from "path";
+import { existsSync as existsSync11, readFileSync as readFileSync7 } from "fs";
+import { join as join20 } from "path";
 var FAMILIES = ["claude", "codex", "agy", "qoder", "codebuddy"];
 function asFamily(value) {
   return typeof value === "string" && FAMILIES.includes(value) ? value : undefined;
@@ -16671,8 +16716,8 @@ function envForRead() {
   };
 }
 function loadBrainConfigSync(homeBase) {
-  const path = join18(homeBase, "config.json");
-  if (!existsSync10(path))
+  const path = join20(homeBase, "config.json");
+  if (!existsSync11(path))
     return parseBrainConfig(null, envForRead());
   try {
     return parseBrainConfig(readFileSync7(path, "utf8"), envForRead());
@@ -16695,8 +16740,8 @@ var DEFAULT_MIN_AGE_MS = 24 * 60 * 60 * 1000;
 
 // src/brain/providers/codex.ts
 import { homedir as homedir4, tmpdir } from "os";
-import { join as join19 } from "path";
-var SCHEMA_CACHE_DIR = join19(tmpdir(), "siltpoke-codex-schemas");
+import { join as join21 } from "path";
+var SCHEMA_CACHE_DIR = join21(tmpdir(), "siltpoke-codex-schemas");
 
 // src/brain/registry.ts
 var CLAUDE_PINNED = "claude-haiku-4-5-20251001";
@@ -16736,8 +16781,8 @@ function resolveRoleMeta(config2, role) {
 }
 
 // src/cli/brain-cli.ts
-import { existsSync as existsSync11, readFileSync as readFileSync8 } from "fs";
-import { join as join20 } from "path";
+import { existsSync as existsSync12, readFileSync as readFileSync8 } from "fs";
+import { join as join22 } from "path";
 var FAMILIES2 = ["claude", "codex", "agy", "qoder", "codebuddy"];
 var ROLES = ["chat", "review", "extract"];
 function isFamily(x) {
@@ -16747,8 +16792,8 @@ function isRole(x) {
   return ROLES.includes(x);
 }
 function readRawConfig(home) {
-  const configPath = join20(home, "config.json");
-  if (!existsSync11(configPath))
+  const configPath = join22(home, "config.json");
+  if (!existsSync12(configPath))
     return {};
   try {
     const parsed = JSON.parse(readFileSync8(configPath, "utf8"));
@@ -16857,9 +16902,9 @@ function runBrainSet(home, role, family, model) {
       message: `"${family}" does not accept a model from siltpoke \u2014 its CLI serves the model set in its own config`
     };
   }
-  const configPath = join20(home, "config.json");
+  const configPath = join22(home, "config.json");
   let prior = {};
-  if (existsSync11(configPath)) {
+  if (existsSync12(configPath)) {
     try {
       const parsed = JSON.parse(readFileSync8(configPath, "utf8"));
       if (parsed && typeof parsed === "object")
@@ -16898,9 +16943,9 @@ function setReviewByBuilder(home, builder, reviewer, model) {
       message: `"${reviewer}"'s review model is set in its own CLI config \u2014 only claude's model is chosen here`
     };
   }
-  const configPath = join20(home, "config.json");
+  const configPath = join22(home, "config.json");
   let prior = {};
-  if (existsSync11(configPath)) {
+  if (existsSync12(configPath)) {
     try {
       const parsed = JSON.parse(readFileSync8(configPath, "utf8"));
       if (parsed && typeof parsed === "object")
@@ -16926,8 +16971,8 @@ function runBrainUnset(home, role) {
   if (!isRole(role)) {
     return { ok: false, message: `unknown role "${role}" \u2014 one of: ${ROLES.join(" / ")}` };
   }
-  const configPath = join20(home, "config.json");
-  if (!existsSync11(configPath)) {
+  const configPath = join22(home, "config.json");
+  if (!existsSync12(configPath)) {
     return { ok: true, message: `${role} brain was not pinned \u2014 nothing to unset` };
   }
   let prior = {};
@@ -16992,7 +17037,7 @@ function reviewerAdviceFor(host) {
   return host === "claude-code" ? "run `/siltpoke-brain set-builder <builder> <reviewer>` \u2014 e.g. `set-builder claude codex` when you build in Claude Code" : "ask your agent to have Siltpoke use a different reviewer for the agent you build with";
 }
 function readEvalProvenance(path) {
-  if (!existsSync12(path))
+  if (!existsSync13(path))
     return null;
   try {
     const parsed = JSON.parse(readFileSync9(path, "utf8"));
@@ -17004,7 +17049,7 @@ function readEvalProvenance(path) {
   }
 }
 function defaultEvalProvenancePath(repoRoot) {
-  return join21(repoRoot, "src", "eval", "caller-impact", "verdict.provenance.json");
+  return join23(repoRoot, "src", "eval", "caller-impact", "verdict.provenance.json");
 }
 function resolveEvalProvenancePath(opts) {
   return opts.evalProvenancePath ?? defaultEvalProvenancePath(opts.repoRoot ?? defaultRepoRoot());
@@ -17078,8 +17123,8 @@ function checkBrainRoles(opts) {
 }
 
 // src/cli/doctor-statusline-check.ts
-import { existsSync as existsSync13, readFileSync as readFileSync10 } from "fs";
-import { join as join22 } from "path";
+import { existsSync as existsSync14, readFileSync as readFileSync10 } from "fs";
+import { join as join24 } from "path";
 
 // src/installer/statusline-interpreter.ts
 function splitInterpreter(command) {
@@ -17149,12 +17194,12 @@ function interpreterToCheck(opts, path) {
   return interpreter;
 }
 function checkStatuslineInterpreter(opts = {}) {
-  const path = join22(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
+  const path = join24(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
   const decided = interpreterToCheck(opts, path);
   if (typeof decided !== "string")
     return decided;
   const isPath = decided.includes("/") || decided.includes("\\");
-  const found = isPath ? (opts.statuslineExistsFn ?? existsSync13)(decided) : (opts.statuslineWhichFn ?? ((c) => Bun.which(c)))(decided) !== null;
+  const found = isPath ? (opts.statuslineExistsFn ?? existsSync14)(decided) : (opts.statuslineWhichFn ?? ((c) => Bun.which(c)))(decided) !== null;
   if (found) {
     return { name: CHECK_NAME3, pass: true, detail: null };
   }
@@ -17166,7 +17211,7 @@ function checkStatuslineInterpreter(opts = {}) {
 }
 
 // src/cli/doctor-statusline-run-check.ts
-import { existsSync as existsSync14 } from "fs";
+import { existsSync as existsSync15 } from "fs";
 import { homedir as homedir5 } from "os";
 var CHECK_NAME4 = "statusline renders (real run)";
 var SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
@@ -17194,7 +17239,7 @@ function checkStatuslineRenders(opts = {}, deps = {}) {
   }
   const home = opts.home ?? homedir5();
   const shim = statuslineShimPath(home);
-  if (!existsSync14(shim)) {
+  if (!existsSync15(shim)) {
     return {
       name: CHECK_NAME4,
       pass: true,
@@ -17230,7 +17275,7 @@ function defaultRepoRoot() {
   return resolve(here, "..", "..");
 }
 function readJson(path) {
-  if (!existsSync15(path))
+  if (!existsSync16(path))
     return { ok: false, reason: "missing", detail: `${path} does not exist` };
   let raw;
   try {
@@ -17245,11 +17290,11 @@ function readJson(path) {
   }
 }
 function detectDoctorHost(opts = {}) {
-  if (existsSync15(opts.claudeHome ?? resolveClaudeHome()))
+  if (existsSync16(opts.claudeHome ?? resolveClaudeHome()))
     return "claude-code";
-  if (existsSync15(opts.agyHooksJsonPath ?? resolveAgyHooksJsonPath()))
+  if (existsSync16(opts.agyHooksJsonPath ?? resolveAgyHooksJsonPath()))
     return "antigravity";
-  if (existsSync15(opts.codexConfigPath ?? join23(resolveCodexHome(), "config.toml")))
+  if (existsSync16(opts.codexConfigPath ?? join25(resolveCodexHome(), "config.toml")))
     return "codex";
   return "claude-code";
 }
@@ -17266,15 +17311,15 @@ function setupAdviceFor(host) {
 function hostWiringPath(host, opts) {
   switch (host) {
     case "codex":
-      return join23(resolveCodexHome(), "hooks.json");
+      return join25(resolveCodexHome(), "hooks.json");
     case "antigravity":
       return opts.agyHooksJsonPath ?? resolveAgyHooksJsonPath();
     default:
-      return join23(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
+      return join25(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
   }
 }
 function checkSettingsJson(opts) {
-  const path = join23(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
+  const path = join25(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
   const r = readJson(path);
   const name = "~/.claude/settings.json valid";
   const host = detectDoctorHost(opts);
@@ -17299,8 +17344,8 @@ function checkSettingsJson(opts) {
 }
 function checkInnerTxt(opts) {
   const name = "~/.siltpoke/inner.txt readable";
-  const path = join23(opts.siltpokeHome ?? siltpokeRoot(), "inner.txt");
-  if (!existsSync15(path)) {
+  const path = join25(opts.siltpokeHome ?? siltpokeRoot(), "inner.txt");
+  if (!existsSync16(path)) {
     return { name, pass: true, detail: null };
   }
   try {
@@ -17312,8 +17357,8 @@ function checkInnerTxt(opts) {
 }
 function checkWakeJson(opts) {
   const name = "~/.siltpoke/wake.json healthy (absent OK)";
-  const path = join23(opts.siltpokeHome ?? siltpokeRoot(), "wake.json");
-  if (!existsSync15(path)) {
+  const path = join25(opts.siltpokeHome ?? siltpokeRoot(), "wake.json");
+  if (!existsSync16(path)) {
     return { name, pass: true, detail: null };
   }
   const r = readJson(path);
@@ -17332,9 +17377,28 @@ function checkWakeJson(opts) {
   }
   return { name, pass: true, detail: null };
 }
+function checkUpdateCheck(opts) {
+  const home = opts.siltpokeHome ?? siltpokeRoot();
+  const enabled = loadUpdateCheckConfigSync(home, (p, e) => readFileSync11(p, e)).enabled;
+  if (!enabled) {
+    return {
+      name: "update check",
+      pass: true,
+      detail: "off (updateCheck.enabled=false in config.json) \u2014 no request is made"
+    };
+  }
+  const path = cachePath(home);
+  const cache = existsSync16(path) ? parseCache(readFileSync11(path, "utf8")) : null;
+  const last = cache ? cache.latestVersion ? `last saw ${cache.latestVersion}` : "last check found nothing (offline or rate-limited)" : "not run yet";
+  return {
+    name: "update check",
+    pass: true,
+    detail: `on \u2014 once a day, asks GitHub for the latest version only; ${last}`
+  };
+}
 function checkGlobalSchema(opts) {
   const name = "~/.siltpoke/global.json schema v3 current";
-  const path = join23(opts.siltpokeHome ?? siltpokeRoot(), "global.json");
+  const path = join25(opts.siltpokeHome ?? siltpokeRoot(), "global.json");
   const r = readJson(path);
   if (!r.ok) {
     if (r.reason === "missing") {
@@ -17368,8 +17432,8 @@ function checkSlashSymlinks(opts) {
   }
   const platform = opts.platform ?? process.platform;
   const repoRoot = opts.repoRoot ?? defaultRepoRoot();
-  const claudeCommandsDir = join23(opts.claudeHome ?? resolveClaudeHome(), "commands");
-  const pluginCommandsDir = join23(repoRoot, ".claude-plugin", "commands");
+  const claudeCommandsDir = join25(opts.claudeHome ?? resolveClaudeHome(), "commands");
+  const pluginCommandsDir = join25(repoRoot, ".claude-plugin", "commands");
   if (isPluginInstall(opts)) {
     return {
       name: "slash commands",
@@ -17378,7 +17442,7 @@ function checkSlashSymlinks(opts) {
       detail: "shipped with the plugin \u2014 no symlinks to verify"
     };
   }
-  if (!existsSync15(pluginCommandsDir)) {
+  if (!existsSync16(pluginCommandsDir)) {
     return {
       name: "slash command symlinks intact",
       pass: false,
@@ -17389,9 +17453,9 @@ function checkSlashSymlinks(opts) {
   const total = sourceFiles.length;
   const broken = [];
   for (const f of sourceFiles) {
-    const linkPath = join23(claudeCommandsDir, f);
-    const expectedTarget = join23(pluginCommandsDir, f);
-    if (!existsSync15(linkPath)) {
+    const linkPath = join25(claudeCommandsDir, f);
+    const expectedTarget = join25(pluginCommandsDir, f);
+    if (!existsSync16(linkPath)) {
       broken.push(`${f} (missing)`);
       continue;
     }
@@ -17434,7 +17498,7 @@ function checkSlashSymlinks(opts) {
 }
 function checkConfigJson(opts) {
   const name = "~/.siltpoke/config.json valid";
-  const path = join23(opts.siltpokeHome ?? siltpokeRoot(), "config.json");
+  const path = join25(opts.siltpokeHome ?? siltpokeRoot(), "config.json");
   const r = readJson(path);
   if (!r.ok) {
     return { name, pass: false, detail: r.detail };
@@ -17454,7 +17518,7 @@ function checkConfigJson(opts) {
 function checkAgyHooksJson(opts) {
   const name = "~/.gemini/config/hooks.json siltpoke-review Stop registered (agy)";
   const path = opts.agyHooksJsonPath ?? resolveAgyHooksJsonPath();
-  if (!existsSync15(path)) {
+  if (!existsSync16(path)) {
     return {
       name,
       pass: true,
@@ -17517,7 +17581,8 @@ function runAllChecks(opts = {}) {
     checkAgyHooksJson(opts),
     checkProjectRoots(opts),
     checkStatuslineInterpreter(opts),
-    checkStatuslineRenders(opts)
+    checkStatuslineRenders(opts),
+    checkUpdateCheck(opts)
   ];
 }
 function formatChecklist(results, opts = {}) {
@@ -17584,8 +17649,8 @@ import { readFile as readFile7 } from "fs/promises";
 
 // src/state/critique-status.ts
 import { readFile as readFile6, writeFile as writeFile3, readdir as readdir3 } from "fs/promises";
-import { existsSync as existsSync16 } from "fs";
-import { join as join24 } from "path";
+import { existsSync as existsSync17 } from "fs";
+import { join as join26 } from "path";
 var STATUS_LINE = /^status:\s*(\S+)\s*$/m;
 var CRITIQUE_ID_LINE = /^critique_id:\s*(\S+)\s*$/m;
 async function readCritiqueId(critiquePath) {
@@ -17624,22 +17689,22 @@ async function setStatus(critiquePath, next) {
   }
 }
 async function findCritiqueByIdOrLatest(basePath, idOrLatest) {
-  const critiqueRoot = join24(basePath, "critiques");
+  const critiqueRoot = join26(basePath, "critiques");
   if (idOrLatest === "latest") {
-    const latestPath = join24(critiqueRoot, "latest.md");
-    return existsSync16(latestPath) ? latestPath : null;
+    const latestPath = join26(critiqueRoot, "latest.md");
+    return existsSync17(latestPath) ? latestPath : null;
   }
-  const archiveRoot = join24(critiqueRoot, "archive");
-  if (!existsSync16(archiveRoot))
+  const archiveRoot = join26(critiqueRoot, "archive");
+  if (!existsSync17(archiveRoot))
     return null;
   try {
     const dates = await readdir3(archiveRoot);
     for (const date5 of dates.sort().reverse()) {
-      const dateDir = join24(archiveRoot, date5);
+      const dateDir = join26(archiveRoot, date5);
       const files = await readdir3(dateDir);
       const match = files.find((f) => f === `${idOrLatest}.md`);
       if (match)
-        return join24(dateDir, match);
+        return join26(dateDir, match);
     }
     return null;
   } catch {
@@ -17648,15 +17713,15 @@ async function findCritiqueByIdOrLatest(basePath, idOrLatest) {
 }
 
 // src/cli/critique-absent.ts
-import { existsSync as existsSync17 } from "fs";
+import { existsSync as existsSync18 } from "fs";
 import { readdir as readdir4 } from "fs/promises";
-import { join as join25 } from "path";
+import { join as join27 } from "path";
 async function hasNoCritiquesAtAll(basePath) {
-  const critiqueRoot = join25(basePath, "critiques");
-  if (existsSync17(join25(critiqueRoot, "latest.md")))
+  const critiqueRoot = join27(basePath, "critiques");
+  if (existsSync18(join27(critiqueRoot, "latest.md")))
     return false;
-  const archiveRoot = join25(critiqueRoot, "archive");
-  if (!existsSync17(archiveRoot))
+  const archiveRoot = join27(critiqueRoot, "archive");
+  if (!existsSync18(archiveRoot))
     return true;
   let dates;
   try {
@@ -17666,7 +17731,7 @@ async function hasNoCritiquesAtAll(basePath) {
   }
   for (const date5 of dates) {
     try {
-      const files = await readdir4(join25(archiveRoot, date5));
+      const files = await readdir4(join27(archiveRoot, date5));
       if (files.some((f) => f.endsWith(".md")))
         return false;
     } catch {}
@@ -17821,8 +17886,8 @@ import { readFile as readFile9 } from "fs/promises";
 
 // src/state/progression.ts
 import { readFile as readFile8, writeFile as writeFile4, rename as rename4, mkdir as mkdir3 } from "fs/promises";
-import { existsSync as existsSync18 } from "fs";
-import { join as join26 } from "path";
+import { existsSync as existsSync19 } from "fs";
+import { join as join28 } from "path";
 import { randomBytes as randomBytes2 } from "crypto";
 var DEFAULT_STATS = {
   hp: 10,
@@ -17937,7 +18002,7 @@ function addXp(progression, amount) {
 }
 var FILENAME2 = "progression.json";
 function progressionPath(basePath) {
-  return join26(basePath, FILENAME2);
+  return join28(basePath, FILENAME2);
 }
 function isLegacyProgression(value) {
   if (typeof value !== "object" || value === null)
@@ -17977,7 +18042,7 @@ function migrateToV2(parsed, now) {
 }
 async function readProgression(basePath) {
   const path = progressionPath(basePath);
-  if (!existsSync18(path))
+  if (!existsSync19(path))
     return { ...DEFAULT_PROGRESSION, stats_last_tick_at: new Date().toISOString() };
   try {
     const raw = await readFile8(path, "utf8");
@@ -18008,8 +18073,8 @@ async function writeProgression(basePath, progression) {
 
 // src/preference-log/writer.ts
 import { appendFile, mkdir as mkdir4 } from "fs/promises";
-import { dirname as dirname7, join as join27 } from "path";
-var DEFAULT_PATH = join27(siltpokeRoot(), "preference-log.jsonl");
+import { dirname as dirname7, join as join29 } from "path";
+var DEFAULT_PATH = join29(siltpokeRoot(), "preference-log.jsonl");
 async function appendPreferenceEntry(entry, opts = {}) {
   const path = opts.path ?? DEFAULT_PATH;
   const fullEntry = {
@@ -18069,16 +18134,16 @@ async function markForwarded(opts) {
 if (false) {}
 
 // src/state/mute.ts
-import { readFileSync as readFileSync12, existsSync as existsSync19, unlinkSync } from "fs";
-import { join as join28 } from "path";
+import { readFileSync as readFileSync12, existsSync as existsSync20, unlinkSync } from "fs";
+import { join as join30 } from "path";
 var MUTE_FILENAME = "mute.json";
 var MUTE_SCHEMA_VERSION = 1;
 function mutePath(homeBase) {
-  return join28(homeBase, MUTE_FILENAME);
+  return join30(homeBase, MUTE_FILENAME);
 }
 function readMute(homeBase) {
   const path = mutePath(homeBase);
-  if (!existsSync19(path))
+  if (!existsSync20(path))
     return null;
   let raw;
   try {
@@ -18124,7 +18189,7 @@ function writeMute(homeBase, mute) {
 }
 function clearMute(homeBase) {
   const path = mutePath(homeBase);
-  if (!existsSync19(path))
+  if (!existsSync20(path))
     return false;
   try {
     unlinkSync(path);
@@ -18334,29 +18399,19 @@ function computeQuizDials(raw, matchModeOverride) {
   return scoreQuiz(answers, modeRaw);
 }
 
-// src/cli/report.ts
+// src/cli/dashboard.ts
 import { spawnSync as spawnSync6 } from "child_process";
-import { existsSync as existsSync22 } from "fs";
-import { basename as basename4, dirname as dirname9, join as join34 } from "path";
+import { existsSync as existsSync23 } from "fs";
+import { join as join36 } from "path";
 import { fileURLToPath as fileURLToPath2 } from "url";
 
-// src/config/write-daemon-enabled.ts
-import { existsSync as existsSync20 } from "fs";
-import { readFile as readFile10 } from "fs/promises";
-import { join as join29 } from "path";
-async function setDaemonEnabled(home, enabled) {
-  const configPath = join29(home, "config.json");
-  let obj = {};
-  if (existsSync20(configPath)) {
-    try {
-      obj = JSON.parse(await readFile10(configPath, "utf8"));
-    } catch {
-      obj = {};
-    }
-  }
-  const daemon = { ...obj.daemon, enabled };
-  atomicWrite(configPath, `${JSON.stringify({ ...obj, daemon }, null, 2)}
-`);
+// src/installer/editor-detect.ts
+function editorOpener(platform) {
+  if (platform === "darwin")
+    return ["open"];
+  if (platform === "win32")
+    return ["cmd", "/c", "start", ""];
+  return ["xdg-open"];
 }
 
 // src/cli/daemon-restart.ts
@@ -18368,13 +18423,13 @@ import { spawnSync as spawnSync4 } from "child_process";
 // src/installer/menubar-setup.ts
 import { spawnSync as spawnSync3 } from "child_process";
 import { existsSync as realExistsSync2, writeFileSync as writeFileSync3 } from "fs";
-import { basename as basename3, join as join31, normalize } from "path";
+import { basename as basename3, join as join32, normalize } from "path";
 
 // src/installer/swiftbar-autostart.ts
 import { spawnSync as spawnSync2 } from "child_process";
 import { mkdirSync as mkdirSync2, existsSync as realExistsSync, rmSync, writeFileSync as writeFileSync2 } from "fs";
 import { homedir as homedir6 } from "os";
-import { dirname as dirname8, join as join30 } from "path";
+import { dirname as dirname8, join as join31 } from "path";
 var SWIFTBAR_APP_PATH = "/Applications/SwiftBar.app";
 var SWIFTBAR_LABEL = "io.siltpoke.swiftbar";
 function renderSwiftbarPlist() {
@@ -18394,7 +18449,7 @@ function renderSwiftbarPlist() {
 </plist>`;
 }
 function defaultPlistPath2(home) {
-  return join30(home, "Library", "LaunchAgents", "io.siltpoke.swiftbar.plist");
+  return join31(home, "Library", "LaunchAgents", "io.siltpoke.swiftbar.plist");
 }
 var realExec = (cmd, args) => spawnSync2(cmd, args, { stdio: "ignore" });
 function installSwiftbarAutostart(opts = {}) {
@@ -18560,9 +18615,9 @@ function defaultExec(cmd, args) {
 }
 function resolveWrapperPath(hereDir = import.meta.dir) {
   if (basename3(hereDir) === "dist") {
-    return normalize(join31(hereDir, "siltpoke-card.js"));
+    return normalize(join32(hereDir, "siltpoke-card.js"));
   }
-  return normalize(join31(hereDir, "..", "face", "wrapper.ts"));
+  return normalize(join32(hereDir, "..", "face", "wrapper.ts"));
 }
 function resolveBunPath2(exec) {
   const which = exec("which", ["bun"]);
@@ -18584,7 +18639,7 @@ function resolvePluginDir(exec, home) {
   return fallback;
 }
 function defaultPluginDir(home) {
-  return join31(home, "Library", "Application Support", "SwiftBar", "plugins");
+  return join32(home, "Library", "Application Support", "SwiftBar", "plugins");
 }
 function readPluginDirPref(exec, home) {
   const read = exec("defaults", ["read", SWIFTBAR_DEFAULTS_DOMAIN, SWIFTBAR_PLUGIN_DIR_KEY]);
@@ -18592,14 +18647,14 @@ function readPluginDirPref(exec, home) {
   if (!existing) {
     return null;
   }
-  return existing.startsWith("~") ? join31(home, existing.slice(1)) : existing;
+  return existing.startsWith("~") ? join32(home, existing.slice(1)) : existing;
 }
 function resolveObeyedShimPath(exec, home) {
   const pref = readPluginDirPref(exec, home);
-  return join31(pref ?? defaultPluginDir(home), SHIM_NAME);
+  return join32(pref ?? defaultPluginDir(home), SHIM_NAME);
 }
 function strandedShimPath(obeyedPath, home, existsSync21) {
-  const defaultPath = join31(defaultPluginDir(home), SHIM_NAME);
+  const defaultPath = join32(defaultPluginDir(home), SHIM_NAME);
   if (obeyedPath === defaultPath) {
     return null;
   }
@@ -18646,7 +18701,7 @@ async function runMenubarSetup(deps) {
   }
   const pluginDir = resolvePluginDir(exec, home);
   exec("mkdir", ["-p", pluginDir]);
-  const shimPath = join31(pluginDir, SHIM_NAME);
+  const shimPath = join32(pluginDir, SHIM_NAME);
   const bunPath = resolveBunPath2(exec);
   const wrapperPath = deps.rendererPath ?? resolveWrapperPath();
   writeFile5(shimPath, renderShim(bunPath, wrapperPath));
@@ -18685,9 +18740,9 @@ function refreshMenubar(deps = {}) {
 
 // src/cli/restart-outcome.ts
 import { readFileSync as readFileSync13, writeFileSync as writeFileSync4, mkdirSync as mkdirSync3 } from "fs";
-import { join as join32 } from "path";
+import { join as join33 } from "path";
 function restartOutcomePath(homeBase) {
-  return join32(homeBase, "last-restart.json");
+  return join33(homeBase, "last-restart.json");
 }
 function writeRestartOutcome(homeBase, outcome) {
   try {
@@ -18810,1494 +18865,11 @@ async function runRestart(deps = {}) {
   return 1;
 }
 
-// src/state/state.ts
-var DEFAULT_STALE_MS = 30 * 60 * 1000;
-
-// src/cli/card.ts
-if (false) {}
-
-// node_modules/marked/lib/marked.esm.js
-function z2() {
-  return { async: false, breaks: false, extensions: null, gfm: true, hooks: null, pedantic: false, renderer: null, silent: false, tokenizer: null, walkTokens: null };
-}
-var T = z2();
-function G(l) {
-  T = l;
-}
-var _ = { exec: () => null };
-function d(l, e = "") {
-  let t = typeof l == "string" ? l : l.source, n = { replace: (s, r) => {
-    let i = typeof r == "string" ? r : r.source;
-    return i = i.replace(m.caret, "$1"), t = t.replace(s, i), n;
-  }, getRegex: () => new RegExp(t, e) };
-  return n;
-}
-var Re = ((l = "") => {
-  try {
-    return !!new RegExp("(?<=1)(?<!1)" + l);
-  } catch {
-    return false;
-  }
-})();
-var m = { codeRemoveIndent: /^(?: {1,4}| {0,3}\t)/gm, outputLinkReplace: /\\([\[\]])/g, indentCodeCompensation: /^(\s+)(?:```)/, beginningSpace: /^\s+/, endingHash: /#$/, startingSpaceChar: /^ /, endingSpaceChar: / $/, nonSpaceChar: /[^ ]/, newLineCharGlobal: /\n/g, tabCharGlobal: /\t/g, multipleSpaceGlobal: /\s+/g, blankLine: /^[ \t]*$/, doubleBlankLine: /\n[ \t]*\n[ \t]*$/, blockquoteStart: /^ {0,3}>/, blockquoteSetextReplace: /\n {0,3}((?:=+|-+) *)(?=\n|$)/g, blockquoteSetextReplace2: /^ {0,3}>[ \t]?/gm, listReplaceNesting: /^ {1,4}(?=( {4})*[^ ])/g, listIsTask: /^\[[ xX]\] +\S/, listReplaceTask: /^\[[ xX]\] +/, listTaskCheckbox: /\[[ xX]\]/, anyLine: /\n.*\n/, hrefBrackets: /^<(.*)>$/, tableDelimiter: /[:|]/, tableAlignChars: /^\||\| *$/g, tableRowBlankLine: /\n[ \t]*$/, tableAlignRight: /^ *-+: *$/, tableAlignCenter: /^ *:-+: *$/, tableAlignLeft: /^ *:-+ *$/, startATag: /^<a /i, endATag: /^<\/a>/i, startPreScriptTag: /^<(pre|code|kbd|script)(\s|>)/i, endPreScriptTag: /^<\/(pre|code|kbd|script)(\s|>)/i, startAngleBracket: /^</, endAngleBracket: />$/, pedanticHrefTitle: /^([^'"]*[^\s])\s+(['"])(.*)\2/, unicodeAlphaNumeric: /[\p{L}\p{N}]/u, escapeTest: /[&<>"']/, escapeReplace: /[&<>"']/g, escapeTestNoEncode: /[<>"']|&(?!(#\d{1,7}|#[Xx][a-fA-F0-9]{1,6}|\w+);)/, escapeReplaceNoEncode: /[<>"']|&(?!(#\d{1,7}|#[Xx][a-fA-F0-9]{1,6}|\w+);)/g, caret: /(^|[^\[])\^/g, percentDecode: /%25/g, findPipe: /\|/g, splitPipe: / \|/, slashPipe: /\\\|/g, carriageReturn: /\r\n|\r/g, spaceLine: /^ +$/gm, notSpaceStart: /^\S*/, endingNewline: /\n$/, listItemRegex: (l) => new RegExp(`^( {0,3}${l})((?:[	 ][^\\n]*)?(?:\\n|$))`), nextBulletRegex: (l) => new RegExp(`^ {0,${Math.min(3, l - 1)}}(?:[*+-]|\\d{1,9}[.)])((?:[ 	][^\\n]*)?(?:\\n|$))`), hrRegex: (l) => new RegExp(`^ {0,${Math.min(3, l - 1)}}((?:- *){3,}|(?:_ *){3,}|(?:\\* *){3,})(?:\\n+|$)`), fencesBeginRegex: (l) => new RegExp(`^ {0,${Math.min(3, l - 1)}}(?:\`\`\`|~~~)`), headingBeginRegex: (l) => new RegExp(`^ {0,${Math.min(3, l - 1)}}#`), htmlBeginRegex: (l) => new RegExp(`^ {0,${Math.min(3, l - 1)}}<(?:[a-z].*>|!--)`, "i"), blockquoteBeginRegex: (l) => new RegExp(`^ {0,${Math.min(3, l - 1)}}>`) };
-var Te = /^(?:[ \t]*(?:\n|$))+/;
-var Oe = /^((?: {4}| {0,3}\t)[^\n]+(?:\n(?:[ \t]*(?:\n|$))*)?)+/;
-var we = /^ {0,3}(`{3,}(?=[^`\n]*(?:\n|$))|~{3,})([^\n]*)(?:\n|$)(?:|([\s\S]*?)(?:\n|$))(?: {0,3}\1[~`]* *(?=\n|$)|$)/;
-var I = /^ {0,3}((?:-[\t ]*){3,}|(?:_[ \t]*){3,}|(?:\*[ \t]*){3,})(?:\n+|$)/;
-var ye = /^ {0,3}(#{1,6})(?=\s|$)(.*)(?:\n+|$)/;
-var Q = / {0,3}(?:[*+-]|\d{1,9}[.)])/;
-var ie = /^(?!bull |blockCode|fences|blockquote|heading|html|table)((?:.|\n(?!\s*?\n|bull |blockCode|fences|blockquote|heading|html|table))+?)\n {0,3}(=+|-+) *(?:\n+|$)/;
-var oe = d(ie).replace(/bull/g, Q).replace(/blockCode/g, /(?: {4}| {0,3}\t)/).replace(/fences/g, / {0,3}(?:`{3,}|~{3,})/).replace(/blockquote/g, / {0,3}>/).replace(/heading/g, / {0,3}#{1,6}/).replace(/html/g, / {0,3}<[^\n>]+>\n/).replace(/\|table/g, "").getRegex();
-var Pe = d(ie).replace(/bull/g, Q).replace(/blockCode/g, /(?: {4}| {0,3}\t)/).replace(/fences/g, / {0,3}(?:`{3,}|~{3,})/).replace(/blockquote/g, / {0,3}>/).replace(/heading/g, / {0,3}#{1,6}/).replace(/html/g, / {0,3}<[^\n>]+>\n/).replace(/table/g, / {0,3}\|?(?:[:\- ]*\|)+[\:\- ]*\n/).getRegex();
-var j = /^([^\n]+(?:\n(?!hr|heading|lheading|blockquote|fences|list|html|table| +\n)[^\n]+)*)/;
-var Se = /^[^\n]+/;
-var F = /(?!\s*\])(?:\\[\s\S]|[^\[\]\\])+/;
-var $e = d(/^ {0,3}\[(label)\]: *(?:\n[ \t]*)?([^<\s][^\s]*|<.*?>)(?:(?: +(?:\n[ \t]*)?| *\n[ \t]*)(title))? *(?:\n+|$)/).replace("label", F).replace("title", /(?:"(?:\\"?|[^"\\])*"|'[^'\n]*(?:\n[^'\n]+)*\n?'|\([^()]*\))/).getRegex();
-var Le = d(/^(bull)([ \t][^\n]+?)?(?:\n|$)/).replace(/bull/g, Q).getRegex();
-var v = "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|meta|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul";
-var U = /<!--(?:-?>|[\s\S]*?(?:-->|$))/;
-var _e = d("^ {0,3}(?:<(script|pre|style|textarea)[\\s>][\\s\\S]*?(?:</\\1>[^\\n]*\\n+|$)|comment[^\\n]*(\\n+|$)|<\\?[\\s\\S]*?(?:\\?>\\n*|$)|<![A-Z][\\s\\S]*?(?:>\\n*|$)|<!\\[CDATA\\[[\\s\\S]*?(?:\\]\\]>\\n*|$)|</?(tag)(?: +|\\n|/?>)[\\s\\S]*?(?:(?:\\n[ \t]*)+\\n|$)|<(?!script|pre|style|textarea)([a-z][\\w-]*)(?:attribute)*? */?>(?=[ \\t]*(?:\\n|$))[\\s\\S]*?(?:(?:\\n[ \t]*)+\\n|$)|</(?!script|pre|style|textarea)[a-z][\\w-]*\\s*>(?=[ \\t]*(?:\\n|$))[\\s\\S]*?(?:(?:\\n[ \t]*)+\\n|$))", "i").replace("comment", U).replace("tag", v).replace("attribute", / +[a-zA-Z:_][\w.:-]*(?: *= *"[^"\n]*"| *= *'[^'\n]*'| *= *[^\s"'=<>`]+)?/).getRegex();
-var ae = d(j).replace("hr", I).replace("heading", " {0,3}#{1,6}(?:\\s|$)").replace("|lheading", "").replace("|table", "").replace("blockquote", " {0,3}>").replace("fences", " {0,3}(?:`{3,}(?=[^`\\n]*\\n)|~{3,})[^\\n]*\\n").replace("list", " {0,3}(?:[*+-]|1[.)])[ \\t]").replace("html", "</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|textarea|!--)").replace("tag", v).getRegex();
-var Me = d(/^( {0,3}> ?(paragraph|[^\n]*)(?:\n|$))+/).replace("paragraph", ae).getRegex();
-var K = { blockquote: Me, code: Oe, def: $e, fences: we, heading: ye, hr: I, html: _e, lheading: oe, list: Le, newline: Te, paragraph: ae, table: _, text: Se };
-var re = d("^ *([^\\n ].*)\\n {0,3}((?:\\| *)?:?-+:? *(?:\\| *:?-+:? *)*(?:\\| *)?)(?:\\n((?:(?! *\\n|hr|heading|blockquote|code|fences|list|html).*(?:\\n|$))*)\\n*|$)").replace("hr", I).replace("heading", " {0,3}#{1,6}(?:\\s|$)").replace("blockquote", " {0,3}>").replace("code", "(?: {4}| {0,3}\t)[^\\n]").replace("fences", " {0,3}(?:`{3,}(?=[^`\\n]*\\n)|~{3,})[^\\n]*\\n").replace("list", " {0,3}(?:[*+-]|1[.)])[ \\t]").replace("html", "</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|textarea|!--)").replace("tag", v).getRegex();
-var ze = { ...K, lheading: Pe, table: re, paragraph: d(j).replace("hr", I).replace("heading", " {0,3}#{1,6}(?:\\s|$)").replace("|lheading", "").replace("table", re).replace("blockquote", " {0,3}>").replace("fences", " {0,3}(?:`{3,}(?=[^`\\n]*\\n)|~{3,})[^\\n]*\\n").replace("list", " {0,3}(?:[*+-]|1[.)])[ \\t]").replace("html", "</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|textarea|!--)").replace("tag", v).getRegex() };
-var Ee = { ...K, html: d(`^ *(?:comment *(?:\\n|\\s*$)|<(tag)[\\s\\S]+?</\\1> *(?:\\n{2,}|\\s*$)|<tag(?:"[^"]*"|'[^']*'|\\s[^'"/>\\s]*)*?/?> *(?:\\n{2,}|\\s*$))`).replace("comment", U).replace(/tag/g, "(?!(?:a|em|strong|small|s|cite|q|dfn|abbr|data|time|code|var|samp|kbd|sub|sup|i|b|u|mark|ruby|rt|rp|bdi|bdo|span|br|wbr|ins|del|img)\\b)\\w+(?!:|[^\\w\\s@]*@)\\b").getRegex(), def: /^ *\[([^\]]+)\]: *<?([^\s>]+)>?(?: +(["(][^\n]+[")]))? *(?:\n+|$)/, heading: /^(#{1,6})(.*)(?:\n+|$)/, fences: _, lheading: /^(.+?)\n {0,3}(=+|-+) *(?:\n+|$)/, paragraph: d(j).replace("hr", I).replace("heading", ` *#{1,6} *[^
-]`).replace("lheading", oe).replace("|table", "").replace("blockquote", " {0,3}>").replace("|fences", "").replace("|list", "").replace("|html", "").replace("|tag", "").getRegex() };
-var Ae = /^\\([!"#$%&'()*+,\-./:;<=>?@\[\]\\^_`{|}~])/;
-var Ce = /^(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/;
-var le = /^( {2,}|\\)\n(?!\s*$)/;
-var Ie = /^(`+|[^`])(?:(?= {2,}\n)|[\s\S]*?(?:(?=[\\<!\[`*_]|\b_|$)|[^ ](?= {2,}\n)))/;
-var E = /[\p{P}\p{S}]/u;
-var H = /[\s\p{P}\p{S}]/u;
-var W = /[^\s\p{P}\p{S}]/u;
-var Be = d(/^((?![*_])punctSpace)/, "u").replace(/punctSpace/g, H).getRegex();
-var ue = /(?!~)[\p{P}\p{S}]/u;
-var De = /(?!~)[\s\p{P}\p{S}]/u;
-var qe = /(?:[^\s\p{P}\p{S}]|~)/u;
-var ve = d(/link|precode-code|html/, "g").replace("link", /\[(?:[^\[\]`]|(?<a>`+)[^`]+\k<a>(?!`))*?\]\((?:\\[\s\S]|[^\\\(\)]|\((?:\\[\s\S]|[^\\\(\)])*\))*\)/).replace("precode-", Re ? "(?<!`)()" : "(^^|[^`])").replace("code", /(?<b>`+)[^`]+\k<b>(?!`)/).replace("html", /<(?! )[^<>]*?>/).getRegex();
-var pe = /^(?:\*+(?:((?!\*)punct)|([^\s*]))?)|^_+(?:((?!_)punct)|([^\s_]))?/;
-var He = d(pe, "u").replace(/punct/g, E).getRegex();
-var Ze = d(pe, "u").replace(/punct/g, ue).getRegex();
-var ce = "^[^_*]*?__[^_*]*?\\*[^_*]*?(?=__)|[^*]+(?=[^*])|(?!\\*)punct(\\*+)(?=[\\s]|$)|notPunctSpace(\\*+)(?!\\*)(?=punctSpace|$)|(?!\\*)punctSpace(\\*+)(?=notPunctSpace)|[\\s](\\*+)(?!\\*)(?=punct)|(?!\\*)punct(\\*+)(?!\\*)(?=punct)|notPunctSpace(\\*+)(?=notPunctSpace)";
-var Ge = d(ce, "gu").replace(/notPunctSpace/g, W).replace(/punctSpace/g, H).replace(/punct/g, E).getRegex();
-var Ne = d(ce, "gu").replace(/notPunctSpace/g, qe).replace(/punctSpace/g, De).replace(/punct/g, ue).getRegex();
-var Qe = d("^[^_*]*?\\*\\*[^_*]*?_[^_*]*?(?=\\*\\*)|[^_]+(?=[^_])|(?!_)punct(_+)(?=[\\s]|$)|notPunctSpace(_+)(?!_)(?=punctSpace|$)|(?!_)punctSpace(_+)(?=notPunctSpace)|[\\s](_+)(?!_)(?=punct)|(?!_)punct(_+)(?!_)(?=punct)", "gu").replace(/notPunctSpace/g, W).replace(/punctSpace/g, H).replace(/punct/g, E).getRegex();
-var je = d(/^~~?(?:((?!~)punct)|[^\s~])/, "u").replace(/punct/g, E).getRegex();
-var Fe = "^[^~]+(?=[^~])|(?!~)punct(~~?)(?=[\\s]|$)|notPunctSpace(~~?)(?!~)(?=punctSpace|$)|(?!~)punctSpace(~~?)(?=notPunctSpace)|[\\s](~~?)(?!~)(?=punct)|(?!~)punct(~~?)(?!~)(?=punct)|notPunctSpace(~~?)(?=notPunctSpace)";
-var Ue = d(Fe, "gu").replace(/notPunctSpace/g, W).replace(/punctSpace/g, H).replace(/punct/g, E).getRegex();
-var Ke = d(/\\(punct)/, "gu").replace(/punct/g, E).getRegex();
-var We = d(/^<(scheme:[^\s\x00-\x1f<>]*|email)>/).replace("scheme", /[a-zA-Z][a-zA-Z0-9+.-]{1,31}/).replace("email", /[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+(@)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+(?![-_])/).getRegex();
-var Xe = d(U).replace("(?:-->|$)", "-->").getRegex();
-var Je = d("^comment|^</[a-zA-Z][\\w:-]*\\s*>|^<[a-zA-Z][\\w-]*(?:attribute)*?\\s*/?>|^<\\?[\\s\\S]*?\\?>|^<![a-zA-Z]+\\s[\\s\\S]*?>|^<!\\[CDATA\\[[\\s\\S]*?\\]\\]>").replace("comment", Xe).replace("attribute", /\s+[a-zA-Z:_][\w.:-]*(?:\s*=\s*"[^"]*"|\s*=\s*'[^']*'|\s*=\s*[^\s"'=<>`]+)?/).getRegex();
-var q = /(?:\[(?:\\[\s\S]|[^\[\]\\])*\]|\\[\s\S]|`+(?!`)[^`]*?`+(?!`)|``+(?=\])|[^\[\]\\`])*?/;
-var Ve = d(/^!?\[(label)\]\(\s*(href)(?:(?:[ \t]+(?:\n[ \t]*)?|\n[ \t]*)(title))?\s*\)/).replace("label", q).replace("href", /<(?:\\.|[^\n<>\\])+>|[^ \t\n\x00-\x1f]*/).replace("title", /"(?:\\"?|[^"\\])*"|'(?:\\'?|[^'\\])*'|\((?:\\\)?|[^)\\])*\)/).getRegex();
-var he = d(/^!?\[(label)\]\[(ref)\]/).replace("label", q).replace("ref", F).getRegex();
-var ke = d(/^!?\[(ref)\](?:\[\])?/).replace("ref", F).getRegex();
-var Ye = d("reflink|nolink(?!\\()", "g").replace("reflink", he).replace("nolink", ke).getRegex();
-var se = /[hH][tT][tT][pP][sS]?|[fF][tT][pP]/;
-var X = { _backpedal: _, anyPunctuation: Ke, autolink: We, blockSkip: ve, br: le, code: Ce, del: _, delLDelim: _, delRDelim: _, emStrongLDelim: He, emStrongRDelimAst: Ge, emStrongRDelimUnd: Qe, escape: Ae, link: Ve, nolink: ke, punctuation: Be, reflink: he, reflinkSearch: Ye, tag: Je, text: Ie, url: _ };
-var et = { ...X, link: d(/^!?\[(label)\]\((.*?)\)/).replace("label", q).getRegex(), reflink: d(/^!?\[(label)\]\s*\[([^\]]*)\]/).replace("label", q).getRegex() };
-var N = { ...X, emStrongRDelimAst: Ne, emStrongLDelim: Ze, delLDelim: je, delRDelim: Ue, url: d(/^((?:protocol):\/\/|www\.)(?:[a-zA-Z0-9\-]+\.?)+[^\s<]*|^email/).replace("protocol", se).replace("email", /[A-Za-z0-9._+-]+(@)[a-zA-Z0-9-_]+(?:\.[a-zA-Z0-9-_]*[a-zA-Z0-9])+(?![-_])/).getRegex(), _backpedal: /(?:[^?!.,:;*_'"~()&]+|\([^)]*\)|&(?![a-zA-Z0-9]+;$)|[?!.,:;*_'"~)]+(?!$))+/, del: /^(~~?)(?=[^\s~])((?:\\[\s\S]|[^\\])*?(?:\\[\s\S]|[^\s~\\]))\1(?=[^~]|$)/, text: d(/^([`~]+|[^`~])(?:(?= {2,}\n)|(?=[a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-]+@)|[\s\S]*?(?:(?=[\\<!\[`*~_]|\b_|protocol:\/\/|www\.|$)|[^ ](?= {2,}\n)|[^a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-](?=[a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-]+@)))/).replace("protocol", se).getRegex() };
-var tt = { ...N, br: d(le).replace("{2,}", "*").getRegex(), text: d(N.text).replace("\\b_", "\\b_| {2,}\\n").replace(/\{2,\}/g, "*").getRegex() };
-var B = { normal: K, gfm: ze, pedantic: Ee };
-var A = { normal: X, gfm: N, breaks: tt, pedantic: et };
-var nt = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
-var de = (l) => nt[l];
-function O(l, e) {
-  if (e) {
-    if (m.escapeTest.test(l))
-      return l.replace(m.escapeReplace, de);
-  } else if (m.escapeTestNoEncode.test(l))
-    return l.replace(m.escapeReplaceNoEncode, de);
-  return l;
-}
-function J(l) {
-  try {
-    l = encodeURI(l).replace(m.percentDecode, "%");
-  } catch {
-    return null;
-  }
-  return l;
-}
-function V(l, e) {
-  let t = l.replace(m.findPipe, (r, i, o) => {
-    let u = false, a = i;
-    for (;--a >= 0 && o[a] === "\\"; )
-      u = !u;
-    return u ? "|" : " |";
-  }), n = t.split(m.splitPipe), s = 0;
-  if (n[0].trim() || n.shift(), n.length > 0 && !n.at(-1)?.trim() && n.pop(), e)
-    if (n.length > e)
-      n.splice(e);
-    else
-      for (;n.length < e; )
-        n.push("");
-  for (;s < n.length; s++)
-    n[s] = n[s].trim().replace(m.slashPipe, "|");
-  return n;
-}
-function $(l, e, t) {
-  let n = l.length;
-  if (n === 0)
-    return "";
-  let s = 0;
-  for (;s < n; ) {
-    let r = l.charAt(n - s - 1);
-    if (r === e && !t)
-      s++;
-    else if (r !== e && t)
-      s++;
-    else
-      break;
-  }
-  return l.slice(0, n - s);
-}
-function Y(l) {
-  let e = l.split(`
-`), t = e.length - 1;
-  for (;t >= 0 && m.blankLine.test(e[t]); )
-    t--;
-  return e.length - t <= 2 ? l : e.slice(0, t + 1).join(`
-`);
-}
-function ge(l, e) {
-  if (l.indexOf(e[1]) === -1)
-    return -1;
-  let t = 0;
-  for (let n = 0;n < l.length; n++)
-    if (l[n] === "\\")
-      n++;
-    else if (l[n] === e[0])
-      t++;
-    else if (l[n] === e[1] && (t--, t < 0))
-      return n;
-  return t > 0 ? -2 : -1;
-}
-function fe(l, e = 0) {
-  let t = e, n = "";
-  for (let s of l)
-    if (s === "\t") {
-      let r = 4 - t % 4;
-      n += " ".repeat(r), t += r;
-    } else
-      n += s, t++;
-  return n;
-}
-function me(l, e, t, n, s) {
-  let r = e.href, i = e.title || null, o = l[1].replace(s.other.outputLinkReplace, "$1");
-  n.state.inLink = true;
-  let u = { type: l[0].charAt(0) === "!" ? "image" : "link", raw: t, href: r, title: i, text: o, tokens: n.inlineTokens(o) };
-  return n.state.inLink = false, u;
-}
-function rt(l, e, t) {
-  let n = l.match(t.other.indentCodeCompensation);
-  if (n === null)
-    return e;
-  let s = n[1];
-  return e.split(`
-`).map((r) => {
-    let i = r.match(t.other.beginningSpace);
-    if (i === null)
-      return r;
-    let [o] = i;
-    return o.length >= s.length ? r.slice(s.length) : r;
-  }).join(`
-`);
-}
-var w = class {
-  options;
-  rules;
-  lexer;
-  constructor(e) {
-    this.options = e || T;
-  }
-  space(e) {
-    let t = this.rules.block.newline.exec(e);
-    if (t && t[0].length > 0)
-      return { type: "space", raw: t[0] };
-  }
-  code(e) {
-    let t = this.rules.block.code.exec(e);
-    if (t) {
-      let n = this.options.pedantic ? t[0] : Y(t[0]), s = n.replace(this.rules.other.codeRemoveIndent, "");
-      return { type: "code", raw: n, codeBlockStyle: "indented", text: s };
-    }
-  }
-  fences(e) {
-    let t = this.rules.block.fences.exec(e);
-    if (t) {
-      let n = t[0], s = rt(n, t[3] || "", this.rules);
-      return { type: "code", raw: n, lang: t[2] ? t[2].trim().replace(this.rules.inline.anyPunctuation, "$1") : t[2], text: s };
-    }
-  }
-  heading(e) {
-    let t = this.rules.block.heading.exec(e);
-    if (t) {
-      let n = t[2].trim();
-      if (this.rules.other.endingHash.test(n)) {
-        let s = $(n, "#");
-        (this.options.pedantic || !s || this.rules.other.endingSpaceChar.test(s)) && (n = s.trim());
-      }
-      return { type: "heading", raw: $(t[0], `
-`), depth: t[1].length, text: n, tokens: this.lexer.inline(n) };
-    }
-  }
-  hr(e) {
-    let t = this.rules.block.hr.exec(e);
-    if (t)
-      return { type: "hr", raw: $(t[0], `
-`) };
-  }
-  blockquote(e) {
-    let t = this.rules.block.blockquote.exec(e);
-    if (t) {
-      let n = $(t[0], `
-`).split(`
-`), s = "", r = "", i = [];
-      for (;n.length > 0; ) {
-        let o = false, u = [], a;
-        for (a = 0;a < n.length; a++)
-          if (this.rules.other.blockquoteStart.test(n[a]))
-            u.push(n[a]), o = true;
-          else if (!o)
-            u.push(n[a]);
-          else
-            break;
-        n = n.slice(a);
-        let c = u.join(`
-`), p = c.replace(this.rules.other.blockquoteSetextReplace, `
-    $1`).replace(this.rules.other.blockquoteSetextReplace2, "");
-        s = s ? `${s}
-${c}` : c, r = r ? `${r}
-${p}` : p;
-        let k = this.lexer.state.top;
-        if (this.lexer.state.top = true, this.lexer.blockTokens(p, i, true), this.lexer.state.top = k, n.length === 0)
-          break;
-        let h = i.at(-1);
-        if (h?.type === "code")
-          break;
-        if (h?.type === "blockquote") {
-          let R = h, f = R.raw + `
-` + n.join(`
-`), S = this.blockquote(f);
-          i[i.length - 1] = S, s = s.substring(0, s.length - R.raw.length) + S.raw, r = r.substring(0, r.length - R.text.length) + S.text;
-          break;
-        } else if (h?.type === "list") {
-          let R = h, f = R.raw + `
-` + n.join(`
-`), S = this.list(f);
-          i[i.length - 1] = S, s = s.substring(0, s.length - h.raw.length) + S.raw, r = r.substring(0, r.length - R.raw.length) + S.raw, n = f.substring(i.at(-1).raw.length).split(`
-`);
-          continue;
-        }
-      }
-      return { type: "blockquote", raw: s, tokens: i, text: r };
-    }
-  }
-  list(e) {
-    let t = this.rules.block.list.exec(e);
-    if (t) {
-      let n = t[1].trim(), s = n.length > 1, r = { type: "list", raw: "", ordered: s, start: s ? +n.slice(0, -1) : "", loose: false, items: [] };
-      n = s ? `\\d{1,9}\\${n.slice(-1)}` : `\\${n}`, this.options.pedantic && (n = s ? n : "[*+-]");
-      let i = this.rules.other.listItemRegex(n), o = false;
-      for (;e; ) {
-        let a = false, c = "", p = "";
-        if (!(t = i.exec(e)) || this.rules.block.hr.test(e))
-          break;
-        c = t[0], e = e.substring(c.length);
-        let k = fe(t[2].split(`
-`, 1)[0], t[1].length), h = e.split(`
-`, 1)[0], R = !k.trim(), f = 0;
-        if (this.options.pedantic ? (f = 2, p = k.trimStart()) : R ? f = t[1].length + 1 : (f = k.search(this.rules.other.nonSpaceChar), f = f > 4 ? 1 : f, p = k.slice(f), f += t[1].length), R && this.rules.other.blankLine.test(h) && (c += h + `
-`, e = e.substring(h.length + 1), a = true), !a) {
-          let S = this.rules.other.nextBulletRegex(f), ee = this.rules.other.hrRegex(f), te = this.rules.other.fencesBeginRegex(f), ne = this.rules.other.headingBeginRegex(f), xe = this.rules.other.htmlBeginRegex(f), be = this.rules.other.blockquoteBeginRegex(f);
-          for (;e; ) {
-            let Z = e.split(`
-`, 1)[0], C;
-            if (h = Z, this.options.pedantic ? (h = h.replace(this.rules.other.listReplaceNesting, "  "), C = h) : C = h.replace(this.rules.other.tabCharGlobal, "    "), te.test(h) || ne.test(h) || xe.test(h) || be.test(h) || S.test(h) || ee.test(h))
-              break;
-            if (C.search(this.rules.other.nonSpaceChar) >= f || !h.trim())
-              p += `
-` + C.slice(f);
-            else {
-              if (R || k.replace(this.rules.other.tabCharGlobal, "    ").search(this.rules.other.nonSpaceChar) >= 4 || te.test(k) || ne.test(k) || ee.test(k))
-                break;
-              p += `
-` + h;
-            }
-            R = !h.trim(), c += Z + `
-`, e = e.substring(Z.length + 1), k = C.slice(f);
-          }
-        }
-        r.loose || (o ? r.loose = true : this.rules.other.doubleBlankLine.test(c) && (o = true)), r.items.push({ type: "list_item", raw: c, task: !!this.options.gfm && this.rules.other.listIsTask.test(p), loose: false, text: p, tokens: [] }), r.raw += c;
-      }
-      let u = r.items.at(-1);
-      if (u)
-        u.raw = u.raw.trimEnd(), u.text = u.text.trimEnd();
-      else
-        return;
-      r.raw = r.raw.trimEnd();
-      for (let a of r.items) {
-        this.lexer.state.top = false, a.tokens = this.lexer.blockTokens(a.text, []);
-        let c = a.tokens[0];
-        if (a.task && (c?.type === "text" || c?.type === "paragraph")) {
-          a.text = a.text.replace(this.rules.other.listReplaceTask, ""), c.raw = c.raw.replace(this.rules.other.listReplaceTask, ""), c.text = c.text.replace(this.rules.other.listReplaceTask, "");
-          for (let k = this.lexer.inlineQueue.length - 1;k >= 0; k--)
-            if (this.rules.other.listIsTask.test(this.lexer.inlineQueue[k].src)) {
-              this.lexer.inlineQueue[k].src = this.lexer.inlineQueue[k].src.replace(this.rules.other.listReplaceTask, "");
-              break;
-            }
-          let p = this.rules.other.listTaskCheckbox.exec(a.raw);
-          if (p) {
-            let k = { type: "checkbox", raw: p[0] + " ", checked: p[0] !== "[ ]" };
-            a.checked = k.checked, r.loose ? a.tokens[0] && ["paragraph", "text"].includes(a.tokens[0].type) && "tokens" in a.tokens[0] && a.tokens[0].tokens ? (a.tokens[0].raw = k.raw + a.tokens[0].raw, a.tokens[0].text = k.raw + a.tokens[0].text, a.tokens[0].tokens.unshift(k)) : a.tokens.unshift({ type: "paragraph", raw: k.raw, text: k.raw, tokens: [k] }) : a.tokens.unshift(k);
-          }
-        } else
-          a.task && (a.task = false);
-        if (!r.loose) {
-          let p = a.tokens.filter((h) => h.type === "space"), k = p.length > 0 && p.some((h) => this.rules.other.anyLine.test(h.raw));
-          r.loose = k;
-        }
-      }
-      if (r.loose)
-        for (let a of r.items) {
-          a.loose = true;
-          for (let c of a.tokens)
-            c.type === "text" && (c.type = "paragraph");
-        }
-      return r;
-    }
-  }
-  html(e) {
-    let t = this.rules.block.html.exec(e);
-    if (t) {
-      let n = Y(t[0]);
-      return { type: "html", block: true, raw: n, pre: t[1] === "pre" || t[1] === "script" || t[1] === "style", text: n };
-    }
-  }
-  def(e) {
-    let t = this.rules.block.def.exec(e);
-    if (t) {
-      let n = t[1].toLowerCase().replace(this.rules.other.multipleSpaceGlobal, " "), s = t[2] ? t[2].replace(this.rules.other.hrefBrackets, "$1").replace(this.rules.inline.anyPunctuation, "$1") : "", r = t[3] ? t[3].substring(1, t[3].length - 1).replace(this.rules.inline.anyPunctuation, "$1") : t[3];
-      return { type: "def", tag: n, raw: $(t[0], `
-`), href: s, title: r };
-    }
-  }
-  table(e) {
-    let t = this.rules.block.table.exec(e);
-    if (!t || !this.rules.other.tableDelimiter.test(t[2]))
-      return;
-    let n = V(t[1]), s = t[2].replace(this.rules.other.tableAlignChars, "").split("|"), r = t[3]?.trim() ? t[3].replace(this.rules.other.tableRowBlankLine, "").split(`
-`) : [], i = { type: "table", raw: $(t[0], `
-`), header: [], align: [], rows: [] };
-    if (n.length === s.length) {
-      for (let o of s)
-        this.rules.other.tableAlignRight.test(o) ? i.align.push("right") : this.rules.other.tableAlignCenter.test(o) ? i.align.push("center") : this.rules.other.tableAlignLeft.test(o) ? i.align.push("left") : i.align.push(null);
-      for (let o = 0;o < n.length; o++)
-        i.header.push({ text: n[o], tokens: this.lexer.inline(n[o]), header: true, align: i.align[o] });
-      for (let o of r)
-        i.rows.push(V(o, i.header.length).map((u, a) => ({ text: u, tokens: this.lexer.inline(u), header: false, align: i.align[a] })));
-      return i;
-    }
-  }
-  lheading(e) {
-    let t = this.rules.block.lheading.exec(e);
-    if (t) {
-      let n = t[1].trim();
-      return { type: "heading", raw: $(t[0], `
-`), depth: t[2].charAt(0) === "=" ? 1 : 2, text: n, tokens: this.lexer.inline(n) };
-    }
-  }
-  paragraph(e) {
-    let t = this.rules.block.paragraph.exec(e);
-    if (t) {
-      let n = t[1].charAt(t[1].length - 1) === `
-` ? t[1].slice(0, -1) : t[1];
-      return { type: "paragraph", raw: t[0], text: n, tokens: this.lexer.inline(n) };
-    }
-  }
-  text(e) {
-    let t = this.rules.block.text.exec(e);
-    if (t)
-      return { type: "text", raw: t[0], text: t[0], tokens: this.lexer.inline(t[0]) };
-  }
-  escape(e) {
-    let t = this.rules.inline.escape.exec(e);
-    if (t)
-      return { type: "escape", raw: t[0], text: t[1] };
-  }
-  tag(e) {
-    let t = this.rules.inline.tag.exec(e);
-    if (t)
-      return !this.lexer.state.inLink && this.rules.other.startATag.test(t[0]) ? this.lexer.state.inLink = true : this.lexer.state.inLink && this.rules.other.endATag.test(t[0]) && (this.lexer.state.inLink = false), !this.lexer.state.inRawBlock && this.rules.other.startPreScriptTag.test(t[0]) ? this.lexer.state.inRawBlock = true : this.lexer.state.inRawBlock && this.rules.other.endPreScriptTag.test(t[0]) && (this.lexer.state.inRawBlock = false), { type: "html", raw: t[0], inLink: this.lexer.state.inLink, inRawBlock: this.lexer.state.inRawBlock, block: false, text: t[0] };
-  }
-  link(e) {
-    let t = this.rules.inline.link.exec(e);
-    if (t) {
-      let n = t[2].trim();
-      if (!this.options.pedantic && this.rules.other.startAngleBracket.test(n)) {
-        if (!this.rules.other.endAngleBracket.test(n))
-          return;
-        let i = $(n.slice(0, -1), "\\");
-        if ((n.length - i.length) % 2 === 0)
-          return;
-      } else {
-        let i = ge(t[2], "()");
-        if (i === -2)
-          return;
-        if (i > -1) {
-          let u = (t[0].indexOf("!") === 0 ? 5 : 4) + t[1].length + i;
-          t[2] = t[2].substring(0, i), t[0] = t[0].substring(0, u).trim(), t[3] = "";
-        }
-      }
-      let s = t[2], r = "";
-      if (this.options.pedantic) {
-        let i = this.rules.other.pedanticHrefTitle.exec(s);
-        i && (s = i[1], r = i[3]);
-      } else
-        r = t[3] ? t[3].slice(1, -1) : "";
-      return s = s.trim(), this.rules.other.startAngleBracket.test(s) && (this.options.pedantic && !this.rules.other.endAngleBracket.test(n) ? s = s.slice(1) : s = s.slice(1, -1)), me(t, { href: s && s.replace(this.rules.inline.anyPunctuation, "$1"), title: r && r.replace(this.rules.inline.anyPunctuation, "$1") }, t[0], this.lexer, this.rules);
-    }
-  }
-  reflink(e, t) {
-    let n;
-    if ((n = this.rules.inline.reflink.exec(e)) || (n = this.rules.inline.nolink.exec(e))) {
-      let s = (n[2] || n[1]).replace(this.rules.other.multipleSpaceGlobal, " "), r = t[s.toLowerCase()];
-      if (!r) {
-        let i = n[0].charAt(0);
-        return { type: "text", raw: i, text: i };
-      }
-      return me(n, r, n[0], this.lexer, this.rules);
-    }
-  }
-  emStrong(e, t, n = "") {
-    let s = this.rules.inline.emStrongLDelim.exec(e);
-    if (!s || !s[1] && !s[2] && !s[3] && !s[4] || s[4] && n.match(this.rules.other.unicodeAlphaNumeric))
-      return;
-    if (!(s[1] || s[3] || "") || !n || this.rules.inline.punctuation.exec(n)) {
-      let i = [...s[0]].length - 1, o, u, a = i, c = 0, p = s[0][0] === "*" ? this.rules.inline.emStrongRDelimAst : this.rules.inline.emStrongRDelimUnd;
-      for (p.lastIndex = 0, t = t.slice(-1 * e.length + i);(s = p.exec(t)) !== null; ) {
-        if (o = s[1] || s[2] || s[3] || s[4] || s[5] || s[6], !o)
-          continue;
-        if (u = [...o].length, s[3] || s[4]) {
-          a += u;
-          continue;
-        } else if ((s[5] || s[6]) && i % 3 && !((i + u) % 3)) {
-          c += u;
-          continue;
-        }
-        if (a -= u, a > 0)
-          continue;
-        u = Math.min(u, u + a + c);
-        let k = [...s[0]][0].length, h = e.slice(0, i + s.index + k + u);
-        if (Math.min(i, u) % 2) {
-          let f = h.slice(1, -1);
-          return { type: "em", raw: h, text: f, tokens: this.lexer.inlineTokens(f) };
-        }
-        let R = h.slice(2, -2);
-        return { type: "strong", raw: h, text: R, tokens: this.lexer.inlineTokens(R) };
-      }
-    }
-  }
-  codespan(e) {
-    let t = this.rules.inline.code.exec(e);
-    if (t) {
-      let n = t[2].replace(this.rules.other.newLineCharGlobal, " "), s = this.rules.other.nonSpaceChar.test(n), r = this.rules.other.startingSpaceChar.test(n) && this.rules.other.endingSpaceChar.test(n);
-      return s && r && (n = n.substring(1, n.length - 1)), { type: "codespan", raw: t[0], text: n };
-    }
-  }
-  br(e) {
-    let t = this.rules.inline.br.exec(e);
-    if (t)
-      return { type: "br", raw: t[0] };
-  }
-  del(e, t, n = "") {
-    let s = this.rules.inline.delLDelim.exec(e);
-    if (!s)
-      return;
-    if (!(s[1] || "") || !n || this.rules.inline.punctuation.exec(n)) {
-      let i = [...s[0]].length - 1, o, u, a = i, c = this.rules.inline.delRDelim;
-      for (c.lastIndex = 0, t = t.slice(-1 * e.length + i);(s = c.exec(t)) !== null; ) {
-        if (o = s[1] || s[2] || s[3] || s[4] || s[5] || s[6], !o || (u = [...o].length, u !== i))
-          continue;
-        if (s[3] || s[4]) {
-          a += u;
-          continue;
-        }
-        if (a -= u, a > 0)
-          continue;
-        u = Math.min(u, u + a);
-        let p = [...s[0]][0].length, k = e.slice(0, i + s.index + p + u), h = k.slice(i, -i);
-        return { type: "del", raw: k, text: h, tokens: this.lexer.inlineTokens(h) };
-      }
-    }
-  }
-  autolink(e) {
-    let t = this.rules.inline.autolink.exec(e);
-    if (t) {
-      let n, s;
-      return t[2] === "@" ? (n = t[1], s = "mailto:" + n) : (n = t[1], s = n), { type: "link", raw: t[0], text: n, href: s, tokens: [{ type: "text", raw: n, text: n }] };
-    }
-  }
-  url(e) {
-    let t;
-    if (t = this.rules.inline.url.exec(e)) {
-      let n, s;
-      if (t[2] === "@")
-        n = t[0], s = "mailto:" + n;
-      else {
-        let r;
-        do
-          r = t[0], t[0] = this.rules.inline._backpedal.exec(t[0])?.[0] ?? "";
-        while (r !== t[0]);
-        n = t[0], t[1] === "www." ? s = "http://" + t[0] : s = t[0];
-      }
-      return { type: "link", raw: t[0], text: n, href: s, tokens: [{ type: "text", raw: n, text: n }] };
-    }
-  }
-  inlineText(e) {
-    let t = this.rules.inline.text.exec(e);
-    if (t) {
-      let n = this.lexer.state.inRawBlock;
-      return { type: "text", raw: t[0], text: t[0], escaped: n };
-    }
-  }
-};
-var x = class l {
-  tokens;
-  options;
-  state;
-  inlineQueue;
-  tokenizer;
-  constructor(e) {
-    this.tokens = [], this.tokens.links = Object.create(null), this.options = e || T, this.options.tokenizer = this.options.tokenizer || new w, this.tokenizer = this.options.tokenizer, this.tokenizer.options = this.options, this.tokenizer.lexer = this, this.inlineQueue = [], this.state = { inLink: false, inRawBlock: false, top: true };
-    let t = { other: m, block: B.normal, inline: A.normal };
-    this.options.pedantic ? (t.block = B.pedantic, t.inline = A.pedantic) : this.options.gfm && (t.block = B.gfm, this.options.breaks ? t.inline = A.breaks : t.inline = A.gfm), this.tokenizer.rules = t;
-  }
-  static get rules() {
-    return { block: B, inline: A };
-  }
-  static lex(e, t) {
-    return new l(t).lex(e);
-  }
-  static lexInline(e, t) {
-    return new l(t).inlineTokens(e);
-  }
-  lex(e) {
-    e = e.replace(m.carriageReturn, `
-`), this.blockTokens(e, this.tokens);
-    for (let t = 0;t < this.inlineQueue.length; t++) {
-      let n = this.inlineQueue[t];
-      this.inlineTokens(n.src, n.tokens);
-    }
-    return this.inlineQueue = [], this.tokens;
-  }
-  blockTokens(e, t = [], n = false) {
-    this.tokenizer.lexer = this, this.options.pedantic && (e = e.replace(m.tabCharGlobal, "    ").replace(m.spaceLine, ""));
-    let s = 1 / 0;
-    for (;e; ) {
-      if (e.length < s)
-        s = e.length;
-      else {
-        this.infiniteLoopError(e.charCodeAt(0));
-        break;
-      }
-      let r;
-      if (this.options.extensions?.block?.some((o) => (r = o.call({ lexer: this }, e, t)) ? (e = e.substring(r.raw.length), t.push(r), true) : false))
-        continue;
-      if (r = this.tokenizer.space(e)) {
-        e = e.substring(r.raw.length);
-        let o = t.at(-1);
-        r.raw.length === 1 && o !== undefined ? o.raw += `
-` : t.push(r);
-        continue;
-      }
-      if (r = this.tokenizer.code(e)) {
-        e = e.substring(r.raw.length);
-        let o = t.at(-1);
-        o?.type === "paragraph" || o?.type === "text" ? (o.raw += (o.raw.endsWith(`
-`) ? "" : `
-`) + r.raw, o.text += `
-` + r.text, this.inlineQueue.at(-1).src = o.text) : t.push(r);
-        continue;
-      }
-      if (r = this.tokenizer.fences(e)) {
-        e = e.substring(r.raw.length), t.push(r);
-        continue;
-      }
-      if (r = this.tokenizer.heading(e)) {
-        e = e.substring(r.raw.length), t.push(r);
-        continue;
-      }
-      if (r = this.tokenizer.hr(e)) {
-        e = e.substring(r.raw.length), t.push(r);
-        continue;
-      }
-      if (r = this.tokenizer.blockquote(e)) {
-        e = e.substring(r.raw.length), t.push(r);
-        continue;
-      }
-      if (r = this.tokenizer.list(e)) {
-        e = e.substring(r.raw.length), t.push(r);
-        continue;
-      }
-      if (r = this.tokenizer.html(e)) {
-        e = e.substring(r.raw.length), t.push(r);
-        continue;
-      }
-      if (r = this.tokenizer.def(e)) {
-        e = e.substring(r.raw.length);
-        let o = t.at(-1);
-        o?.type === "paragraph" || o?.type === "text" ? (o.raw += (o.raw.endsWith(`
-`) ? "" : `
-`) + r.raw, o.text += `
-` + r.raw, this.inlineQueue.at(-1).src = o.text) : this.tokens.links[r.tag] || (this.tokens.links[r.tag] = { href: r.href, title: r.title }, t.push(r));
-        continue;
-      }
-      if (r = this.tokenizer.table(e)) {
-        e = e.substring(r.raw.length), t.push(r);
-        continue;
-      }
-      if (r = this.tokenizer.lheading(e)) {
-        e = e.substring(r.raw.length), t.push(r);
-        continue;
-      }
-      let i = e;
-      if (this.options.extensions?.startBlock) {
-        let o = 1 / 0, u = e.slice(1), a;
-        this.options.extensions.startBlock.forEach((c) => {
-          a = c.call({ lexer: this }, u), typeof a == "number" && a >= 0 && (o = Math.min(o, a));
-        }), o < 1 / 0 && o >= 0 && (i = e.substring(0, o + 1));
-      }
-      if (this.state.top && (r = this.tokenizer.paragraph(i))) {
-        let o = t.at(-1);
-        n && o?.type === "paragraph" ? (o.raw += (o.raw.endsWith(`
-`) ? "" : `
-`) + r.raw, o.text += `
-` + r.text, this.inlineQueue.pop(), this.inlineQueue.at(-1).src = o.text) : t.push(r), n = i.length !== e.length, e = e.substring(r.raw.length);
-        continue;
-      }
-      if (r = this.tokenizer.text(e)) {
-        e = e.substring(r.raw.length);
-        let o = t.at(-1);
-        o?.type === "text" ? (o.raw += (o.raw.endsWith(`
-`) ? "" : `
-`) + r.raw, o.text += `
-` + r.text, this.inlineQueue.pop(), this.inlineQueue.at(-1).src = o.text) : t.push(r);
-        continue;
-      }
-      if (e) {
-        this.infiniteLoopError(e.charCodeAt(0));
-        break;
-      }
-    }
-    return this.state.top = true, t;
-  }
-  inline(e, t = []) {
-    return this.inlineQueue.push({ src: e, tokens: t }), t;
-  }
-  inlineTokens(e, t = []) {
-    this.tokenizer.lexer = this;
-    let n = e, s = null;
-    if (this.tokens.links) {
-      let a = Object.keys(this.tokens.links);
-      if (a.length > 0)
-        for (;(s = this.tokenizer.rules.inline.reflinkSearch.exec(n)) !== null; )
-          a.includes(s[0].slice(s[0].lastIndexOf("[") + 1, -1)) && (n = n.slice(0, s.index) + "[" + "a".repeat(s[0].length - 2) + "]" + n.slice(this.tokenizer.rules.inline.reflinkSearch.lastIndex));
-    }
-    for (;(s = this.tokenizer.rules.inline.anyPunctuation.exec(n)) !== null; )
-      n = n.slice(0, s.index) + "++" + n.slice(this.tokenizer.rules.inline.anyPunctuation.lastIndex);
-    let r;
-    for (;(s = this.tokenizer.rules.inline.blockSkip.exec(n)) !== null; )
-      r = s[2] ? s[2].length : 0, n = n.slice(0, s.index + r) + "[" + "a".repeat(s[0].length - r - 2) + "]" + n.slice(this.tokenizer.rules.inline.blockSkip.lastIndex);
-    n = this.options.hooks?.emStrongMask?.call({ lexer: this }, n) ?? n;
-    let i = false, o = "", u = 1 / 0;
-    for (;e; ) {
-      if (e.length < u)
-        u = e.length;
-      else {
-        this.infiniteLoopError(e.charCodeAt(0));
-        break;
-      }
-      i || (o = ""), i = false;
-      let a;
-      if (this.options.extensions?.inline?.some((p) => (a = p.call({ lexer: this }, e, t)) ? (e = e.substring(a.raw.length), t.push(a), true) : false))
-        continue;
-      if (a = this.tokenizer.escape(e)) {
-        e = e.substring(a.raw.length), t.push(a);
-        continue;
-      }
-      if (a = this.tokenizer.tag(e)) {
-        e = e.substring(a.raw.length), t.push(a);
-        continue;
-      }
-      if (a = this.tokenizer.link(e)) {
-        e = e.substring(a.raw.length), t.push(a);
-        continue;
-      }
-      if (a = this.tokenizer.reflink(e, this.tokens.links)) {
-        e = e.substring(a.raw.length);
-        let p = t.at(-1);
-        a.type === "text" && p?.type === "text" ? (p.raw += a.raw, p.text += a.text) : t.push(a);
-        continue;
-      }
-      if (a = this.tokenizer.emStrong(e, n, o)) {
-        e = e.substring(a.raw.length), t.push(a);
-        continue;
-      }
-      if (a = this.tokenizer.codespan(e)) {
-        e = e.substring(a.raw.length), t.push(a);
-        continue;
-      }
-      if (a = this.tokenizer.br(e)) {
-        e = e.substring(a.raw.length), t.push(a);
-        continue;
-      }
-      if (a = this.tokenizer.del(e, n, o)) {
-        e = e.substring(a.raw.length), t.push(a);
-        continue;
-      }
-      if (a = this.tokenizer.autolink(e)) {
-        e = e.substring(a.raw.length), t.push(a);
-        continue;
-      }
-      if (!this.state.inLink && (a = this.tokenizer.url(e))) {
-        e = e.substring(a.raw.length), t.push(a);
-        continue;
-      }
-      let c = e;
-      if (this.options.extensions?.startInline) {
-        let p = 1 / 0, k = e.slice(1), h;
-        this.options.extensions.startInline.forEach((R) => {
-          h = R.call({ lexer: this }, k), typeof h == "number" && h >= 0 && (p = Math.min(p, h));
-        }), p < 1 / 0 && p >= 0 && (c = e.substring(0, p + 1));
-      }
-      if (a = this.tokenizer.inlineText(c)) {
-        e = e.substring(a.raw.length), a.raw.slice(-1) !== "_" && (o = a.raw.slice(-1)), i = true;
-        let p = t.at(-1);
-        p?.type === "text" ? (p.raw += a.raw, p.text += a.text) : t.push(a);
-        continue;
-      }
-      if (e) {
-        this.infiniteLoopError(e.charCodeAt(0));
-        break;
-      }
-    }
-    return t;
-  }
-  infiniteLoopError(e) {
-    let t = "Infinite loop on byte: " + e;
-    if (this.options.silent)
-      console.error(t);
-    else
-      throw new Error(t);
-  }
-};
-var y = class {
-  options;
-  parser;
-  constructor(e) {
-    this.options = e || T;
-  }
-  space(e) {
-    return "";
-  }
-  code({ text: e, lang: t, escaped: n }) {
-    let s = (t || "").match(m.notSpaceStart)?.[0], r = e.replace(m.endingNewline, "") + `
-`;
-    return s ? '<pre><code class="language-' + O(s) + '">' + (n ? r : O(r, true)) + `</code></pre>
-` : "<pre><code>" + (n ? r : O(r, true)) + `</code></pre>
-`;
-  }
-  blockquote({ tokens: e }) {
-    return `<blockquote>
-${this.parser.parse(e)}</blockquote>
-`;
-  }
-  html({ text: e }) {
-    return e;
-  }
-  def(e) {
-    return "";
-  }
-  heading({ tokens: e, depth: t }) {
-    return `<h${t}>${this.parser.parseInline(e)}</h${t}>
-`;
-  }
-  hr(e) {
-    return `<hr>
-`;
-  }
-  list(e) {
-    let { ordered: t, start: n } = e, s = "";
-    for (let o = 0;o < e.items.length; o++) {
-      let u = e.items[o];
-      s += this.listitem(u);
-    }
-    let r = t ? "ol" : "ul", i = t && n !== 1 ? ' start="' + n + '"' : "";
-    return "<" + r + i + `>
-` + s + "</" + r + `>
-`;
-  }
-  listitem(e) {
-    return `<li>${this.parser.parse(e.tokens)}</li>
-`;
-  }
-  checkbox({ checked: e }) {
-    return "<input " + (e ? 'checked="" ' : "") + 'disabled="" type="checkbox"> ';
-  }
-  paragraph({ tokens: e }) {
-    return `<p>${this.parser.parseInline(e)}</p>
-`;
-  }
-  table(e) {
-    let t = "", n = "";
-    for (let r = 0;r < e.header.length; r++)
-      n += this.tablecell(e.header[r]);
-    t += this.tablerow({ text: n });
-    let s = "";
-    for (let r = 0;r < e.rows.length; r++) {
-      let i = e.rows[r];
-      n = "";
-      for (let o = 0;o < i.length; o++)
-        n += this.tablecell(i[o]);
-      s += this.tablerow({ text: n });
-    }
-    return s && (s = `<tbody>${s}</tbody>`), `<table>
-<thead>
-` + t + `</thead>
-` + s + `</table>
-`;
-  }
-  tablerow({ text: e }) {
-    return `<tr>
-${e}</tr>
-`;
-  }
-  tablecell(e) {
-    let t = this.parser.parseInline(e.tokens), n = e.header ? "th" : "td";
-    return (e.align ? `<${n} align="${e.align}">` : `<${n}>`) + t + `</${n}>
-`;
-  }
-  strong({ tokens: e }) {
-    return `<strong>${this.parser.parseInline(e)}</strong>`;
-  }
-  em({ tokens: e }) {
-    return `<em>${this.parser.parseInline(e)}</em>`;
-  }
-  codespan({ text: e }) {
-    return `<code>${O(e, true)}</code>`;
-  }
-  br(e) {
-    return "<br>";
-  }
-  del({ tokens: e }) {
-    return `<del>${this.parser.parseInline(e)}</del>`;
-  }
-  link({ href: e, title: t, tokens: n }) {
-    let s = this.parser.parseInline(n), r = J(e);
-    if (r === null)
-      return s;
-    e = r;
-    let i = '<a href="' + e + '"';
-    return t && (i += ' title="' + O(t) + '"'), i += ">" + s + "</a>", i;
-  }
-  image({ href: e, title: t, text: n, tokens: s }) {
-    s && (n = this.parser.parseInline(s, this.parser.textRenderer));
-    let r = J(e);
-    if (r === null)
-      return O(n);
-    e = r;
-    let i = `<img src="${e}" alt="${O(n)}"`;
-    return t && (i += ` title="${O(t)}"`), i += ">", i;
-  }
-  text(e) {
-    return "tokens" in e && e.tokens ? this.parser.parseInline(e.tokens) : ("escaped" in e) && e.escaped ? e.text : O(e.text);
-  }
-};
-var L = class {
-  strong({ text: e }) {
-    return e;
-  }
-  em({ text: e }) {
-    return e;
-  }
-  codespan({ text: e }) {
-    return e;
-  }
-  del({ text: e }) {
-    return e;
-  }
-  html({ text: e }) {
-    return e;
-  }
-  text({ text: e }) {
-    return e;
-  }
-  link({ text: e }) {
-    return "" + e;
-  }
-  image({ text: e }) {
-    return "" + e;
-  }
-  br() {
-    return "";
-  }
-  checkbox({ raw: e }) {
-    return e;
-  }
-};
-var b = class l2 {
-  options;
-  renderer;
-  textRenderer;
-  constructor(e) {
-    this.options = e || T, this.options.renderer = this.options.renderer || new y, this.renderer = this.options.renderer, this.renderer.options = this.options, this.renderer.parser = this, this.textRenderer = new L;
-  }
-  static parse(e, t) {
-    return new l2(t).parse(e);
-  }
-  static parseInline(e, t) {
-    return new l2(t).parseInline(e);
-  }
-  parse(e) {
-    this.renderer.parser = this;
-    let t = "";
-    for (let n = 0;n < e.length; n++) {
-      let s = e[n];
-      if (this.options.extensions?.renderers?.[s.type]) {
-        let i = s, o = this.options.extensions.renderers[i.type].call({ parser: this }, i);
-        if (o !== false || !["space", "hr", "heading", "code", "table", "blockquote", "list", "html", "def", "paragraph", "text"].includes(i.type)) {
-          t += o || "";
-          continue;
-        }
-      }
-      let r = s;
-      switch (r.type) {
-        case "space": {
-          t += this.renderer.space(r);
-          break;
-        }
-        case "hr": {
-          t += this.renderer.hr(r);
-          break;
-        }
-        case "heading": {
-          t += this.renderer.heading(r);
-          break;
-        }
-        case "code": {
-          t += this.renderer.code(r);
-          break;
-        }
-        case "table": {
-          t += this.renderer.table(r);
-          break;
-        }
-        case "blockquote": {
-          t += this.renderer.blockquote(r);
-          break;
-        }
-        case "list": {
-          t += this.renderer.list(r);
-          break;
-        }
-        case "checkbox": {
-          t += this.renderer.checkbox(r);
-          break;
-        }
-        case "html": {
-          t += this.renderer.html(r);
-          break;
-        }
-        case "def": {
-          t += this.renderer.def(r);
-          break;
-        }
-        case "paragraph": {
-          t += this.renderer.paragraph(r);
-          break;
-        }
-        case "text": {
-          t += this.renderer.text(r);
-          break;
-        }
-        default: {
-          let i = 'Token with "' + r.type + '" type was not found.';
-          if (this.options.silent)
-            return console.error(i), "";
-          throw new Error(i);
-        }
-      }
-    }
-    return t;
-  }
-  parseInline(e, t = this.renderer) {
-    this.renderer.parser = this;
-    let n = "";
-    for (let s = 0;s < e.length; s++) {
-      let r = e[s];
-      if (this.options.extensions?.renderers?.[r.type]) {
-        let o = this.options.extensions.renderers[r.type].call({ parser: this }, r);
-        if (o !== false || !["escape", "html", "link", "image", "strong", "em", "codespan", "br", "del", "text"].includes(r.type)) {
-          n += o || "";
-          continue;
-        }
-      }
-      let i = r;
-      switch (i.type) {
-        case "escape": {
-          n += t.text(i);
-          break;
-        }
-        case "html": {
-          n += t.html(i);
-          break;
-        }
-        case "link": {
-          n += t.link(i);
-          break;
-        }
-        case "image": {
-          n += t.image(i);
-          break;
-        }
-        case "checkbox": {
-          n += t.checkbox(i);
-          break;
-        }
-        case "strong": {
-          n += t.strong(i);
-          break;
-        }
-        case "em": {
-          n += t.em(i);
-          break;
-        }
-        case "codespan": {
-          n += t.codespan(i);
-          break;
-        }
-        case "br": {
-          n += t.br(i);
-          break;
-        }
-        case "del": {
-          n += t.del(i);
-          break;
-        }
-        case "text": {
-          n += t.text(i);
-          break;
-        }
-        default: {
-          let o = 'Token with "' + i.type + '" type was not found.';
-          if (this.options.silent)
-            return console.error(o), "";
-          throw new Error(o);
-        }
-      }
-    }
-    return n;
-  }
-};
-var P = class {
-  options;
-  block;
-  constructor(e) {
-    this.options = e || T;
-  }
-  static passThroughHooks = new Set(["preprocess", "postprocess", "processAllTokens", "emStrongMask"]);
-  static passThroughHooksRespectAsync = new Set(["preprocess", "postprocess", "processAllTokens"]);
-  preprocess(e) {
-    return e;
-  }
-  postprocess(e) {
-    return e;
-  }
-  processAllTokens(e) {
-    return e;
-  }
-  emStrongMask(e) {
-    return e;
-  }
-  provideLexer(e = this.block) {
-    return e ? x.lex : x.lexInline;
-  }
-  provideParser(e = this.block) {
-    return e ? b.parse : b.parseInline;
-  }
-};
-var D = class {
-  defaults = z2();
-  options = this.setOptions;
-  parse = this.parseMarkdown(true);
-  parseInline = this.parseMarkdown(false);
-  Parser = b;
-  Renderer = y;
-  TextRenderer = L;
-  Lexer = x;
-  Tokenizer = w;
-  Hooks = P;
-  constructor(...e) {
-    this.use(...e);
-  }
-  walkTokens(e, t) {
-    let n = [];
-    for (let s of e)
-      switch (n = n.concat(t.call(this, s)), s.type) {
-        case "table": {
-          let r = s;
-          for (let i of r.header)
-            n = n.concat(this.walkTokens(i.tokens, t));
-          for (let i of r.rows)
-            for (let o of i)
-              n = n.concat(this.walkTokens(o.tokens, t));
-          break;
-        }
-        case "list": {
-          let r = s;
-          n = n.concat(this.walkTokens(r.items, t));
-          break;
-        }
-        default: {
-          let r = s;
-          this.defaults.extensions?.childTokens?.[r.type] ? this.defaults.extensions.childTokens[r.type].forEach((i) => {
-            let o = r[i].flat(1 / 0);
-            n = n.concat(this.walkTokens(o, t));
-          }) : r.tokens && (n = n.concat(this.walkTokens(r.tokens, t)));
-        }
-      }
-    return n;
-  }
-  use(...e) {
-    let t = this.defaults.extensions || { renderers: {}, childTokens: {} };
-    return e.forEach((n) => {
-      let s = { ...n };
-      if (s.async = this.defaults.async || s.async || false, n.extensions && (n.extensions.forEach((r) => {
-        if (!r.name)
-          throw new Error("extension name required");
-        if ("renderer" in r) {
-          let i = t.renderers[r.name];
-          i ? t.renderers[r.name] = function(...o) {
-            let u = r.renderer.apply(this, o);
-            return u === false && (u = i.apply(this, o)), u;
-          } : t.renderers[r.name] = r.renderer;
-        }
-        if ("tokenizer" in r) {
-          if (!r.level || r.level !== "block" && r.level !== "inline")
-            throw new Error("extension level must be 'block' or 'inline'");
-          let i = t[r.level];
-          i ? i.unshift(r.tokenizer) : t[r.level] = [r.tokenizer], r.start && (r.level === "block" ? t.startBlock ? t.startBlock.push(r.start) : t.startBlock = [r.start] : r.level === "inline" && (t.startInline ? t.startInline.push(r.start) : t.startInline = [r.start]));
-        }
-        "childTokens" in r && r.childTokens && (t.childTokens[r.name] = r.childTokens);
-      }), s.extensions = t), n.renderer) {
-        let r = this.defaults.renderer || new y(this.defaults);
-        for (let i in n.renderer) {
-          if (!(i in r))
-            throw new Error(`renderer '${i}' does not exist`);
-          if (["options", "parser"].includes(i))
-            continue;
-          let o = i, u = n.renderer[o], a = r[o];
-          r[o] = (...c) => {
-            let p = u.apply(r, c);
-            return p === false && (p = a.apply(r, c)), p || "";
-          };
-        }
-        s.renderer = r;
-      }
-      if (n.tokenizer) {
-        let r = this.defaults.tokenizer || new w(this.defaults);
-        for (let i in n.tokenizer) {
-          if (!(i in r))
-            throw new Error(`tokenizer '${i}' does not exist`);
-          if (["options", "rules", "lexer"].includes(i))
-            continue;
-          let o = i, u = n.tokenizer[o], a = r[o];
-          r[o] = (...c) => {
-            let p = u.apply(r, c);
-            return p === false && (p = a.apply(r, c)), p;
-          };
-        }
-        s.tokenizer = r;
-      }
-      if (n.hooks) {
-        let r = this.defaults.hooks || new P;
-        for (let i in n.hooks) {
-          if (!(i in r))
-            throw new Error(`hook '${i}' does not exist`);
-          if (["options", "block"].includes(i))
-            continue;
-          let o = i, u = n.hooks[o], a = r[o];
-          P.passThroughHooks.has(i) ? r[o] = (c) => {
-            if (this.defaults.async && P.passThroughHooksRespectAsync.has(i))
-              return (async () => {
-                let k = await u.call(r, c);
-                return a.call(r, k);
-              })();
-            let p = u.call(r, c);
-            return a.call(r, p);
-          } : r[o] = (...c) => {
-            if (this.defaults.async)
-              return (async () => {
-                let k = await u.apply(r, c);
-                return k === false && (k = await a.apply(r, c)), k;
-              })();
-            let p = u.apply(r, c);
-            return p === false && (p = a.apply(r, c)), p;
-          };
-        }
-        s.hooks = r;
-      }
-      if (n.walkTokens) {
-        let r = this.defaults.walkTokens, i = n.walkTokens;
-        s.walkTokens = function(o) {
-          let u = [];
-          return u.push(i.call(this, o)), r && (u = u.concat(r.call(this, o))), u;
-        };
-      }
-      this.defaults = { ...this.defaults, ...s };
-    }), this;
-  }
-  setOptions(e) {
-    return this.defaults = { ...this.defaults, ...e }, this;
-  }
-  lexer(e, t) {
-    return x.lex(e, t ?? this.defaults);
-  }
-  parser(e, t) {
-    return b.parse(e, t ?? this.defaults);
-  }
-  parseMarkdown(e) {
-    return (n, s) => {
-      let r = { ...s }, i = { ...this.defaults, ...r }, o = this.onError(!!i.silent, !!i.async);
-      if (this.defaults.async === true && r.async === false)
-        return o(new Error("marked(): The async option was set to true by an extension. Remove async: false from the parse options object to return a Promise."));
-      if (typeof n > "u" || n === null)
-        return o(new Error("marked(): input parameter is undefined or null"));
-      if (typeof n != "string")
-        return o(new Error("marked(): input parameter is of type " + Object.prototype.toString.call(n) + ", string expected"));
-      if (i.hooks && (i.hooks.options = i, i.hooks.block = e), i.async)
-        return (async () => {
-          let u = i.hooks ? await i.hooks.preprocess(n) : n, c = await (i.hooks ? await i.hooks.provideLexer(e) : e ? x.lex : x.lexInline)(u, i), p = i.hooks ? await i.hooks.processAllTokens(c) : c;
-          i.walkTokens && await Promise.all(this.walkTokens(p, i.walkTokens));
-          let h = await (i.hooks ? await i.hooks.provideParser(e) : e ? b.parse : b.parseInline)(p, i);
-          return i.hooks ? await i.hooks.postprocess(h) : h;
-        })().catch(o);
-      try {
-        i.hooks && (n = i.hooks.preprocess(n));
-        let a = (i.hooks ? i.hooks.provideLexer(e) : e ? x.lex : x.lexInline)(n, i);
-        i.hooks && (a = i.hooks.processAllTokens(a)), i.walkTokens && this.walkTokens(a, i.walkTokens);
-        let p = (i.hooks ? i.hooks.provideParser(e) : e ? b.parse : b.parseInline)(a, i);
-        return i.hooks && (p = i.hooks.postprocess(p)), p;
-      } catch (u) {
-        return o(u);
-      }
-    };
-  }
-  onError(e, t) {
-    return (n) => {
-      if (n.message += `
-Please report this to https://github.com/markedjs/marked.`, e) {
-        let s = "<p>An error occurred:</p><pre>" + O(n.message + "", true) + "</pre>";
-        return t ? Promise.resolve(s) : s;
-      }
-      if (t)
-        return Promise.reject(n);
-      throw n;
-    };
-  }
-};
-var M = new D;
-function g(l3, e) {
-  return M.parse(l3, e);
-}
-g.options = g.setOptions = function(l3) {
-  return M.setOptions(l3), g.defaults = M.defaults, G(g.defaults), g;
-};
-g.getDefaults = z2;
-g.defaults = T;
-g.use = function(...l3) {
-  return M.use(...l3), g.defaults = M.defaults, G(g.defaults), g;
-};
-g.walkTokens = function(l3, e) {
-  return M.walkTokens(l3, e);
-};
-g.parseInline = M.parseInline;
-g.Parser = b;
-g.parser = b.parse;
-g.Renderer = y;
-g.TextRenderer = L;
-g.Lexer = x;
-g.lexer = x.lex;
-g.Tokenizer = w;
-g.Hooks = P;
-g.parse = g;
-var jt = g.options;
-var Ft = g.setOptions;
-var Ut = g.use;
-var Kt = g.walkTokens;
-var Wt = g.parseInline;
-var Jt = b.parse;
-var Vt = x.lex;
-
-// src/face/species.ts
-var slime = {
-  name: "slime",
-  menubarEmoji: "\uD83D\uDFE2",
-  art: {
-    base: [" .---. ", " (o.o) ", " (___) "].join(`
-`),
-    concerned: [" .---. ", " (>.<) ", " (___) "].join(`
-`),
-    sleeping: [" .---. ", " (-.-) ", "  zzz  "].join(`
-`),
-    peek: [" .---. ", " (o.-) ", " (___) "].join(`
-`),
-    blink: [" .---. ", " (^.^) ", " (___) "].join(`
-`),
-    arms_crossed: [" .---. ", " (-_-) ", " [___] "].join(`
-`),
-    shrug: [" .---. ", " (o.O) ", " \xAF\\_/\xAF "].join(`
-`),
-    wave: [" .---. ", " (^o^) ", " (_o/) "].join(`
-`),
-    stretch: [" .---. ", " (o.~) ", " ~o/^\\~ "].join(`
-`),
-    zen: [" .---. ", " (-\u3002-) ", " \u262F___\u262F "].join(`
-`)
-  }
-};
-var cat = {
-  name: "cat",
-  menubarEmoji: "\uD83D\uDC31",
-  art: {
-    base: [" /\\_/\\ ", " (o.o) ", " > ^ < "].join(`
-`),
-    concerned: [" /\\_/\\ ", " (>.<) ", " > _ < "].join(`
-`),
-    sleeping: [" /\\_/\\ ", " (-.-) ", "  zzz  "].join(`
-`),
-    peek: [" /\\_/\\ ", " (o.-) ", " > ^ < "].join(`
-`),
-    blink: [" /\\_/\\ ", " (^.^) ", " > ^ < "].join(`
-`),
-    arms_crossed: [" /\\_/\\ ", " (-_-) ", " >=-=< "].join(`
-`),
-    shrug: [" /\\_/\\ ", " (o.O) ", " \xAF\\_/\xAF "].join(`
-`),
-    wave: [" /\\_/\\ ", " (^o^) ", " >o/^< "].join(`
-`),
-    stretch: [" /\\_/\\ ", " (o.~) ", " ~o/^\\~ "].join(`
-`),
-    zen: [" /\\_/\\ ", " (-\u3002-) ", " \u262F ^ \u262F "].join(`
-`)
-  }
-};
-var owl = {
-  name: "owl",
-  menubarEmoji: "\uD83E\uDD89",
-  art: {
-    base: [" ,-,-, ", " (O,O) ", " ===== "].join(`
-`),
-    concerned: [" ,-,-, ", " (>,<) ", " ===== "].join(`
-`),
-    sleeping: [" ,-,-, ", " (-,-) ", " ===== "].join(`
-`),
-    peek: [" ,-,-, ", " (O,-) ", " ===== "].join(`
-`),
-    blink: [" ,-,-, ", " (^,^) ", " ===== "].join(`
-`),
-    arms_crossed: [" ,-,-, ", " (=,=) ", " =[X]= "].join(`
-`),
-    shrug: [" ,-,-, ", " (O,o) ", " \xAF===\xAF "].join(`
-`),
-    wave: [" ,-,-, ", " (^,^) ", " ==o/= "].join(`
-`),
-    stretch: [" ,-,-, ", " (O,~) ", " ~o=o~ "].join(`
-`),
-    zen: [" ,-,-, ", " (-\u3002-) ", " \u262F===\u262F "].join(`
-`)
-  }
-};
-var robot = {
-  name: "robot",
-  menubarEmoji: "\uD83E\uDD16",
-  art: {
-    base: [" [---] ", " |o-o| ", " [___] "].join(`
-`),
-    concerned: [" [---] ", " |x-x| ", " [___] "].join(`
-`),
-    sleeping: [" [---] ", " |---| ", " [___] "].join(`
-`),
-    peek: [" [---] ", " |o-_| ", " [___] "].join(`
-`),
-    blink: [" [---] ", " |^-^| ", " [___] "].join(`
-`),
-    arms_crossed: [" [---] ", " |=-=| ", " [X-X] "].join(`
-`),
-    shrug: [" [---] ", " |o-O| ", " [\xAF_\xAF] "].join(`
-`),
-    wave: [" [---] ", " |^-^| ", " [_o/] "].join(`
-`),
-    stretch: [" [---] ", " |o-~| ", " [~o~] "].join(`
-`),
-    zen: [" [---] ", " |-\u3002-| ", " [\u262F_\u262F] "].join(`
-`)
-  }
-};
-var bunny = {
-  name: "bunny",
-  menubarEmoji: "\uD83D\uDC30",
-  art: {
-    base: [" (\\_/) ", " (o.o) ", " (=v=) "].join(`
-`),
-    concerned: [" (\\_/) ", " (>.<) ", " (=v=) "].join(`
-`),
-    sleeping: [" (\\_/) ", " (-.-) ", "  zzz  "].join(`
-`),
-    peek: [" (\\_/) ", " (o.-) ", " (=v=) "].join(`
-`),
-    blink: [" (\\_/) ", " (^.^) ", " (=v=) "].join(`
-`),
-    arms_crossed: [" (\\_/) ", " (-_-) ", " [=v=] "].join(`
-`),
-    shrug: [" (\\_/) ", " (o.O) ", " \xAF=v=\xAF "].join(`
-`),
-    wave: [" (\\_/) ", " (^o^) ", " (=v/) "].join(`
-`),
-    stretch: [" (\\_/) ", " (o.~) ", " ~=v=~ "].join(`
-`),
-    zen: [" (\\_/) ", " (-\u3002-) ", " \u262F=v=\u262F "].join(`
-`)
-  }
-};
-
-// src/state/pose.ts
-var POSE_OVERRIDING_MOODS = new Set([
-  "annoyed",
-  "concerned",
-  "tired",
-  "sleeping_quiet",
-  "sleeping_broke"
-]);
-var POSE_KEYS = new Set([
-  "base",
-  "peek",
-  "blink",
-  "arms_crossed",
-  "shrug",
-  "wave",
-  "stretch",
-  "zen"
-]);
-var ANIMATED_MOODS = new Set(["idle", "watching"]);
 // src/cli/report-stop.ts
 import { existsSync as existsSync21, readFileSync as readFileSync14 } from "fs";
-import { join as join33 } from "path";
+import { join as join34 } from "path";
 var BASE = siltpokeRoot();
-var PID_PATHS = [join33(BASE, "siltpoked.pid"), join33(BASE, "report.pid")];
+var PID_PATHS = [join34(BASE, "siltpoked.pid"), join34(BASE, "report.pid")];
 function stopReport(pidPaths = PID_PATHS) {
   for (const p of pidPaths) {
     if (!existsSync21(p))
@@ -20332,1019 +18904,26 @@ function stopReport(pidPaths = PID_PATHS) {
 }
 if (false) {}
 
-// src/cli/report-style/base.ts
-var STYLE_BASE = `
-  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Quicksand:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Sans+JP:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap');
-
-  :root {
-    --shell-pink: #ffc0d8;
-    --shell-pink-dk: #f48fb1;
-    --shell-shadow: #c46a91;
-    --shell-glow: rgba(255, 192, 216, 0.45);
-    --lcd-bg: #d4e5b8;
-    --lcd-bg-dk: #a3c084;
-    --lcd-edge: #6b8c4f;
-    --lcd-ink: #1f3010;
-    --lcd-ink-soft: #4a5d36;
-    --pixel-font: 'Press Start 2P', monospace;
-    --display-font: 'Quicksand', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-    --bg: #fff7fb;
-    --bg-2: #ffffff;
-    --bg-3: #fef0f6;
-    --ink: #2c1f33;
-    --ink-soft: #7a6a82;
-    --accent: #ff6fa8;
-    --accent-2: #b45cff;
-    --accent-soft: #ffe2ed;
-    --border: #fce0eb;
-    --good: #1cae5e;
-    --warn: #e3811d;
-    --bad: #ed4862;
-    --panel-shadow: 0 1px 0 rgba(255,255,255,0.9) inset, 0 6px 18px rgba(255,111,168,0.08), 0 2px 4px rgba(180,92,255,0.05);
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #1a1320;
-      --bg-2: #261b2e;
-      --bg-3: #2e2238;
-      --ink: #f7e8f0;
-      --ink-soft: #b09cb8;
-      --shell-pink: #e07ba8;
-      --shell-pink-dk: #b85587;
-      --shell-shadow: #6b2c50;
-      --shell-glow: rgba(224, 123, 168, 0.3);
-      --accent-soft: #3a2236;
-      --border: #3e2538;
-      --panel-shadow: 0 1px 0 rgba(255,255,255,0.04) inset, 0 6px 18px rgba(0,0,0,0.4);
+// src/config/write-daemon-enabled.ts
+import { existsSync as existsSync22 } from "fs";
+import { readFile as readFile10 } from "fs/promises";
+import { join as join35 } from "path";
+async function setDaemonEnabled(home, enabled) {
+  const configPath = join35(home, "config.json");
+  let obj = {};
+  if (existsSync22(configPath)) {
+    try {
+      obj = JSON.parse(await readFile10(configPath, "utf8"));
+    } catch {
+      obj = {};
     }
   }
-  * { box-sizing: border-box; }
-  html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
-  html, body { margin: 0; padding: 0; }
-  body {
-    font-family: var(--display-font);
-    font-size: 15px;
-    font-weight: 500;
-    line-height: 1.55;
-    background:
-      radial-gradient(ellipse at top left, rgba(255,111,168,0.08), transparent 50%),
-      radial-gradient(ellipse at bottom right, rgba(180,92,255,0.06), transparent 50%),
-      var(--bg);
-    color: var(--ink);
-    padding: 2.5rem 1.5rem 4rem;
-    min-height: 100vh;
-  }
-  .wrap {
-    max-width: 1240px;
-    margin: 0 auto;
-    display: grid;
-    grid-template-columns: minmax(300px, 380px) 1fr;
-    gap: 2rem;
-    align-items: start;
-  }
-  @media (max-width: 960px) {
-    .wrap { grid-template-columns: 1fr; }
-    .left-col { position: static !important; max-width: 380px; margin: 0 auto; width: 100%; }
-    .shell { position: static !important; }
-  }
-  .left-col {
-    position: sticky;
-    top: 1.5rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
-  }
-  .mode-strip { display: flex; justify-content: center; }
-  .mode-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 6px 14px;
-    border-radius: 999px;
-    font-weight: 700;
-    font-size: 11px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    border: 1px solid var(--border);
-    background: var(--bg-2);
-    color: var(--ink);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.04);
-    cursor: help;
-  }
-  .mode-badge::before {
-    content: "\u25CF";
-    color: var(--ink-soft);
-    font-size: 10px;
-  }
-  .mode-badge.mode-project::before { color: var(--good); }
-  .mode-badge.mode-global::before { color: var(--accent); }
+  const daemon = { ...obj.daemon, enabled };
+  atomicWrite(configPath, `${JSON.stringify({ ...obj, daemon }, null, 2)}
+`);
+}
 
-  /* --- shell (tamagotchi body) ----------------------------------------- */
-  .shell {
-    filter: drop-shadow(0 20px 30px var(--shell-glow));
-  }
-  .shell-loop {
-    width: 36px;
-    height: 22px;
-    margin: 0 auto -10px;
-    border: 6px solid var(--shell-pink-dk);
-    border-bottom: 0;
-    border-radius: 18px 18px 0 0;
-    box-shadow: inset -1px 1px 0 rgba(255,255,255,0.35);
-    position: relative;
-    z-index: 0;
-  }
-  .shell-body {
-    background:
-      radial-gradient(ellipse at 30% 18%, rgba(255,255,255,0.55), transparent 50%),
-      linear-gradient(180deg, var(--shell-pink) 0%, var(--shell-pink-dk) 100%);
-    border-radius: 44px;
-    padding: 2rem 1.5rem 2rem;
-    box-shadow:
-      0 14px 0 var(--shell-shadow),
-      inset 0 3px 0 rgba(255,255,255,0.55),
-      inset 0 -8px 0 rgba(0,0,0,0.12),
-      inset 6px 0 14px rgba(255,255,255,0.18),
-      inset -6px 0 14px rgba(0,0,0,0.08);
-    position: relative;
-    overflow: hidden;
-  }
-  .shell-body::after {
-    content: "";
-    position: absolute;
-    top: 14%;
-    left: 18%;
-    width: 22%;
-    height: 14%;
-    background: radial-gradient(ellipse, rgba(255,255,255,0.55) 0%, transparent 70%);
-    border-radius: 50%;
-    pointer-events: none;
-  }
-  .shell-top {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-    padding: 0 0.5rem;
-    position: relative;
-    z-index: 1;
-  }
-  .shell-dots { display: flex; gap: 6px; }
-  .shell-dots span {
-    width: 7px; height: 7px; border-radius: 50%;
-    background: rgba(0,0,0,0.22);
-    box-shadow: inset 1px 1px 1px rgba(255,255,255,0.4);
-  }
-  .shell-brand {
-    font-family: var(--pixel-font);
-    font-size: 7px;
-    color: rgba(255,255,255,0.7);
-    letter-spacing: 0.18em;
-    text-shadow: 1px 1px 0 rgba(0,0,0,0.15);
-  }
-
-  /* --- LCD screen ------------------------------------------------------- */
-  .lcd-frame {
-    padding: 6px;
-    border-radius: 22px;
-    background: linear-gradient(180deg, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.1) 100%);
-    box-shadow:
-      inset 0 2px 4px rgba(0,0,0,0.3),
-      0 2px 0 rgba(255,255,255,0.4);
-  }
-  .lcd {
-    background: linear-gradient(180deg, var(--lcd-bg) 0%, var(--lcd-bg-dk) 100%);
-    border-radius: 16px;
-    padding: 1.5rem 1.1rem 1.1rem;
-    position: relative;
-    overflow: hidden;
-    box-shadow:
-      inset 0 0 0 2px var(--lcd-edge),
-      inset 0 6px 14px rgba(0,0,0,0.18);
-    color: var(--lcd-ink);
-  }
-  .scanlines {
-    position: absolute;
-    inset: 0;
-    background: repeating-linear-gradient(
-      0deg,
-      transparent 0,
-      transparent 2px,
-      rgba(0,0,0,0.05) 2px,
-      rgba(0,0,0,0.05) 3px
-    );
-    pointer-events: none;
-    border-radius: inherit;
-  }
-  @keyframes pet-idle {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-3px); }
-  }
-  @keyframes pet-blink {
-    0%, 92%, 100% { opacity: 1; }
-    94%, 96% { opacity: 0.15; }
-  }
-  .pet-portrait {
-    font-family: var(--pixel-font);
-    font-size: 20px;
-    line-height: 1.5;
-    white-space: pre;
-    text-align: center;
-    margin: 0.25rem 0 1rem;
-    color: var(--lcd-ink);
-    text-shadow: 1px 1px 0 var(--lcd-edge);
-    letter-spacing: 0.04em;
-    animation: pet-idle 3.6s ease-in-out infinite, pet-blink 5.2s ease-in-out infinite;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .pet-portrait { animation: none; }
-  }
-  .pet-name {
-    text-align: center;
-    margin-bottom: 0.25rem;
-    color: var(--lcd-ink);
-    font-weight: 700;
-    font-size: 17px;
-    letter-spacing: 0.01em;
-  }
-  .pet-mood {
-    text-align: center;
-    font-size: 24px;
-    margin-bottom: 0.5rem;
-    color: var(--lcd-ink);
-    letter-spacing: 0.02em;
-  }
-  .bubble {
-    background: rgba(255,255,255,0.45);
-    border: 1px solid rgba(255,255,255,0.6);
-    border-radius: 14px;
-    padding: 0.75rem 1rem;
-    margin: 0.75rem -0.25rem 1rem;
-    font-size: 13.5px;
-    line-height: 1.5;
-    text-align: center;
-    color: var(--lcd-ink);
-    font-weight: 500;
-    min-height: 3.2em;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: inset 0 1px 2px rgba(255,255,255,0.7), 0 1px 2px rgba(0,0,0,0.05);
-  }
-  .bubble-quote {
-    color: var(--lcd-ink-soft);
-    font-family: var(--pixel-font);
-    font-size: 14px;
-    margin: 0 0.2rem;
-  }
-  .meters { display: flex; flex-direction: column; gap: 0.55rem; margin: 1rem 0 0.75rem; }
-  .meter-row {
-    display: grid;
-    grid-template-columns: 56px 1fr 88px;
-    gap: 0.6rem;
-    align-items: center;
-  }
-  .meter-label {
-    font-family: var(--pixel-font);
-    font-size: 8px;
-    color: var(--lcd-ink-soft);
-    letter-spacing: 0.05em;
-  }
-  .meter {
-    height: 12px;
-    background: rgba(0,0,0,0.18);
-    border-radius: 6px;
-    overflow: hidden;
-    position: relative;
-    box-shadow: inset 0 1px 2px rgba(0,0,0,0.25);
-  }
-  .fill {
-    height: 100%;
-    background: linear-gradient(180deg, var(--lcd-ink-soft) 0%, var(--lcd-ink) 100%);
-    border-radius: 6px;
-    box-shadow: 0 1px 0 rgba(255,255,255,0.2) inset;
-    transition: width 0.6s ease;
-  }
-  .meter-val {
-    font-family: var(--pixel-font);
-    font-size: 9px;
-    text-align: right;
-    color: var(--lcd-ink);
-    letter-spacing: 0.02em;
-  }
-  .titles {
-    text-align: center;
-    font-family: var(--pixel-font);
-    font-size: 7px;
-    color: var(--lcd-ink-soft);
-    margin-top: 0.75rem;
-    letter-spacing: 0.08em;
-    line-height: 1.6;
-  }
-  .shell-buttons {
-    display: flex;
-    justify-content: space-around;
-    margin-top: 1.5rem;
-    padding: 0 0.5rem;
-    position: relative;
-    z-index: 1;
-  }
-  .btn {
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    border: 0;
-    padding: 0;
-    background:
-      radial-gradient(circle at 35% 30%, rgba(255,255,255,0.55), transparent 55%),
-      linear-gradient(180deg, var(--shell-pink) 0%, var(--shell-pink-dk) 100%);
-    box-shadow:
-      0 4px 0 var(--shell-shadow),
-      inset 0 1px 0 rgba(255,255,255,0.5),
-      inset 0 -2px 0 rgba(0,0,0,0.15);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    user-select: none;
-    transition: transform 0.08s ease, box-shadow 0.08s ease;
-    font: inherit;
-    color: inherit;
-  }
-  .btn:hover { transform: translateY(-1px); }
-  .btn:active, .btn.pressed {
-    transform: translateY(3px);
-    box-shadow:
-      0 1px 0 var(--shell-shadow),
-      inset 0 1px 0 rgba(255,255,255,0.5),
-      inset 0 -2px 0 rgba(0,0,0,0.15);
-  }
-  .btn:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 3px;
-  }
-
-`;
-
-// src/cli/report-style/interactive.ts
-var STYLE_INTERACTIVE = `  /* button-triggered effects on the LCD */
-  @keyframes pet-wiggle {
-    0%, 100% { transform: translate(0,0) rotate(0); }
-    20% { transform: translate(-2px, -2px) rotate(-2deg); }
-    40% { transform: translate(2px, -1px) rotate(2deg); }
-    60% { transform: translate(-1px, 1px) rotate(-1deg); }
-    80% { transform: translate(2px, 0) rotate(1deg); }
-  }
-  .pet-portrait.wiggle {
-    animation:
-      pet-wiggle 0.55s ease-in-out 1,
-      pet-idle 3.6s ease-in-out infinite 0.55s,
-      pet-blink 5.2s ease-in-out infinite;
-  }
-  .heart-burst {
-    position: absolute;
-    pointer-events: none;
-    inset: 0;
-    overflow: visible;
-  }
-  .heart-burst span {
-    position: absolute;
-    bottom: 30%;
-    left: 50%;
-    font-size: 24px;
-    color: var(--accent);
-    opacity: 0;
-    animation: heart-rise 1.4s ease-out forwards;
-    text-shadow: 0 2px 8px rgba(255,111,168,0.5);
-  }
-  @keyframes heart-rise {
-    0% { transform: translate(-50%, 0) scale(0.5); opacity: 0; }
-    20% { opacity: 1; }
-    100% { transform: translate(calc(-50% + var(--dx, 0px)), -120px) scale(1.1); opacity: 0; }
-  }
-  .bubble.flash {
-    animation: bubble-flash 0.35s ease-out;
-  }
-  @keyframes bubble-flash {
-    0% { background: rgba(255,255,255,0.45); }
-    50% { background: rgba(255,255,255,0.85); }
-    100% { background: rgba(255,255,255,0.45); }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .pet-portrait.wiggle, .heart-burst span, .bubble.flash { animation: none; }
-  }
-  .btn-glyph {
-    font-family: var(--pixel-font);
-    font-size: 9px;
-    color: rgba(255,255,255,0.85);
-    text-shadow: 1px 1px 0 rgba(0,0,0,0.18);
-  }
-
-  /* --- tabs ------------------------------------------------------------ */
-  .tab-nav {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    padding: 6px;
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    box-shadow: var(--panel-shadow);
-    position: sticky;
-    top: 1.5rem;
-    z-index: 10;
-    backdrop-filter: saturate(160%) blur(10px);
-  }
-  .tab-btn {
-    flex: 1 1 auto;
-    min-width: 90px;
-    padding: 0.65rem 0.9rem;
-    border: 0;
-    border-radius: 10px;
-    background: transparent;
-    color: var(--ink-soft);
-    font: inherit;
-    font-weight: 700;
-    font-size: 13px;
-    cursor: pointer;
-    transition: background 0.15s ease, color 0.15s ease;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.4rem;
-    letter-spacing: 0.02em;
-  }
-  .tab-btn:hover { background: var(--bg-3); color: var(--ink); }
-  .tab-btn[aria-selected="true"] {
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    color: white;
-    box-shadow: 0 2px 8px rgba(255,111,168,0.35);
-  }
-  .tab-btn[aria-selected="true"] .pill {
-    background: rgba(255,255,255,0.3);
-    color: white;
-    box-shadow: none;
-  }
-  .tab-btn:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-  .tab-content {
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
-  }
-  .tab-content[hidden] { display: none; }
-
-  /* --- panels (right column, all collapsible) -------------------------- */
-  .panels { display: flex; flex-direction: column; gap: 1.25rem; }
-  details.panel {
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: 18px;
-    padding: 0;
-    box-shadow: var(--panel-shadow);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-    overflow: hidden;
-  }
-  details.panel:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 1px 0 rgba(255,255,255,0.9) inset, 0 10px 28px rgba(255,111,168,0.12), 0 4px 10px rgba(180,92,255,0.08);
-  }
-  details.panel > summary {
-    list-style: none;
-    cursor: pointer;
-    padding: 1.25rem 1.75rem;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    user-select: none;
-  }
-  details.panel > summary::-webkit-details-marker { display: none; }
-  details.panel > summary::after {
-    content: "\u203A";
-    margin-left: auto;
-    font-size: 22px;
-    line-height: 0.7;
-    color: var(--accent);
-    transition: transform 0.2s ease;
-    font-weight: 700;
-  }
-  details.panel[open] > summary::after { transform: rotate(90deg); }
-  details.panel > summary h2 {
-    font-family: var(--display-font);
-    font-size: 13px;
-    font-weight: 700;
-    margin: 0;
-    color: var(--accent);
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  details.panel > summary h2::before {
-    content: "";
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 2px;
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    box-shadow: 0 0 8px var(--accent-soft);
-  }
-  details.panel > .panel-body {
-    padding: 0 1.75rem 1.5rem;
-  }
-  details.panel > .panel-body > :first-child { margin-top: 0; }
-  .panel p { margin: 0.25rem 0; }
-  .muted { color: var(--ink-soft); }
-  .small { font-size: 0.85em; }
-
-  /* key-value list (used by genesis + progression detail) */
-  .kv-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    margin-top: 0.5rem;
-  }
-  .kv-row {
-    display: grid;
-    grid-template-columns: 140px 1fr;
-    gap: 0.75rem;
-    padding: 0.4rem 0;
-    border-bottom: 1px dashed var(--border);
-    font-size: 14px;
-  }
-  .kv-row:last-child { border-bottom: 0; }
-  .kv-k {
-    color: var(--ink-soft);
-    font-weight: 600;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  .kv-v { color: var(--ink); }
-  blockquote.genesis-soul {
-    margin: 0.5rem 0;
-    padding: 0.85rem 1.2rem;
-    background: linear-gradient(135deg, var(--accent-soft), var(--bg-3));
-    border-left: 3px solid var(--accent);
-    border-radius: 0 10px 10px 0;
-    color: var(--ink);
-    font-style: italic;
-    font-size: 15px;
-    line-height: 1.5;
-  }
-  pre {
-    background: var(--bg-3);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.85rem 1rem;
-    overflow-x: auto;
-    font-size: 12px;
-    line-height: 1.55;
-    margin: 0.5rem 0;
-  }
-  pre code {
-    border: 0;
-    background: transparent;
-    padding: 0;
-    font-size: inherit;
-  }
-
-  /* stats grid */
-  .stat-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    gap: 0.75rem;
-  }
-  .stat {
-    padding: 0.85rem 1rem;
-    background:
-      linear-gradient(180deg, var(--bg-3) 0%, var(--bg-2) 100%);
-    border-radius: 12px;
-    border: 1px solid var(--border);
-    box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 1px 2px rgba(0,0,0,0.03);
-    transition: transform 0.15s ease;
-  }
-  .stat:hover { transform: translateY(-1px); }
-  .stat-v {
-    font-family: var(--display-font);
-    font-size: 22px;
-    font-weight: 700;
-    color: var(--ink);
-    letter-spacing: -0.01em;
-    line-height: 1.1;
-  }
-  .stat-k {
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--ink-soft);
-    margin-top: 0.4rem;
-    letter-spacing: 0.02em;
-  }
-
-  /* chart */
-  .chart {
-    display: flex;
-    align-items: end;
-    gap: 10px;
-    height: 180px;
-    padding: 0.5rem 0 0;
-  }
-  .bar {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    justify-content: end;
-    gap: 6px;
-    height: 100%;
-  }
-  .bar-fill {
-    width: 100%;
-    background: linear-gradient(180deg, var(--accent) 0%, var(--accent-2) 100%);
-    border-radius: 6px 6px 2px 2px;
-    min-height: 6px;
-    box-shadow: 0 2px 4px rgba(255,111,168,0.25);
-    transition: height 0.5s ease;
-  }
-  .bar-count {
-    font-family: var(--display-font);
-    font-weight: 700;
-    font-size: 13px;
-    text-align: center;
-    color: var(--ink);
-  }
-  .bar-label {
-    font-size: 11px;
-    text-align: center;
-    color: var(--ink-soft);
-    font-weight: 500;
-  }
-
-`;
-
-// src/cli/report-style/panels.ts
-var STYLE_PANELS = `  /* tables */
-  table { width: 100%; border-collapse: collapse; }
-  th, td {
-    text-align: left;
-    padding: 0.65rem 0.75rem;
-    border-bottom: 1px solid var(--border);
-    vertical-align: top;
-    font-size: 14px;
-  }
-  th {
-    font-weight: 600;
-    font-size: 11px;
-    text-transform: uppercase;
-    color: var(--accent);
-    letter-spacing: 0.08em;
-    border-bottom: 2px solid var(--accent-soft);
-  }
-  tr:last-child td { border-bottom: 0; }
-  table.dense td, table.dense th { padding: 0.45rem 0.6rem; }
-  table.dense td { font-size: 13.5px; }
-  code {
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 0.85em;
-    padding: 0.1em 0.4em;
-    background: var(--bg-3);
-    border-radius: 4px;
-    border: 1px solid var(--border);
-  }
-
-  /* severities */
-  .sev-high { color: var(--bad); font-weight: 700; }
-  .sev-medium { color: var(--warn); font-weight: 600; }
-  .sev-low { color: var(--accent-2); }
-  .sev-info { color: var(--ink-soft); }
-
-  .verdict-forwarded { color: var(--good); font-weight: 700; }
-  .verdict-dismissed { color: var(--bad); font-weight: 600; }
-  .verdict-acked { color: var(--ink-soft); }
-  tr.skipped td { color: var(--ink-soft); font-style: italic; }
-
-  /* config panel under shell */
-  .cfg-panel { font-size: 13.5px; }
-  .cfg-panel > .panel-body { padding-top: 0.25rem; }
-  .cfg-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin: 0.75rem 0;
-  }
-  .cfg-row {
-    display: grid;
-    grid-template-columns: 72px 1fr 40px;
-    gap: 0.6rem;
-    align-items: center;
-  }
-  .cfg-row .cfg-label {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--ink-soft);
-    font-weight: 600;
-  }
-  .cfg-row input[type="text"],
-  .cfg-row select {
-    grid-column: 2 / span 2;
-    padding: 0.4rem 0.6rem;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--bg);
-    color: var(--ink);
-    font: inherit;
-    font-size: 13px;
-  }
-  .cfg-row input[type="text"]:focus,
-  .cfg-row select:focus {
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
-  }
-  .cfg-dial input[type="range"] {
-    appearance: none;
-    -webkit-appearance: none;
-    background: transparent;
-    height: 18px;
-    margin: 0;
-  }
-  .cfg-dial input[type="range"]::-webkit-slider-runnable-track {
-    height: 6px;
-    background: var(--accent-soft);
-    border-radius: 3px;
-  }
-  .cfg-dial input[type="range"]::-moz-range-track {
-    height: 6px;
-    background: var(--accent-soft);
-    border-radius: 3px;
-  }
-  .cfg-dial input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: linear-gradient(180deg, var(--accent), var(--accent-2));
-    margin-top: -5px;
-    box-shadow: 0 1px 3px rgba(255,111,168,0.4);
-    cursor: pointer;
-  }
-  .cfg-dial input[type="range"]::-moz-range-thumb {
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: linear-gradient(180deg, var(--accent), var(--accent-2));
-    border: 0;
-    box-shadow: 0 1px 3px rgba(255,111,168,0.4);
-    cursor: pointer;
-  }
-  .cfg-val {
-    font-variant-numeric: tabular-nums;
-    font-weight: 700;
-    text-align: right;
-    color: var(--ink);
-    font-size: 13px;
-  }
-  .cfg-divider {
-    height: 1px;
-    background: var(--border);
-    margin: 0.25rem 0;
-  }
-  .cfg-diff {
-    margin-top: 0.75rem;
-    padding: 0.75rem;
-    background: var(--bg-3);
-    border: 1px dashed var(--border);
-    border-radius: 10px;
-  }
-  .cfg-diff.has-changes {
-    border-style: solid;
-    border-color: var(--accent);
-    background: linear-gradient(135deg, var(--accent-soft), var(--bg-3));
-  }
-  .cfg-diff-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .cfg-diff-json {
-    margin: 0.5rem 0 0;
-    font-size: 11px;
-    line-height: 1.5;
-    max-height: 200px;
-    overflow: auto;
-  }
-  .cfg-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .cfg-apply, .cfg-reset {
-    padding: 0.4rem 0.8rem;
-    border: 0;
-    border-radius: 8px;
-    font: inherit;
-    font-size: 12px;
-    font-weight: 700;
-    cursor: pointer;
-    transition: transform 0.08s ease;
-  }
-  .cfg-apply {
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    color: white;
-    box-shadow: 0 1px 3px rgba(255,111,168,0.4);
-  }
-  .cfg-apply:hover { transform: translateY(-1px); }
-  .cfg-apply:active { transform: translateY(1px); }
-  .cfg-apply:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  .cfg-reset {
-    background: transparent;
-    color: var(--ink-soft);
-    border: 1px solid var(--border);
-  }
-  .cfg-reset:hover { background: var(--bg-2); }
-  .cfg-toast {
-    color: var(--good);
-    font-weight: 700;
-    font-size: 12px;
-  }
-
-  /* floating action toast \u2014 feed/play/tease feedback */
-  .xp-toast {
-    position: fixed;
-    bottom: 24px;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 12px 22px;
-    border-radius: 999px;
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
-    font-weight: 700;
-    font-size: 14px;
-    z-index: 999;
-    animation: toast-pop 0.25s ease-out;
-  }
-  .xp-toast.good { color: var(--good); border-color: var(--good); }
-  .xp-toast.warn { color: var(--warn); border-color: var(--warn); }
-  .xp-toast.info { color: var(--ink-soft); }
-  @keyframes toast-pop {
-    0% { transform: translate(-50%, 20px); opacity: 0; }
-    100% { transform: translate(-50%, 0); opacity: 1; }
-  }
-
-  /* joined token columns inside recent calls */
-  .token-joined th:nth-child(5),
-  .token-joined th:nth-child(6),
-  .token-joined th:nth-child(7) { white-space: nowrap; }
-  .tok-cell {
-    font-variant-numeric: tabular-nums;
-    font-size: 12.5px;
-    white-space: nowrap;
-  }
-  .tok-in { color: var(--accent-2); font-weight: 600; }
-  .tok-out { color: var(--accent); font-weight: 600; }
-  .tok-cache { color: var(--ink-soft); }
-  .cost-cell {
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-
-  /* inboxes / docs */
-  details.inbox, details.doc {
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 0.75rem 1rem;
-    margin: 0.75rem 0;
-    background:
-      linear-gradient(180deg, var(--bg-3) 0%, var(--bg-2) 100%);
-    transition: border-color 0.15s ease;
-  }
-  details.inbox:hover, details.doc:hover { border-color: var(--accent-soft); }
-  details.inbox[open], details.doc[open] { border-color: var(--accent-soft); }
-  details summary {
-    cursor: pointer;
-    font-weight: 600;
-    font-size: 14px;
-    color: var(--ink);
-    padding: 0.25rem 0;
-    list-style: none;
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    flex-wrap: wrap;
-  }
-  details summary::-webkit-details-marker { display: none; }
-  details summary::before {
-    content: "\u203A";
-    font-size: 22px;
-    line-height: 0.8;
-    color: var(--accent);
-    transition: transform 0.2s ease;
-    font-weight: 700;
-  }
-  details[open] summary::before { transform: rotate(90deg); }
-  .pill {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 22px;
-    padding: 2px 8px;
-    background: linear-gradient(180deg, var(--accent), var(--accent-2));
-    color: white;
-    border-radius: 12px;
-    font-weight: 700;
-    font-size: 11px;
-    box-shadow: 0 1px 4px rgba(255,111,168,0.4);
-  }
-  .inbox-path { margin-left: auto; }
-  .inbox-name { font-weight: 700; font-size: 15px; color: var(--ink); }
-  .doc-title { font-weight: 700; font-size: 14px; }
-
-  /* rendered markdown body inside docs */
-  .md {
-    font-family: var(--display-font);
-    font-size: 15px;
-    line-height: 1.6;
-    padding: 0.75rem 0.25rem 0.25rem;
-    color: var(--ink);
-  }
-  .md h1, .md h2, .md h3, .md h4 {
-    font-family: var(--display-font);
-    font-weight: 700;
-    line-height: 1.3;
-    color: var(--ink);
-    margin: 1.25rem 0 0.5rem;
-  }
-  .md h1 { font-size: 22px; }
-  .md h2 { font-size: 18px; color: var(--accent); }
-  .md h3 { font-size: 15px; }
-  .md h4 { font-size: 13px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.06em; }
-  .md p { margin: 0.5rem 0; }
-  .md code { font-size: 0.88em; }
-  .md pre {
-    background: var(--bg-3);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.85rem 1rem;
-    overflow-x: auto;
-    font-size: 13px;
-    line-height: 1.5;
-  }
-  .md pre code { border: 0; background: transparent; padding: 0; }
-  .md blockquote {
-    border-left: 3px solid var(--accent);
-    margin: 0.75rem 0;
-    padding: 0.5rem 1rem;
-    background: var(--accent-soft);
-    border-radius: 0 8px 8px 0;
-    color: var(--ink);
-    font-style: italic;
-  }
-  .md table { font-size: 13.5px; margin: 0.5rem 0; }
-  .md table th, .md table td { padding: 0.5rem 0.7rem; }
-  .md ul, .md ol { margin: 0.4rem 0 0.6rem 1.5rem; padding: 0; }
-  .md li { margin: 0.2rem 0; }
-  .md a { color: var(--accent); text-decoration: none; border-bottom: 1px dashed var(--accent-soft); }
-  .md a:hover { border-bottom-style: solid; }
-  .md hr { border: 0; border-top: 1px dashed var(--border); margin: 1.5rem 0; }
-  .md strong { color: var(--ink); font-weight: 700; }
-  .md em { color: var(--ink-soft); }
-
-  /* footer */
-  footer {
-    text-align: center;
-    margin: 3rem auto 0;
-    max-width: 1240px;
-    padding-top: 1.5rem;
-    border-top: 1px dashed var(--border);
-    font-size: 12px;
-  }
-`;
-
-// src/cli/report-style/index.ts
-var STYLE = STYLE_BASE + STYLE_INTERACTIVE + STYLE_PANELS;
-
-// src/state/critic-counters.ts
-var _locks = new Map;
-
-// src/cli/stats.ts
-init_memory();
-
-// src/chat/sessions.ts
-init_memory();
-
-// src/cli/stats.ts
-if (false) {}
-
-// src/cli/report.ts
+// src/cli/dashboard.ts
 var DASHBOARD_URL = "http://127.0.0.1:9876/";
 async function siltpokedAnswersAt(pingUrl, timeoutMs) {
   try {
@@ -21362,9 +18941,9 @@ async function openDashboard(opts = {}) {
     fileURLToPath2(new URL("./daemon.ts", import.meta.url)),
     "start"
   ];
-  const daemonAlive = (timeoutMs) => siltpokedAnswersAt(`${DASHBOARD_URL}api/ping`, timeoutMs);
-  const pidPath = join34(homeBase, "siltpoked.pid");
-  const alive = existsSync22(pidPath) ? await daemonAlive(250) : false;
+  const daemonAlive = opts.isDaemonUp ?? ((timeoutMs) => siltpokedAnswersAt(`${DASHBOARD_URL}api/ping`, timeoutMs));
+  const pidPath = join36(homeBase, "siltpoked.pid");
+  const alive = opts.isDaemonUp ? await daemonAlive(250) : existsSync23(pidPath) && await daemonAlive(250);
   if (!alive) {
     await setDaemonEnabled(homeBase, true);
     const proc = Bun.spawn([...daemonArgv], {
@@ -21385,8 +18964,11 @@ async function openDashboard(opts = {}) {
   out(`Siltpoke: ${DASHBOARD_URL}
 `);
   if (!opts.noOpen) {
-    const cmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-    Bun.spawn([cmd, DASHBOARD_URL], { stdio: ["ignore", "ignore", "ignore"] });
+    const argv = [...editorOpener(opts.platform ?? process.platform), DASHBOARD_URL];
+    const spawnOpener = opts.spawnOpener ?? ((a) => {
+      Bun.spawn([...a], { stdio: ["ignore", "ignore", "ignore"] });
+    });
+    spawnOpener(argv);
   }
 }
 async function restartDashboard(opts = {}) {
@@ -21401,7 +18983,7 @@ async function restartDashboard(opts = {}) {
     return;
   }
   const homeBase = opts.homeBase ?? siltpokeRoot(process.env);
-  stopReport([join34(homeBase, "siltpoked.pid"), join34(homeBase, "report.pid")]);
+  stopReport([join36(homeBase, "siltpoked.pid"), join36(homeBase, "report.pid")]);
   for (let i = 0;i < 30; i++) {
     try {
       const r = await fetch(`${DASHBOARD_URL}api/ping`, {
@@ -21466,12 +19048,12 @@ function handleStatus(deps, write) {
 `);
     return 0;
   }
-  const existsSync23 = deps.existsSync ?? realExistsSync3;
+  const existsSync24 = deps.existsSync ?? realExistsSync3;
   const exec = deps.exec ?? probeExec;
   const home = deps.home ?? process.env.HOME ?? "";
   const obeyed = obeyedShimPath(deps);
-  if (!existsSync23(obeyed)) {
-    const stranded = strandedShimPath(obeyed, home, existsSync23);
+  if (!existsSync24(obeyed)) {
+    const stranded = strandedShimPath(obeyed, home, existsSync24);
     if (stranded) {
       write(`menu-bar pet: installed at ${stranded}, but SwiftBar is now reading ${obeyed} \u2014 the menu bar stays empty. Re-run install to put it where SwiftBar looks.
 `);
@@ -21492,7 +19074,7 @@ function handleStatus(deps, write) {
 `);
     return 0;
   }
-  if (!existsSync23(SWIFTBAR_APP_PATH)) {
+  if (!existsSync24(SWIFTBAR_APP_PATH)) {
     write(`menu-bar pet: installed, but I cannot find SwiftBar at ${SWIFTBAR_APP_PATH} \u2014 nothing can draw the pet. If you don't have it:
   ${SWIFTBAR_DOWNLOAD_URL}
 `);
@@ -21509,12 +19091,12 @@ function handleRemove(deps, write) {
 `);
     return 0;
   }
-  const existsSync23 = deps.existsSync ?? realExistsSync3;
+  const existsSync24 = deps.existsSync ?? realExistsSync3;
   const exec = deps.exec ?? probeExec;
   const home = deps.home ?? process.env.HOME ?? "";
   const rm = deps.rm ?? ((p) => unlinkSync2(p));
   const obeyed = obeyedShimPath(deps);
-  const path = existsSync23(obeyed) ? obeyed : strandedShimPath(obeyed, home, existsSync23);
+  const path = existsSync24(obeyed) ? obeyed : strandedShimPath(obeyed, home, existsSync24);
   if (!path) {
     write(`menu-bar pet: not installed (nothing to remove)
 `);
@@ -21564,11 +19146,11 @@ if (false) {}
 
 // src/cli/wake.ts
 import { mkdir as mkdir5, writeFile as writeFile5, readFile as readFile11, unlink } from "fs/promises";
-import { join as join35 } from "path";
+import { join as join37 } from "path";
 var FILENAME3 = "wake.json";
 var DEFAULT_TTL_MS = 5 * 60 * 1000;
 function wakePath(homeBase) {
-  return join35(homeBase, FILENAME3);
+  return join37(homeBase, FILENAME3);
 }
 async function runWake(opts = {}) {
   const homeBase = opts.homeBase ?? siltpokeRoot();
@@ -21643,22 +19225,22 @@ function resolveDaemonArgv() {
   const root = pluginRoot();
   const candidates = [
     fileURLToPath3(new URL("./siltpoke-daemon.js", import.meta.url)),
-    ...root ? [join36(root, "dist", "siltpoke-daemon.js")] : [],
+    ...root ? [join38(root, "dist", "siltpoke-daemon.js")] : [],
     fileURLToPath3(new URL("./daemon.ts", import.meta.url))
   ];
-  const found = candidates.find((p) => existsSync23(p));
+  const found = candidates.find((p) => existsSync24(p));
   return found ? ["bun", found, "start"] : undefined;
 }
 function resolveCardPath() {
   const root = pluginRoot();
   const candidates = [
     fileURLToPath3(new URL("./siltpoke-card.js", import.meta.url)),
-    ...root ? [join36(root, "dist", "siltpoke-card.js")] : []
+    ...root ? [join38(root, "dist", "siltpoke-card.js")] : []
   ];
-  return candidates.find((p) => existsSync23(p));
+  return candidates.find((p) => existsSync24(p));
 }
 function projectBase() {
-  return join36(process.cwd(), ".siltpoke");
+  return join38(process.cwd(), ".siltpoke");
 }
 function positional(rest) {
   return rest.find((a) => !a.startsWith("--"));

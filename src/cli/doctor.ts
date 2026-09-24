@@ -25,6 +25,8 @@ import {
   resolveCodexHome,
   siltpokeRoot,
 } from "../installer/paths";
+import { loadUpdateCheckConfigSync } from "../config/update-check-config";
+import { cachePath, parseCache } from "../update/check";
 import { resolveDaemonProject } from "../memory/active-project";
 import { globalSchema } from "../memory/schema-v3";
 import { checkBrainHealth } from "./doctor-brain-check";
@@ -265,6 +267,39 @@ function checkWakeJson(opts: DoctorOptions): CheckResult {
     return { name, pass: false, detail: `${path} missing or non-numeric expires_at_ms field` };
   }
   return { name, pass: true, detail: null };
+}
+
+/**
+ * Shows whether the once-a-day update check is on, and what it last found.
+ *
+ * Always passes. It is a disclosure row, not a health row: the only thing that
+ * could "fail" is the user having turned it off, which is their decision. The
+ * row exists so the one request siltpoke makes on its own is visible from
+ * inside the product rather than only in the README — a switch nobody can find
+ * is not really a switch.
+ */
+function checkUpdateCheck(opts: DoctorOptions): CheckResult {
+  const home = opts.siltpokeHome ?? siltpokeRoot();
+  const enabled = loadUpdateCheckConfigSync(home, (p, e) => readFileSync(p, e)).enabled;
+  if (!enabled) {
+    return {
+      name: "update check",
+      pass: true,
+      detail: 'off (updateCheck.enabled=false in config.json) — no request is made',
+    };
+  }
+  const path = cachePath(home);
+  const cache = existsSync(path) ? parseCache(readFileSync(path, "utf8")) : null;
+  const last = cache
+    ? cache.latestVersion
+      ? `last saw ${cache.latestVersion}`
+      : "last check found nothing (offline or rate-limited)"
+    : "not run yet";
+  return {
+    name: "update check",
+    pass: true,
+    detail: `on — once a day, asks GitHub for the latest version only; ${last}`,
+  };
 }
 
 function checkGlobalSchema(opts: DoctorOptions): CheckResult {
@@ -530,6 +565,7 @@ export function runAllChecks(opts: DoctorOptions = {}): CheckResult[] {
     checkProjectRoots(opts),
     checkStatuslineInterpreter(opts),
     checkStatuslineRenders(opts),
+    checkUpdateCheck(opts),
   ];
 }
 

@@ -39,7 +39,13 @@ project:
   ask it to explain a file or symbol, grounded in the real call graph.
 - **Memory.** Bugs fingerprinted across sessions; facts you tell it
   remembered across projects. Data stays on your disk — no siltpoke
-  cloud, no telemetry.
+  cloud, no telemetry. The only request Siltpoke makes on its own is a
+  once-a-day check with GitHub for the latest released version number, so
+  it can tell you when an update is waiting. It sends nothing about you or
+  your code, and Siltpoke receives nothing — GitHub sees that request the
+  way it would if you opened the releases page yourself. Turn it off with
+  `"updateCheck": { "enabled": false }` in `~/.siltpoke/config.json`;
+  `/siltpoke-doctor` shows whether it is on.
 - **Chat.** Talk to it with all of the above in context.
 
 And it's a **Tamagotchi** — pet it, level it up, unlock poses. The pet
@@ -47,6 +53,21 @@ is the surface that makes it feel like a companion, not a dashboard.
 Runs **~$0.04–$0.10/day** on typical use, thanks to prompt caching.
 
 ## Setup (90 seconds)
+
+> **Platforms: macOS and Linux.** Windows is **not supported yet** — not
+> "rough", not "untested": the plugin registers its review hook as
+> `sh ./hooks/stop.sh`, and a stock Windows box has no `sh`, so the hook never
+> starts. Everything else installs and looks healthy — the pet appears, the
+> commands work, the config file says you are set up — and no review ever
+> happens, silently. WSL works, because inside WSL you are on Linux. Native
+> Windows support is being built; until it lands, this is a warning rather
+> than a caveat.
+
+**Prefer to have your coding agent do the whole install?** Paste one of
+[`docs/install-prompts/`](docs/install-prompts/) into it — one file per host
+(Claude Code · Codex · Antigravity · CodeBuddy · Qoder). Each one installs
+Siltpoke, runs setup, and then teaches you what to type on your first day.
+Everything below is the same thing done by hand.
 
 ### Claude Code
 

@@ -32,7 +32,7 @@ import { markForwarded } from "./mark-forwarded";
 import { formatMuteHuman, formatMuteJson, runMute } from "./mute";
 import { helpText } from "./plugin-help";
 import { computeQuizDials } from "./quiz-score";
-import { openDashboard, restartDashboard } from "./report";
+import { openDashboard, restartDashboard } from "./dashboard";
 import { runMenubarCli } from "./menubar";
 import { formatUnmuteHuman, formatUnmuteJson, runUnmute } from "./unmute";
 import { formatWakeHuman, formatWakeJson, runWake } from "./wake";

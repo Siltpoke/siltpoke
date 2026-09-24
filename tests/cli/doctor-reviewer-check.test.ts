@@ -32,7 +32,7 @@ describe("doctor — brain role health rows (chat/review/extract)", () => {
 
   test("wired into runAllChecks as three per-role entries", () => {
     const checks = runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome });
-    expect(checks).toHaveLength(16); // the knowledge render-cache row is not in this tree
+    expect(checks).toHaveLength(17); // the knowledge render-cache row is not in this tree
     const names = checks.map((c) => c.name);
     expect(names).toContain("brain role: chat");
     expect(names).toContain("brain role: review");

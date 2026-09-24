@@ -16,9 +16,10 @@ var __export = (target, all) => {
 
 // src/hooks/handle-session-start.ts
 import { spawnSync } from "child_process";
-import { existsSync as existsSync4, mkdirSync as mkdirSync3, writeFileSync as writeFileSync2 } from "fs";
+import { existsSync as existsSync7, mkdirSync as mkdirSync4, writeFileSync as writeFileSync3 } from "fs";
 import { mkdir as mkdir5, writeFile as writeFile4 } from "fs/promises";
-import { join as join9 } from "path";
+import { dirname as dirname7, join as join12 } from "path";
+import { fileURLToPath } from "url";
 
 // src/installer/agy-migration.ts
 import { readFile } from "fs/promises";
@@ -14722,23 +14723,215 @@ function isSiltpokeInternal(env = process.env) {
   return env.SILTPOKE_INTERNAL === "1";
 }
 
+// src/update/session-notice.ts
+import { existsSync as existsSync6, readFileSync as readFileSync4, writeFileSync as writeFileSync2, mkdirSync as mkdirSync3 } from "fs";
+import { dirname as dirname6 } from "path";
+
+// src/config/update-check-config.ts
+import { existsSync as existsSync4 } from "fs";
+import { join as join8 } from "path";
+var updateCheckConfigSchema = exports_external.object({
+  enabled: exports_external.boolean().default(true)
+});
+function loadUpdateCheckConfigSync(home, readFileSyncFn) {
+  const configPath = join8(home, "config.json");
+  if (!existsSync4(configPath))
+    return updateCheckConfigSchema.parse({});
+  try {
+    return parseSection(readFileSyncFn(configPath, "utf8"));
+  } catch {
+    return updateCheckConfigSchema.parse({});
+  }
+}
+function parseSection(raw) {
+  const parsed = JSON.parse(raw);
+  const result = updateCheckConfigSchema.safeParse(parsed.updateCheck ?? {});
+  return result.success ? result.data : updateCheckConfigSchema.parse({});
+}
+
+// src/installer/installed-version.ts
+import { existsSync as existsSync5, readFileSync as readFileSync3 } from "fs";
+import { dirname as dirname5, join as join9, parse as parse5 } from "path";
+function findInstalledVersion(startDir) {
+  let dir = startDir;
+  const root = parse5(dir).root;
+  for (;; ) {
+    for (const rel of [join9(".claude-plugin", "plugin.json"), "package.json"]) {
+      const candidate = join9(dir, rel);
+      if (existsSync5(candidate)) {
+        const v = readVersionField(candidate);
+        if (v)
+          return v;
+      }
+    }
+    if (dir === root)
+      return null;
+    const parent = dirname5(dir);
+    if (parent === dir)
+      return null;
+    dir = parent;
+  }
+}
+function readVersionField(path) {
+  try {
+    const parsed = JSON.parse(readFileSync3(path, "utf8"));
+    return typeof parsed.version === "string" && parsed.version.length > 0 ? parsed.version : null;
+  } catch {
+    return null;
+  }
+}
+function isNewerVersion(candidate, current) {
+  const a = parseSemver(candidate);
+  const b = parseSemver(current);
+  if (!a || !b)
+    return false;
+  for (let i = 0;i < 3; i++) {
+    if (a.nums[i] !== b.nums[i])
+      return a.nums[i] > b.nums[i];
+  }
+  return !a.pre && !!b.pre;
+}
+function parseSemver(v) {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(v.trim());
+  if (!m)
+    return null;
+  return {
+    nums: [Number(m[1]), Number(m[2]), Number(m[3])],
+    pre: m[4] ?? null
+  };
+}
+
+// src/update/check.ts
+import { join as join10 } from "path";
+var CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+var LATEST_RELEASE_URL = "https://api.github.com/repos/Siltpoke/siltpoke/releases/latest";
+var CACHE_BASENAME = "update-check.json";
+function cachePath(home) {
+  return join10(home, CACHE_BASENAME);
+}
+function parseCache(raw) {
+  try {
+    const o = JSON.parse(raw);
+    if (typeof o.checkedAtMs !== "number" || !Number.isFinite(o.checkedAtMs))
+      return null;
+    return {
+      checkedAtMs: o.checkedAtMs,
+      latestVersion: typeof o.latestVersion === "string" ? o.latestVersion : null,
+      headline: typeof o.headline === "string" ? o.headline : null
+    };
+  } catch {
+    return null;
+  }
+}
+function isStale(cache, nowMs) {
+  if (!cache)
+    return true;
+  const age = nowMs - cache.checkedAtMs;
+  return age < 0 || age >= CHECK_INTERVAL_MS;
+}
+function readReleasePayload(payload) {
+  if (typeof payload !== "object" || payload === null)
+    return null;
+  const o = payload;
+  const tag = typeof o.tag_name === "string" ? o.tag_name.trim() : "";
+  if (!tag)
+    return null;
+  const version2 = tag.replace(/^v/, "");
+  if (!version2)
+    return null;
+  return { latestVersion: version2, headline: firstMeaningfulLines(o.body) };
+}
+function firstMeaningfulLines(body, maxChars = 160) {
+  if (typeof body !== "string")
+    return null;
+  const bullets = [];
+  for (const rawLine of body.split(`
+`)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#") || line.startsWith("---"))
+      continue;
+    const bullet = line.replace(/^[-*]\s+/, "");
+    const clean = bullet.replace(/\*\*/g, "").replace(/`/g, "");
+    if (clean)
+      bullets.push(clean);
+    if (bullets.join(" \xB7 ").length >= maxChars)
+      break;
+  }
+  if (bullets.length === 0)
+    return null;
+  const joined = bullets.join(" \xB7 ");
+  return joined.length <= maxChars ? joined : `${joined.slice(0, maxChars - 1).trimEnd()}\u2026`;
+}
+function updateNotice(installedVersion, cache, updateCommand) {
+  if (!installedVersion || !cache?.latestVersion)
+    return null;
+  if (!isNewerVersion(cache.latestVersion, installedVersion))
+    return null;
+  const head = cache.headline ? ` \u2014 ${cache.headline}` : "";
+  return `siltpoke ${cache.latestVersion} is out (you have ${installedVersion})${head}. ` + `Update with \`${updateCommand}\`, then restart.`;
+}
+
+// src/update/session-notice.ts
+function updateNoticeForSession(deps) {
+  const now = deps.nowMs ?? Date.now;
+  const readF = deps.readFileSyncFn ?? ((p, e) => readFileSync4(p, e));
+  const exists = deps.existsSyncFn ?? existsSync6;
+  try {
+    if (!loadUpdateCheckConfigSync(deps.home, readF).enabled)
+      return SILENT;
+    const path = cachePath(deps.home);
+    const cache = exists(path) ? parseCache(readF(path, "utf8")) : null;
+    return {
+      notice: updateNotice(findInstalledVersion(deps.startDir), cache, deps.updateCommand),
+      needsRefresh: isStale(cache, now())
+    };
+  } catch {
+    return SILENT;
+  }
+}
+var SILENT = { notice: null, needsRefresh: false };
+async function refreshUpdateCache(home, deps = {}) {
+  const now = (deps.nowMs ?? Date.now)();
+  const write = deps.writeFileSyncFn ?? ((p, d) => writeFileSync2(p, d));
+  let entry = { checkedAtMs: now, latestVersion: null, headline: null };
+  try {
+    const f = deps.fetchFn ?? fetch;
+    const res = await f(LATEST_RELEASE_URL, {
+      headers: { accept: "application/vnd.github+json" },
+      signal: AbortSignal.timeout(deps.timeoutMs ?? 5000)
+    });
+    if (res.ok) {
+      const parsed = readReleasePayload(await res.json());
+      if (parsed)
+        entry = { checkedAtMs: now, ...parsed };
+    }
+  } catch {}
+  try {
+    const path = cachePath(home);
+    mkdirSync3(dirname6(path), { recursive: true });
+    write(path, `${JSON.stringify(entry)}
+`);
+  } catch {}
+  return entry;
+}
+
 // src/hooks/session-baseline.ts
 import { createHash } from "crypto";
 import { mkdir as mkdir4, readdir, rm as rm2, stat } from "fs/promises";
-import { join as join8 } from "path";
+import { join as join11 } from "path";
 var BASELINE_RETENTION_DAYS = 7;
 var SAFE_SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
 function isSafeSessionId(sessionId) {
   return SAFE_SESSION_ID.test(sessionId);
 }
 function stateDirFor(cwd) {
-  return join8(cwd, ".siltpoke");
+  return join11(cwd, ".siltpoke");
 }
 function legacyBaselinePath(stateDir) {
-  return join8(stateDir, "baseline.json");
+  return join11(stateDir, "baseline.json");
 }
 function sessionBaselineDir(stateDir) {
-  return join8(stateDir, "baselines");
+  return join11(stateDir, "baselines");
 }
 function idDigest(sessionId) {
   return createHash("sha256").update(sessionId).digest("hex").slice(0, 8);
@@ -14746,7 +14939,7 @@ function idDigest(sessionId) {
 function sessionBaselinePath(stateDir, sessionId) {
   if (!isSafeSessionId(sessionId))
     return null;
-  return join8(sessionBaselineDir(stateDir), `${sessionId}-${idDigest(sessionId)}.json`);
+  return join11(sessionBaselineDir(stateDir), `${sessionId}-${idDigest(sessionId)}.json`);
 }
 async function writeSessionBaseline(cwd, baseline) {
   const stateDir = stateDirFor(cwd);
@@ -14772,7 +14965,7 @@ async function pruneSessionBaselines(stateDir, now = new Date) {
   for (const name of names) {
     if (!name.endsWith(".json") && !name.startsWith(".tmp-"))
       continue;
-    const file2 = join8(dir, name);
+    const file2 = join11(dir, name);
     try {
       if ((await stat(file2)).mtimeMs < cutoff) {
         await rm2(file2, { force: true });
@@ -14788,8 +14981,8 @@ async function maybeMigrateLegacyCodexHooks(env) {
   const home = siltpokeRoot(env);
   if (env.SILTPOKE_HOST === "codex") {
     try {
-      const codexMarker = join9(home, ".codex-migrated");
-      if (!existsSync4(codexMarker)) {
+      const codexMarker = join12(home, ".codex-migrated");
+      if (!existsSync7(codexMarker)) {
         await removeCodexLegacyHooks(codexHooksJsonPath(env));
         await mkdir5(home, { recursive: true });
         await writeFile4(codexMarker, "");
@@ -14797,8 +14990,8 @@ async function maybeMigrateLegacyCodexHooks(env) {
     } catch {}
   }
   try {
-    const ccForkMarker = join9(home, ".ccfork-migrated");
-    if (!existsSync4(ccForkMarker)) {
+    const ccForkMarker = join12(home, ".ccfork-migrated");
+    if (!existsSync7(ccForkMarker)) {
       await removeCcForkLegacyHooks(hostSettingsJsonPath(resolveQoderHome(env)));
       await removeCcForkLegacyHooks(hostSettingsJsonPath(resolveCodebuddyHome(env)));
       await mkdir5(home, { recursive: true });
@@ -14806,13 +14999,44 @@ async function maybeMigrateLegacyCodexHooks(env) {
     }
   } catch {}
   try {
-    const agyMarker = join9(home, ".agy-migrated");
-    if (!existsSync4(agyMarker)) {
+    const agyMarker = join12(home, ".agy-migrated");
+    if (!existsSync7(agyMarker)) {
       await removeAgyLegacyHooks(resolveAgyHooksJsonPath(env));
       await mkdir5(home, { recursive: true });
       await writeFile4(agyMarker, "");
     }
   } catch {}
+}
+function updateCommandFor(env) {
+  switch (env.SILTPOKE_HOST) {
+    case "codex":
+      return "codex plugin update siltpoke";
+    case "codebuddy":
+      return "/plugin marketplace update siltpoke";
+    case "qoder":
+      return "qodercli plugin update siltpoke";
+    case "antigravity":
+      return "agy plugin install https://github.com/Siltpoke/siltpoke-agy";
+    default:
+      return "claude plugin update siltpoke";
+  }
+}
+function updateSystemMessage(env) {
+  try {
+    if (isSiltpokeInternal(env))
+      return null;
+    const home = siltpokeRoot(env);
+    const state = updateNoticeForSession({
+      home,
+      startDir: dirname7(fileURLToPath(import.meta.url)),
+      updateCommand: updateCommandFor(env)
+    });
+    if (state.needsRefresh)
+      refreshUpdateCache(home).catch(() => {});
+    return state.notice ? JSON.stringify({ systemMessage: state.notice }) : null;
+  } catch {
+    return null;
+  }
 }
 function codexFirstRunNudge(env) {
   try {
@@ -14821,14 +15045,14 @@ function codexFirstRunNudge(env) {
     if (env.SILTPOKE_HOST !== "codex")
       return null;
     const root = siltpokeRoot(env);
-    if (existsSync4(join9(root, "config.json")))
+    if (existsSync7(join12(root, "config.json")))
       return null;
-    const marker = join9(root, ".codex-nudged");
-    if (existsSync4(marker))
+    const marker = join12(root, ".codex-nudged");
+    if (existsSync7(marker))
       return null;
-    mkdirSync3(root, { recursive: true });
-    writeFileSync2(marker, "");
-    if (!existsSync4(marker))
+    mkdirSync4(root, { recursive: true });
+    writeFileSync3(marker, "");
+    if (!existsSync7(marker))
       return null;
     return JSON.stringify({
       systemMessage: 'Siltpoke is installed but has no pet yet \u2014 say "set up my Siltpoke pet" to create one and start reviews.'
@@ -14872,9 +15096,17 @@ if (import.meta.main) {
     if (nudge)
       process.stdout.write(`${nudge}
 `);
+    else {
+      const update = updateSystemMessage(process.env);
+      if (update)
+        process.stdout.write(`${update}
+`);
+    }
   } catch {}
 }
 export {
+  updateSystemMessage,
+  updateCommandFor,
   handleSessionStart,
   codexFirstRunNudge
 };

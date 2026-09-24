@@ -12,7 +12,7 @@
  * revert to `return r.ok` reds them.
  */
 import { describe, expect, test } from "bun:test";
-import { siltpokedAnswersAt } from "../../src/cli/report";
+import { siltpokedAnswersAt } from "../../src/cli/dashboard";
 
 async function against(
   fetchImpl: () => Response,

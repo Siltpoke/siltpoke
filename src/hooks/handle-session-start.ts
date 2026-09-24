@@ -17,7 +17,8 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { removeAgyLegacyHooks } from "../installer/agy-migration";
 import { removeCcForkLegacyHooks } from "../installer/ccfork-migration";
 import { refreshStaleShims } from "../installer/shim";
@@ -32,6 +33,7 @@ import {
 } from "../installer/paths";
 import { maybeLaunchDistilWorker } from "../memory/distil-launcher";
 import { isSiltpokeInternal } from "../router/router";
+import { refreshUpdateCache, updateNoticeForSession } from "../update/session-notice";
 import { stateDirFor, writeSessionBaseline } from "./session-baseline";
 
 // Uses the shared lightweight resolver from ../installer/paths — that module
@@ -196,6 +198,56 @@ async function maybeMigrateLegacyCodexHooks(env: NodeJS.ProcessEnv): Promise<voi
  * Returns the JSON string to print on stdout, or null to stay silent.
  * Marker-gated to fire once — mirrors hooks/stop.sh.
  */
+/**
+ * Per-host command that performs an update. Named here rather than in
+ * `src/update/` because the host split is a hook concern — the update module
+ * should not have to know what a host is.
+ */
+export function updateCommandFor(env: NodeJS.ProcessEnv): string {
+  switch (env.SILTPOKE_HOST) {
+    case "codex":
+      return "codex plugin update siltpoke";
+    case "codebuddy":
+      return "/plugin marketplace update siltpoke";
+    case "qoder":
+      return "qodercli plugin update siltpoke";
+    case "antigravity":
+      return "agy plugin install https://github.com/Siltpoke/siltpoke-agy";
+    default:
+      return "claude plugin update siltpoke";
+  }
+}
+
+/**
+ * The "there is a newer siltpoke" line, as a hook `systemMessage` JSON string,
+ * or null to stay silent.
+ *
+ * Same three guards as `codexFirstRunNudge`, for the same reasons:
+ * `isSiltpokeInternal` keeps it out of nested Brain-call sessions (there is no
+ * user in one), everything is wrapped, and every failure resolves to null. It
+ * reads the cache only — the network refresh it may schedule is not awaited, so
+ * this cannot slow a session start no matter what the network is doing.
+ */
+export function updateSystemMessage(env: NodeJS.ProcessEnv): string | null {
+  try {
+    if (isSiltpokeInternal(env)) return null;
+    const home = siltpokeRoot(env);
+    const state = updateNoticeForSession({
+      home,
+      startDir: dirname(fileURLToPath(import.meta.url)),
+      updateCommand: updateCommandFor(env),
+    });
+    // Started, deliberately NOT awaited. This line is the whole "a session
+    // never waits on GitHub" rule, so it lives here rather than inside the
+    // module, where a later reader could quietly add an `await` and nobody
+    // would see that the hot path had grown a network round-trip.
+    if (state.needsRefresh) void refreshUpdateCache(home).catch(() => {});
+    return state.notice ? JSON.stringify({ systemMessage: state.notice }) : null;
+  } catch {
+    return null; // never break SessionStart
+  }
+}
+
 export function codexFirstRunNudge(env: NodeJS.ProcessEnv): string | null {
   try {
     // Same recursion guard as handleSessionStart, for the same reason in a
@@ -322,6 +374,13 @@ if (import.meta.main) {
 
     const nudge = codexFirstRunNudge(process.env);
     if (nudge) process.stdout.write(`${nudge}\n`);
+    else {
+      // Only when the first-run nudge did not fire: a brand-new install has
+      // nothing to update to, and two systemMessages in one SessionStart is
+      // one more than the channel is worth spending.
+      const update = updateSystemMessage(process.env);
+      if (update) process.stdout.write(`${update}\n`);
+    }
   } catch {
     // fail-soft — must never throw into or disrupt a SessionStart (e.g.
     // siltpokeRoot() throws PathError when HOME is unset/empty).

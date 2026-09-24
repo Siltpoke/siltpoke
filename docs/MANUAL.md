@@ -187,6 +187,10 @@ install autostart:
 - macOS: a LaunchAgent at `~/Library/LaunchAgents/io.siltpoke.daemon.plist`
   (`RunAtLoad` + `KeepAlive` — relaunches if it crashes).
 - Linux: a systemd user unit `siltpoked.service` (`Restart=always`).
+- Windows: nothing — the install step is skipped, and the dashboard does not
+  survive a reboot. This is one of several gaps; native Windows is not
+  supported yet (see README "Platforms"), the load-bearing one being that the
+  review hook is registered as `sh ./hooks/stop.sh` and never starts.
 
 Install/refresh any time: `bun src/cli/daemon.ts install-autostart`.
 `bun run uninstall` removes it along with everything else.
@@ -510,6 +514,31 @@ If you see English leaking into the bubble for non-English settings,
 verify your `language` field is set and restart Claude Code.
 
 ---
+
+## Update check
+
+Once a day, at the start of a session, Siltpoke asks GitHub for the version
+number of its own latest release. If that is newer than what you have, the next
+session says so in one line and names the command to update. It never updates
+anything by itself, and it never blocks a session: the session reads a cached
+answer and refreshes in the background, so being offline just means the line
+does not appear.
+
+That request is the **only** one Siltpoke makes on its own. It carries nothing
+about you, your code, or your usage, and Siltpoke receives nothing — the request
+goes to GitHub, which sees it the way it would if you opened the releases page
+yourself.
+
+It is on by default, because the people it exists for are the ones who do not
+know an update is waiting. Turn it off with:
+
+```json
+{ "updateCheck": { "enabled": false } }
+```
+
+in `~/.siltpoke/config.json`. `/siltpoke-doctor` has a row showing whether it is
+on and what the last check found. The cached answer lives in
+`~/.siltpoke/update-check.json`; deleting it just forces a fresh check.
 
 ## Files Siltpoke owns
 

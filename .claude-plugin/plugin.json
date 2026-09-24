@@ -1,7 +1,7 @@
 {
   "name": "siltpoke",
   "displayName": "Siltpoke",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "A sassy ASCII terminal buddy that watches Claude Code work and points out what you missed.",
   "homepage": "https://siltpoke.com",
   "repository": "https://github.com/Siltpoke/siltpoke",

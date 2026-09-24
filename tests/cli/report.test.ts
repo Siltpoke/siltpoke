@@ -10,7 +10,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildReport, restartDashboard } from "../../src/cli/report";
+import { buildReport } from "../../src/cli/report";
+import { restartDashboard } from "../../src/cli/dashboard";
 
 let tmp: string;
 let homeBase: string;

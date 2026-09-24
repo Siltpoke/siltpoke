@@ -6,6 +6,40 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-24
+
+### Added
+
+- **Siltpoke tells you when a newer version is out.** Once a day a session asks
+  GitHub for the latest released version number; if it is newer than yours, the
+  next session says so in one line and names the command to update. It never
+  updates anything itself and never delays a session — the answer is read from a
+  local cache and refreshed in the background, so being offline just means the
+  line does not appear. That request is the only one Siltpoke makes on its own:
+  it carries nothing about you or your code, and Siltpoke receives nothing.
+  Turn it off with `"updateCheck": { "enabled": false }` in
+  `~/.siltpoke/config.json`; `/siltpoke-doctor` shows whether it is on.
+- **A copy-paste install prompt for each host.** `docs/install-prompts/` holds
+  one per host (Claude Code, Codex, Antigravity, CodeBuddy, Qoder). Paste one
+  into that agent and it installs Siltpoke, runs setup, and then teaches you
+  what to type on your first day.
+
+### Fixed
+
+- **`/siltpoke-dashboard` opens a browser on Windows** instead of silently
+  doing nothing. It was spawning `start`, which is a `cmd.exe` builtin rather
+  than a program, so nothing could launch.
+
+### Known limitation
+
+- **Native Windows is not supported yet, and it fails quietly.** Siltpoke
+  installs, the pet appears, the commands work and the config reports a healthy
+  setup — but the review hook is registered as `sh ./hooks/stop.sh`, a stock
+  Windows box has no `sh`, and so no review ever runs and nothing says so. WSL
+  works, because inside WSL you are on Linux. The install prompts now stop and
+  warn before installing anything on Windows, and the README states it.
+
+
 ## [1.2.0] - 2026-09-23
 
 ### Added

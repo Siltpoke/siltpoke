@@ -6,20 +6,16 @@ name: release
 # section from CHANGELOG.md and publishes it as the GitHub Release body,
 # with PR-label-grouped auto-notes appended (via .github/release.yml).
 #
-# **DORMANT (workflow_dispatch only)** until GitHub Actions billing resumed.
-# To restore tag-trigger: replace `workflow_dispatch:` block with:
-#   on:
-#     push:
-#       tags:
-#         - "v*.*.*"
-#     workflow_dispatch:
-#       inputs:
-#         tag:
-#           description: "Tag to build release from (e.g. v0.1.0)"
-#           required: true
-#           type: string
+# Pushing a tag publishes its Release. `workflow_dispatch` is KEPT alongside
+# that trigger and is not a leftover: it is the only way to publish a Release
+# for a tag that is ALREADY pushed, which is how a historical gap gets filled.
+# When it is used that way the publish step below deliberately withholds the
+# "Latest" badge — see the comment there.
 
 on:
+  push:
+    tags:
+      - "v*.*.*"
   workflow_dispatch:
     inputs:
       tag:
@@ -38,13 +34,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          # fetch-depth: 0 is load-bearing beyond history — it is what makes
+          # actions/checkout fetch refs/tags/*, and the publish step's "is this
+          # the highest release tag" computation reads those tags. Narrowing
+          # this to fetch-depth: 1 to save time would leave that step with no
+          # tags to compare against; it now fails loudly rather than guessing.
           fetch-depth: 0
           ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Derive version
         id: ver
+        # The dispatch input reaches the shell through `env`, never through a
+        # `${{ }}` expansion inside `run:`. Interpolating it directly builds the
+        # script text out of user-supplied input — the canonical Actions
+        # script-injection shape — and this input is free-form.
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG="${INPUT_TAG:-$REF_NAME}"
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::refusing to build a release from '$TAG' — expected vX.Y.Z"; exit 1 ;;
+          esac
           VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -107,8 +119,45 @@ jobs:
           TAG="${{ steps.ver.outputs.tag }}"
           IS_PRE=""
           if [[ "$TAG" == *-* ]]; then IS_PRE="--prerelease"; fi
+
+          # Backfilling an OLDER tag must not steal the repo's "Latest" badge.
+          # `gh release create` defaults to make_latest=true, which is right for
+          # a tag push and wrong for a dispatch that fills a historical gap.
+          # Measured 2026-09-23: dispatching v1.1.0 after v1.2.0 had shipped
+          # moved Latest back to v1.1.0, so the repo front page advertised the
+          # older release until it was PATCHed back by hand.
+          if [ -n "$IS_PRE" ]; then
+            # A pre-release can never be Latest, and asking for it is a 422.
+            LATEST_FLAG="--latest=false"
+          else
+            # Pre-releases are EXCLUDED from the comparison set, because
+            # `sort -V` ranks them ABOVE the release they precede:
+            #   $ printf 'v1.3.0\nv1.3.0-rc1\n' | sort -V
+            #   v1.3.0
+            #   v1.3.0-rc1        <- sorts last, i.e. reads as "highest"
+            # and `git tag -l 'v*.*.*'` does match `v1.3.0-rc1` (the trailing
+            # `*` absorbs `0-rc1`). Without this filter the FINAL v1.3.0 would
+            # compare unequal to HIGHEST and ship with no Latest badge — the
+            # same broken front page this guard exists to prevent, arrived at
+            # from the other direction. Measured 2026-09-23 on coreutils 9.7.
+            HIGHEST="$(git tag -l 'v*.*.*' | grep -v -- '-' | sort -V | tail -1)"
+            if [ -z "$HIGHEST" ]; then
+              # Only reachable if the checkout stopped fetching tags. Fail loud:
+              # an empty HIGHEST silently means "not latest" for every release.
+              echo "::error::no v*.*.* tags visible — the Checkout step needs fetch-depth: 0"
+              exit 1
+            fi
+            if [ "$TAG" = "$HIGHEST" ]; then
+              LATEST_FLAG="--latest=true"
+            else
+              LATEST_FLAG="--latest=false"
+              echo "::notice::$TAG is not the highest release tag ($HIGHEST) — publishing without the Latest badge"
+            fi
+          fi
+
           gh release create "$TAG" \
             --title "$TAG" \
             --notes-file release-body.md \
             --generate-notes \
+            $LATEST_FLAG \
             $IS_PRE

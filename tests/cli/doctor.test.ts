@@ -37,9 +37,13 @@ describe("doctor — orchestration", () => {
   // 15 → 16 on 2026-09-20 (statusline interpreter runnable — install-audit
   // defect [10]: doctor was green on a Windows box whose statusline could
   // never start, because nothing checked the interpreter it names).
-  test("runAllChecks returns 16 entries (one per check)", () => {
+  // 17 → 18 on 2026-09-24 (update check: a DISCLOSURE row, not a health row —
+  // it always passes. The once-a-day version check is the only request
+  // siltpoke makes on its own, and a switch nobody can find from inside the
+  // product is not really a switch).
+  test("runAllChecks returns 17 entries (one per check)", () => {
     const results = runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome });
-    expect(results).toHaveLength(16);
+    expect(results).toHaveLength(17);
     for (const r of results) {
       expect(typeof r.name).toBe("string");
       expect(typeof r.pass).toBe("boolean");
