@@ -28,6 +28,7 @@ import {
   type CallBrainOptions,
   extractJsonString,
 } from "../brain";
+import { drainProcess, stopProcess } from "../drain-process";
 import type { BrainFailureInput } from "../failure-classify";
 import {
   type BrainProviderMeta,
@@ -37,6 +38,7 @@ import {
 } from "../provider";
 import { reapQoderSessions, recordQoderSession } from "../qoder-reaper";
 import { parseBrainOutput } from "../schema";
+import { systemPromptArgs } from "../system-prompt-file";
 import { resolveReviewerCwd } from "./reviewer-cwd";
 
 /** Comparable fixed overhead to claude -p (unlike codex's heavier ~120s). */
@@ -47,10 +49,38 @@ export interface CcForkReviewerConfig {
   bin: string;
   genAiSystem: string;
   defaultTimeoutMs?: number;
+  /**
+   * Does this CLI accept `--system-prompt-file`? Declared per fork, never
+   * inferred from the family (defect `[26]`).
+   *
+   * `codebuddy` is true because its `--help` was read on a real machine and
+   * lists the flag.
+   *
+   * `qoder` is true as of 2026-09-26, and the evidence is NOT its `--help`,
+   * which does not mention the flag at all. `qodercli` 1.1.1's own bundle
+   * declares it and hides it:
+   *
+   *   .addOption(new pT("--system-prompt-file <path>").hideHelp())
+   *
+   * sitting in the same option chain as `--system-prompt <text>`. Confirmed
+   * against the running binary: passing `--system-prompt-file <path>` gets as
+   * far as the model (it then fails on the account's credit limit, error_code
+   * 118), exactly like the documented `--system-prompt`, while a flag that does
+   * not exist makes qodercli print its usage and exit 1. So the flip is a
+   * measurement, not the family guess this field was created to prevent.
+   *
+   * Still NOT established: that the flag DELIVERS the prompt to the model. The
+   * credit limit blocks any real turn, so this shares codebuddy's grade — the
+   * CLI's own declared interface, never exercised end-to-end, never on Windows.
+   */
+  supportsSystemPromptFile: boolean;
   /** Full argv (bin first) EXCLUDING the reviewed context, which rides stdin.
+   * `systemPromptArgs` is the already-built fragment — either
+   * `--system-prompt <text>` or `--system-prompt-file <path>`; the caller owns
+   * that choice and the temp file's lifetime.
    * `--model` is omitted when `model` is undefined (qoder rejects the literal
    * "default"; omitting lets the CLI use its account default). */
-  buildArgv(args: { systemPrompt: string; model?: string }): string[];
+  buildArgv(args: { systemPromptArgs: readonly string[]; model?: string }): string[];
 }
 
 interface CcForkEnvelope {
@@ -150,6 +180,61 @@ function runQoderSessionReaper(configName: string, stdout: string): void {
   }
 }
 
+/**
+ * Spawn the fork's CLI, converting a spawn-level failure into the structured
+ * BrainError the classifier reads.
+ *
+ * Extracted to keep `callRaw` under its length pin; `cleanup` runs here because
+ * this throw leaves before the caller's `finally` is armed, and defect `[26]`'s
+ * temp file must not linger.
+ */
+function spawnCcFork(args: {
+  spawnFn: typeof Bun.spawn;
+  argv: string[];
+  cwd: string | undefined;
+  bin: string;
+  cleanup: () => void;
+}): Bun.Subprocess<"pipe", "pipe", "pipe"> {
+  try {
+    return args.spawnFn(args.argv, {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      cwd: args.cwd,
+      // Recursion guard — these CLIs are also hosts; their own Stop hook could
+      // re-fire siltpoke's review on this subprocess.
+      env: { ...process.env, SILTPOKE_INTERNAL: "1" },
+    });
+  } catch (err) {
+    args.cleanup();
+    throw new BrainError(`${args.bin} -p spawn failed: ${err}`, err, {
+      exitCode: null,
+      stderr: "",
+      stdout: "",
+      spawnError: String(err),
+    } satisfies BrainFailureInput);
+  }
+}
+
+/**
+ * argv plus the temp-file lifetime that may come with it (defect `[26]`): on
+ * Windows the system prompt moves out of argv into a file, and whoever builds
+ * the argv also owns deleting that file.
+ */
+function buildArgvWithPrompt(
+  config: CcForkReviewerConfig,
+  opts: CallBrainOptions,
+): { argv: string[]; cleanup: () => void } {
+  const promptArgs = systemPromptArgs(opts.systemPrompt, {
+    supportsFile: config.supportsSystemPromptFile,
+    platform: opts.platform,
+  });
+  return {
+    argv: config.buildArgv({ systemPromptArgs: promptArgs.args, model: opts.model }),
+    cleanup: promptArgs.cleanup,
+  };
+}
+
 export function makeCcForkReviewerProvider(config: CcForkReviewerConfig): ReviewerBrainProvider {
   const callRaw = async (opts: CallBrainOptions): Promise<CallRawResult> => {
     const spawnFn = opts.spawnFn ?? Bun.spawn;
@@ -159,49 +244,34 @@ export function makeCcForkReviewerProvider(config: CcForkReviewerConfig): Review
     // warns loudly instead of silently falling back (Task 14 — latent
     // hardening).
     const cwd = resolveReviewerCwd(opts);
-    const argv = config.buildArgv({ systemPrompt: opts.systemPrompt, model: opts.model });
+    const { argv, cleanup } = buildArgvWithPrompt(config, opts);
 
-    const proc = (() => {
-      try {
-        return spawnFn(argv, {
-          stdin: "pipe",
-          stdout: "pipe",
-          stderr: "pipe",
-          cwd,
-          // Recursion guard — these CLIs are also hosts; their own Stop hook
-          // could re-fire siltpoke's review on this subprocess.
-          env: { ...process.env, SILTPOKE_INTERNAL: "1" },
-        });
-      } catch (err) {
-        throw new BrainError(`${config.bin} -p spawn failed: ${err}`, err, {
-          exitCode: null,
-          stderr: "",
-          stdout: "",
-          spawnError: String(err),
-        } satisfies BrainFailureInput);
-      }
-    })();
-
-    proc.stdin.write(opts.contextBundle);
-    proc.stdin.end();
-
-    const killTimer = setTimeout(() => {
-      try {
-        proc.kill();
-      } catch {
-        // ignore — process may already have exited
-      }
-    }, timeoutMs);
+    const proc = spawnCcFork({ spawnFn, argv, cwd, bin: config.bin, cleanup });
 
     let stdout: string;
     let stderr: string;
     let exitCode: number;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
     try {
-      stdout = await new Response(proc.stdout).text();
-      stderr = await new Response(proc.stderr).text();
-      exitCode = await proc.exited;
+      // Inside the try: a throw from the stdin write used to land between the
+      // spawn's cleanup and this finally, leaking the prompt file (defect
+      // `[26]`'s temp file) once per review. Mirrors brain.ts.
+      proc.stdin.write(opts.contextBundle);
+      proc.stdin.end();
+
+      killTimer = setTimeout(() => {
+        try {
+          stopProcess(proc);
+        } catch {
+          // ignore — process may already have exited
+        }
+      }, timeoutMs);
+
+      // Defect [51]: bounded — a child holding the pipe cannot outlive the timeout.
+      ({ stdout, stderr, exitCode } = await drainProcess(proc));
     } finally {
-      clearTimeout(killTimer);
+      if (killTimer !== undefined) clearTimeout(killTimer);
+      cleanup();
     }
 
     try {
@@ -269,18 +339,19 @@ export function makeCcForkReviewerProvider(config: CcForkReviewerConfig): Review
   };
 }
 
-/** Qoder (`qodercli`) — Alibaba/Qwen family. */
+/** Qoder (`qodercli`) — Alibaba/Qwen family. `--system-prompt-file` is a real but
+ * `.hideHelp()`-ed option in qodercli 1.1.1; see `supportsSystemPromptFile`. */
 export function makeQoderProvider(): ReviewerBrainProvider {
   return makeCcForkReviewerProvider({
     name: "qoder",
     bin: "qodercli",
     genAiSystem: "alibaba",
-    buildArgv: ({ systemPrompt, model }) => {
+    supportsSystemPromptFile: true,
+    buildArgv: ({ systemPromptArgs, model }) => {
       const argv = [
         "qodercli",
         "-p",
-        "--system-prompt",
-        systemPrompt,
+        ...systemPromptArgs,
         "--output-format",
         "json",
         // Read-only reviewer posture — empty variadic disables all built-in tools.
@@ -309,12 +380,12 @@ export function makeCodeBuddyProvider(): ReviewerBrainProvider {
     name: "codebuddy",
     bin: "codebuddy",
     genAiSystem: "tencent",
-    buildArgv: ({ systemPrompt, model }) => {
+    supportsSystemPromptFile: true,
+    buildArgv: ({ systemPromptArgs, model }) => {
       const argv = [
         "codebuddy",
         "-p",
-        "--system-prompt",
-        systemPrompt,
+        ...systemPromptArgs,
         "--output-format",
         "json",
         // Read-only reviewer posture — empty variadic disables all built-in tools.

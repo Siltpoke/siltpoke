@@ -287,9 +287,24 @@ export async function runTools(opts: RunToolsOpts): Promise<RunToolsResult> {
     }
   }
 
+  // Why an unscheduled tool did not run — the reviewer is told this verbatim,
+  // so "no result" can never be mistaken for "no findings".
+  // `notRelevant` = nothing of the tool's kind changed; that is not a missing check.
+  const tscSkip = !hasTsFiles
+    ? { reason: "no .ts/.tsx file changed", notRelevant: true }
+    : !caps.hasTsc
+      ? { reason: "tsc is not available" }
+      : { reason: "no tsconfig.json found" };
+  const eslintSkip =
+    eslintFiles.length === 0
+      ? { reason: "no JS/TS file changed", notRelevant: true }
+      : !caps.hasEslint
+        ? { reason: "eslint is not available" }
+        : { reason: "no eslint config file found" };
+
   return {
-    tsc: resultMap.get("tsc") ?? notApplicable("tsc"),
-    eslint: resultMap.get("eslint") ?? notApplicable("eslint"),
+    tsc: resultMap.get("tsc") ?? { ...notApplicable("tsc"), ...tscSkip },
+    eslint: resultMap.get("eslint") ?? { ...notApplicable("eslint"), ...eslintSkip },
     "git-diff": resultMap.get("git-diff") ?? notApplicable("git-diff"),
     ripgrep: resultMap.get("ripgrep") ?? notApplicable("ripgrep"),
     securityFindings,

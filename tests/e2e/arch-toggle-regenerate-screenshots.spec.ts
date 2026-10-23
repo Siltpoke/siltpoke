@@ -181,6 +181,26 @@ test.beforeAll(async () => {
 
 test.beforeEach(async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 820 });
+  // The big fixture seeds empty fingerprints (FRESH_FINGERPRINT depends on
+  // that), and an index with no recorded files reads "not indexed" — so the
+  // page would rightly decline to say "Diagram is current". These scenarios
+  // are about the diagram cache, not the index: answer the index check
+  // "fresh" here. The index-behind path has its own island tests
+  // (repo-graph-index-freshness-wiring.test.ts).
+  await page.route("**/api/repo-graph/staleness?*", (route) =>
+    route.fulfill({
+      json: {
+        success: true,
+        error: null,
+        data: {
+          level: "fresh",
+          headline: "index is current",
+          caveat: null,
+          counts: { content_changed: 0, deleted_still_indexed: 0, unindexed_files: 0, indexed: 1, wrong_ratio: 0 },
+        },
+      },
+    }),
+  );
 });
 
 // ── Scenario 01 ───────────────────────────────────────────────────────────

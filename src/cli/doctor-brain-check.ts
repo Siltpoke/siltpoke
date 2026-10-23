@@ -9,7 +9,7 @@
  * permanent for a binary-missing failure, a passing deterministic re-verify
  * (claude back on PATH) clears the breaker — the one mutation doctor
  * performs. Auth-flavored permanents stay latched (re-verify cannot prove
- * auth fixed; /siltpoke-wake is the user's clear).
+ * auth fixed; /siltpoke:siltpoke-wake is the user's clear).
  */
 import { siltpokeRoot } from "../installer/paths";
 import {

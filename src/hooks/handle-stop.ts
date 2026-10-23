@@ -11,9 +11,12 @@ import {
   type CallBrainOptions,
 } from "../brain/brain";
 import { loadBrainConfigSync } from "../brain/brain-config";
+import { type ProviderFields, providerFields, recordMainUsage } from "./usage-record";
+import { scanText } from "../critic/injection-scan";
+import { reviewAlert, safeScan } from "../critic/review-alert";
 import { makeGuardedCallBrain } from "../brain/brain-guarded";
 import { type CostConfig, loadCostConfig } from "../brain/cost-config";
-import { buildSystemPrompt, loadPersonality } from "../brain/personality";
+import { buildSystemPrompt, expandLanguage, loadPersonality } from "../brain/personality";
 import { assembleSystemPromptWithFunnel, type MemoryFunnel } from "../brain/prompt-assembly";
 import { detectFileTypes } from "../brain/rule-selector";
 import type { BrainOutput } from "../brain/schema";
@@ -43,7 +46,6 @@ import {
 import { type RecentEntry, readRecent, resolveRecentPath } from "../memory/recent";
 import { TraceStore } from "../observability/storage";
 import { Tracer } from "../observability/tracer";
-import type { WhyHost } from "../repo-graph/why-index";
 import {
   type ContextBundle,
   confineToRepo,
@@ -78,7 +80,8 @@ import {
   writeProgression,
 } from "../state/progression";
 import { isQuietHour, loadQuietHoursConfig } from "../state/quiet-hours";
-import { readState, writeState } from "../state/state";
+import { readState, writeStateKeepingAlert } from "../state/state";
+import { writeReviewState } from "./review-state";
 import {
   appendUsageEvent,
   loadDailyRollup,
@@ -91,7 +94,7 @@ import {
 } from "./menubar-refresh";
 import { resolveHostCwd } from "./resolve-host-cwd";
 import { readSessionBaseline, resolveOrCaptureSessionHeadSha } from "./session-baseline";
-import { maybeRecordWhy } from "./why-index-wiring";
+import { recordWhyForEvent } from "./why-index-wiring";
 
 export function logPath(env: NodeJS.ProcessEnv): string {
   return join(siltpokeRoot(env), "brain-calls.jsonl");
@@ -108,27 +111,6 @@ export async function appendJsonLine(
     // Logger failures must never crash the hook.
   }
 }
-
-/**
- * Track #7 T3 (AC7) — provider truth for ledger/telemetry rows. runCritic
- * resolves the reviewer provider once and carries its meta on every
- * RunCriticResult branch (even HARD_SUPPRESS, where no call may have
- * happened); this reads it back with the historical-row-compatible default
- * (absent providerMeta ⇒ claude/usd, matching every pre-track row on disk).
- */
-function providerFields(
-  r: RunCriticResult,
-  authorFamily: string,
-): { provider: string; billing: "usd" | "quota"; model: string | undefined; authorFamily: string } {
-  return {
-    provider: r.providerMeta?.name ?? "claude",
-    billing: r.providerMeta?.billing ?? "usd",
-    model: r.servedModel,
-    authorFamily,
-  };
-}
-
-type ProviderFields = ReturnType<typeof providerFields>;
 
 /**
  * Read-half memory funnel (eval design §2.1) flattened onto the telemetry row.
@@ -194,6 +176,7 @@ function promptBytesFields(r: RunCriticResult): Record<string, number> {
     prompt_bytes_caller_impact: b.caller_impact,
     prompt_bytes_reverse_deps: b.reverse_deps,
     prompt_bytes_anti_examples: b.anti_examples,
+    prompt_bytes_project_notes: b.project_notes,
   };
 }
 
@@ -324,23 +307,6 @@ function captureBranch(
 }
 
 /**
- * Task 3 — map the generic `event.siltpoke_host` (stamped by the
- * per-host Stop normalizers — agy-stop.ts / codex-stop.ts; left undefined by
- * the native claude-code payload, which never sets it) onto the narrower
- * WhyHost union `maybeRecordWhy` expects. handleStopHook is the single
- * shared call site reached by ALL three hosts (native invokes it directly
- * via on-stop.ts, codex via runHook, agy via its detached on-stop.ts child —
- * see on-stop.ts's runHook), so this reads the real per-event host rather
- * than assuming "claude-code".
- */
-export function resolveWhyHost(siltpokeHost: string | undefined): WhyHost {
-  if (siltpokeHost === "codex" || siltpokeHost === "antigravity" || siltpokeHost === "codebuddy") {
-    return siltpokeHost;
-  }
-  return "claude-code";
-}
-
-/**
  * Shared "pet fell asleep" state writer for the quiet-hours and
  * budget-hard-stop gates. Extracted from a closure inside handleStopHook so
  * both gates can call it without capturing handleStopHook's local scope.
@@ -351,7 +317,7 @@ async function writeSleepingState(
   mood: "sleeping_quiet" | "sleeping_broke",
 ): Promise<void> {
   try {
-    await writeState(stateBase, {
+    await writeStateKeepingAlert(stateBase, {
       schemaVersion: 1,
       mood,
       pose: "base",
@@ -360,7 +326,7 @@ async function writeSleepingState(
       confidence: "high",
       last_updated_ms: Date.now(),
       last_session_id: event.session_id!,
-    });
+    }, "keep");
   } catch {
     // never crash hook
   }
@@ -396,7 +362,7 @@ async function checkMuteGate(
   homeBase: string,
   now: Date,
 ): Promise<boolean> {
-  // Mute beats wake. If the user ran /siltpoke-mute, short-circuit BEFORE
+  // Mute beats wake. If the user ran /siltpoke:siltpoke-mute, short-circuit BEFORE
   // consuming the wake marker so an unused wake survives the mute window.
   // Mute is fail-open (missing/corrupt file = not muted).
   if (isMuted(homeBase, now)) {
@@ -421,11 +387,11 @@ interface ReviewUnitGateResult {
    */
   revisionRange?: string;
   /**
-   * Set only when this gate FIRED. Advancing the anchor consumes the HEAD
-   * move: once it is on disk, this unit's diff can never appear in a later
-   * `<anchor>..HEAD` range again. So on a fire it must not be written until
-   * the review is actually going to be attempted — the caller invokes this
-   * after the gates that sit BELOW this one have all passed.
+   * Set only when this gate FIRED. Calling it consumes the HEAD move: past the
+   * anchor, this unit's diff is unreachable forever. So the caller holds it
+   * until the unit was DEALT WITH — not merely "a review was started", which is
+   * defect `[27]` (audit §38.1). Three call sites: the dedupe skip, and each
+   * path once the critic returned anything but a failure.
    *
    * A non-fire decision writes its anchor immediately inside the gate and
    * leaves this undefined: nothing downstream can veto a skip, and an amend
@@ -456,13 +422,44 @@ async function checkReviewUnitGate(
   wakeBypass: boolean,
   now: Date,
 ): Promise<ReviewUnitGateResult> {
-  // `/siltpoke-review` and `/siltpoke-wake` mean "look now". They pre-date any
+  // `/siltpoke-review` and `/siltpoke:siltpoke-wake` mean "look now". They pre-date any
   // notion of a unit and must not be answered with "you have not committed":
   // the user asking IS the unit. No range, so git-diff keeps its old
   // working-tree behaviour and, on a clean tree, the recent-commits fallback.
-  if (wakeBypass) return { skip: false };
-
   const unit = await loadReviewUnit(homeBase);
+
+  // A forced review still never skips. But when the unit WOULD have fired — HEAD
+  // moved past the anchor — it reviews that unit and consumes it like any other
+  // fire. Before, a wake review took the working tree / recent commits, left
+  // the anchor where it was, and the next normal review read the same commits
+  // again: reviewed and paid for twice (install audit §110 W1, Windows Run 4:
+  // c-f069 then c-549f). With nothing new committed it keeps the old
+  // "look at what is there now" behaviour and writes no anchor.
+  //
+  // Uncommitted work wins over the unit: a range diff (`<anchor>..HEAD`) cannot
+  // see the working tree, and a user who asks to "look now" with edits on disk
+  // means those edits. Then the old behaviour stands, the anchor stays, and the
+  // next normal review may re-read the commits — the cost W1 is about, paid
+  // only in that case. Any error here falls back to the old behaviour too: a
+  // forced review must still run.
+  if (wakeBypass) {
+    if (event.cwd === undefined || event.cwd.length === 0) return { skip: false };
+    let decision: ReturnType<typeof decideReviewUnit>;
+    try {
+      const facts = await collectReviewUnitFacts({ cwd: event.cwd, stateBase, unit, now });
+      if ((facts.uncommittedLines ?? 0) > 0) return { skip: false };
+      decision = decideReviewUnit(facts);
+    } catch {
+      return { skip: false };
+    }
+    if (!decision.fire || decision.advanceAnchorTo === undefined) return { skip: false };
+    const to = decision.advanceAnchorTo;
+    return {
+      skip: false,
+      revisionRange: decision.revisionRange,
+      commitAnchor: () => writeAnchor(stateBase, { head: to.head, tree: to.tree, reviewedAt: now.toISOString() }),
+    };
+  }
 
   // No cwd means no repo to ask about. `resolveHostCwd` has already run by
   // this point, so this is a genuinely degraded payload rather than a host
@@ -536,7 +533,7 @@ async function checkReviewUnitGate(
         : (now.getTime() - (existing.last_updated_ms ?? 0)) / 60_000;
     if (decision.nudge === true && bubbleAgeMinutes > NUDGE_QUIET_MINUTES) {
       nudged = true;
-      await writeState(stateBase, {
+      await writeStateKeepingAlert(stateBase, {
         schemaVersion: 1,
         mood: "curious",
         pose: "base",
@@ -546,7 +543,7 @@ async function checkReviewUnitGate(
         confidence: "high",
         last_updated_ms: now.getTime(),
         last_session_id: event.session_id ?? "",
-      });
+      }, "keep");
     }
 
     await appendJsonLine(env, {
@@ -594,7 +591,7 @@ async function checkBreakerGate(
   wakeBypass: boolean,
 ): Promise<boolean> {
   // Brain circuit breaker — while open, skip the spawn entirely and write a
-  // telemetry skip record. /siltpoke-wake clears the breaker (the user's
+  // telemetry skip record. /siltpoke:siltpoke-wake clears the breaker (the user's
   // explicit "try now"); this is also the self-serve clear for a latched
   // permanent class.
   const health = readBrainHealth(homeBase);
@@ -701,7 +698,7 @@ async function checkCodeChangeGate(
 ): Promise<boolean> {
   // Code-change gate. Brain reviews code, not chit-chat.
   // If the turn touched no files, skip the brain call entirely. The
-  // /siltpoke-review and /siltpoke-wake bypasses still work because they
+  // /siltpoke-review and /siltpoke:siltpoke-wake bypasses still work because they
   // set wakeBypass earlier in the flow.
   if (!wakeBypass && changedFiles.length === 0) {
     // First-touch acknowledgement (sq-nocode-noop, day-1). On a brand-new
@@ -716,7 +713,7 @@ async function checkCodeChangeGate(
       !existsSync(join(stateBase, "state.json")) &&
       !existsSync(join(homeBase, "state.json"));
     if (neverReacted) {
-      await writeState(stateBase, {
+      await writeStateKeepingAlert(stateBase, {
         schemaVersion: 1,
         mood: "happy",
         pose: "base",
@@ -726,7 +723,7 @@ async function checkCodeChangeGate(
         confidence: "high",
         last_updated_ms: Date.now(),
         last_session_id: event.session_id!,
-      });
+      }, "keep");
     }
     await appendJsonLine(env, {
       timestamp: new Date().toISOString(),
@@ -774,12 +771,14 @@ async function checkDedupeGate(
   homeBase: string,
   changedFiles: string[],
   latestUserMessage: string,
+  revisionRange: string | undefined,
 ): Promise<DedupeGateResult> {
   const signature = buildSignature({
     sessionId: event.session_id!,
     cwd: event.cwd ?? "",
     changedFiles,
     latestUserMessage,
+    ...(revisionRange !== undefined ? { revisionRange } : {}),
   });
   const skipDecision = await evaluateSkip({
     basePath: homeBase,
@@ -802,6 +801,8 @@ async function checkDedupeGate(
 
 export interface PromptContext {
   personalitySystemPrompt: string;
+  /** Expanded config language — restated last in the reviewer's user message ([74]). */
+  outputLanguage: string;
   memory: CoreMemory | null;
   recent: RecentEntry[];
   systemPrompt: string;
@@ -910,6 +911,7 @@ export async function buildPromptContext(
 
   return {
     personalitySystemPrompt,
+    outputLanguage: expandLanguage(personality.language),
     memory,
     recent,
     systemPrompt,
@@ -959,7 +961,7 @@ export async function handleStopHook(
 
   if (await checkMuteGate(event, env, homeBase, now)) return;
 
-  // Consume any pending /siltpoke-wake bypass; the file is deleted whether
+  // Consume any pending /siltpoke:siltpoke-wake bypass; the file is deleted whether
   // or not the timestamp is still fresh (one-shot).
   const wakeBypass = await consumeWake(homeBase, now);
 
@@ -1054,11 +1056,9 @@ export async function handleStopHook(
     return;
   }
 
-  // The review is going to be attempted, so the unit may now be consumed. This
-  // is deliberately AFTER the code-change gate and BEFORE the dedupe gate: a
-  // code-change skip means this unit was never looked at, while a dedupe skip
-  // means it was already said. Only the first of those must be retryable.
-  reviewUnitGate.commitAnchor?.();
+  // The unit is deliberately NOT consumed here — defect `[27]`, audit §38.1.
+  // "About to be attempted" is not "was reviewed", and a review that then failed
+  // left the anchor claiming a commit had been read that never was.
 
   const costConfig = await loadCostConfig(homeBase);
   // Forward-capture case1-freeze gate (Task 8) — read once per hook, threaded
@@ -1074,7 +1074,7 @@ export async function handleStopHook(
   });
 
   const {
-    personalitySystemPrompt,
+    personalitySystemPrompt, outputLanguage,
     memory,
     recent,
     systemPrompt,
@@ -1088,8 +1088,14 @@ export async function handleStopHook(
     event.transcript_path!,
   );
 
-  const dedupe = await checkDedupeGate(event, env, homeBase, changedFiles, latestUserMessage);
-  if (dedupe.skip) return;
+  const dedupe = await checkDedupeGate(
+    event, env, homeBase, changedFiles, latestUserMessage, reviewUnitGate.revisionRange,
+  );
+  // Already said, so this unit IS consumed. Since `[59]` the signature carries
+  // the unit, and a hash is stored only once a unit was really resolved, so
+  // this matches only a unit that was already reviewed (e.g. two Stop events
+  // racing for one unit) — never a new commit, never a retry after a failure.
+  if (dedupe.skip) { reviewUnitGate.commitAnchor?.(); return; }
   const contextHash = dedupe.hash;
 
   const t0 = Date.now();
@@ -1114,14 +1120,14 @@ export async function handleStopHook(
       t0,
       contextHash,
       bundleText: bundle.text,
-      personalitySystemPrompt,
+      personalitySystemPrompt, outputLanguage,
       memory,
       recent,
       costConfig,
       consolidateFn,
       antiExamplesBlock,
       case1CaptureConfig,
-      revisionRange: reviewUnitGate.revisionRange,
+      reviewUnit: reviewUnitGate,
     });
     return;
   }
@@ -1144,6 +1150,7 @@ export async function handleStopHook(
     recentEntriesCount,
     consolidateFn,
     case1CaptureConfig,
+    reviewUnit: reviewUnitGate,
   });
 }
 
@@ -1299,6 +1306,11 @@ async function handleHardSuppress(
     m112_path: true,
     critic_path_decision: "HARD_SUPPRESS",
     m112_reason: criticResult.reason,
+    // A suppression that means the review did not RUN (`brainFailed`) is also an
+    // error row — the marker the catch path writes. Without it the timeline
+    // reads this row as a bubble-less "fired" turn and drops it (defect `[58]`).
+    // Deliberate skips (abstention floor, true no-op) carry no `brainFailed`.
+    ...(criticResult.brainFailed === true ? { error_message: criticResult.reason } : {}),
     diff_snapshot_id: criticResult.diffSnapshotId,
     diff_summary: "diffSummary" in criticResult ? criticResult.diffSummary : undefined,
     timing: criticResult.timing,
@@ -1329,36 +1341,23 @@ async function handlePassiveBubble(
   const out = criticResult.critique;
   const pf = providerFields(criticResult, authorFamilyFor(homeBase));
   // F4: record Brain tokens so the daily budget rollup stays accurate.
-  await appendUsageEvent(homeBase, {
-    ts: new Date().toISOString(),
-    kind: "main",
-    session_id: event.session_id!,
-    input_tokens: criticResult.usage.input_tokens,
-    output_tokens: criticResult.usage.output_tokens,
-    cache_creation_input_tokens: criticResult.usage.cache_creation_input_tokens,
-    cache_read_input_tokens: criticResult.usage.cache_read_input_tokens,
-    total_cost_usd: criticResult.usage.total_cost_usd,
-    ...pf,
-  });
-  // Empty effective bubble → skip the state/activity
-  // write entirely; the jsonl telemetry line below is still written,
-  // flagged so the history render layer filters the row.
+  await recordMainUsage(homeBase, event.session_id!, criticResult.usage, pf);
+  // Empty effective bubble → only an injection alert is merged into the state
+  // file (set or cleared); the jsonl line below is still written, flagged.
   const passiveBubbleSuppressed = out.bubble_short.trim().length === 0;
-  if (!passiveBubbleSuppressed) {
-    try {
-      await writeState(stateBase, {
-        schemaVersion: 1,
-        mood: out.mood,
-        pose: out.pose,
-        bubble_short: out.bubble_short,
-        severity: out.severity,
-        confidence: out.confidence,
-        last_updated_ms: Date.now(),
-        last_session_id: event.session_id!,
-      });
-    } catch {
-      // non-fatal
-    }
+  try {
+    await writeReviewState(stateBase, event.cwd, {
+      schemaVersion: 1,
+      mood: out.mood,
+      pose: out.pose,
+      bubble_short: out.bubble_short,
+      severity: out.severity,
+      confidence: out.confidence,
+      last_updated_ms: Date.now(),
+      last_session_id: event.session_id!,
+    }, passiveBubbleSuppressed, criticResult.injectionAlert);
+  } catch {
+    // non-fatal
   }
   await appendJsonLine(env, {
     timestamp: new Date().toISOString(),
@@ -1553,27 +1552,25 @@ async function handleNormalAccepted(
   // NORMAL accepted — write state, handle XP, log
   let stateError: string | undefined;
 
-  // Low-confidence blanking used to write an EMPTY bubble
-  // row; now an empty effective bubble skips the state write entirely
-  // (jsonl telemetry below still written, flagged for the render filter).
+  // Low-confidence blanking: an empty effective bubble writes only the alert
+  // field (set or cleared); jsonl telemetry below is still written, flagged.
   const normalEffectiveBubble =
     out.confidence !== "low" ? out.bubble_short : "";
   const normalBubbleSuppressed = normalEffectiveBubble.trim().length === 0;
-  if (!normalBubbleSuppressed) {
-    try {
-      await writeState(stateBase, {
-        schemaVersion: 1,
-        mood: out.mood,
-        pose: out.pose,
-        bubble_short: normalEffectiveBubble,
-        severity: out.severity,
-        confidence: out.confidence,
-        last_updated_ms: Date.now(),
-        last_session_id: event.session_id!,
-      });
-    } catch (err) {
-      stateError = String(err);
-    }
+  let normalStateWritten = false;
+  try {
+    normalStateWritten = await writeReviewState(stateBase, event.cwd, {
+      schemaVersion: 1,
+      mood: out.mood,
+      pose: out.pose,
+      bubble_short: normalEffectiveBubble,
+      severity: out.severity,
+      confidence: out.confidence,
+      last_updated_ms: Date.now(),
+      last_session_id: event.session_id!,
+    }, normalBubbleSuppressed, criticResult.injectionAlert);
+  } catch (err) {
+    stateError = String(err);
   }
 
   const { xpAwarded, leveledUp } = await awardXpFromEvents(homeBase, out.xp_earned_events);
@@ -1607,7 +1604,7 @@ async function handleNormalAccepted(
     brain_output: out,
     usage: criticResult.usage,
     bubble_suppressed: normalBubbleSuppressed ? true : undefined,
-    state_written: normalBubbleSuppressed ? false : stateError === undefined,
+    state_written: normalStateWritten && stateError === undefined, // a blank bubble can still write the alert
     state_error: stateError,
     xp_awarded: xpAwarded,
     leveled_up: leveledUp,
@@ -1640,6 +1637,7 @@ interface ToolAugmentedPathInput {
   contextHash: string;
   bundleText: string;
   personalitySystemPrompt: string;
+  outputLanguage: string;
   memory: CoreMemory | null;
   recent: RecentEntry[];
   costConfig: CostConfig;
@@ -1656,11 +1654,11 @@ interface ToolAugmentedPathInput {
   /** Forward-capture case1-freeze gate (Task 8) — read from disk once per hook. */
   case1CaptureConfig: Case1CaptureConfig;
   /**
-   * The unit of work the review-unit gate named (`<lastReviewedHead>..HEAD`,
-   * spec D2), forwarded to `runCritic` so git-diff shows the unit instead of
-   * the working tree. Absent on a forced review, which named no unit.
+   * The review-unit gate's result, forwarded whole: `revisionRange` names the
+   * unit for git-diff (spec D2) and `commitAnchor` consumes it. One decision,
+   * one field — a field added to the gate needs no plumbing here.
    */
-  revisionRange?: string;
+  reviewUnit: ReviewUnitGateResult;
 }
 
 async function runToolAugmentedPath(input: ToolAugmentedPathInput): Promise<void> {
@@ -1674,14 +1672,14 @@ async function runToolAugmentedPath(input: ToolAugmentedPathInput): Promise<void
     t0,
     contextHash,
     bundleText,
-    personalitySystemPrompt,
+    personalitySystemPrompt, outputLanguage,
     memory,
     recent,
     costConfig,
     consolidateFn,
     antiExamplesBlock,
     case1CaptureConfig,
-    revisionRange,
+    reviewUnit,
   } = input;
 
   try {
@@ -1717,15 +1715,7 @@ async function runToolAugmentedPath(input: ToolAugmentedPathInput): Promise<void
     // the parent-launch shape. `maybeRecordWhy` refuses a `late_capture` record
     // explicitly for that reason — do not drop that check on the grounds that
     // "a baseline is always present now".
-    if (event.cwd) {
-      await maybeRecordWhy({
-        cwd: event.cwd,
-        sessionId,
-        transcriptPath: event.transcript_path!,
-        host: resolveWhyHost(event.siltpoke_host),
-        stopTime: new Date().toISOString(),
-      });
-    }
+    await recordWhyForEvent(event, sessionId, env);
 
     // Build-2 sweep: launch the detached distil worker to adjudicate PRIOR
     // pending critiques against current git state, BEFORE this turn's
@@ -1758,9 +1748,9 @@ async function runToolAugmentedPath(input: ToolAugmentedPathInput): Promise<void
         transcriptTurns,
         tracer,
         traceStore,
-        revisionRange,
+        revisionRange: reviewUnit.revisionRange,
         brainContext: {
-          personalitySystemPrompt,
+          personalitySystemPrompt, outputLanguage, // outputLanguage: restated last in the reviewer message ([74])
           memory,
           recent,
           fileTypes: detectFileTypes(bundleText),
@@ -1776,7 +1766,23 @@ async function runToolAugmentedPath(input: ToolAugmentedPathInput): Promise<void
       opts?.m112Deps,
     );
 
-    await commitHash(homeBase, event.session_id!, contextHash);
+    // Consumed HERE, after the critic returned (defect `[27]`, audit §38.1).
+    // `runCritic` NEVER throws — a spawn error / timeout / rejected reply comes
+    // back as HARD_SUPPRESS — so neither "did it throw" nor the decision alone
+    // can tell a failure from the abstention floor and the true no-op, which DID
+    // look and must consume. `brainFailed` is that signal, set at the three
+    // returns meaning "not looked at" and nowhere else. Named for what it
+    // measures: the abstention floor resolves the unit without calling the Brain
+    // at all, which the "an abstention still advances the anchor" test pins.
+    const unitWasResolved =
+      criticResult.decision !== "HARD_SUPPRESS" || criticResult.brainFailed !== true;
+    // The dedupe hash is "already said" too, so it follows the same rule: a
+    // failed review stored it and the retry was skipped as `no_change`, which
+    // consumed the unit nobody had read (review of `[59]`).
+    if (unitWasResolved) {
+      reviewUnit.commitAnchor?.();
+      await commitHash(homeBase, event.session_id!, contextHash);
+    }
 
     // Handle result by decision
     if (criticResult.decision === "HARD_SUPPRESS") {
@@ -1804,17 +1810,7 @@ async function runToolAugmentedPath(input: ToolAugmentedPathInput): Promise<void
     // F4: record Brain tokens for the NORMAL run. (Used to say "for both
     // accepted and rejected guard outcomes" — there is no rejected outcome
     // left: the evidence check labels citations instead of dropping reviews.)
-    await appendUsageEvent(homeBase, {
-      ts: new Date().toISOString(),
-      kind: "main",
-      session_id: event.session_id!,
-      input_tokens: criticResult.usage.input_tokens,
-      output_tokens: criticResult.usage.output_tokens,
-      cache_creation_input_tokens: criticResult.usage.cache_creation_input_tokens,
-      cache_read_input_tokens: criticResult.usage.cache_read_input_tokens,
-      total_cost_usd: criticResult.usage.total_cost_usd,
-      ...pf,
-    });
+    await recordMainUsage(homeBase, event.session_id!, criticResult.usage, pf);
     await handleNormalAccepted(criticResult, out, pf, {
       env,
       event,
@@ -1859,6 +1855,8 @@ interface LegacyPathInput {
   consolidateFn: typeof consolidate;
   /** Forward-capture case1-freeze gate (Task 8) — read from disk once per hook. */
   case1CaptureConfig: Case1CaptureConfig;
+  /** See `ToolAugmentedPathInput.reviewUnit`. */
+  reviewUnit: ReviewUnitGateResult;
 }
 
 async function runLegacyPath(input: LegacyPathInput): Promise<void> {
@@ -1877,6 +1875,7 @@ async function runLegacyPath(input: LegacyPathInput): Promise<void> {
     recentEntriesCount,
     consolidateFn,
     case1CaptureConfig,
+    reviewUnit,
   } = input;
 
   try {
@@ -1894,24 +1893,21 @@ async function runLegacyPath(input: LegacyPathInput): Promise<void> {
     // (classify → record → throttle 1-retry). Tests injecting brainFn
     // bypass the guard deliberately.
     const brain = opts?.brainFn ?? makeGuardedCallBrain({ homeBase });
-    const { output: out, usage } = await brain({
+    const { output: out, usage, toolCalls } = await brain({
       systemPrompt,
       contextBundle: bundle.text,
+      readOnly: true, // a review, like the tool-augmented path's: read, never run
+      projectSettingsOff: true, // as in critic/phases/normal.ts; this fallback path gets no project notes
     });
+
+    // The Brain answered, so the unit is consumed (defect `[27]`). A failure
+    // THROWS past this line into the catch below — no flag needed here, unlike
+    // the tool-augmented path where it comes back as a decision.
+    reviewUnit.commitAnchor?.();
 
     await commitHash(homeBase, event.session_id!, contextHash);
 
-    const usageEvent: UsageEvent = {
-      ts: new Date().toISOString(),
-      kind: "main",
-      session_id: event.session_id!,
-      input_tokens: usage.input_tokens,
-      output_tokens: usage.output_tokens,
-      cache_creation_input_tokens: usage.cache_creation_input_tokens,
-      cache_read_input_tokens: usage.cache_read_input_tokens,
-      total_cost_usd: usage.total_cost_usd,
-    };
-    await appendUsageEvent(homeBase, usageEvent);
+    await recordMainUsage(homeBase, event.session_id!, usage);
 
     let stateError: string | undefined;
     let critiqueId: string | undefined;
@@ -1925,25 +1921,26 @@ async function runLegacyPath(input: LegacyPathInput): Promise<void> {
     const writeCritiqueFile = gating === "high" && out.severity !== "info";
     const showBubble = gating !== "low";
 
-    // Empty effective bubble (low gating OR Brain emitted an
-    // empty bubble) → skip the state write; keep the jsonl telemetry line.
+    // Empty effective bubble (low gating or empty) → only the alert field is
+    // merged into the state file; keep the jsonl telemetry line.
     const legacyEffectiveBubble = showBubble ? out.bubble_short : "";
     const legacyBubbleSuppressed = legacyEffectiveBubble.trim().length === 0;
-    if (!legacyBubbleSuppressed) {
-      try {
-        await writeState(stateBase, {
-          schemaVersion: 1,
-          mood: out.mood,
-          pose: out.pose,
-          bubble_short: legacyEffectiveBubble,
-          severity: out.severity,
-          confidence: out.confidence,
-          last_updated_ms: Date.now(),
-          last_session_id: event.session_id!,
-        });
-      } catch (err) {
-        stateError = String(err);
-      }
+    // On this path (SILTPOKE_TOOL_AUGMENTED=0) the reviewer's input is the transcript bundle, so the scan covers that text.
+    const legacyAlert = await reviewAlert({ items: out.injection_suspected, readText: `${systemPrompt}\n${bundle.text}`, toolCalls, cwd: event.cwd ?? process.cwd(), provider: "claude", scan: safeScan(() => scanText(bundle.text, "review context")) }); // legacy = claude (makeGuardedCallBrain default)
+    let legacyStateWritten = false;
+    try {
+      legacyStateWritten = await writeReviewState(stateBase, event.cwd, {
+        schemaVersion: 1,
+        mood: out.mood,
+        pose: out.pose,
+        bubble_short: legacyEffectiveBubble,
+        severity: out.severity,
+        confidence: out.confidence,
+        last_updated_ms: Date.now(),
+        last_session_id: event.session_id!,
+      }, legacyBubbleSuppressed, legacyAlert);
+    } catch (err) {
+      stateError = String(err);
     }
 
     if (writeCritiqueFile) {
@@ -2046,11 +2043,13 @@ async function runLegacyPath(input: LegacyPathInput): Promise<void> {
       duration_ms: Date.now() - t0,
       brain_output: out,
       usage,
+      tool_calls: toolCalls ?? "not_recorded", // 🛡 [C], as on the tool-augmented rows
+      injection_alert: legacyAlert,
       memory_rules_count: memoryRulesCount,
       ...memoryFunnel,
       recent_entries_count: recentEntriesCount,
       bubble_suppressed: legacyBubbleSuppressed ? true : undefined,
-      state_written: legacyBubbleSuppressed ? false : stateError === undefined,
+      state_written: legacyStateWritten && stateError === undefined,
       critique_id: critiqueId,
       state_error: stateError,
       critique_error: critiqueError,

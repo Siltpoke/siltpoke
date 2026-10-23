@@ -54,6 +54,8 @@ export interface ArchModelMeta {
   citedClaims?: number;
   totalClaims?: number;
   topologyBlindClaims?: number;
+  /** HEAD commit at generate time; absent on older caches (export prints "not recorded"). */
+  headCommit?: string;
 }
 
 export function archModelPath(storageDir: string): string {

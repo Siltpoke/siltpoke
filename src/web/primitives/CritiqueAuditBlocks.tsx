@@ -17,7 +17,7 @@
  *   F — COST              (tokens, cache hit %, $)
  */
 export { RULE_EXPLAIN_BY_ID, SPAN_KIND_EXPLAIN } from "./critique-audit/rules-data";
-export { EvidenceMark, PartialDiffMark } from "./critique-audit/shared";
+export { EvidenceMark, InjectionMark, PartialDiffMark, ToolCallsLine } from "./critique-audit/shared";
 export { BlockA, redactPath, type BlockAProps } from "./critique-audit/BlockA";
 export { BlockC, type BlockCProps } from "./critique-audit/BlockC";
 export {

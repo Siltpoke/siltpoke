@@ -294,7 +294,12 @@ test("two different cwds produce two isolated state.json files", async () => {
   expect(stateB.last_session_id).toBe("sess-B");
 });
 
-test("identical event fired twice: second invocation skipped on no_change", async () => {
+// Defect `[59]`: this test used to EXPECT the second commit to be skipped as
+// `no_change` — the same files and the same question on a new commit. That is
+// the defect: a commit nobody read, marked reviewed. The review unit is now
+// part of the dedupe signature, so a new commit is a new unit and is reviewed.
+// A dedupe skip on the SAME unit is pinned in handle-stop-review-anchor.test.ts.
+test("[59] same files and same question on a second commit: both commits are reviewed", async () => {
   seedEditedFile(join(tmpHome, "proj"));
   const transcriptPath = join(tmpHome, "transcript.jsonl");
   writeFileSync(
@@ -366,7 +371,7 @@ test("identical event fired twice: second invocation skipped on no_change", asyn
     brainFn,
   });
 
-  expect(brainCalls).toBe(1);
+  expect(brainCalls).toBe(2);
 
   const log = readFileSync(
     join(tmpHome, ".siltpoke", "brain-calls.jsonl"),
@@ -374,5 +379,6 @@ test("identical event fired twice: second invocation skipped on no_change", asyn
   );
   const lines = log.trim().split("\n").map((l) => JSON.parse(l));
   expect(lines[0]?.brain_output).toBeDefined();
-  expect(lines[1]?.skipped).toBe("no_change");
+  expect(lines[1]?.skipped).toBeUndefined();
+  expect(lines[1]?.brain_output).toBeDefined();
 });

@@ -79,6 +79,29 @@ describe("decideReviewUnit — failure paths", () => {
     // The dangerous alternative: firing with `A..B` where A is unreachable.
     expect(d.revisionRange).toBeUndefined();
   });
+  test("[60] an anchor that is not an ancestor of HEAD (branch switch) recovers like a lost one", () => {
+    const d = decideReviewUnit(quiet({ head: B, tree: T2, storedHeadNotAncestor: true }));
+    expect(d.fire).toBe(true);
+    expect(d.reason).toBe("anchor_unusable");
+    expect(d.revisionRange).toBeUndefined();
+    expect(d.advanceAnchorTo).toEqual({ head: B, tree: T2 });
+  });
+
+  test("[60] off-branch anchor with the same tree is still an amend-like no-op", () => {
+    // A rebase that only relocated commits leaves the anchor off-branch AND the
+    // tree unchanged; AC16 must keep winning there.
+    const d = decideReviewUnit(quiet({ head: B, tree: T1, storedHeadNotAncestor: true }));
+    expect(d.fire).toBe(false);
+    expect(d.reason).toBe("tree_unchanged");
+  });
+
+  test("[60] the PR unit is untouched: its range never used the anchor", () => {
+    const d = decideReviewUnit(
+      quiet({ head: B, tree: T2, unit: "pr", onDefaultBranch: false, mergeBase: A, storedHeadNotAncestor: true }),
+    );
+    expect(d.reason).toBe("branch_grew");
+    expect(d.revisionRange).toBe(`${A}..${B}`);
+  });
 });
 
 describe("decideReviewUnit — the commit unit", () => {
@@ -246,6 +269,7 @@ describe("decideReviewUnit — D6: no unlabelled exit", () => {
     ["branch grew", quiet({ head: B, tree: T2, unit: "pr", onDefaultBranch: false, mergeBase: A })],
     ["pr on default", quiet({ head: B, tree: T2, unit: "pr", onDefaultBranch: true })],
     ["vanished anchor", quiet({ head: B, tree: T2, storedHeadVanished: true })],
+    ["off-branch anchor", quiet({ head: B, tree: T2, storedHeadNotAncestor: true })],
   ];
 
   for (const [name, facts] of cases) {

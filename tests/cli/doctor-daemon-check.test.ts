@@ -17,8 +17,8 @@
  * Implementation: src/cli/doctor-daemon-check.ts.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   checkAutostart,
@@ -189,8 +189,8 @@ describe("doctor autostart — plist/unit presence", () => {
 
   // A Claude Code host, so the advice is the slash command; under agy or
   // codex this row now says that host's own path instead (it used to hand
-  // every host `/siltpoke-setup`, which a clean Linux CI runner caught).
-  const NOT_INSTALLED_DETAIL = "not installed — Run `/siltpoke-setup`";
+  // every host `/siltpoke:siltpoke-setup`, which a clean Linux CI runner caught).
+  const NOT_INSTALLED_DETAIL = "not installed — Run `/siltpoke:siltpoke-setup`";
 
   test("darwin, plist present → ✓ pass 'installed'", () => {
     const plist = join(tmp, "io.siltpoke.daemon.plist");
@@ -229,6 +229,52 @@ describe("doctor autostart — plist/unit presence", () => {
     expect(r.pass).toBe(true);
     expect(r.status).toBe("info");
     expect(r.detail).toBe(NOT_INSTALLED_DETAIL);
+  });
+
+  // Defect [68]: the read side of [66]. The installer writes the plist / unit
+  // under the `home` it is given; doctor must look under that same `home`, not
+  // the real one. The "present" cases fail without the fix on any machine; the
+  // "absent" cases are the negative half — on a machine whose real home HAS
+  // autostart installed, an unfixed doctor reports someone else's file.
+  test("darwin, `home` given, plist under it → ✓ pass at that home's path", () => {
+    const dir = join(tmp, "Library", "LaunchAgents");
+    mkdirSync(dir, { recursive: true });
+    const plist = join(dir, "io.siltpoke.daemon.plist");
+    writeFileSync(plist, "<plist/>");
+    const r = checkAutostart({ platform: "darwin", home: tmp });
+    expect(r.status).toBe("pass");
+    expect(r.detail).toBe(`installed (${plist})`);
+  });
+
+  test("darwin, `home` given, nothing under it → ◦ info, never the real home's plist", () => {
+    const r = checkAutostart({ platform: "darwin", home: tmp });
+    expect(r.status).toBe("info");
+    expect(r.detail).toBe(NOT_INSTALLED_DETAIL);
+    expect(r.detail).not.toContain(homedir());
+  });
+
+  test("linux, `home` given, unit under it → ✓ pass at that home's path", () => {
+    const dir = join(tmp, ".config", "systemd", "user");
+    mkdirSync(dir, { recursive: true });
+    const unit = join(dir, "siltpoked.service");
+    writeFileSync(unit, "[Unit]");
+    const r = checkAutostart({ platform: "linux", home: tmp, env: {} });
+    expect(r.status).toBe("pass");
+    expect(r.detail).toBe(`installed (${unit})`);
+  });
+
+  test("linux, `home` given, nothing under it → ◦ info, never the real home's unit", () => {
+    const r = checkAutostart({ platform: "linux", home: tmp, env: {} });
+    expect(r.status).toBe("info");
+    expect(r.detail).toBe(NOT_INSTALLED_DETAIL);
+    expect(r.detail).not.toContain(homedir());
+  });
+
+  test("an explicit `autostartPath` still wins over `home`", () => {
+    const plist = join(tmp, "elsewhere.plist");
+    writeFileSync(plist, "<plist/>");
+    const r = checkAutostart({ platform: "darwin", home: join(tmp, "empty-home"), autostartPath: plist });
+    expect(r.detail).toBe(`installed (${plist})`);
   });
 
   test("unsupported platform (win32) → ◦ info skip note", () => {

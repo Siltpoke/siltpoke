@@ -96,6 +96,8 @@ function makeCriticCall(overrides: Partial<CriticCall> = {}): CriticCall {
     evidence: [{ file: "src/auth/token.ts", line: 42, snippet: "if (age < ttl)" }],
     audit_absence: "unrecorded" as const,
     evidence_label: null,
+    injection_alert: null,
+    tool_calls: null,
     evidence_unverified: 0,
     diff_shown: null,
     diff_total: null,

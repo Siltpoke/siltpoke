@@ -15,6 +15,10 @@ describe("bootstrap.sh guards", () => {
   });
   test("never git clones", () => { expect(script).not.toMatch(/git\s+clone/); });
   test("execs the bun wizard", () => { expect(script).toMatch(/exec\s+bun\s+.*src\/cli\/bootstrap\.ts/); });
+  test("hands the setup the terminal when stdin is a pipe and a terminal exists, so its questions can be asked", () => {
+    expect(script).toMatch(/\[ ! -t 0 \] && \( : < \/dev\/tty \) 2>\/dev\/null/);
+    expect(script).toMatch(/exec bun "\$APP_DIR\/src\/cli\/bootstrap\.ts" "\$@" < \/dev\/tty/);
+  });
   test("points at the real public repo, not the OWNER placeholder", () => {
     expect(script).toContain("Siltpoke/siltpoke");
     expect(script).not.toContain("OWNER/siltpoke-dist");

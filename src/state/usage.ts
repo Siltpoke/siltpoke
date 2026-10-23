@@ -88,6 +88,21 @@ export function dayKey(now: Date, resetAtMinutes: number = 0): string {
   return `${y}-${m}-${d}`;
 }
 
+/**
+ * The local day before `day` (a `dayKey` string). Calendar arithmetic, not
+ * minus 24 hours, so a DST change never skips or repeats a day.
+ */
+export function dayBefore(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return dayKey(new Date(y ?? 1970, (m ?? 1) - 1, (d ?? 1) - 1));
+}
+
+/** Local midnight at the start of `day` (a `dayKey` string). */
+export function startOfDay(day: string): Date {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1);
+}
+
 export async function appendUsageEvent(
   basePath: string,
   event: UsageEvent,

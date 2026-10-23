@@ -111,8 +111,44 @@ function basenameOf(path: string): string {
   return segs.length ? segs[segs.length - 1]! : path;
 }
 
-function parseIO(signature: string | undefined): TraceIO {
-  if (!signature) return { input: "", output: "" };
+/**
+ * Drop `/* *\/`, `/** *\/` and `//` comments from signature text and collapse
+ * whitespace. The stored signature is the raw parameter-list source, so a
+ * param carrying its own JSDoc (e.g. `guardCritique`) would otherwise fill the
+ * trace card's INPUT cell with 20+ lines. Done at derive-time, not in the
+ * extractor, so graphs already on disk benefit without a re-index. String
+ * literals are skipped so `url = "http://x"` survives.
+ */
+function stripSignatureComments(src: string): string {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i]!;
+    const n = src[i + 1];
+    if (c === '"' || c === "'" || c === "`") {
+      let j = i + 1;
+      while (j < src.length && src[j] !== c) j += src[j] === "\\" ? 2 : 1;
+      out += src.slice(i, j + 1);
+      i = j + 1;
+    } else if (c === "/" && n === "*") {
+      const end = src.indexOf("*/", i + 2);
+      i = end < 0 ? src.length : end + 2;
+      out += " ";
+    } else if (c === "/" && n === "/") {
+      const end = src.indexOf("\n", i);
+      i = end < 0 ? src.length : end;
+      out += " ";
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out.replace(/\s+/g, " ").trim();
+}
+
+function parseIO(rawSignature: string | undefined): TraceIO {
+  if (!rawSignature) return { input: "", output: "" };
+  const signature = stripSignatureComments(rawSignature);
   const open = signature.indexOf("(");
   const close = signature.lastIndexOf(")");
   const input = open >= 0 && close > open ? signature.slice(open + 1, close).trim() : "";

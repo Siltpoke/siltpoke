@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 export class PathError extends Error {}
 
-function homeDir(env: NodeJS.ProcessEnv): string {
+export function homeDir(env: NodeJS.ProcessEnv): string {
   const home = env.HOME ?? env.USERPROFILE;
   if (!home || home.length === 0) {
     throw new PathError("HOME environment variable is not set");
@@ -27,7 +27,10 @@ export function siltpokeRoot(
 ): string {
   const override = env.SILTPOKE_HOME;
   if (typeof override === "string" && override.length > 0) {
-    return override;
+    // Absolute: several modules compute paths from this at import time, and
+    // the daemon then moves to the filesystem root (src/daemon/neutral-cwd.ts).
+    // A relative value kept as a string would re-resolve under `/`.
+    return resolve(override);
   }
   return join(homeDir(env), ".siltpoke");
 }
@@ -105,6 +108,23 @@ export function resolveAgyHooksJsonPath(
     return join(override, "hooks.json");
   }
   return join(homeDir(env), ".gemini", "config", "hooks.json");
+}
+
+/**
+ * Where agy installs this plugin: ~/.gemini/config/plugins/siltpoke — beside
+ * hooks.json in the same config dir, so it follows the same override. No
+ * version in the name (measured 2026-09-29 on agy 1.2.13), so a path into it
+ * survives a plugin upgrade.
+ */
+export function resolveAgyPluginRoot(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const override = env.ANTIGRAVITY_HOOKS_HOME;
+  const configDir =
+    typeof override === "string" && override.length > 0
+      ? override
+      : join(homeDir(env), ".gemini", "config");
+  return join(configDir, "plugins", "siltpoke");
 }
 
 /** settings.json under a host config home (CC-fork hosts share Claude's layout). */

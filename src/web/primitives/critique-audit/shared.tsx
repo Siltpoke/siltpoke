@@ -6,6 +6,8 @@
  * Extracted from the original CritiqueAuditBlocks.tsx.
  */
 import { tokens } from "../../tokens/tokens";
+
+export { InjectionMark, ToolCallsLine } from "./injection-mark";
 import type { EvidenceLabel } from "../../../critic/evidence-guard";
 import { AUDIT_ABSENCE_COPY, type AuditAbsenceKind } from "../../../state/audit-absence";
 

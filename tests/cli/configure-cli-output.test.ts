@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * `/siltpoke-setup`'s kernel must say what it did.
+ * `/siltpoke:siltpoke-setup`'s kernel must say what it did.
  *
  * WHY — audit defect `[5d]`
  * (an internal design note). On success the kernel

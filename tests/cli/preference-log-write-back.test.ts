@@ -13,7 +13,7 @@
  *
  * BLAST RADIUS, stated precisely rather than generously. All three signals were
  * lost, but only ONE of the three has a shipped caller: `mark-forwarded` is run
- * by `/siltpoke-last` after it surfaces a review, so every forward a real user
+ * by `/siltpoke:siltpoke-last` after it surfaces a review, so every forward a real user
  * ever produced was dropped. `ack` and `dismiss` have no slash command, no entry
  * in `src/cli/plugin-cli.ts`'s dispatch table, and no daemon route — the
  * dashboard's ACK / DISMISS buttons POST to `/api/critic/action` and write

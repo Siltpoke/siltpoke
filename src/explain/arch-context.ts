@@ -21,7 +21,8 @@
  * context FITS produces a byte-identical bundle (no-regress, sha-pinned).
  */
 import type { AggregatedGraph } from "./../repo-graph/aggregator";
-import type { ArchitectureProjection } from "./../repo-graph/project-architecture";
+import { ROOT_CONTAINER_PATH } from "./../repo-graph/bucketing";
+import { type ArchitectureProjection, ROOT_BUCKET_ID } from "./../repo-graph/project-architecture";
 import type { RepoGraph, SiltpokeGraphNode } from "./../repo-graph/types";
 
 /** Above this ESTIMATE, the single-pass context is capped to the largest
@@ -88,6 +89,13 @@ function renderSymbol(n: SiltpokeGraphNode): string {
   return `- ${n.name} [${n.type}]${sig} ${loc}${doc}`;
 }
 
+/** A container path as the model reads it. The root container's path is "",
+ * which would print as nothing; it reads as its bucket id instead — the same
+ * id `drillTo` resolves to. */
+function containerLabel(path: string): string {
+  return path === ROOT_CONTAINER_PATH ? ROOT_BUCKET_ID : path;
+}
+
 /** Render the per-subdir block: header + symbols grouped by FILE (signatures
  * only). V1: the per-file sub-blocks surface file + class boundaries so the model
  * can split a multi-responsibility directory into multiple grounded containers
@@ -100,7 +108,7 @@ function renderSubdirLines(
   fileCount: number,
   symbols: SiltpokeGraphNode[],
 ): string[] {
-  const head = `### ${subdirPath}  (group: ${group}; ${fileCount} files${
+  const head = `### ${containerLabel(subdirPath)}  (group: ${containerLabel(group)}; ${fileCount} files${
     purpose ? `; purpose: "${purpose}"` : ""
   })`;
   const byFile = new Map<string, SiltpokeGraphNode[]>();
@@ -171,7 +179,7 @@ export function assembleArchContext(
   for (const node of graph.nodes) {
     if (!isSymbolNode(node)) continue;
     const owner = subdirPaths.find((p) => node.path.startsWith(p));
-    if (!owner) continue;
+    if (owner === undefined) continue; // the root container's path is "" — falsy but real
     const arr = symbolsByPath.get(owner) ?? [];
     arr.push(node);
     symbolsByPath.set(owner, arr);
@@ -180,7 +188,7 @@ export function assembleArchContext(
   // Cross-subdir import-count edges (skip self + zero).
   const edgeLines = aggregated.aggregatedEdges
     .filter((e) => e.source !== e.target && e.count > 0)
-    .map((e) => `  ${e.source} → ${e.target}  ×${e.count}`);
+    .map((e) => `  ${containerLabel(e.source)} → ${containerLabel(e.target)}  ×${e.count}`);
 
   // Order subdirs by projection group order, then by size desc within a group.
   const groupOrder = new Map(projection.groups.map((g, i) => [g.title, i]));

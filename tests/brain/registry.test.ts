@@ -82,14 +82,14 @@ describe("resolveRole", () => {
   // resolveRole drops it rather than reporting a model the process never gets.
   // Every role resolves through the same provider object, so this holds for
   // chat/extract too, not just review.
-  test("a codex model in config is dropped at resolve, on every role", () => {
+  test("a codex model in config is kept at resolve, on every role", () => {
     const c = parseBrainConfig(
-      JSON.stringify({ brain: { roles: { chat: { provider: "codex", model: "gpt-5.5" } } } }),
+      JSON.stringify({ brain: { roles: { chat: { provider: "codex", model: "gpt-5.6-luna" } } } }),
     );
     const r = resolveRole(c, "chat");
     expect(r.family).toBe("codex");
     expect(r.provider.meta.name).toBe("codex");
-    expect(r.model).toBeUndefined();
+    expect(r.model).toBe("gpt-5.6-luna");
   });
 
   test("ccfork provider with no model -> undefined model (omit --model)", () => {
@@ -149,7 +149,7 @@ describe("familySupportsModelChoice + CLAUDE_REVIEW_MODELS (Brain select v2 T1)"
     expect(familySupportsModelChoice("agy")).toBe(true); // providers/agy.ts --model
     expect(familySupportsModelChoice("qoder")).toBe(true); // ccfork buildArgv --model
     expect(familySupportsModelChoice("codebuddy")).toBe(true); // ccfork buildArgv --model
-    expect(familySupportsModelChoice("codex")).toBe(false); // providers/codex.ts: no -m
+    expect(familySupportsModelChoice("codex")).toBe(true); // providers/codex.ts -m
   });
 
   // A WIRING check, and only that: both sides trace back to FAMILY_ACCEPTS_MODEL,

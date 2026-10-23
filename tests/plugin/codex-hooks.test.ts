@@ -7,18 +7,20 @@ const hooksJson = JSON.parse(readFileSync(join(ROOT, "hooks.json"), "utf8"));
 const stopSh = readFileSync(join(ROOT, "hooks", "codex-stop.sh"), "utf8");
 
 describe("Codex plugin-root hooks.json", () => {
-  test("declares Stop + SessionStart with relative-path commands", () => {
+  test("declares Stop + SessionStart through PLUGIN_ROOT, never a source path", () => {
     expect(hooksJson.hooks.Stop).toBeDefined();
     expect(hooksJson.hooks.SessionStart).toBeDefined();
     const cmds = JSON.stringify(hooksJson);
-    // relative paths only — never an absolute /Users or src/ source path
-    expect(cmds).toContain("./hooks/codex-stop.sh");
+    // codex runs a hook in the SESSION's cwd, so a `./hooks/` path would not
+    // resolve; `${PLUGIN_ROOT}` is substituted by codex (rust-v0.162.1).
+    expect(cmds).toContain(`\${PLUGIN_ROOT}/hooks/codex-stop.sh`);
+    expect(cmds).not.toContain("./hooks/");
     expect(cmds).not.toContain("/src/hooks/");
   });
 
-  test("is NOT declared in the codex plugin manifest (validator rejects the field)", () => {
+  test("IS declared in the codex plugin manifest — without it codex reads Claude Code's hooks/hooks.json", () => {
     const manifest = JSON.parse(readFileSync(join(ROOT, ".codex-plugin", "plugin.json"), "utf8"));
-    expect(manifest.hooks).toBeUndefined();
+    expect(manifest.hooks).toBe("./hooks.json");
   });
 
   test("stop wrapper guards: silent exit on missing config/bun/bundle + honors SILTPOKE_INTERNAL", () => {

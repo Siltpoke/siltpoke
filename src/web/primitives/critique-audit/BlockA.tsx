@@ -44,6 +44,7 @@ import {
   SubLabel,
   auditAbsenceNote,
 } from "./shared";
+import { ReferenceSection } from "./BlockA-reference";
 
 /**
  * What `captureIntent` actually stores for the agent reply: the FIRST PARAGRAPH
@@ -321,9 +322,13 @@ export function BlockA({ v2, c, agentReplyLabel = AGENT_REPLY_LABEL }: BlockAPro
   // reader gains the file list and loses the sentence saying why no archive was
   // filed. That reason is still on the page: the row's own evidence mark and
   // Block C carry it.
-  const nothingRead =
-    files.length === 0 && diffIntent === null && userQuery === null && agentReply === null;
-  if (nothingRead) {
+  //
+  // Defect [37]: the user's words and the agent's reply are captured and
+  // archived for this page, but the reviewer is never sent either — its call is
+  // the system prompt plus a fixed one-liner (src/critic/phases/normal.ts). So
+  // they live in their own section that says so, not under "WHAT I READ".
+  const readNothing = files.length === 0 && diffIntent === null;
+  if (readNothing && userQuery === null && agentReply === null) {
     return (
       <AuditSection id="A" label="A · WHAT I READ">
         <PlaceholderNote text={auditAbsenceNote(c.audit_absence, "A")} />
@@ -332,41 +337,38 @@ export function BlockA({ v2, c, agentReplyLabel = AGENT_REPLY_LABEL }: BlockAPro
   }
 
   return (
-    <AuditSection id="A" label="A · WHAT I READ">
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <SubLabel>changed files</SubLabel>
-        {files.length > 0 ? (
-          <ChangedFileList files={files} unlisted={unlisted} cwd={cwd} />
+    <>
+      <AuditSection id="A" label="A · WHAT I READ">
+        {readNothing ? (
+          <PlaceholderNote text={auditAbsenceNote(c.audit_absence, "A")} />
         ) : (
-          <PlaceholderNote text="no changed files recorded (older entry or non-code change)" />
-        )}
-      </div>
+          <>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <SubLabel>changed files</SubLabel>
+              {files.length > 0 ? (
+                <ChangedFileList files={files} unlisted={unlisted} cwd={cwd} />
+              ) : (
+                <PlaceholderNote text="no changed files recorded (older entry or non-code change)" />
+              )}
+            </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <SubLabel>user raw query (verbatim)</SubLabel>
-        {userQuery ? (
-          <MonoBlock>{userQuery}</MonoBlock>
-        ) : (
-          <PlaceholderNote text={missingQueryNote(c.timestamp)} />
+            {diffIntent && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <SubLabel>{diffIntentLabel}</SubLabel>
+                <MonoBlock>{diffIntent}</MonoBlock>
+              </div>
+            )}
+          </>
         )}
-        {queryTruncated && (
-          <PlaceholderNote text="long prompt — only the first 2000 characters were stored" />
-        )}
-      </div>
+      </AuditSection>
 
-      {agentReply && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <SubLabel>{agentReplyLabel}</SubLabel>
-          <MonoBlock>{agentReply}</MonoBlock>
-        </div>
-      )}
-
-      {diffIntent && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <SubLabel>{diffIntentLabel}</SubLabel>
-          <MonoBlock>{diffIntent}</MonoBlock>
-        </div>
-      )}
-    </AuditSection>
+      <ReferenceSection
+        userQuery={userQuery}
+        missingNote={missingQueryNote(c.timestamp)}
+        queryTruncated={Boolean(queryTruncated)}
+        agentReply={agentReply}
+        agentReplyLabel={agentReplyLabel}
+      />
+    </>
   );
 }

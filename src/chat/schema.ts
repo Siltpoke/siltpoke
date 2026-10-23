@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Jiaqi Duan
 import { z } from "zod";
 
+const chatProviderEnum = z.enum(["claude", "codex", "agy", "qoder", "codebuddy"]);
+
 export const chatMessageSchema = z.object({
   id: z.string().min(1),
   session_id: z.string().min(1),
@@ -23,7 +25,22 @@ export const chatMessageSchema = z.object({
   // transcript builder excludes them from model context.
   status: z.enum(["ok", "failed", "cancelled"]).optional(),
   // Only meaningful when status is "failed".
-  error_reason: z.enum(["timeout", "spawn_failed", "empty_exit"]).optional(),
+  error_reason: z
+    .enum([
+      "timeout",
+      "spawn_failed",
+      "empty_exit",
+      // Defect [49] — chat can go to any of the five coding agents.
+      "no_provider",
+      "choose_provider",
+      "quota_cap",
+      "provider_failed",
+    ])
+    .optional(),
+  // Which agent the failure belongs to, and (choose_provider) which were found.
+  // Enums, never free text: the chat UI builds its sentence from these names.
+  error_provider: chatProviderEnum.optional(),
+  error_found: z.array(chatProviderEnum).max(5).optional(),
   // Short human hint only — raw stderr goes to the daemon log, never the store.
   error_message: z.string().max(300).optional(),
 });

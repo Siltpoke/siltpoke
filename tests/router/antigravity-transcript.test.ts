@@ -268,3 +268,111 @@ describe("normalizeAntigravityEvents — agy 1.1.1 CODE_ACTION edit format (repl
     rmSync(tmp, { recursive: true, force: true });
   });
 });
+
+// Real transcript from the Antigravity desktop app (2.0.6, gemini-3.8-flash-high),
+// captured 2026-09-30 by a hook probe; paths rewritten to /tmp. The edit is a
+// structured `replace_file_content` tool_call on PLANNER_RESPONSE, and a GENERIC
+// step repeats it as prose. Before this fix the parser saw zero changed files.
+const DESKTOP_FIXTURE = join(
+  import.meta.dir,
+  "..",
+  "fixtures",
+  "agy",
+  "transcript-desktop-replace-file-content.jsonl",
+);
+
+function desktopLines(): { type: string }[] {
+  return readFileSync(DESKTOP_FIXTURE, "utf8")
+    .split("\n")
+    .filter((l) => l.trim().length > 0)
+    .map((l) => JSON.parse(l) as { type: string });
+}
+
+function editEvent(
+  filePath: string,
+  timestamp: string | undefined,
+): NonNullable<ReturnType<typeof normalizeAntigravityEvents>> {
+  return [
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "tool_use", name: "Edit", input: { file_path: filePath } }],
+      },
+      timestamp,
+    },
+  ];
+}
+
+describe("Antigravity desktop 2.0.6 transcript — edits are read from the replace_file_content tool_call", () => {
+  const lines = desktopLines();
+
+  test("fixture shape is what this block assumes (8 steps, edit on step 3, GENERIC prose on step 4)", () => {
+    expect(lines.map((l) => l.type)).toEqual([
+      "USER_INPUT",
+      "PLANNER_RESPONSE",
+      "GENERIC",
+      "PLANNER_RESPONSE",
+      "GENERIC",
+      "PLANNER_RESPONSE",
+      "GENERIC",
+      "PLANNER_RESPONSE",
+    ]);
+  });
+
+  test("step 3 (PLANNER_RESPONSE, replace_file_content tool_call) → an Edit tool_use on TargetFile", () => {
+    expect(normalizeAntigravityEvents(lines[3])).toEqual(
+      editEvent("/tmp/agy-desktop-ws/hello.txt", "2026-10-01T02:35:41Z"),
+    );
+  });
+
+  test("steps 1 and 5 (view_file tool_calls) are reads, not edits — dropped", () => {
+    expect(normalizeAntigravityEvents(lines[1])).toEqual([]);
+    expect(normalizeAntigravityEvents(lines[5])).toEqual([]);
+  });
+});
+
+describe("Antigravity desktop 2.0.6 transcript — GENERIC is dropped and the file is found end to end", () => {
+  const lines = desktopLines();
+
+  test("GENERIC steps are recognized agy steps and dropped — the prose repeat of the edit is not double-counted", () => {
+    expect(normalizeAntigravityEvents(lines[2])).toEqual([]);
+    expect(normalizeAntigravityEvents(lines[4])).toEqual([]);
+    expect(normalizeAntigravityEvents(lines[6])).toEqual([]);
+  });
+
+  test("extractChangedFiles on the real desktop transcript returns exactly the edited file (was [] before the fix)", async () => {
+    expect(await extractChangedFiles(DESKTOP_FIXTURE)).toEqual(["/tmp/agy-desktop-ws/hello.txt"]);
+  });
+});
+
+describe("normalizeAntigravityEvents — structured edit tool names, synthetic edge cases", () => {
+  test("multi_replace_file_content maps the same way (synthetic: same TargetFile arg, not yet seen in a captured transcript)", () => {
+    expect(
+      normalizeAntigravityEvents({
+        type: "PLANNER_RESPONSE",
+        tool_calls: [{ name: "multi_replace_file_content", args: { TargetFile: "/repo/b.ts" } }],
+      }),
+    ).toEqual(editEvent("/repo/b.ts", undefined));
+  });
+
+  test("a tool name that is an inherited object key (constructor, toString) is not an edit", () => {
+    for (const name of ["constructor", "toString", "__proto__"]) {
+      expect(
+        normalizeAntigravityEvents({
+          type: "PLANNER_RESPONSE",
+          tool_calls: [{ name, args: { TargetFile: "/repo/c.ts" } }],
+        }),
+      ).toEqual([]);
+    }
+  });
+
+  test("replace_file_content without a TargetFile is skipped, not crashed", () => {
+    expect(
+      normalizeAntigravityEvents({
+        type: "PLANNER_RESPONSE",
+        tool_calls: [{ name: "replace_file_content", args: { ReplacementContent: "x" } }],
+      }),
+    ).toEqual([]);
+  });
+});

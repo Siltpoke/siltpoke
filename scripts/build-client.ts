@@ -5,6 +5,13 @@
  * Main bundle: `src/web/client/index.ts` → `public/static/index.js`
  *   - code-split via Bun's `--splitting` flag
  *
+ * Standalone bundle: `src/web/client/export-standalone.ts` →
+ * `public/static/export-standalone.js` — the script inlined into the Code Map HTML
+ * export. A SEPARATE build with `splitting: false` and `format: "iife"`: in the main
+ * build's splitting pass, code shared with the dashboard would be factored into a
+ * chunk and leave `import` statements in the entry, and an inline classic
+ * `<script>` with an `import` throws a SyntaxError offline.
+ *
  * Re-run on every UI change in dev; bundled at install time in production.
  */
 import { mkdir } from "node:fs/promises";
@@ -41,18 +48,27 @@ export async function buildClient(
 }> {
   const outdir = opts.outdir ?? DEFAULT_OUTDIR;
   await mkdir(outdir, { recursive: true });
-  const entry = join(repoRoot, "src", "web", "client", "index.ts");
+  const minify = opts.minify ?? false;
   const result = await Bun.build({
-    entrypoints: [entry],
+    entrypoints: [join(repoRoot, "src", "web", "client", "index.ts")],
     outdir,
     target: "browser",
-    minify: opts.minify ?? false,
+    minify,
     splitting: true,
     naming: "[name].js",
   });
+  const standalone = await Bun.build({
+    entrypoints: [join(repoRoot, "src", "web", "client", "export-standalone.ts")],
+    outdir,
+    target: "browser",
+    format: "iife",
+    minify,
+    splitting: false,
+    naming: "[name].js",
+  });
   return {
-    success: result.success,
-    outputs: result.outputs.map((o) => o.path),
+    success: result.success && standalone.success,
+    outputs: [...result.outputs, ...standalone.outputs].map((o) => o.path),
   };
 }
 

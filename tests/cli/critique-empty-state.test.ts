@@ -5,7 +5,7 @@
  *
  * WHY — audit defect `[5c]`
  * (an internal design note). A brand-new user's
- * very first `/siltpoke-last` answered
+ * very first `/siltpoke:siltpoke-last` answered
  *
  *   # Siltpoke: review 'latest' not found.
  *
@@ -166,7 +166,7 @@ describe("reviews exist but the `latest` pointer is gone", () => {
 
   test("is not told to re-run the command that just produced this message", async () => {
     // `src/state/critique.ts:406` treats writing `latest.md` as non-fatal, so
-    // this state is reachable. `/siltpoke-last` always passes the sentinel
+    // this state is reachable. `/siltpoke:siltpoke-last` always passes the sentinel
     // "latest", which the user never typed — telling them "that id is not one of
     // them, re-run with no argument" is a loop.
     seedArchiveOnly();
@@ -180,7 +180,7 @@ describe("reviews exist but the `latest` pointer is gone", () => {
     seedArchiveOnly();
     const out = await getCritique({ basePath: tmp, idOrLatest: "latest" });
     expect(out).toContain("archive");
-    expect(out).toContain("/siltpoke-last <id>");
+    expect(out).toContain("/siltpoke:siltpoke-last <id>");
   });
 
   test("a real typed id in the same state still gets the id message (control)", async () => {

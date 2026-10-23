@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFileSync, existsSync as fsExists } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bubbleTimeStamp, parseAgentFlag, runWrapper } from "../../src/face/wrapper.ts";
+import { parseAgentFlag, runWrapper } from "../../src/face/wrapper.ts";
 import { getSpecies } from "../../src/face/species.ts";
 
 let tempBase: string;
@@ -619,23 +619,4 @@ test("a config-default bubble (no state) carries NO time — there is none to cl
   const result = await runWrapper({ basePath: tempBase, termWidth: 200 });
   expect(result).toContain('"hello from config"');
   expect(result).not.toMatch(/\[\d{1,2}:\d\d (AM|PM)]:/);
-});
-
-test("bubbleTimeStamp: 12-hour with AM/PM, and empty for anything unusable", () => {
-  const at = (h: number, m: number): number => {
-    const d = new Date();
-    d.setHours(h, m, 0, 0);
-    return d.getTime();
-  };
-  expect(bubbleTimeStamp(at(9, 5))).toBe("[9:05 AM]: ");
-  expect(bubbleTimeStamp(at(13, 44))).toBe("[1:44 PM]: ");
-  // The two the modulo gets wrong: 0 % 12 and 12 % 12 are both 0.
-  expect(bubbleTimeStamp(at(0, 15))).toBe("[12:15 AM]: ");
-  expect(bubbleTimeStamp(at(12, 15))).toBe("[12:15 PM]: ");
-  // Boundaries either side of noon and midnight.
-  expect(bubbleTimeStamp(at(11, 59))).toBe("[11:59 AM]: ");
-  expect(bubbleTimeStamp(at(23, 59))).toBe("[11:59 PM]: ");
-  expect(bubbleTimeStamp(undefined)).toBe("");
-  expect(bubbleTimeStamp(0)).toBe("");
-  expect(bubbleTimeStamp(Number.NaN)).toBe("");
 });

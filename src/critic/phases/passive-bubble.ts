@@ -6,7 +6,9 @@
 
 import { type BrainCallResult, BrainError, type BrainUsage, type CallBrainOptions, DEFAULT_MODEL } from "../../brain/brain";
 import { assembleSystemPromptWithFunnel, type MemoryFunnel, type PromptSectionBytes } from "../../brain/prompt-assembly";
+import { reviewUserContent } from "../../brain/output-language";
 import { buildPassiveBubblePrompt } from "../../brain/prompt-tools";
+import type { ToolCallsField } from "../../brain/tool-calls";
 import type { BrainProviderMeta } from "../../brain/provider";
 import type { BrainOutput } from "../../brain/schema";
 import type { Tracer } from "../../observability/tracer";
@@ -14,6 +16,8 @@ import type { Span } from "../../observability/types";
 import type { CritiqueInput } from "../../state/critique";
 import type { DiffSummary } from "../tools/run-diff-summary";
 import type { runTools } from "../tools/run-tools";
+import type { InjectionAlert } from "../injection-alert";
+import { reviewAlert, scanReviewInputs } from "../review-alert";
 import type { BrainContext, CriticSource, TimingTrace, V2ResultFields } from "../types";
 import { writeV2Archive } from "./archive";
 import { autoPromoteSeverity } from "./severity-promotion";
@@ -69,8 +73,16 @@ export interface PassiveBubblePhaseArgs {
  * memory funnel (eval design §2.1) rather than leaving it optional.
  */
 export type PassiveBubblePhaseResult =
-  | { kind: "ok"; critique: BrainOutput; usage: BrainUsage; critiqueId: string | undefined; servedModel?: string; memoryFunnel: MemoryFunnel; promptBytes: PromptSectionBytes }
-  | { kind: "hard_suppress"; reason: string; skipCode?: "quota_cap" | "agy_prompt_too_large"; memoryFunnel: MemoryFunnel; promptBytes: PromptSectionBytes };
+  | { kind: "ok"; critique: BrainOutput; usage: BrainUsage; critiqueId: string | undefined; servedModel?: string; toolCalls: ToolCallsField; injectionAlert?: InjectionAlert; memoryFunnel: MemoryFunnel; promptBytes: PromptSectionBytes }
+  | {
+      kind: "hard_suppress";
+      reason: string;
+      skipCode?: "quota_cap" | "agy_prompt_too_large";
+      /** See normal.ts's `brainFailed` — same meaning, same consumer. */
+      brainFailed?: true;
+      memoryFunnel: MemoryFunnel;
+      promptBytes: PromptSectionBytes;
+    };
 
 /**
  * Run the PASSIVE_BUBBLE branch:
@@ -101,8 +113,9 @@ export async function runPassiveBubblePhase(
           files: new Set(gitDiffResult.parsed.map((h) => h.file)).size,
           hunks: gitDiffResult.parsed.length,
           intent: brainContext.intent,
+          checks: { tsc: toolResults.tsc, eslint: toolResults.eslint, ripgrep: toolResults.ripgrep },
         })
-      : "The user completed a clean change with no tool findings.";
+      : "The user completed a change. No tool findings were reported, but the checks that ran are not listed here, so do not claim the code was fully checked.";
 
   const { prompt: systemPrompt, funnel: memoryFunnel, sizes: promptBytes } = assembleSystemPromptWithFunnel({
     personalitySystemPrompt: brainContext.personalitySystemPrompt,
@@ -129,7 +142,7 @@ export async function runPassiveBubblePhase(
     tracer.setInput(brainFindSpanPB, {
       messages: [
         { role: "system", content: "[redacted — siltpoke critic system prompt]" },
-        { role: "user", content: "Produce one Siltpoke JSON per the system prompt." },
+        { role: "user", content: reviewUserContent(brainContext.outputLanguage) },
       ],
       system_prompt_bytes: systemPrompt.length,
     });
@@ -141,12 +154,15 @@ export async function runPassiveBubblePhase(
     const criticStart = Date.now();
     brainResult = await callBrainFn({
       systemPrompt,
-      contextBundle: "Produce one Siltpoke JSON per the system prompt.",
+      // The language rule rides LAST in the user message (defect [74]).
+      contextBundle: reviewUserContent(brainContext.outputLanguage),
       // Reviewed-repo cwd (track #7 T3 deferred item) — see normal.ts.
       cwd: brainContext.cwd,
       // Resolved review model (reviewer_model plumbing, single-brain #10 critic
       // half) — see normal.ts's mirror-image comment. undefined -> provider default.
       model: reviewModel,
+      readOnly: true, // as in normal.ts
+      projectSettingsOff: true, // as in normal.ts (this prompt carries no diff, so no project notes either)
       // Kill timer from `<home>/config.json`'s `brain.timeout_ms`. `undefined`
       // is meaningful: resolveBrainTimeoutMs only consults
       // SILTPOKE_BRAIN_TIMEOUT_MS when no explicit value arrives, so forcing a
@@ -197,12 +213,27 @@ export async function runPassiveBubblePhase(
         : err instanceof BrainError && err.code === "agy_prompt_too_large"
           ? ("agy_prompt_too_large" as const)
           : undefined;
-    return { kind: "hard_suppress", reason, skipCode, memoryFunnel, promptBytes };
+    // A pre-spawn abstain (`skipCode`) is a policy skip, not a failed look — see
+    // normal.ts's mirror-image comment.
+    return { kind: "hard_suppress", reason, skipCode, brainFailed: skipCode === undefined ? true : undefined, memoryFunnel, promptBytes };
   }
 
   const critique = brainResult.output;
   const usage = brainResult.usage;
   const servedModel = brainResult.servedModel;
+  const toolCalls: ToolCallsField = brainResult.toolCalls ?? "not_recorded";
+  // What the model was given: the system prompt (the bundle rides in it) plus the user message.
+  const injectionAlert = await reviewAlert({
+    // No self signals here: the passive prompt carries no project text (spec §4.4), so anything the model lists is siltpoke's own instruction.
+    items: undefined,
+    readText: `${systemPrompt}\n${reviewUserContent(brainContext.outputLanguage)}`,
+    toolCalls,
+    cwd: brainContext.cwd,
+    provider: providerMeta.name,
+    // The reviewer is not given the diff here (the passive prompt carries only counts), but it can
+    // open these files with its tools; the scan warns about planted text in the change.
+    scan: scanReviewInputs(gitDiffResult),
+  });
 
   // Post-process: hard severity promotion when Brain emits info-only but
   // rubric triggers or diff-summary risks exist. Soft prompt suggestions
@@ -272,5 +303,5 @@ export async function runPassiveBubblePhase(
     `[siltpoke] runCritic [${source}] PASSIVE_BUBBLE — critique written`,
   );
 
-  return { kind: "ok", critique, usage, critiqueId, servedModel, memoryFunnel, promptBytes };
+  return { kind: "ok", critique, usage, critiqueId, servedModel, toolCalls, injectionAlert, memoryFunnel, promptBytes };
 }

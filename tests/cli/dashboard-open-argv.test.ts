@@ -8,7 +8,7 @@ import { openDashboard, DASHBOARD_URL } from "../../src/cli/dashboard";
  *   Bun.spawn([cmd, DASHBOARD_URL]);
  *
  * `start` is a `cmd.exe` BUILTIN, not an executable on disk, so `Bun.spawn`
- * (which does not go through a shell) can never run it — `/siltpoke-dashboard`
+ * (which does not go through a shell) can never run it — `/siltpoke:siltpoke-dashboard`
  * printed the URL and then silently failed to open anything on Windows.
  *
  * The same repo already had this right: `editorOpener()` in

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * The `/siltpoke-help` manual.
+ * The `/siltpoke:siltpoke-help` manual.
  *
  * Lives in code (not in the command's markdown) for one reason: the command
- * surface a `/plugin install` actually exposes is the 11 commands below, and
+ * surface a `/plugin install` actually exposes is the 12 commands below, and
  * that list has to be derivable from the shipped bundle rather than from a
  * prose file that can drift from it. `tests/plugin/commands.test.ts` asserts
  * this text lists exactly the commands that exist.
@@ -12,17 +12,18 @@
 
 /** The complete command surface of the installed plugin. Keep in sync with `.claude-plugin/commands/`. */
 export const PLUGIN_COMMANDS: ReadonlyArray<{ name: string; blurb: string }> = [
-  { name: "/siltpoke-setup", blurb: "Create your pet + finish the install (statusline, dashboard)." },
-  { name: "/siltpoke-last", blurb: "Pull Siltpoke's most recent review INTO this conversation." },
-  { name: "/siltpoke-dashboard", blurb: "Open the dashboard (http://127.0.0.1:9876)." },
-  { name: "/siltpoke-restart-daemon", blurb: "Restart the dashboard daemon." },
-  { name: "/siltpoke-menubar", blurb: "Put the pet in your macOS menu bar (needs SwiftBar). install/status/remove." },
-  { name: "/siltpoke-mute", blurb: "Silence Siltpoke for a duration (15m / 1h / 2d / indefinite)." },
-  { name: "/siltpoke-unmute", blurb: "Un-silence Siltpoke." },
-  { name: "/siltpoke-brain", blurb: "Show or set which CLI + model reviews your code (set review <family> [model])." },
-  { name: "/siltpoke-doctor", blurb: "Install-health diagnostic (✓/✗ checklist)." },
-  { name: "/siltpoke-wake", blurb: "Reviews went quiet? Clear the stuck breaker and review the next turn." },
-  { name: "/siltpoke-help", blurb: "This manual." },
+  { name: "/siltpoke:siltpoke-setup", blurb: "Create your pet + finish the install (statusline, dashboard)." },
+  { name: "/siltpoke:siltpoke-last", blurb: "Pull Siltpoke's most recent review INTO this conversation." },
+  { name: "/siltpoke:siltpoke-dashboard", blurb: "Open the dashboard (http://127.0.0.1:9876)." },
+  { name: "/siltpoke:siltpoke-restart-daemon", blurb: "Restart the dashboard daemon." },
+  { name: "/siltpoke:siltpoke-menubar", blurb: "Put the pet in your macOS menu bar (needs SwiftBar). install/status/remove." },
+  { name: "/siltpoke:siltpoke-mute", blurb: "Silence Siltpoke for a duration (15m / 1h / 2d / indefinite)." },
+  { name: "/siltpoke:siltpoke-unmute", blurb: "Un-silence Siltpoke." },
+  { name: "/siltpoke:siltpoke-brain", blurb: "Show or set which CLI + model reviews your code (set review <family> [model])." },
+  { name: "/siltpoke:siltpoke-doctor", blurb: "Install-health diagnostic (✓/✗ checklist)." },
+  { name: "/siltpoke:siltpoke-wake", blurb: "Reviews went quiet? Clear the stuck breaker and review the next turn." },
+  { name: "/siltpoke:siltpoke-uninstall", blurb: "Undo what setup changed (status line, dashboard, menu bar) before removing the plugin." },
+  { name: "/siltpoke:siltpoke-help", blurb: "This manual." },
 ];
 
 function commandTable(): string {
@@ -40,15 +41,15 @@ WHAT IT DOES
   After every turn, a separate reviewer reads over Claude's shoulder,
   looks for what Claude missed, and writes a review to disk.
   Reviews NEVER auto-inject into your chat — nothing interrupts you.
-  You pull one in when you want it, with /siltpoke-last.
+  You pull one in when you want it, with /siltpoke:siltpoke-last.
 
-COMMANDS (the whole surface — there are only 11)
+COMMANDS (the whole surface — there are only 12)
 
 ${commandTable()}
 
 THE DASHBOARD IS WHERE EVERYTHING ELSE LIVES
 
-  /siltpoke-dashboard opens it at http://127.0.0.1:9876.
+  /siltpoke:siltpoke-dashboard opens it at http://127.0.0.1:9876.
   The full review history, the chat with your pet, and the code-map of
   your repo all live there — not behind slash commands. If you are
   looking for something that is not in the list above, it is in the
@@ -68,11 +69,11 @@ WHICH MODEL REVIEWS YOUR CODE
 
 QUIET
 
-  /siltpoke-mute 1h        silence for an hour (mute beats everything)
-  /siltpoke-unmute         resume
+  /siltpoke:siltpoke-mute 1h        silence for an hour (mute beats everything)
+  /siltpoke:siltpoke-unmute         resume
 
 TROUBLE
 
-  /siltpoke-doctor         tells you exactly which piece is not wired up
+  /siltpoke:siltpoke-doctor         tells you exactly which piece is not wired up
 `;
 }

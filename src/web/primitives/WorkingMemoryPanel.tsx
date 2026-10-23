@@ -11,8 +11,9 @@ export interface WorkingMemoryPanelProps {
 const LEGEND = [
   { color: tokens.color.sky, title: "Semantic · facts & knowledge", sub: "about the repo and your preferences" },
   { color: tokens.color.violet, title: "Episodic · things that happened", sub: "what it did, how you reacted" },
-  { color: tokens.color.moss, title: "Procedural · learned rules", // "personality tuning in Settings" dropped 2026-08-06: /settings is unmounted, so the
-    // sentence sent a reader on the live /memory page to a 404.
+  { color: tokens.color.moss, title: "Procedural · learned rules", // "personality tuning in Settings" dropped 2026-08-06: /settings was unmounted then, so
+    // the sentence sent a reader on the live /memory page to a 404. The page is mounted
+    // again (2026-10-09) but holds no personality tuning, so the sentence stays out.
     sub: "how it does things" },
 ];
 

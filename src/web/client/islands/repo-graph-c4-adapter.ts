@@ -47,6 +47,25 @@ export function edgeTierKey(source: string, target: string): string {
 /**
  * Adapt a generated ArchModelDoc to a C4Model (+ tier map). Pure + deterministic.
  */
+/** Where the outside column goes: 40px right of the boundary, each box's y evenly spread from
+ * the first band's top to the last band's bottom (a single box is centred on that span); when
+ * they do not fit, or there are no bands, a plain stack with EXT_GAP between. */
+function outsideColumn(count: number, bands: Array<{ y: number; h: number }>, boundary: { x: number; y: number; w: number }): { x: number; ys: number[] } {
+  return { x: boundary.x + boundary.w + 40, ys: outsideColumnY(count, bands, boundary.y + 20) };
+}
+
+function outsideColumnY(count: number, bands: Array<{ y: number; h: number }>, fallbackTop: number): number[] {
+  const stack = (top: number): number[] => Array.from({ length: count }, (_, i) => top + i * (EXT_H + EXT_GAP));
+  if (!count || !bands.length) return stack(fallbackTop);
+  const top = bands[0].y;
+  const bottom = bands[bands.length - 1].y + bands[bands.length - 1].h;
+  const free = bottom - top - count * EXT_H;
+  if (free < (count - 1) * EXT_GAP) return stack(top);
+  if (count === 1) return [top + free / 2];
+  const gap = free / (count - 1);
+  return Array.from({ length: count }, (_, i) => top + i * (EXT_H + gap));
+}
+
 export function archDocToC4Model(
   doc: ArchModelDoc,
   groundedPct: number,
@@ -94,9 +113,12 @@ export function archDocToC4Model(
     .filter((s) => s.memberIds.length > 0);
   const { bands, boundary, bounds } = layoutC4Bands(seeds, N, doc.boundary);
 
-  // person + ext: stacked in a column to the RIGHT of the boundary (outside it).
+  // person + ext: a column to the RIGHT of the boundary (outside it), spread evenly over the
+  // bands' height (first band top → last band bottom) so it sits level with the system rather
+  // than bunched at the top (found in a hands-on test). Box sizes are fixed; a column taller than
+  // the bands keeps the plain EXT_GAP stack from the first band's top.
   const outside = doc.nodes.filter((n) => n.kind === "ext" || n.kind === "person");
-  const extX = boundary.x + boundary.w + 40;
+  const { x: extX, ys: extY } = outsideColumn(outside.length, bands, boundary);
   outside.forEach((n, i) => {
     N[n.id] = {
       kind: n.kind,
@@ -105,7 +127,7 @@ export function archDocToC4Model(
       provenance: n.provenance,
       externalFamily: n.externalFamily,
       x: extX,
-      y: boundary.y + 20 + i * (EXT_H + EXT_GAP),
+      y: extY[i],
       w: EXT_W,
       h: EXT_H,
     };
@@ -121,7 +143,7 @@ export function archDocToC4Model(
   for (const n of doc.nodes) tiers.nodes[n.id] = n.title.tier ?? "inferred";
 
   const w = outside.length ? Math.max(bounds.w, extX + EXT_W + 28) : bounds.w;
-  const h = Math.max(bounds.h, boundary.y + 20 + outside.length * (EXT_H + EXT_GAP) + 28);
+  const h = Math.max(bounds.h, ...extY.map((y) => y + EXT_H + 28));
   return {
     model: { N, E, BANDS: bands, BOUNDARY: boundary, GROUP_ACCENT, __bounds: { w, h } },
     tiers,

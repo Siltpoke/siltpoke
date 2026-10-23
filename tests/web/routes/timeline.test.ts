@@ -111,12 +111,12 @@ describe("GET /api/timeline/dossier — lazy dossier fragment", () => {
     expect(res.status).toBe(400);
   });
 
-  test("resolves a row BEYOND the page's 20-turn view (window is deliberately wider, anti-race)", async () => {
-    // The page renders the newest 20 turns; the dossier route must use a WIDER
-    // window so a row that scrolled past 20 (or was pushed down by a new
+  test("resolves a row BEYOND the page's 12-turn view (window is deliberately wider, anti-race)", async () => {
+    // The page renders the newest 12 turns; the dossier route must use a WIDER
+    // window so a row that scrolled past 12 (or was pushed down by a new
     // arrival after page render) still resolves — otherwise a visible row's
     // placeholder would 404 and hang. 25 fired turns; request the OLDEST (well
-    // outside the top-20). A 20-cap would 404 here; the 200 window finds it.
+    // outside the top-12). A 12-cap would 404 here; the 200 window finds it.
     const many: FixtureCall[] = Array.from({ length: 25 }, (_, i) => ({
       ts: `2026-07-01T${String(i).padStart(2, "0")}:00:00Z`,
       session: `s${i}`,
@@ -164,7 +164,7 @@ describe("master/detail row select without reload", () => {
     // Both panes share the `.tl-detail-pane` shell + x-show/x-cloak contract
     // so the rail's select state drives them identically.
     const paneRe = (key: string) =>
-      new RegExp(`<div class="tl-detail-pane" data-turn-key="${key.replace("|", "\\|")}"([^>]*)>`);
+      new RegExp(`<div class="tl-detail-pane" data-turn-key="${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"([^>]*)>`);
     const newestPane = html.match(paneRe(newestKey))?.[0] ?? "";
     const olderPane = html.match(paneRe(olderKey))?.[0] ?? "";
     expect(newestPane).not.toBe("");
@@ -633,14 +633,15 @@ describe("Load-older pagination", () => {
     expect(anchor).not.toBe("");
     expect(anchor).toContain("range=7d");
     expect(anchor).toContain("status=all");
-    // Window = newest 20 of 251 rows → oldest window row is t230.
-    expect(anchor).toContain(`before=${encodeURIComponent(rowTs(230))}`);
+    // Window = newest 12 of 251 rows (t238..t249) → oldest window row is t238.
+    expect(anchor).toContain(`before=${encodeURIComponent(rowTs(238))}`);
   });
 
   test("(b) activating older shows the next-older window, reaching the prior day; exhausted → older gone, newer offered", async () => {
     await writeFixture(homeBase, pagedFixture());
-    // before=t10 lands the oldest window: rows strictly older than t10 =
-    // t9..t0 + yday = 11 rows (< limit), exhausting the range going older.
+    // Limit is 12, so before=t10 lands the oldest window: rows strictly older
+    // than t10 = t9..t0 + yday = 11 rows (< limit), exhausting the range going
+    // older. (before=t12 would leave 13 rows > limit, i.e. NOT exhausted.)
     const html = await getHtml(
       `/timeline?range=7d&status=all&before=${encodeURIComponent(rowTs(10))}`,
     );
@@ -661,17 +662,17 @@ describe("Load-older pagination", () => {
   test("(b2) following the newer anchor returns to (an equivalent of) the newest window — no dead ends", async () => {
     await writeFixture(homeBase, pagedFixture());
     const page2 = await getHtml(
-      `/timeline?range=7d&status=all&before=${encodeURIComponent(rowTs(230))}`,
+      `/timeline?range=7d&status=all&before=${encodeURIComponent(rowTs(238))}`,
     );
     const newerHref = (page2.match(/<a class="tl-load-newer"[^>]*href="([^"]+)"/)?.[1] ?? "")
       .replace(/&amp;/g, "&");
     expect(newerHref).not.toBe("");
     const back = await getHtml(newerHref);
-    // page2 = t229..t210 (after=t229); following newer → the newest window
-    // (the 20 rows strictly newer than t229 = t230..t249).
-    expect(back).toContain("bx230e");
+    // page2 = t237..t226 (after=t237); following newer → the newest window
+    // (the 12 rows strictly newer than t237 = t238..t249).
+    expect(back).toContain("bx238e");
     expect(back).toContain("bx249e");
-    expect(back).not.toContain("bx229e");
+    expect(back).not.toContain("bx237e");
     // At the newest edge again: no newer anchor, older anchor back.
     expect(back).not.toContain("tl-load-newer");
     expect(back).toContain("tl-load-older");
@@ -680,10 +681,11 @@ describe("Load-older pagination", () => {
   test("sort=oldest anchors the first page at the range's OLDEST end and pages toward newer", async () => {
     await writeFixture(homeBase, pagedFixture());
     const html = await getHtml("/timeline?status=all&sort=oldest");
-    // Oldest 20 of 251: yday + t0..t18; the rest belong to later pages.
+    // Oldest 12 of 251: yday + t0..t10; the rest belong to later pages.
     expect(html).toContain("bxdayYe");
     expect(html).toContain("bx0e");
-    expect(html).toContain("bx18e");
+    expect(html).toContain("bx10e");
+    expect(html).not.toContain("bx11e"); // belongs to page 2
     expect(html).not.toContain("bx249e");
     // Paging direction is toward newer; nothing exists older than page 1.
     expect(html).toContain("tl-load-newer");
@@ -725,7 +727,8 @@ describe("Load-older pagination", () => {
     await writeFixture(homeBase, pagedFixture());
     // Fixture default usage: 100 in + 50 out tokens per row; 251 in range.
     const p1 = await getHtml("/timeline");
-    expect(p1).toContain(`251 turns in range · showing 20 · ${fmtTokens(20 * 150)} tok`);
+    expect(p1).toContain(`251 turns in range · showing 12 · ${fmtTokens(12 * 150)} tok`);
+    // before=t10 → t9..t0 + yday = 11 rows on the short last page.
     const p2 = await getHtml(`/timeline?before=${encodeURIComponent(rowTs(10))}`);
     expect(p2).toContain(`251 turns in range · showing 11 · ${fmtTokens(11 * 150)} tok`);
   });

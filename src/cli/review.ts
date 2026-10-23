@@ -20,12 +20,14 @@
  */
 
 import { join } from "node:path";
-import { loadPersonality, buildSystemPrompt } from "../brain/personality";
+import { loadPersonality, buildSystemPrompt, expandLanguage } from "../brain/personality";
 import { readMemory } from "../memory/memory";
 import { readRecent, resolveRecentPath } from "../memory/recent";
 import { getProjectCapabilities } from "../critic/capabilities";
 import { runCritic, type RunCriticDeps, type BrainContext } from "../critic/run-critic";
 import { emptyCritiqueNote } from "../state/critique";
+import { describeToolCalls } from "../brain/tool-calls";
+import { alertCliLines, type InjectionAlert } from "../critic/injection-alert";
 import { loadBudgetConfig, evaluateBudget } from "../state/budget-config";
 import { loadDailyRollup } from "../state/usage";
 import { runGitDiff } from "../critic/tools/run-git-diff";
@@ -128,6 +130,11 @@ async function getChangedFilesFromGit(cwd: string, revisionRange: string | undef
 // Main function
 // ---------------------------------------------------------------------------
 
+/** One line per injection signal, right after the `reviewer tools:` line. Nothing when no alert. */
+function printInjectionAlert(out: OutputFn, alert: InjectionAlert | undefined): void {
+  if (alert) for (const line of alertCliLines(alert)) out(line);
+}
+
 export async function runReview(opts: ReviewOpts = {}): Promise<ReviewResult> {
   const out = opts.output ?? defaultOutput;
   const cwd = opts.cwd ?? process.cwd();
@@ -198,7 +205,7 @@ export async function runReview(opts: ReviewOpts = {}): Promise<ReviewResult> {
   );
 
   const brainContext: BrainContext = {
-    personalitySystemPrompt,
+    personalitySystemPrompt, outputLanguage: expandLanguage(personality.language), // [74]
     memory,
     recent,
     sessionId: "review-cli",
@@ -208,7 +215,7 @@ export async function runReview(opts: ReviewOpts = {}): Promise<ReviewResult> {
 
   // Run critic (DI seam for tests).
   // Deliberately NO brain-breaker pre-check here: /siltpoke-review is an
-  // explicit user request — like /siltpoke-wake, it means "try now" even
+  // explicit user request — like /siltpoke:siltpoke-wake, it means "try now" even
   // while a breaker is open (the breaker gate is scoped to Stop-hook
   // ticks). A failure here still records to brain-health as usual.
   const criticDeps: RunCriticDeps = {};
@@ -248,6 +255,9 @@ export async function runReview(opts: ReviewOpts = {}): Promise<ReviewResult> {
     case "PASSIVE_BUBBLE": {
       const critique = result.critique;
       out(critique.bubble_short);
+      out("");
+      out(describeToolCalls(result.toolCalls));
+      printInjectionAlert(out, result.injectionAlert);
       return { exitCode: 0 };
     }
 
@@ -309,6 +319,9 @@ export async function runReview(opts: ReviewOpts = {}): Promise<ReviewResult> {
         out(`evidence: ${toolsUsed}`);
         out("");
       }
+      out(describeToolCalls(result.toolCalls));
+      printInjectionAlert(out, result.injectionAlert);
+      out("");
 
       // bubble_short and bubble_long
       out(critique.bubble_short);

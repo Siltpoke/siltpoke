@@ -131,12 +131,10 @@ export function providerForFamily(family: ProviderFamily): ReviewerBrainProvider
 }
 
 /**
- * A configured model only survives when the family's argv can carry it. Config
- * written before 2026-09-12 can hold a codex model — `runBrainSet` accepted one
- * with no check at all — and codex's spawn argv has no `-m`, so passing it on
- * would let `servedModel` and every display below report a model the process
- * never saw. The writers now refuse such a pin; this drops the ones already on
- * disk (spec brain-select-four-gaps §3.1). The parser keeps it verbatim: it
+ * A configured model only survives when the family's argv can carry it, so
+ * `servedModel` and every display never report a model the process never saw
+ * (spec brain-select-four-gaps §3.1). Every family carries one today — codex
+ * since 2026-10-16 (`-m`) — so this drops nothing; it guards a future family. The parser keeps it verbatim: it
  * cannot ask the registry without an import cycle.
  */
 function sendableModel(family: ProviderFamily, model: string | undefined): string | undefined {

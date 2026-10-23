@@ -24,6 +24,14 @@ export interface BuildSignatureInput {
   cwd: string;
   changedFiles: readonly string[];
   latestUserMessage: string;
+  /**
+   * The unit of work this turn closes (`<anchor>..<HEAD>`), when there is one.
+   * Defect `[59]`: without it, the same sentence editing the same file across
+   * two commits produced the same signature, the second commit was skipped as
+   * `no_change` — and, being a consumed skip, its anchor moved past a commit
+   * nobody reviewed. Reproduced on Claude Code, Windows Run 4 (audit §110.2).
+   */
+  revisionRange?: string;
 }
 
 export function buildSignature(input: BuildSignatureInput): string {
@@ -33,6 +41,7 @@ export function buildSignature(input: BuildSignatureInput): string {
     `cwd:${input.cwd}`,
     `files:${files}`,
     `user:${input.latestUserMessage.trim()}`,
+    `unit:${input.revisionRange ?? ""}`,
   ].join("\n");
 }
 

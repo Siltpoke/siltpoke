@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * v1.1-I — `/siltpoke-mute [duration]` CLI.
+ * v1.1-I — `/siltpoke:siltpoke-mute [duration]` CLI.
  *
  * Silences Siltpoke for a duration (or indefinitely). Writes
  * `~/.siltpoke/mute.json`; router checks it before any other gate
@@ -117,10 +117,10 @@ function formatWallClock(epochMs: number): string {
 
 export function formatMuteHuman(result: MuteResult): string {
   if (result.indefinite) {
-    return `Siltpoke muted indefinitely. Run /siltpoke-unmute to resume.\n`;
+    return `Siltpoke muted indefinitely. Run /siltpoke:siltpoke-unmute to resume.\n`;
   }
   const wall = formatWallClock(result.until_ms!);
-  return `Siltpoke muted until ${wall} (${result.label} from now). Run /siltpoke-unmute to resume.\n`;
+  return `Siltpoke muted until ${wall} (${result.label} from now). Run /siltpoke:siltpoke-unmute to resume.\n`;
 }
 
 export function formatMuteJson(result: MuteResult): string {

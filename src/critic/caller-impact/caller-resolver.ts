@@ -84,6 +84,8 @@ async function ripgrepSearch(args: {
     cwd: args.cwd,
     patterns: [pattern],
     rgBin: getRgBin(),
+    // Callers may live in a source file holding a NUL byte; rg would skip it as binary.
+    text: true,
   });
   if (result.status !== "ok") return { matches: [], ok: false };
   const matches: SearchMatch[] = result.parsed.map((m: RipgrepMatch) => ({

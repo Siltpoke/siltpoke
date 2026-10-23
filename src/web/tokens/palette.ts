@@ -627,6 +627,13 @@ export const shadowPalette = {
     // was WRONG here: `ink` flips to near-white in dark mode, turning the
     // scrim into a veil that brightens the page it exists to dim.)
     scrim: "rgba(31,27,22,0.42)",
+    // Settings "in use" fill: the building agent chip and the Change-model
+    // window's In use now bar. Not a shadow, kept here for the
+    // scrim's reason: light and dark differ in kind, not by a flip. Light =
+    // moss (#7a9a5e) at 14%, because moss on cream alone barely read as green;
+    // dark = none, the maintainer's call (2026-10-15) — bright moss on near-black
+    // already reads.
+    inUseWash: "rgba(122,154,94,0.14)",
   },
   dark: {
     // Dark UIs need near-black shadows; a shadow derived from the light ink is
@@ -643,6 +650,7 @@ export const shadowPalette = {
     // (confirm-modal.ts's own `.45`, out of this batch) may retune this;
     // scoped here to the two sites Family 1/2 touch.
     scrim: "rgba(0,0,0,0.55)",
+    inUseWash: "transparent",
   },
 } as const;
 

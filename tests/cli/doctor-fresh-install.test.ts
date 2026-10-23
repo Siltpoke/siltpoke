@@ -3,9 +3,9 @@
 /**
  * Audit defect [2] — a healthy fresh install must not report a failure.
  *
- * Running `/siltpoke-doctor` is the first thing a new user does, and it said
+ * Running `/siltpoke:siltpoke-doctor` is the first thing a new user does, and it said
  * "1 of 18 checks failed" on an install where nothing was wrong. The single ✗
- * was `~/.siltpoke/global.json does not exist` — a file `/siltpoke-setup` never
+ * was `~/.siltpoke/global.json does not exist` — a file `/siltpoke:siltpoke-setup` never
  * writes, created the first time a review awards XP.
  *
  * This is the THIRD instance of one disease: a check that treats "this has not
@@ -21,7 +21,7 @@
  * `$HOME`, so the verdict is about the code, not about this machine.
  *
  * SCOPE, stated rather than implied: this drives `runAllChecks()`, which is the
- * 15 SYNC checks. A real `/siltpoke-doctor` run also reports five async rows —
+ * 15 SYNC checks. A real `/siltpoke:siltpoke-doctor` run also reports five async rows —
  * checkProjectResolutionUnderRoot, checkDaemonAlive, checkDaemonStaleness,
  * checkIndexStaleness, checkKnowledgeTracks — and one of them
  * (checkProjectResolutionUnderRoot) can move the exit code. Those are NOT
@@ -54,7 +54,7 @@ describe("doctor — a freshly installed plugin reports nothing broken", () => {
 
   beforeEach(() => {
     env = setupDoctorTmp("doctor-fresh-");
-    // Exactly what a `/plugin install` + `/siltpoke-setup` leaves behind, and
+    // Exactly what a `/plugin install` + `/siltpoke:siltpoke-setup` leaves behind, and
     // nothing else. In particular NO global.json: src/cli/install.ts never
     // writes one (zero references to the filename), and src/memory/global.ts
     // creates it only when a review awards XP.

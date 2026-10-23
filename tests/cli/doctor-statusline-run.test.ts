@@ -73,7 +73,7 @@ describe("[23] doctor runs the statusline for real", () => {
     shimExists();
     const r = checkStatuslineRenders(
       { home, claudeHome: home },
-      { runShim: () => "siltpoke: can't find bun (not on PATH) — run /siltpoke-doctor" },
+      { runShim: () => "siltpoke: can't find bun (not on PATH) — run /siltpoke:siltpoke-doctor" },
     );
     // Output is non-empty, so a naive "did it print anything" check would have
     // passed here. That is exactly the false green [23] was about.
@@ -85,6 +85,76 @@ describe("[23] doctor runs the statusline for real", () => {
     const r = checkStatuslineRenders({ home, claudeHome: home }, { runShim: () => "" });
     expect(r.pass).toBe(false);
     expect(r.detail).toContain("no pet on either run");
+  });
+
+  test("§110 W3: bun reachable without PATH -> the warn does not blame bun or send the user to setup", () => {
+    shimExists();
+    writeFileSync(join(home, ".siltpoke", "bun-path"), `${process.execPath}\n`);
+    const r = checkStatuslineRenders(
+      { home, claudeHome: home },
+      {
+        platform: "darwin",
+        runShim: (_shim, path) => (path === "/usr/bin:/bin:/usr/sbin:/sbin" ? "" : "🦠 Silty"),
+      },
+    );
+    expect(r.status).toBe("warn");
+    expect(r.detail).toContain("bun is not the reason");
+    expect(r.detail).toContain("printed nothing");
+    expect(r.detail).not.toContain("/siltpoke:siltpoke-setup");
+    expect(r.detail).not.toContain("reviews may never fire");
+  });
+
+  test("§110 W3, the Windows box: renders with the user's PATH -> green, even if a system-PATH run would not", () => {
+    shimExists();
+    const r = checkStatuslineRenders(
+      { home, claudeHome: home },
+      {
+        platform: "win32",
+        env: { SystemRoot: "C:\\Windows", PATH: "C:\\Users\\u\\.bun\\bin;C:\\Windows\\system32" },
+        runShim: (_shim, path) => (path.includes(".bun") ? "🦠 Silty" : ""),
+      },
+    );
+    expect([r.pass, r.status]).toEqual([true, undefined]);
+  });
+
+  test("§110 W3 control: on Windows, no pet with the user's PATH is still red", () => {
+    shimExists();
+    const r = checkStatuslineRenders(
+      { home, claudeHome: home },
+      { platform: "win32", env: { SystemRoot: "C:\\Windows", PATH: "C:\\x" }, runShim: () => "" },
+    );
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("no pet with this shell's PATH");
+    expect(r.detail).not.toContain("either run");
+  });
+
+  test("§110 W3: the system-PATH run's own line is quoted", () => {
+    shimExists();
+    writeFileSync(join(home, ".siltpoke", "bun-path"), `${process.execPath}\n`);
+    const r = checkStatuslineRenders(
+      { home, claudeHome: home },
+      {
+        platform: "darwin",
+        runShim: (_s, path) =>
+          path === "/usr/bin:/bin:/usr/sbin:/sbin" ? "[siltpoke] could not start sh: boom\nmore" : "🦠 Silty",
+      },
+    );
+    expect(r.detail).toContain('printed: "[siltpoke] could not start sh: boom"');
+  });
+
+  test("§110 W3: if the shim itself says it cannot find bun, bun is not ruled out", () => {
+    shimExists();
+    writeFileSync(join(home, ".siltpoke", "bun-path"), `${process.execPath}\n`);
+    const r = checkStatuslineRenders(
+      { home, claudeHome: home },
+      {
+        platform: "darwin",
+        runShim: (_s, path) =>
+          path === "/usr/bin:/bin:/usr/sbin:/sbin" ? "siltpoke: can't find bun (not on PATH)" : "🦠 Silty",
+      },
+    );
+    expect(r.detail).not.toContain("bun is not the reason");
+    expect(r.detail).toContain("/siltpoke:siltpoke-setup");
   });
 
   test("a recorded bun pointer changes the reported route", () => {
@@ -178,6 +248,27 @@ describe("[24] plugin install is detected without CLAUDE_PLUGIN_ROOT", () => {
     const row = slashRow(home, elsewhere);
     expect(row.pass).toBe(false);
     expect(row.detail).toContain("does not exist");
+  });
+
+  // Defect [91]: the pointer now stays on the NEWEST copy, so a doctor run from
+  // another host's (older) copy no longer finds itself named there.
+  test("[91] another host's plugin copy is a plugin install though the pointer names a newer one", () => {
+    pluginInstalled(home); // pointer names <home>/cache/siltpoke-1.1.0
+    const qoderCopy = join(home, "qoder", "plugins", "siltpoke");
+    mkdirSync(join(qoderCopy, ".claude-plugin"), { recursive: true });
+    writeFileSync(join(qoderCopy, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "siltpoke", version: "1.3.0" }));
+    const row = slashRow(home, qoderCopy);
+    expect(row.pass).toBe(true);
+    expect(row.status).toBe("info");
+  });
+
+  test("[91] control — a from-source checkout (has .git) is still not excused by the manifest", () => {
+    pluginInstalled(home);
+    const checkout = join(home, "src", "siltpoke");
+    mkdirSync(join(checkout, ".claude-plugin"), { recursive: true });
+    mkdirSync(join(checkout, ".git"), { recursive: true });
+    writeFileSync(join(checkout, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "siltpoke", version: "1.3.0" }));
+    expect(slashRow(home, checkout).pass).toBe(false);
   });
 
   test("control — the pointer naming THIS run's directory is still believed", () => {

@@ -15,7 +15,7 @@ const CRITIQUE_ID_LINE = /^critique_id:\s*(\S+)\s*$/m;
  * Needed because callers address a critique by `<id> | "latest"`, and "latest"
  * is a lookup sentinel, not an identity. Writing the sentinel into a record —
  * as mark-forwarded did into `preference-log.jsonl` — produces a row that
- * cannot be joined back to any critique, and `/siltpoke-last` invokes
+ * cannot be joined back to any critique, and `/siltpoke:siltpoke-last` invokes
  * `mark-forwarded` with no argument, so EVERY forward from the shipped path
  * carried it. Resolve through this before recording an id anywhere.
  */

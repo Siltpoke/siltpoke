@@ -204,7 +204,7 @@ test("csh-05 — /timeline range=7d with Load-older control", async ({ page }) =
       .getByText(`${CSH_TIMELINE_BUBBLE_PREFIX} ${CSH_TIMELINE_ROWS}`)
       .first(),
   ).toBeVisible({ timeout: 10_000 });
-  // Load-older control present because the window (limit 20) has more
+  // Load-older control present because the window (limit 12) has more
   // range-passing rows behind it; its href carries the active range AND the
   // exclusive `before` anchor.
   const older = page.locator(".tl-load-older");

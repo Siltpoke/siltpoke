@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { siltpokeRoot } from "../installer/paths";
+
 export interface Embedder {
   embed(text: string): Promise<number[]>;
   dimension: number;
@@ -34,13 +38,42 @@ export function createStubEmbedder(dim = 384): Embedder {
  * Real fastembed embedder (lazy import) — only if the package is available.
  * Returns null when fastembed is absent so the caller can fall back to the stub.
  */
-export async function createFastEmbedEmbedder(): Promise<Embedder | null> {
+export interface FastEmbedOptions {
+  /** Environment used to resolve the Siltpoke data root (SILTPOKE_HOME). */
+  env?: NodeJS.ProcessEnv;
+  /** Test seam: replaces the dynamic `import("fastembed")`. */
+  loadFastembed?: () => Promise<any>;
+}
+
+/**
+ * Where the downloaded model lives: inside Siltpoke's own data root. Only
+ * `uninstall --purge` removes it (together with `~/.siltpoke`); a default
+ * uninstall keeps it, like the rest of that folder. Without this, fastembed
+ * defaults to `<cwd>/local_cache` — one ~87 MB copy per project folder.
+ */
+export function embeddingModelCacheDir(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return join(siltpokeRoot(env), "models");
+}
+
+export async function createFastEmbedEmbedder(
+  opts: FastEmbedOptions = {},
+): Promise<Embedder | null> {
   try {
-    // biome-ignore lint/suspicious/noTsIgnore: the directive's necessity is environment-dependent — with the optional package installed there is no error to expect, so @ts-expect-error reddens tsc (measured 2026-09-22)
-    // @ts-ignore - dynamic import; package may not be present
-    const { FlagEmbedding, EmbeddingModel } = await import("fastembed");
+    const mod = opts.loadFastembed
+      ? await opts.loadFastembed()
+      : // biome-ignore lint/suspicious/noTsIgnore: the directive's necessity is environment-dependent — with the optional package installed there is no error to expect, so @ts-expect-error reddens tsc (measured 2026-09-22)
+        // @ts-ignore - dynamic import; package may not be present
+        await import("fastembed");
+    const { FlagEmbedding, EmbeddingModel } = mod;
+    const cacheDir = embeddingModelCacheDir(opts.env);
+    // fastembed's own mkdir is not recursive: a missing data root would make
+    // init throw ENOENT and silently fall back to the stub.
+    mkdirSync(cacheDir, { recursive: true });
     const model = await FlagEmbedding.init({
       model: EmbeddingModel.AllMiniLML6V2,
+      cacheDir,
     });
     return {
       dimension: 384,

@@ -60,6 +60,8 @@ export interface C4Node {
     fileCount: number;
     funcCount: number;
     recurringBasenames: Array<{ name: string; count: number }>;
+    /** Non-code files drawn in the box (docs, tests, config). */
+    otherCount?: number;
   };
   x: number;
   y: number;

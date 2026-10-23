@@ -5,7 +5,7 @@
  * documented way out did not exist.
  *
  * `brain-health.ts` tells the user (in the statusline card, the dashboard
- * strip and the skip telemetry) to "clear via /siltpoke-wake". There was no
+ * strip and the skip telemetry) to "clear via /siltpoke:siltpoke-wake". There was no
  * such command: `src/cli/wake.ts` existed but was wired into neither
  * `siltpoke-cli` nor `.claude-plugin/commands/`, so a new user whose very
  * first Brain call failed (not logged in, token expired, one network blip)
@@ -178,7 +178,8 @@ test("[11] every recovery path brain-health.ts names to the user exists", () => 
   const src = readFileSync("src/state/brain-health.ts", "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^[ \t]*\/\/.*$/gm, "");
-  const named = [...src.matchAll(/\/siltpoke-([a-z-]+)/g)].map((m) => m[1]!);
+  // Namespaced since §110 W6: `/siltpoke:siltpoke-wake`.
+  const named = [...src.matchAll(/\/siltpoke:siltpoke-([a-z-]+)/g)].map((m) => m[1]!);
   expect(named.length).toBeGreaterThan(0);
   const shipped = readdirSync(".claude-plugin/commands").map((f) =>
     f.replace(/^siltpoke-/, "").replace(/\.md$/, ""),

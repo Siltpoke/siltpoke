@@ -2,13 +2,26 @@
 // Copyright (c) 2026 Jiaqi Duan
 import type { Exec } from "./prereq";
 import { detectPrereqs } from "./prereq";
+import { markDone, recordBefore } from "./receipt";
+import { outsideToolEntry } from "./receipt-sites";
 import type { WizardIO } from "./wizard";
 
 const CLAUDE_INSTALL =
   "curl -fsSL --proto '=https' --tlsv1.2 https://claude.ai/install.sh | bash";
 const CODEX_INSTALL_ARGS = ["install", "-g", "@openai/codex"]; // via npm
 
-export function installClaude(exec: Exec, io: WizardIO): boolean {
+/** Only ever installed when absent, so ours; general tool — never offered for removal (spec §5). */
+const claudeEntry = outsideToolEntry("tool:claude-code", "claude-code", true, {
+  type: "none",
+  reason: "general tool — never offered for removal (spec §5)",
+});
+const codexEntry = outsideToolEntry("tool:codex", "codex", true, {
+  type: "none",
+  reason: "general tool — never offered for removal (spec §5)",
+});
+
+export function installClaude(exec: Exec, io: WizardIO, env: NodeJS.ProcessEnv = process.env): boolean {
+  recordBefore(claudeEntry, env);
   const r = exec("bash", ["-c", CLAUDE_INSTALL]);
   if (r.status !== 0) {
     io.write(
@@ -16,10 +29,16 @@ export function installClaude(exec: Exec, io: WizardIO): boolean {
     );
     return false;
   }
+  markDone(claudeEntry.id, env);
   return true;
 }
 
-export function installCodex(exec: Exec, io: WizardIO, platform?: NodeJS.Platform): boolean {
+export function installCodex(
+  exec: Exec,
+  io: WizardIO,
+  platform?: NodeJS.Platform,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
   const npmPresent = detectPrereqs(exec, ["node"], platform)[0].present
     ? exec(platform === "win32" ? "where" : "command", platform === "win32" ? ["npm"] : ["-v", "npm"]).status === 0
     : false;
@@ -29,6 +48,7 @@ export function installCodex(exec: Exec, io: WizardIO, platform?: NodeJS.Platfor
     );
     return false;
   }
+  recordBefore(codexEntry, env);
   const r = exec("npm", CODEX_INSTALL_ARGS);
   if (r.status !== 0) {
     io.write(
@@ -36,5 +56,6 @@ export function installCodex(exec: Exec, io: WizardIO, platform?: NodeJS.Platfor
     );
     return false;
   }
+  markDone(codexEntry.id, env);
   return true;
 }

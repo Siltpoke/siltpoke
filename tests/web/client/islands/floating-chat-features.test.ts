@@ -11,10 +11,10 @@
  *  - Escape key handler restores panel (via init() keydown listener)
  *  - Launcher state is unaffected by maximized
  */
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
-  renderMarkdown,
   makeFloatingChatData,
+  renderMarkdown,
   STARTER_PROMPTS,
   type ViewedNode,
 } from "../../../../src/web/client/islands/floating-chat";
@@ -482,7 +482,7 @@ describe("starter-prompt chips", () => {
     expect(rec.bodies).toHaveLength(1);
     expect((rec.bodies[0] as Record<string, unknown>).message).toBe("Walk me through it step by step");
     // The user message was appended (conv is no longer fresh).
-    expect(d.active()?.messages[0]).toEqual({ role: "user", text: "Walk me through it step by step" });
+    expect(d.active()?.messages[0]).toEqual({ role: "user", text: "Walk me through it step by step", at: expect.any(String) });
   });
 
   test("sendStarter goes through the send() path → chips hide afterward (conv now has a message)", async () => {
@@ -570,7 +570,7 @@ describe("streaming-scope: per-conversation streaming", () => {
     const convA = d.conversations.find((c) => c.id === "A");
     const convB = d.conversations.find((c) => c.id === "B");
     // The assistant reply landed in A (the originating conv)...
-    expect(convA?.messages.at(-1)).toEqual({ role: "assistant", text: "A-reply" });
+    expect(convA?.messages.at(-1)).toEqual({ role: "assistant", text: "A-reply", at: expect.any(String) });
     // ...and B is untouched (no misrouted reply).
     expect(convB?.messages).toHaveLength(0);
   });
@@ -752,12 +752,13 @@ describe("history list — newest-first sort + created timestamp", () => {
     expect(d.sortedConversations()[0]?.id).toBe(fresh.id);
   });
 
-  test("fmtCreated: ISO → 'date · time'; null / invalid → ''", () => {
+  test("historyGroups lists sortedConversations' order, newest first", () => {
     const d = makeFloatingChatData(fetch);
-    expect(d.fmtCreated(null)).toBe("");
-    expect(d.fmtCreated("not-a-date")).toBe("");
-    const s = d.fmtCreated("2026-06-23T20:38:00.000Z");
-    expect(s.length).toBeGreaterThan(0);
-    expect(s).toContain("·");
+    d.conversations = [
+      { id: "old", createdAt: "2026-01-01T09:00:00.000Z", label: "old" },
+      { id: "new", createdAt: "2026-01-03T09:00:00.000Z", label: "new" },
+    ] as never;
+    const ids = d.historyGroups().flatMap((g) => g.rows.map((r) => r.id));
+    expect(ids).toEqual(["new", "old"]);
   });
 });

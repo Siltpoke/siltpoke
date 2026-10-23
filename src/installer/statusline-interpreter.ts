@@ -129,7 +129,7 @@ function quoteIfNeeded(token: string): string {
  * nothing resolves we still emit a Git Bash command rather than `sh` — a wrong
  * path the user can see and correct beats a command that was never runnable on
  * their OS — and say so through `reason`, which the caller surfaces as a warning
- * and `/siltpoke-doctor` re-checks later.
+ * and `/siltpoke:siltpoke-doctor` re-checks later.
  */
 export function buildStatuslineCommand(
   shimPath: string,

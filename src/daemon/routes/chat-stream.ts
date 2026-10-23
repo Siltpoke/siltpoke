@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
+import { stopProcess } from "../../brain/drain-process";
 import type { ChatMessage } from "../../chat/schema";
+import { buildChatArgv } from "./chat-argv";
 
 export interface StreamUsage {
   input_tokens: number;
@@ -8,10 +10,37 @@ export interface StreamUsage {
 }
 
 /** Classified failure causes — mirrors chatMessageSchema.error_reason. */
-export type StreamErrorReason = "timeout" | "spawn_failed" | "empty_exit";
+export type StreamErrorReason =
+  | "timeout"
+  | "spawn_failed"
+  | "empty_exit"
+  // Defect [49] — chat can go to any of the five coding agents:
+  /** No coding-agent CLI was found on this machine. */
+  | "no_provider"
+  /** Two or more were found and nothing says which one the user works in. */
+  | "choose_provider"
+  /** chat reached its own daily call cap for this agent. */
+  | "quota_cap"
+  /** The agent's CLI ran and failed (logged out, bad model, crashed …). */
+  | "provider_failed";
+
+/** The five agent families, as they travel on the chat wire and into the store. */
+export type ChatProviderName = "claude" | "codex" | "agy" | "qoder" | "codebuddy";
 
 export type StreamEvent =
-  | { type: "message_start"; message_id: string; model: string }
+  | {
+      type: "message_start";
+      message_id: string;
+      model: string;
+      /** Which agent answers this turn (defect [49]). Absent on pre-[49] servers. */
+      provider?: ChatProviderName;
+      /**
+       * True when the reply will arrive in one piece — every agent but claude,
+       * until that agent's streaming format has been seen in a real call. The
+       * waiting UI says so, instead of looking stuck.
+       */
+      whole_reply?: boolean;
+    }
   | { type: "content_block_delta"; text: string }
   /**
    * What the reply is doing right now, for the waiting UI.
@@ -39,6 +68,11 @@ export type StreamEvent =
       error: string;
       /** Present when the failure was classified by the generator. */
       reason?: StreamErrorReason;
+      /** Which agent the failure belongs to (defect [49]) — the client builds
+       * its sentence from this name, never from `error`. */
+      provider?: ChatProviderName;
+      /** `choose_provider` only: the agents found on this machine. */
+      found?: ChatProviderName[];
       /**
        * Server-side channel only: capped subprocess stderr for the daemon
        * log. The route MUST strip this before the SSE wire and before any
@@ -69,6 +103,15 @@ export interface StreamChatOptions {
    * canned event sequence. Each yielded event is forwarded verbatim.
    */
   fakeEvents?: AsyncIterable<StreamEvent>;
+  /** Injected in tests only; defaults to the real platform. Decides whether the
+   * system prompt travels in argv or in a file (defect `[26]`). */
+  platform?: NodeJS.Platform;
+  /** Every non-empty stdout line, before parsing — for the chat call record. */
+  onRawLine?: (line: string) => void;
+  /** The exit code, once, stopped calls included — for the chat call record. */
+  onExit?: (code: number) => void;
+  /** The project root to run in (src/chat/repo-access.ts); absent = the daemon's own working directory. */
+  cwd?: string;
 }
 
 /**
@@ -165,21 +208,9 @@ function startClaudeSession(
   timeoutMs: number,
 ): { ok: true; session: ProcSession } | { ok: false; failure: StreamEvent } {
   const spawn = opts.spawnFn ?? Bun.spawn;
-  const args = [
-    "claude",
-    "-p",
-    "--model",
-    model,
-    "--output-format",
-    "stream-json",
-    // Defect [12], the loudest of the three sites: `--print
-    // --output-format=stream-json` EXITS 1 without --verbose ("requires
-    // --verbose"), so dashboard chat was dead on any clean install rather
-    // than merely mis-shaped.
-    "--verbose",
-    "--no-session-persistence",
-  ];
-  if (opts.systemPrompt) args.push("--system-prompt", opts.systemPrompt);
+  // Defect `[26]` (see `chat-argv.ts`): `staged.cleanup` MUST run in
+  // `teardown` AND on both early returns below, neither of which builds one.
+  const staged = buildChatArgv(model, opts.systemPrompt, opts.platform);
 
   const spawnFailure = (msg: string): { ok: false; failure: StreamEvent } => ({
     ok: false,
@@ -192,13 +223,17 @@ function startClaudeSession(
 
   let proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
   try {
-    proc = spawn(args, {
+    proc = spawn(staged.args, {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
       env: { ...process.env, SILTPOKE_INTERNAL: "1" },
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
     });
   } catch (err) {
+    // No session is returned, so `teardown` never runs — clean up here or the
+    // prompt file lingers once per failed chat turn.
+    staged.cleanup();
     return spawnFailure(err instanceof Error ? err.message : String(err));
   }
 
@@ -206,7 +241,7 @@ function startClaudeSession(
   // debug and continue teardown; the exit accounting still resolves.
   const killProc = () => {
     try {
-      proc.kill();
+      stopProcess(proc);
     } catch (err) {
       // biome-ignore lint/suspicious/noConsole: contingency requires a DEBUG-level log here — error/warn would over-promote a benign kill-vs-exit race.
       console.debug(
@@ -222,6 +257,9 @@ function startClaudeSession(
     // Spawn SUCCEEDED — a live child exists. Kill it before reporting the
     // failure, or it outlives the spawn_failed return as an orphan.
     killProc();
+    // No session, so `teardown` never runs. Reachable: a child that exits
+    // instantly (EPIPE) is what an unrecognized `--system-prompt-file` gives.
+    staged.cleanup();
     return spawnFailure(err instanceof Error ? err.message : String(err));
   }
 
@@ -268,6 +306,7 @@ function startClaudeSession(
       teardown: () => {
         clearTimeout(killTimer);
         opts.signal?.removeEventListener("abort", onAbort);
+        staged.cleanup();
       },
     },
   };
@@ -474,6 +513,7 @@ export async function* streamChat(
         const line = pending.slice(0, newlineAt).trim();
         pending = pending.slice(newlineAt + 1);
         if (line.length === 0) continue;
+        opts.onRawLine?.(line);
         let ev: ClaudeStreamEvent;
         try {
           ev = JSON.parse(line) as ClaudeStreamEvent;
@@ -500,6 +540,7 @@ export async function* streamChat(
     exitCode = 1;
   }
   const stderr = await stderrTail;
+  opts.onExit?.(exitCode);
 
   // Abort: the caller repudiated the turn — yield nothing further (no
   // message_stop, no error); it owns cancelled-turn persistence.

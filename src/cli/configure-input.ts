@@ -20,7 +20,7 @@ export interface ConfigureOptions {
    */
   personality: string;
   /**
-   * The five dials, verbatim. This is how the CONVERSATIONAL /siltpoke-setup
+   * The five dials, verbatim. This is how the CONVERSATIONAL /siltpoke:siltpoke-setup
    * delivers a custom / random / quiz result — the model already resolved every
    * mode down to five numbers, so the kernel takes them directly instead of
    * re-deriving them from a preset name it does not have. Wins over
@@ -48,7 +48,7 @@ export const DIAL_KEYS = [
  * to one pick, so each pick has to name a full dial set.
  *
  * This table is also the ALLOW-LIST validateOptions() checks against — the six
- * keys here are exactly the six /siltpoke-setup may offer.
+ * keys here are exactly the six /siltpoke:siltpoke-setup may offer.
  */
 export const PERSONALITY_PRESETS: Record<string, DialSet> = {
   sassy: { snark: 8, patience: 3, rigor: 6, chattiness: 6, curiosity: 7 },
@@ -94,7 +94,7 @@ export function answersFilePath(argv: string[]): string | null {
 /**
  * Read the four pet answers out of a JSON file instead of argv.
  *
- * WHY THIS EXISTS — shell injection. /siltpoke-setup collects `name`, `species`,
+ * WHY THIS EXISTS — shell injection. /siltpoke:siltpoke-setup collects `name`, `species`,
  * `lang` and `personality` from the user, and ALL FOUR can be free-typed (name
  * always is; AskUserQuestion's "Other" escape free-types the rest). It then has
  * to get them into this process. If the model interpolates them into a

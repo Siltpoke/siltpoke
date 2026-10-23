@@ -47,9 +47,24 @@ export type RipgrepMatch = {
   pattern: string;
 };
 
+/**
+ * Why a tool did not run, as a short phrase the reviewer reads verbatim
+ * ("no tsconfig.json found"). Optional: set only where the scheduler knows the
+ * cause; the prompt falls back to a per-status default when it is absent.
+ */
+type SkipReason = {
+  reason?: string;
+  /**
+   * True when the tool had nothing of its kind to look at (no .ts file changed).
+   * That is not a missing check, so the prompt lists it apart from tools that
+   * could not run when they should have.
+   */
+  notRelevant?: boolean;
+};
+
 export type ToolResult =
-  | { tool: "tsc"; status: ToolStatus; parsed: TscDiagnostic[]; raw: string }
-  | { tool: "eslint"; status: ToolStatus; parsed: EslintFinding[]; raw: string }
+  | ({ tool: "tsc"; status: ToolStatus; parsed: TscDiagnostic[]; raw: string } & SkipReason)
+  | ({ tool: "eslint"; status: ToolStatus; parsed: EslintFinding[]; raw: string } & SkipReason)
   | {
       tool: "git-diff";
       status: ToolStatus;

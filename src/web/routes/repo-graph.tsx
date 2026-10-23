@@ -41,8 +41,10 @@ import {
 import { resolveRepoGraphLocation } from "../../repo-graph/proj-hash";
 import { resolveRequestProject } from "../../daemon/project-context";
 import { siltpokeRoot } from "../../installer/paths";
-import { readFingerprints, readGraph, readMeta } from "../../repo-graph/store";
+import { readFingerprints, readGraph, readMeta, readOtherFiles } from "../../repo-graph/store";
 import { computeFileFunctions, computeRepoFingerprint, readArchModel } from "../../explain/arch-cache";
+import { filesOutsideBuckets, filesOutsideGenerated, summarizeUndrawn } from "../../repo-graph/undrawn-files";
+import { ARCH_DEFAULT_HARD_CAP_USD } from "../../explain/arch-generate";
 import { emptyGraph } from "../../repo-graph/types";
 import { createPageCache, type PageCache } from "./repo-graph-cache";
 import {
@@ -134,10 +136,12 @@ interface BuildProjectionInput {
   meta: Awaited<ReturnType<typeof readMeta>>;
   activeProjHash: string;
   projectRoot: string | null;
+  /** Non-code files to draw as plain files (null: older index — draw none). */
+  others: readonly string[] | null;
 }
 
-function buildProjection({ graph, overlay, meta, activeProjHash, projectRoot }: BuildProjectionInput): ArchitectureProjection {
-  if (meta) return projectArchitecture(graph, overlay, meta);
+function buildProjection({ graph, overlay, meta, activeProjHash, projectRoot, others }: BuildProjectionInput): ArchitectureProjection {
+  if (meta) return projectArchitecture(graph, overlay, meta, others);
   return {
     repo: {
       id: activeProjHash,
@@ -254,7 +258,8 @@ async function renderRepoGraphPage(c: Context, deps: RepoGraphWebRouteDeps) {
   const overlay = claudeMd ? parseArchitectureSection(claudeMd) : null;
   const aggregated: AggregatedGraph = aggregateBySuperGroup(graph, overlay, meta?.anchorMap);
 
-  const projection = buildProjection({ graph, overlay, meta, activeProjHash, projectRoot });
+  const otherFiles = storageDir ? await readOtherFiles(storageDir) : null;
+  const projection = buildProjection({ graph, overlay, meta, activeProjHash, projectRoot, others: otherFiles?.files ?? null });
   const stats = { files: projection.repo.files, symbols: projection.repo.symbols, edges: projection.repo.edges };
 
   // Load any cached LLM-derived model so a generated repo opens
@@ -276,6 +281,16 @@ async function renderRepoGraphPage(c: Context, deps: RepoGraphWebRouteDeps) {
     );
     if (generatedModel) fileFunctions = computeFileFunctions(graph, generatedModel.model.nodes);
   }
+
+  // Indexed files each view leaves out of its boxes — the header counts every
+  // file, so the page names the difference instead of leaving it silent.
+  const indexedFiles = graph.nodes.filter((n) => n.type === "file").map((n) => n.path);
+  const undrawn = {
+    structural: summarizeUndrawn(filesOutsideBuckets(projection.subdirs, indexedFiles)),
+    generated: generatedModel
+      ? summarizeUndrawn(filesOutsideGenerated(generatedModel.model, projection.subdirs, indexedFiles))
+      : null,
+  };
 
   // (authored `.siltpoke/arch-c4.json` was read above — it feeds the cache key.)
 
@@ -315,6 +330,7 @@ async function renderRepoGraphPage(c: Context, deps: RepoGraphWebRouteDeps) {
         stalenessBanner={stalenessBanner}
         stats={stats}
         outsideImports={meta?.imports_outside_root ?? null}
+        otherFiles={otherFiles && overlay === null ? { count: otherFiles.files.length, truncated: otherFiles.truncated } : null}
         outsideScope={meta?.repo_root ? "folder" : "repo"}
         secret={secret}
         generatedModel={generatedModel ? {
@@ -325,7 +341,7 @@ async function renderRepoGraphPage(c: Context, deps: RepoGraphWebRouteDeps) {
           // Include generatedTs + durationMs for the modal metadata line.
           generatedTs: generatedModel.meta.generatedTs,
           durationMs: generatedModel.meta.durationMs,
-          costUsd: generatedModel.meta.costUsd,
+          costUsd: generatedModel.meta.costUsd, hardCapUsd: ARCH_DEFAULT_HARD_CAP_USD,
           // Grounding counts — optional; absent on legacy caches (no fabrication).
           citedClaims: generatedModel.meta.citedClaims,
           totalClaims: generatedModel.meta.totalClaims,
@@ -333,6 +349,7 @@ async function renderRepoGraphPage(c: Context, deps: RepoGraphWebRouteDeps) {
         } : null}
         authoredModel={authored.model}
         authoredInvalid={authored.invalid}
+        undrawn={undrawn}
       />
     </Layout>,
   );

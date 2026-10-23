@@ -110,3 +110,49 @@ describe("makeRoleTextBrain", () => {
     }
   });
 });
+
+// Every role-routed claude call (memory summarizer, extract-facts,
+// extract-events, tag-entities, episodes, recap, repo summary, facts route,
+// remember) carries text that came from transcripts and other repos. Before
+// this, each one ran with every tool (Bash, Write, Edit, WebFetch) and the
+// user's MCP servers (measured 2026-10-18 on a captured summarizer call).
+describe("role-routed claude calls may only read", () => {
+  const cases = [
+    ["raw brain, extract role", (h: string) => makeRoleRawBrain(h, "extract"), JSON.stringify({ candidates: [] })],
+    ["text brain, chat role (recap)", (h: string) => makeRoleTextBrain(h, "chat"), "one-line recap"],
+  ] as const;
+  for (const [label, make, inner] of cases) {
+    test(`${label}: tools are limited to reading and MCP servers are not loaded`, async () => {
+      const home = mkdtempSync(join(tmpdir(), "role-brain-"));
+      try {
+        const capture: { argv?: string[] } = {};
+        await make(home)({ systemPrompt: "s", contextBundle: "c", spawnFn: fakeClaudeSpawn(inner, capture) });
+        const argv = capture.argv ?? [];
+        const i = argv.indexOf("--tools");
+        expect(i).toBeGreaterThan(-1);
+        expect(argv[i + 1]).toBe("Read,Grep,Glob");
+        expect(argv).toContain("--strict-mcp-config");
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    });
+
+    test(`${label}: a caller cannot switch the limit off`, async () => {
+      const home = mkdtempSync(join(tmpdir(), "role-brain-"));
+      try {
+        const capture: { argv?: string[] } = {};
+        await make(home)({
+          systemPrompt: "s",
+          contextBundle: "c",
+          readOnly: false,
+          spawnFn: fakeClaudeSpawn(inner, capture),
+        });
+        const argv = capture.argv ?? [];
+        expect(argv[argv.indexOf("--tools") + 1]).toBe("Read,Grep,Glob");
+        expect(argv).toContain("--strict-mcp-config");
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    });
+  }
+});

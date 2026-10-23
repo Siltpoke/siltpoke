@@ -28,6 +28,8 @@ export interface InstallAutostartForPlatformOptions {
   platform?: string;
   /** Home dir to install into. Defaults (in the platform module) to os.homedir(). */
   home?: string;
+  /** Env for XDG_CONFIG_HOME (Linux). Defaults to process.env in the platform module. */
+  env?: NodeJS.ProcessEnv;
   /** Module loaders — injectable so tests never touch launchctl/systemctl. */
   loadLaunchd?: () => Promise<AutostartModule | null>;
   loadSystemd?: () => Promise<AutostartModule | null>;
@@ -38,12 +40,19 @@ async function dispatch(
   platform: string,
   load: () => Promise<AutostartModule | null>,
   home?: string,
+  env?: NodeJS.ProcessEnv,
 ): Promise<AutostartDispatchResult> {
   const mod = await load();
   if (!mod || typeof mod.installAutostart !== "function") {
     return { status: "unavailable", platform, module: moduleName };
   }
-  await mod.installAutostart(home);
+  // launchd's 2nd parameter is its exec seam, NOT an env — only systemd takes
+  // env (XDG_CONFIG_HOME, defect [72]), so never hand it to the other module.
+  if (moduleName === "systemd") {
+    await (mod.installAutostart as (h?: string, e?: NodeJS.ProcessEnv) => Promise<void>)(home, env);
+  } else {
+    await mod.installAutostart(home);
+  }
   return { status: "installed", platform };
 }
 
@@ -61,19 +70,19 @@ export async function installAutostartForPlatform(
   if (platform === "darwin") {
     const load =
       opts.loadLaunchd ?? (() => import("./launchd").catch(() => null));
-    return dispatch("launchd", platform, load, opts.home);
+    return dispatch("launchd", platform, load, opts.home, opts.env);
   }
   if (platform === "linux") {
     const load =
       opts.loadSystemd ?? (() => import("./systemd").catch(() => null));
-    return dispatch("systemd", platform, load, opts.home);
+    return dispatch("systemd", platform, load, opts.home, opts.env);
   }
   return { status: "skipped", platform };
 }
 
 /** Shape both platform uninstallers export (track #6 T4). */
 export interface AutostartUninstallModule {
-  uninstallAutostart(): Promise<{ removed: boolean }>;
+  uninstallAutostart(opts?: { home?: string; env?: NodeJS.ProcessEnv }): Promise<{ removed: boolean }>;
 }
 
 export type AutostartUninstallResult =
@@ -85,6 +94,10 @@ export type AutostartUninstallResult =
 export interface UninstallAutostartForPlatformOptions {
   /** Defaults to process.platform. Injectable for tests. */
   platform?: string;
+  /** Home dir to remove from. Defaults (in the platform module) to os.homedir(). */
+  home?: string;
+  /** Env for XDG_CONFIG_HOME (Linux). Defaults to process.env in the platform module. */
+  env?: NodeJS.ProcessEnv;
   /** Module loaders — injectable so tests never touch launchctl/systemctl. */
   loadLaunchd?: () => Promise<AutostartUninstallModule | null>;
   loadSystemd?: () => Promise<AutostartUninstallModule | null>;
@@ -94,12 +107,14 @@ async function dispatchUninstall(
   moduleName: "launchd" | "systemd",
   platform: string,
   load: () => Promise<AutostartUninstallModule | null>,
+  home?: string,
+  env?: NodeJS.ProcessEnv,
 ): Promise<AutostartUninstallResult> {
   const mod = await load();
   if (!mod || typeof mod.uninstallAutostart !== "function") {
     return { status: "unavailable", platform, module: moduleName };
   }
-  const r = await mod.uninstallAutostart();
+  const r = await mod.uninstallAutostart({ home, env });
   return { status: r.removed ? "removed" : "not-installed", platform };
 }
 
@@ -117,12 +132,12 @@ export async function uninstallAutostartForPlatform(
   if (platform === "darwin") {
     const load =
       opts.loadLaunchd ?? (() => import("./launchd").catch(() => null));
-    return dispatchUninstall("launchd", platform, load);
+    return dispatchUninstall("launchd", platform, load, opts.home, opts.env);
   }
   if (platform === "linux") {
     const load =
       opts.loadSystemd ?? (() => import("./systemd").catch(() => null));
-    return dispatchUninstall("systemd", platform, load);
+    return dispatchUninstall("systemd", platform, load, opts.home, opts.env);
   }
   return { status: "skipped", platform };
 }

@@ -1,18 +1,22 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 
-import type { BrainFailureInput } from "./failure-classify";
+import { buildClaudeArgv } from "./claude-argv";
+import { drainProcess, stopProcess } from "./drain-process";
 import {
   type BrainUsage,
   type ClaudeStreamEvent,
-  type ResultEvent,
   EnvelopeShapeError,
   extractUsage,
   findResultEvent,
   normalizeStreamEnvelope,
+  type ResultEvent,
 } from "./envelope";
+import type { BrainFailureInput } from "./failure-classify";
 import { explainBrainFailure } from "./failure-reason";
-import { type BrainOutput, parseBrainOutput, describeSchemaIssues } from "./schema";
+import { type BrainOutput, describeSchemaIssues, parseBrainOutput } from "./schema";
+import { systemPromptArgs } from "./system-prompt-file";
+import { claudeToolCalls, type ToolCallRecord } from "./tool-calls";
 
 export interface CallBrainOptions {
   systemPrompt: string;
@@ -28,8 +32,22 @@ export interface CallBrainOptions {
    * repo-relative behavior targets the right tree.
    */
   cwd?: string;
+  /**
+   * Which platform's argv rules to build for. Defaults to the real one; the
+   * seam exists because the Windows branch below CANNOT be reached from a test
+   * on any other host, and an untested delivery path is how defect `[26]`
+   * shipped in the first place.
+   */
+  platform?: NodeJS.Platform;
+  /**
+   * The reply is prose for a person (dashboard chat), not a review. A provider
+   * that forces the review shape drops it: codex omits `--output-schema`, agy
+   * does not label the prompt a review rubric. Absent = review, unchanged.
+   */
+  plainReply?: boolean;
+  readOnly?: boolean; // claude may only read files (see `buildClaudeArgv`); other providers ignore it
+  projectSettingsOff?: boolean; // claude skips the folder's project settings (see `buildClaudeArgv`)
 }
-
 
 export interface BrainCallResult {
   output: BrainOutput;
@@ -40,11 +58,14 @@ export interface BrainCallResult {
    * populated by ReviewerBrainProvider.call() implementations.
    */
   servedModel?: string;
+  /** Tools the reviewer used (🛡 [C]); absent = this call's output carried no tool record. */
+  toolCalls?: ToolCallRecord[];
 }
 
 export interface BrainCallRawResult {
   output: unknown;
   usage: BrainUsage;
+  toolCalls?: ToolCallRecord[];
 }
 
 export class BrainError extends Error {
@@ -219,52 +240,33 @@ function classifierStdout(stdout: string): string {
 
 export async function runBrainCall(
   opts: CallBrainOptions,
-): Promise<{ resultText: string; usage: BrainUsage }> {
+): Promise<{ resultText: string; usage: BrainUsage; toolCalls?: ToolCallRecord[] }> {
   const model = opts.model ?? DEFAULT_MODEL;
   const timeoutMs = resolveBrainTimeoutMs(opts.timeoutMs);
   const spawn = opts.spawnFn ?? Bun.spawn;
+  // Defect `[26]`: on Windows this becomes `--system-prompt-file <path>`,
+  // because the runtime refuses to pass a prompt containing cmd.exe special
+  // characters to `claude.cmd`. Elsewhere it stays the argv form it has always
+  // been. `cleanup` MUST run in the finally below.
+  const promptArgs = systemPromptArgs(opts.systemPrompt, {
+    supportsFile: true,
+    platform: opts.platform,
+  });
 
   const proc = (() => {
     try {
-      return spawn(
-        [
-          "claude",
-          "-p",
-          "--model",
-          model,
-          "--system-prompt",
-          opts.systemPrompt,
-          "--output-format",
-          "json",
-          // Defect [12]: `--output-format json` returns the full event ARRAY
-          // only when verbose is on, and that is the USER's
-          // `~/.claude/settings.json` — off in a clean new-user config, which
-          // made every review fail silently. The argv flag wins over the
-          // setting (measured against CC 2.1.274), so the shape is ours.
-          //
-          // ⚠️ CHANGING THIS FLAG CHANGES WHAT THE FAILURE CLASSIFIER READS.
-          // With it, stdout is the whole event stream, and one of the stream's
-          // own type names (`rate_limit_event`) matches a frozen classifier
-          // marker (`/rate[ _-]?limit/i` in failure-classify.ts). That is why
-          // the exit!==0 path below hands the classifier `classifierStdout()`
-          // — the result event alone — instead of the raw tail: without it a
-          // plain `ambiguous` failure classified as `throttle` and authorized
-          // a second PAID spawn (measured; tests/brain/classifier-verbose-noise
-          // .test.ts opens with that device check). If this flag ever goes
-          // away, `classifierStdout` must be revisited in the same change.
-          "--verbose",
-          "--no-session-persistence",
-        ],
-        {
-          stdin: "pipe",
-          stdout: "pipe",
-          stderr: "pipe",
-          env: { ...process.env, SILTPOKE_INTERNAL: "1" },
-        },
-      );
+      return spawn(buildClaudeArgv(model, promptArgs.args, opts.readOnly === true, opts.projectSettingsOff === true), {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, SILTPOKE_INTERNAL: "1" },
+      });
     } catch (err) {
       // Spawn-level failure (ENOENT binary missing, EAGAIN process pressure):
       // carry the structured fields so the classifier sees the spawn error.
+      // Clean up here too: this throw leaves before the finally below is armed,
+      // and the whole point of the file is that it does not linger.
+      promptArgs.cleanup();
       throw new BrainError(`claude -p spawn failed: ${err}`, err, {
         exitCode: null,
         stderr: "",
@@ -274,26 +276,32 @@ export async function runBrainCall(
     }
   })();
 
-  proc.stdin.write(opts.contextBundle);
-  proc.stdin.end();
-
-  const killTimer = setTimeout(() => {
-    try {
-      proc.kill();
-    } catch {
-      // ignore — process may already have exited
-    }
-  }, timeoutMs);
-
   let stdout: string;
   let stderr: string;
   let exitCode: number;
+  let killTimer: ReturnType<typeof setTimeout> | undefined;
   try {
-    stdout = await new Response(proc.stdout).text();
-    stderr = await new Response(proc.stderr).text();
-    exitCode = await proc.exited;
+    // Inside the try, because a throw from the stdin write used to land in the
+    // gap between the spawn's own cleanup and this finally — leaking the prompt
+    // file once per review. The realistic trigger is a child that exits
+    // instantly (EPIPE), which is exactly what an unrecognized
+    // `--system-prompt-file` produces.
+    proc.stdin.write(opts.contextBundle);
+    proc.stdin.end();
+
+    killTimer = setTimeout(() => {
+      try {
+        stopProcess(proc);
+      } catch {
+        // ignore — process may already have exited
+      }
+    }, timeoutMs);
+
+    // Defect [51]: bounded — a child holding the pipe cannot outlive the timeout.
+    ({ stdout, stderr, exitCode } = await drainProcess(proc));
   } finally {
-    clearTimeout(killTimer);
+    if (killTimer !== undefined) clearTimeout(killTimer);
+    promptArgs.cleanup();
   }
 
   if (exitCode !== 0) {
@@ -319,8 +327,12 @@ export async function runBrainCall(
   // the critic phases). `findResultEvent` is inside the same try because it
   // raises the same class for the same reason.
   let resultEvent: ResultEvent;
+  let events: ClaudeStreamEvent[];
+  let isEventList: boolean;
   try {
-    const events: ClaudeStreamEvent[] = normalizeStreamEnvelope(JSON.parse(stdout));
+    const parsed: unknown = JSON.parse(stdout);
+    isEventList = Array.isArray(parsed);
+    events = normalizeStreamEnvelope(parsed);
     resultEvent = findResultEvent(events);
   } catch (err) {
     if (err instanceof BrainError) throw err;
@@ -334,13 +346,16 @@ export async function runBrainCall(
     );
   }
 
-  return { resultText: resultEvent.result, usage: extractUsage(resultEvent) };
+  // Only the verbose event list carries tool events; the single result object
+  // carries none, and reading it as "used no tools" would be the lie 🛡 [C] exists to prevent.
+  const toolCalls = isEventList ? claudeToolCalls(events) : undefined;
+  return { resultText: resultEvent.result, usage: extractUsage(resultEvent), toolCalls };
 }
 
 export async function callBrainRaw(
   opts: CallBrainOptions,
 ): Promise<BrainCallRawResult> {
-  const { resultText, usage } = await runBrainCall(opts);
+  const { resultText, usage, toolCalls } = await runBrainCall(opts);
   const innerText = extractJsonString(resultText);
 
   let inner: unknown;
@@ -360,7 +375,7 @@ export async function callBrainRaw(
     );
   }
 
-  return { output: inner, usage };
+  return { output: inner, usage, toolCalls };
 }
 
 /**
@@ -371,9 +386,9 @@ export async function callBrainRaw(
  */
 export async function callBrainText(
   opts: CallBrainOptions,
-): Promise<{ text: string; usage: BrainUsage }> {
-  const { resultText, usage } = await runBrainCall(opts);
-  return { text: resultText.trim(), usage };
+): Promise<{ text: string; usage: BrainUsage; toolCalls?: ToolCallRecord[] }> {
+  const { resultText, usage, toolCalls } = await runBrainCall(opts);
+  return { text: resultText.trim(), usage, toolCalls };
 }
 
 export async function callBrain(
@@ -399,5 +414,5 @@ export async function callBrain(
       raw.output,
     );
   }
-  return { output, usage: raw.usage };
+  return { output, usage: raw.usage, toolCalls: raw.toolCalls };
 }

@@ -13,8 +13,8 @@
  * report: `src/daemon/server.ts` says "its legacy GET /dashboard report page
  * is retired", and `buildReport` has no caller anywhere in `src/`. Four
  * golden fixtures asserted the select's HTML, so every layer read green while
- * no user could reach the control. `/settings` — the obvious second home — is
- * unmounted too (`src/daemon/server.ts`, 2026-08-06). The lesson is not "add
+ * no user could reach the control. `/settings` — the obvious second home — was
+ * unmounted too at the time (2026-08-06; mounted again 2026-10-09). The lesson is not "add
  * a test", since the old tests passed: it is that a markup assertion says
  * nothing about reachability, and
  * that a page NAME is not a checkable destination — only a mounted route is.

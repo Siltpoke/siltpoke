@@ -210,3 +210,63 @@ test("a skip row gets the fields too — every branch of parseCall, not just fir
   expect(call!.status).toBe("skipped");
   expect(call!.user_raw_query).toBe("just asking a question");
 });
+
+// ── injection_alert / tool_calls (prompt-injection alert, Task 5) ──────────
+
+const signal = { kind: "self", level: "loud", where: "README.md", quote: "ignore previous", why: "tries to steer the reviewer" };
+
+test("a row with a well-formed injection_alert round-trips onto the call", () => {
+  const alert = { level: "loud", signals: [signal], toolRecord: "recorded" };
+  const call = parseCall({ ...baseFired, injection_alert: alert });
+  expect(call!.injection_alert).toEqual(alert as never);
+});
+
+test("a row without injection_alert / tool_calls reads as null for both", () => {
+  const call = parseCall(baseFired);
+  expect(call!.injection_alert).toBeNull();
+  expect(call!.tool_calls).toBeNull();
+});
+
+test("malformed injection_alert → null (bad level, signals not an array, junk)", () => {
+  for (const bad of [
+    { level: "shouting", signals: [signal], toolRecord: "recorded" },
+    { level: "loud", signals: "nope", toolRecord: "recorded" },
+    "loud",
+    42,
+    [],
+  ]) {
+    expect(parseCall({ ...baseFired, injection_alert: bad })!.injection_alert).toBeNull();
+  }
+});
+
+test("a malformed signal is dropped, the rest survive; none left → null", () => {
+  const ok = parseCall({
+    ...baseFired,
+    injection_alert: { level: "loud", signals: [{ kind: "self" }, signal], toolRecord: "recorded" },
+  });
+  expect(ok!.injection_alert!.signals).toEqual([signal as never]);
+  const none = parseCall({
+    ...baseFired,
+    injection_alert: { level: "loud", signals: [{ kind: "self" }, 7], toolRecord: "recorded" },
+  });
+  expect(none!.injection_alert).toBeNull();
+});
+
+test("missing or invalid toolRecord is read as not_recorded, the row is kept", () => {
+  for (const toolRecord of [undefined, "maybe", 3]) {
+    const call = parseCall({
+      ...baseFired,
+      injection_alert: { level: "quiet", signals: [{ ...signal, level: "quiet" }], toolRecord },
+    });
+    expect(call!.injection_alert!.toolRecord).toBe("not_recorded");
+  }
+});
+
+test("tool_calls: list round-trips, not_recorded passes, junk and absent → null", () => {
+  const list = [{ tool: "Read", target: "/etc/passwd", failed: false }];
+  expect(parseCall({ ...baseFired, tool_calls: list })!.tool_calls).toEqual(list);
+  expect(parseCall({ ...baseFired, tool_calls: [] })!.tool_calls).toEqual([]);
+  expect(parseCall({ ...baseFired, tool_calls: "not_recorded" })!.tool_calls).toBe("not_recorded");
+  expect(parseCall({ ...baseFired, tool_calls: "whatever" })!.tool_calls).toBeNull();
+  expect(parseCall({ ...baseFired, tool_calls: [{ tool: 1 }] })!.tool_calls).toBeNull();
+});

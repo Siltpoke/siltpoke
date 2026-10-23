@@ -14,7 +14,7 @@
  */
 
 import type { CriticCall, CriticTelemetry } from "../../../state/api";
-import { BlockA, BlockC, BlockD, BlockE, EvidenceMark, PartialDiffMark, redactPath } from "../../primitives/CritiqueAuditBlocks";
+import { BlockA, BlockC, BlockD, BlockE, EvidenceMark, InjectionMark, PartialDiffMark, ToolCallsLine, redactPath } from "../../primitives/CritiqueAuditBlocks";
 import { tokens } from "../../tokens/tokens";
 import { formatTimeAgo } from "../critic/helpers";
 import { ChipBadge, RowActions, SpeechKindBadge } from "../critic/row-helpers";
@@ -263,6 +263,8 @@ function CriticTab({ c, preferenceStats }: {
           beside the evidence block below it: a reader who stops after the
           first paragraph is exactly the reader who must not miss it. Renders
           nothing when the evidence all checked out. */}
+      <InjectionMark alert={c.injection_alert} />
+      <ToolCallsLine field={c.tool_calls} />
       <EvidenceMark label={c.evidence_label} unverifiedCount={c.evidence_unverified} />
       <PartialDiffMark shown={c.diff_shown} total={c.diff_total} />
 
@@ -282,7 +284,8 @@ function CriticTab({ c, preferenceStats }: {
         </Section>
       )}
 
-      {/* A — WHAT I READ (user raw query + agent reply w/ honesty caveat) */}
+      {/* A — WHAT I READ (changed files + diff intent), then FOR YOUR REFERENCE
+          (user raw query + agent reply — not sent to the reviewer, defect [37]) */}
       {/* No `agentReplyLabel` override — the honest label is the default. */}
       <BlockA v2={c.v2} c={c} />
 

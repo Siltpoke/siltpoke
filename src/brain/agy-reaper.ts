@@ -31,7 +31,7 @@
  *
  *      WHY NOT the cwd cache (`cache/last_conversations.json[cwd]`): that
  *      cache is keyed ONLY by cwd, not by pid/subprocess. In the core
- *      siltpoke-on-agy scenario the reviewed cwd is the user's own repo root,
+ *      siltpoke-on-agy scenario the cwd was the user's repo root (now a temp dir),
  *      and if the user ALSO has an interactive Antigravity session open on
  *      that same repo, a newer conversation the USER creates can overwrite
  *      the cwd entry between our subprocess exiting and our read — so reading

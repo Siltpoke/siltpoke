@@ -52,6 +52,18 @@ const SKIP_DIRS = new Set<string>([
   "tests",
 ]);
 
+/**
+ * Skipped for the CODE graph but still listed as other files: their source
+ * would derail call resolution (see SKIP_DIRS), but a reader of Code Map
+ * still wants to see that `docs/` and `tests/` exist. `public` stays fully
+ * skipped — it holds built bundles, not anything a person wrote.
+ */
+const OTHERS_ONLY_DIRS = new Set<string>(["docs", "tests"]);
+
+/** Max other (non-code) file paths listed in one walk. Only paths are kept —
+ * no stat, no read — so this bounds payload size, not work. */
+export const MAX_OTHER_FILES = 5_000;
+
 /** Files we never index (generated, hidden config, secrets). */
 const SKIP_FILES = new Set<string>([
   ".DS_Store",
@@ -90,6 +102,12 @@ export interface WalkSkip {
 export interface WalkResult {
   files: WalkedFile[];
   skipped: WalkSkip[];
+  /** Files that are not in the code graph but exist in the project — non-code
+   * files, oversized code files, and everything under OTHERS_ONLY_DIRS.
+   * Code Map draws them as plain files; nothing parses them. */
+  others: string[];
+  /** True when `others` stopped at the cap. */
+  othersTruncated: boolean;
 }
 
 function toRelPath(absPath: string, projectRoot: string): string {
@@ -109,14 +127,34 @@ function extOf(name: string): string {
  */
 export async function walkProject(
   projectRoot: string,
-  opts: { maxFiles?: number } = {},
+  opts: {
+    maxFiles?: number;
+    maxOthers?: number;
+    /** false: skip the other-file listing (and the docs/ tests/ walk) — for
+     * callers that only need the code files, like the staleness check. */
+    listOthers?: boolean;
+    /** Applied BEFORE the cap, so rejected files (gitignored) never take a slot. */
+    keepOther?: (relPath: string) => boolean;
+  } = {},
 ): Promise<WalkResult> {
   const maxFiles = opts.maxFiles ?? MAX_FILES;
+  const maxOthers = opts.maxOthers ?? MAX_OTHER_FILES;
+  const listOthers = opts.listOthers ?? true;
+  const keepOther = opts.keepOther;
   const files: WalkedFile[] = [];
   const skipped: WalkSkip[] = [];
+  const others: string[] = [];
+  let othersTruncated = false;
   let capped = false;
 
-  async function recurse(dir: string): Promise<void> {
+  const addOther = (relPath: string): void => {
+    if (!listOthers || (keepOther && !keepOther(relPath))) return;
+    if (others.length < maxOthers) others.push(relPath);
+    else othersTruncated = true;
+  };
+
+  /** `othersOnly`: inside an OTHERS_ONLY_DIRS subtree — list every file, index none. */
+  async function recurse(dir: string, othersOnly: boolean): Promise<void> {
     if (capped) return; // hit the file cap — unwind without descending further
     let entries: Dirent[];
     try {
@@ -129,8 +167,13 @@ export async function walkProject(
       const name = entry.name;
       const abs = join(dir, name);
       if (entry.isDirectory()) {
-        if (SKIP_DIRS.has(name) || name.startsWith(".")) continue;
-        await recurse(abs);
+        if (name.startsWith(".")) continue;
+        if (OTHERS_ONLY_DIRS.has(name)) {
+          if (listOthers) await recurse(abs, true);
+          continue;
+        }
+        if (SKIP_DIRS.has(name)) continue;
+        await recurse(abs, othersOnly);
         continue;
       }
       if (!entry.isFile()) continue;
@@ -140,8 +183,13 @@ export async function walkProject(
       const lang = SOURCE_EXT_TO_LANG[ext];
       const relPath = toRelPath(abs, projectRoot);
 
+      if (othersOnly) {
+        addOther(relPath);
+        continue;
+      }
       if (!lang) {
         skipped.push({ reason: "not_a_source_file", relPath });
+        addOther(relPath);
         continue;
       }
 
@@ -154,6 +202,7 @@ export async function walkProject(
       }
       if (size > MAX_FILE_BYTES) {
         skipped.push({ reason: "too_large", relPath, size });
+        addOther(relPath); // not parsed, but it exists — draw it as a plain file
         continue;
       }
 
@@ -167,6 +216,6 @@ export async function walkProject(
     }
   }
 
-  await recurse(projectRoot);
-  return { files, skipped };
+  await recurse(projectRoot, false);
+  return { files, skipped, others, othersTruncated };
 }

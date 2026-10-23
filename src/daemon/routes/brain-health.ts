@@ -14,10 +14,8 @@
  */
 import type { Hono } from "hono";
 import { siltpokeRoot } from "../../installer/paths";
-import {
-  readBrainHealth,
-  brainUnhealthySignal,
-} from "../../state/brain-health";
+import { readBrainHealth } from "../../state/brain-health";
+import { brainUnhealthySignal } from "../../state/brain-signal";
 
 export interface BrainHealthRouteDeps {
   /** Override ~/.siltpoke (for test isolation). */

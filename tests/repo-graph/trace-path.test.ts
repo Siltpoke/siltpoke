@@ -213,3 +213,34 @@ describe("tracePath — confidence + flags", () => {
     expect((popular?.weight ?? 0) > (lonely?.weight ?? 0)).toBe(true);
   });
 });
+
+describe("tracePath — io strips inline comments from the signature (defect [39])", () => {
+  const ioOf = (signature: string) => {
+    const b = new GraphBuilder();
+    const id = b.fn({ name: "f", signature });
+    return tracePath(b.graph, b.queryIndex, id, { depth: 2 }).nodes.find((n) => n.id === id)!.io;
+  };
+
+  test("guardCritique-shaped signature: JSDoc on params does not reach input", () => {
+    const sig =
+      "guardCritique(out: BrainOutput,\n  mode: GateDecision,\n  citationCorpus: string,\n" +
+      "  /**\n   * Files the review budget cut entirely (`buildToolOutputSection`). Optional\n" +
+      "   * so existing callers keep working (a, b).\n   */\n  budgetCutFiles: Set<string> = new Set(),\n" +
+      "  // line comment with ) paren\n  rangesAnchored = false,\n): EvidenceVerdict";
+    const io = ioOf(sig);
+    expect(io.input).toBe(
+      "out: BrainOutput, mode: GateDecision, citationCorpus: string, budgetCutFiles: Set<string> = new Set(), rangesAnchored = false,",
+    );
+    expect(io.output).toBe("EvidenceVerdict");
+    expect(io.input).not.toContain("*");
+    expect(io.input).not.toContain("//");
+  });
+
+  test("a normal signature is unchanged", () => {
+    expect(ioOf("a(x: number, y: string): R")).toEqual({ input: "x: number, y: string", output: "R" });
+  });
+
+  test("// inside a string literal default is not mangled", () => {
+    expect(ioOf('f(url = "http://x", n = 1): void')).toEqual({ input: 'url = "http://x", n = 1', output: "void" });
+  });
+});

@@ -132,6 +132,25 @@ describe("explain handler — registry wiring", () => {
     expect(readEvents(home)).toHaveLength(1);
   });
 
+  test("a cache-hit explain task records costUsd 0, not the saved answer's cost ([75])", async () => {
+    const { home } = seedHome();
+    const app = mount(home, okProvider);
+    await explain(app, { repo: HASH, target: "src/a/x.ts" });
+    await pollTerminal(home);
+    await explain(app, { repo: HASH, target: "src/a/x.ts", force: false });
+    // second task is registered after the first finished; wait until both are terminal
+    const read = () => JSON.parse(readFileSync(join(home, "tasks.json"), "utf8")) as Array<{ status: string; costUsd: number | null }>;
+    const start = Date.now();
+    while (read().length < 2 || read().some((t) => t.status === "running")) {
+      if (Date.now() - start > 2000) throw new Error("timed out");
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    const costs = read().map((t) => t.costUsd).sort((a, b) => (a ?? 0) - (b ?? 0));
+    expect(costs).toEqual([0, 0.05]);                 // paid run keeps its cost; the open spent nothing
+    expect(costs.reduce((a, b) => (a ?? 0) + (b ?? 0), 0)).toBeCloseTo(0.05, 5); // what a registry total would show
+    expect(readEvents(home)).toHaveLength(1);         // the ledger was already right
+  });
+
   test("cancel → registry cancelled (detached: explain already returned 202; cancel kills the background run)", async () => {
     const { home } = seedHome();
     const app = mount(home, blockingProvider);

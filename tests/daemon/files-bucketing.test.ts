@@ -89,6 +89,67 @@ describe("files endpoint resolves buckets by the keyspace, not a path-shape heur
     expect(body.data.files.map((f) => f.path)).toEqual(["src/alpha/a.ts"]);
   });
 
+  test("root bucket: /files?subdir=(root) returns the repo-root files only", async () => {
+    // agent-runtime shape: main.py beside utils/. Before the root bucket
+    // existed, main.py was in no bucket and no door led to it.
+    const { home } = seed("dddd77778888", [
+      fileNode("main.py"),
+      fnNode("main.py", "run"),
+      fileNode("utils/config.py"),
+      fileNode("utils/tools.py"),
+    ]);
+    const res = await mount(home).request(
+      `/api/repo-graph/files?repo=dddd77778888&subdir=${encodeURIComponent("(root)")}`,
+    );
+    const body = (await res.json()) as { data: { files: Array<{ path: string }> } };
+    expect(body.data.files.map((f) => f.path)).toEqual(["main.py"]);
+  });
+
+  test("other (non-code) files are listed in their box, marked other, never in the code graph", async () => {
+    const { home } = seed("ffff12341234", [fileNode("main.py"), fnNode("main.py", "run"), fileNode("utils/a.py")]);
+    writeFileSync(
+      join(home, "repo-memory", "ffff12341234", "other-files.json"),
+      JSON.stringify({ schemaVersion: 1, files: ["README.md", "docs/plan.md", "utils/NOTES.md"], truncated: false }),
+    );
+    const get = async (sub: string) => {
+      const res = await mount(home).request(`/api/repo-graph/files?repo=ffff12341234&subdir=${encodeURIComponent(sub)}`);
+      return ((await res.json()) as { data: { files: Array<{ path: string; other?: boolean; explainState: string }> } }).data.files;
+    };
+    expect((await get("(root)")).map((f) => [f.path, f.other === true])).toEqual([
+      ["main.py", false],
+      ["README.md", true],
+    ]);
+    expect((await get("docs")).map((f) => f.path)).toEqual(["docs/plan.md"]);
+    expect((await get("utils")).map((f) => f.path)).toEqual(["utils/a.py", "utils/NOTES.md"]);
+  });
+
+  test("a box whose id is a path (tests/daemon beside src/daemon) opens to its own files only", async () => {
+    const { home } = seed("abab12341234", [fileNode("src/daemon/a.ts"), fileNode("src/web/b.ts")]);
+    writeFileSync(
+      join(home, "repo-memory", "abab12341234", "other-files.json"),
+      JSON.stringify({ schemaVersion: 1, files: ["tests/daemon/a.test.ts", "tests/web/b.test.ts"], truncated: false }),
+    );
+    const get = async (sub: string) => {
+      const res = await mount(home).request(`/api/repo-graph/files?repo=abab12341234&subdir=${encodeURIComponent(sub)}`);
+      return ((await res.json()) as { data: { files: Array<{ path: string }> } }).data.files.map((f) => f.path);
+    };
+    expect(await get("daemon")).toEqual(["src/daemon/a.ts"]);
+    expect(await get("tests/daemon")).toEqual(["tests/daemon/a.test.ts"]);
+  });
+
+  test("a bucket that has deeper buckets under it lists only its own loose files", async () => {
+    // src/index.ts sits beside src/alpha/ and src/beta/: the `src` bucket holds
+    // index.ts alone — the deeper files belong to their own buckets.
+    const { home } = seed("eeee99990000", [
+      fileNode("src/index.ts"),
+      fileNode("src/alpha/a.ts"),
+      fileNode("src/beta/b.ts"),
+    ]);
+    const res = await mount(home).request("/api/repo-graph/files?repo=eeee99990000&subdir=src");
+    const body = (await res.json()) as { data: { files: Array<{ path: string }> } };
+    expect(body.data.files.map((f) => f.path)).toEqual(["src/index.ts"]);
+  });
+
   test("search hits on a top-level repo carry the KEYSPACE bucket id (drill target)", async () => {
     const { home } = seed("cccc55556666", [
       fileNode("scripts/builder_stats.py"),

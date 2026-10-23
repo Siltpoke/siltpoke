@@ -15,7 +15,7 @@ import type { RubricTrigger } from "../rubric/types";
 function buildEvidenceBlock(triggers: RubricTrigger[]): string {
   if (triggers.length === 0) return "evidence: []";
   const items = triggers.slice(0, 20).map((t) =>
-    `  - rule_id: ${t.rule_id}\n    tier: ${t.tier}\n    severity: ${t.severity}\n    file: ${t.file}\n    line: ${t.line}\n    message: "${t.message.replace(/"/g, '\\"').replace(/\n/g, " ")}"`
+    `  - rule_id: ${t.rule_id}\n    tier: ${t.tier}\n    severity: ${t.severity}\n    file: ${t.file}\n    line: ${t.line}\n    message: "${t.message.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, " ")}"`
   );
   return `evidence:\n${items.join("\n")}`;
 }
@@ -23,6 +23,12 @@ function buildEvidenceBlock(triggers: RubricTrigger[]): string {
 /**
  * Brain produced empty critique_for_claude even when Haiku flagged real
  * concerns. This section is short, structured, and reasoning-friendly.
+ *
+ * DATA ONLY. The pre-pass read the untrusted diff, so this block is joined into
+ * the TOOL_OUTPUT fence. siltpoke's instruction about the risks is NOT here — a
+ * sentence addressed to the reviewer inside a fence is exactly what the fence
+ * framing tells it to report as injection (codex did, 3 of 8 smoke runs,
+ * 2026-10-20). It is `buildDiffSummaryInstruction`, said after the fence.
  */
 export function buildDiffSummarySection(summary: DiffSummary): string {
   const blocks: string[] = ["## Diff summary (Haiku pre-pass)", ""];
@@ -36,13 +42,23 @@ export function buildDiffSummarySection(summary: DiffSummary): string {
     blocks.push("");
   }
   if (summary.risks.length > 0) {
-    blocks.push("**Risks flagged by pre-pass — address each in your critique unless you have grounds to disagree:**");
+    blocks.push("**Risks flagged by pre-pass:**");
     for (const r of summary.risks.slice(0, 6)) blocks.push(`- ${r}`);
-    blocks.push("");
-    blocks.push("If any risk is concrete and actionable, mention it in `critique_for_claude` and elevate `severity` from `info` to at least `low`. Do NOT silently emit info-only when risks exist.");
   }
   blocks.push("");
   return blocks.join("\n");
+}
+
+/**
+ * siltpoke's own instruction about the pre-pass risks, or "" when there are
+ * none. `assembleSystemPrompt` places it straight after the TOOL_OUTPUT fence,
+ * outside it, so the reviewer reads it as siltpoke speaking rather than as text
+ * found in the reviewed repo. One line: the refutation eval's RISKS_ONLY arm is
+ * defined as PREPASS minus exactly this line.
+ */
+export function buildDiffSummaryInstruction(summary: DiffSummary): string {
+  if (summary.risks.length === 0) return "";
+  return "The TOOL_OUTPUT section above ends with a diff summary written by siltpoke's pre-pass, including the risks it flagged. Address each of those risks in your critique unless you have grounds to disagree. If any risk is concrete and actionable, mention it in `critique_for_claude` and elevate `severity` from `info` to at least `low`. Do NOT silently emit info-only when risks exist.";
 }
 
 /**
@@ -98,9 +114,18 @@ export function buildRubricEvidenceSection(triggers: RubricTrigger[]): string {
     "The following structural issues were detected by the rubric engine before this call:",
     "",
     ...lines,
-    "",
-    "Incorporate these observations into your critique where relevant. Do NOT hallucinate additional findings.",
   ].join("\n");
+}
+
+/**
+ * siltpoke's instruction about the rubric list, or "" with no triggers. Same
+ * placement as `buildDiffSummaryInstruction` (R20): after the TOOL_OUTPUT fence,
+ * never inside it. Must not spell the section header — RUBRIC_HEADER in the
+ * refutation eval greps the whole prompt for it.
+ */
+export function buildRubricEvidenceInstruction(triggers: RubricTrigger[]): string {
+  if (triggers.length === 0) return "";
+  return "The TOOL_OUTPUT section above includes a list of structural issues found by siltpoke's rubric engine. Incorporate these observations into your critique where relevant. Do NOT hallucinate additional findings.";
 }
 
 /**

@@ -32,6 +32,14 @@ describe("firstParagraph", () => {
     const md = "💡 Try --depth 2\n\nReal lead sentence.";
     expect(firstParagraph(md)).toBe("Real lead sentence.");
   });
+  test("skips a Brain preamble before the first H1 (seen live, defect [38] smoke)", () => {
+    const md =
+      "Based on the code I've reviewed, I have enough information to provide the explanation. Let me compile it:\n\n# loadBudgetConfig\n\nReads config.json and returns the budget.\n";
+    expect(firstParagraph(md)).toBe("Reads config.json and returns the budget.");
+  });
+  test("no H1 at all → the first prose block is still used", () => {
+    expect(firstParagraph("Plain lead.\n\nMore.")).toBe("Plain lead.");
+  });
   test("collapses whitespace within the block", () => {
     expect(firstParagraph("a\n  b   c")).toBe("a b c");
   });

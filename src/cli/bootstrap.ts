@@ -3,16 +3,18 @@
 
 import { resolveAgentBinary } from "../installer/agent-bin";
 import { detectAgents, reportAgents } from "../installer/agent-detect";
-import { selectAndInstallAgents } from "../installer/agent-menu";
+import { labelFor, selectAndInstallAgents } from "../installer/agent-menu";
 import { backupSettings, findLatestBackup, restoreFromBackup } from "../installer/backup";
 import type { EditorPresence } from "../installer/editor-detect";
 import { detectEditors, editorOpener, extensionScheme, resolveEditorBranch } from "../installer/editor-detect";
-import { t } from "../installer/i18n";
+import { type Locale, t } from "../installer/i18n";
 import { askLocale } from "../installer/locale-prompt";
 import { describePlatform } from "../installer/os-arch";
 import { resolveClaudeHome } from "../installer/paths";
 import { buildInstallPlan } from "../installer/platform-plan";
-import { installPlc, type PlcExec } from "../installer/plc-install";
+import { askInstall, HOW_TO } from "../installer/consent";
+import { installPlc, type PlcExec, probePlc } from "../installer/plc-install";
+import { mergeBootstrapFragment } from "../installer/receipt";
 import { preflight } from "../installer/preflight";
 import { type Exec, ensureBun, ensureGit } from "../installer/prereq";
 import { RollbackStack } from "../installer/rollback";
@@ -27,12 +29,18 @@ export interface BootstrapOpts {
   yes?: boolean;
   platform?: NodeJS.Platform;
   arch?: string;
-  // runInstallFn now receives the detected/offered agent preset.
-  runInstallFn?: (io: WizardIO, presetAgents: AgentTarget[]) => Promise<unknown>;
+  /** False when there is no terminal to ask on ([63]): installs are skipped (with the command) unless --yes. Omitted ⇒ true. */
+  interactive?: boolean;
+  /** `--with-local-model`: the only way to say yes to the ~4.7 GB Ollama model without being asked. `--yes` never does. */
+  withLocalModel?: boolean;
+  // runInstallFn now receives the detected/offered agent preset (+ the model flag).
+  runInstallFn?: (io: WizardIO, presetAgents: AgentTarget[], extra?: { withLocalModel: boolean }) => Promise<unknown>;
   detectEditorsFn?: () => EditorPresence;
   /** Exec seam for the optional project-lifecycle plugin install step,
    *  injectable for tests (see plcExec below for why it must never throw). */
   plcExecFn?: PlcExec;
+  /** Env for the install receipt (`~/.siltpoke/receipt.json`); defaults to process.env. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface BootstrapResult {
@@ -42,9 +50,28 @@ export interface BootstrapResult {
   error?: string;
 }
 
-function defaultRunInstallFn(claudeHome: string): (io: WizardIO, presetAgents: AgentTarget[]) => Promise<unknown> {
-  return (wio, presetAgents) =>
-    runInstall({ io: wio, env: { ...process.env, CLAUDE_HOME: claudeHome }, presetAgents });
+function defaultRunInstallFn(
+  claudeHome: string,
+): (io: WizardIO, presetAgents: AgentTarget[], extra?: { withLocalModel: boolean }) => Promise<unknown> {
+  return (wio, presetAgents, extra) =>
+    runInstall({
+      io: wio,
+      env: { ...process.env, CLAUDE_HOME: claudeHome },
+      presetAgents,
+      withLocalModel: extra?.withLocalModel,
+    });
+}
+
+function wiredAgentsFrom(result: unknown): AgentTarget[] {
+  const w = (result as { wired?: unknown } | null | undefined)?.wired;
+  return Array.isArray(w) ? (w as AgentTarget[]) : [];
+}
+
+/** "Done — siltpoke is wired into <names>." plus the how-to-start hint when there is one. */
+function doneLine(wired: AgentTarget[], hint: "hintTerminal" | "hintEditor" | null, locale: Locale): string {
+  const names = wired.map((a) => labelFor(a)).join(locale === "zh" ? "、" : ", ");
+  const head = t("done.wired", locale).replace("{agents}", names);
+  return hint ? `${head} ${t(`done.${hint}`, locale)}` : head;
 }
 
 /** Wraps a WizardIO so any askYesNo prompt auto-answers "y" instead of reading real input. */
@@ -74,8 +101,16 @@ export const defaultPlcExec: PlcExec = (cmd, args, env) => {
   }
 };
 
+/** `--yes`, or `SILTPOKE_YES=1` for the Windows one-liner (`irm | iex` cannot pass an argument). */
+export function wantsYes(args: string[], env: NodeJS.ProcessEnv): boolean {
+  return args.includes("--yes") || env.SILTPOKE_YES === "1";
+}
+
 export async function runBootstrap(opts: BootstrapOpts): Promise<BootstrapResult> {
-  const { exec, io, claudeHome, check, yes, runInstallFn: injectedRunInstall } = opts;
+  const { exec, io, claudeHome, check, yes, runInstallFn: injectedRunInstall, env: receiptEnv = process.env } = opts;
+  // [63] consent policy for every install question: --yes counts (the io is auto-"y"),
+  // no terminal and no --yes means skip-and-say-how.
+  const consent = { yes: yes === true, interactive: opts.interactive !== false };
   const platform = opts.platform ?? process.platform;
   const arch = opts.arch ?? process.arch;
   const pf = preflight(exec, claudeHome, platform);
@@ -100,12 +135,15 @@ export async function runBootstrap(opts: BootstrapOpts): Promise<BootstrapResult
     const usesEditor = await askYesNo(promptIo, t("editor.useEditor", locale), { default: detected ? "yes" : "no" });
 
     // AC14 Claude gate + AC10/AC11/AC13 multi-agent picker.
-    const selection = await selectAndInstallAgents({ presence, io: promptIo, exec, platform, locale });
+    const selection = await selectAndInstallAgents({ presence, io: promptIo, exec, platform, locale, env: receiptEnv, consent });
     if (selection.exit) return { status: "no-host", plan };
     const presetAgents = selection.presetAgents;
 
-    await ensureBun(exec, promptIo, platform);
-    await ensureGit(exec, promptIo, platform);
+    // bootstrap.sh / .ps1 ran before any of this code: fold their note about bun
+    // into the receipt before ensureBun looks at it (spec §2.3).
+    mergeBootstrapFragment(receiptEnv);
+    await ensureBun(exec, promptIo, platform, receiptEnv);
+    await ensureGit(exec, promptIo, platform, receiptEnv);
     if (pf.settingsExisted) {
       await backupSettings(claudeHome, undefined, platform);
       rollback.push({
@@ -117,7 +155,13 @@ export async function runBootstrap(opts: BootstrapOpts): Promise<BootstrapResult
       });
     }
 
-    await (injectedRunInstall ?? defaultRunInstallFn(claudeHome))(io, presetAgents);
+    // withLocalModel is the ONLY way bootstrap says yes to the Ollama model; --yes never does (spec §8 D-B).
+    const installResult = await (injectedRunInstall ?? defaultRunInstallFn(claudeHome))(io, presetAgents, {
+      withLocalModel: opts.withLocalModel === true,
+    });
+    // What the install actually wired this run (from its result, never the selection).
+    // A result without the field counts as nothing wired — never as success.
+    const wired = wiredAgentsFrom(installResult);
 
     // AC15-17: install project-lifecycle (suppression-guarded, non-fatal).
     // Bun.spawnSync THROWS synchronously (not a non-zero exit) when the
@@ -141,7 +185,16 @@ export async function runBootstrap(opts: BootstrapOpts): Promise<BootstrapResult
     // right after a successful install.
     try {
       const claudeBin = resolveAgentBinary("claude");
-      installPlc({ exec: plcExec, io, claudePresent: true, claudeBin });
+      // [63]: one question before the plugin is installed (and recorded).
+      // One probe, three outcomes. Present: nothing to ask or install (recorded as not ours).
+      // Absent, or the probe failed: ask (no terminal and no --yes ⇒ skip and say how).
+      const probe = probePlc(plcExec, claudeBin);
+      if (
+        probe === "present" ||
+        (await askInstall(promptIo, "Install the project-lifecycle plugin (optional — adds the spec/plan/TDD workflow)?", HOW_TO.plc, consent))
+      ) {
+        installPlc({ exec: plcExec, io, claudePresent: true, claudeBin, receiptEnv, probe });
+      }
     } catch (err: unknown) {
       io.write(
         `! project-lifecycle install step failed unexpectedly (${errorMessage(err)}) — siltpoke core is fine.\n`,
@@ -149,8 +202,11 @@ export async function runBootstrap(opts: BootstrapOpts): Promise<BootstrapResult
     }
 
     const branch = resolveEditorBranch(usesEditor, editors);
-    if (branch === "C") {
-      io.write(`✓ ${t("done.terminalC", locale)}\n`);
+    const claudeWired = wired.includes("claude-code");
+    if (wired.length === 0) {
+      io.write(`! ${t("done.none", locale)}\n`);
+    } else if (branch === "C" || !claudeWired) {
+      io.write(`✓ ${doneLine(wired, claudeWired ? "hintTerminal" : null, locale)}\n`);
     } else {
       if (branch === "B") {
         const wantsOpen = await askYesNo(promptIo, t("editor.pluginOffer", locale), { default: "yes" });
@@ -170,7 +226,7 @@ export async function runBootstrap(opts: BootstrapOpts): Promise<BootstrapResult
           io.write(`${scheme}\n`);
         }
       }
-      io.write(`✓ ${t("done.editor", locale)}\n`);
+      io.write(`✓ ${doneLine(wired, "hintEditor", locale)}\n`);
     }
 
     return { status: "installed", plan };
@@ -201,7 +257,10 @@ if (import.meta.main) {
     io: realWizardIO(),
     claudeHome: resolveClaudeHome(),
     check: args.includes("--check"),
-    yes: args.includes("--yes"),
+    yes: wantsYes(args, process.env),
+    withLocalModel: args.includes("--with-local-model"),
+    // `curl | sh` hands us a pipe on stdin; bootstrap.sh re-attaches the terminal when there is one.
+    interactive: process.stdin.isTTY === true,
   });
   // biome-ignore lint/suspicious/noConsole: this IS the CLI's output — `siltpoke bootstrap` prints its plan and exit status for a human to read.
   console.log(`siltpoke bootstrap plan:\n- ${res.plan.join("\n- ")}\n→ ${res.status}`);

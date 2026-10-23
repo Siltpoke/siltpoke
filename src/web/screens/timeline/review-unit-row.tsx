@@ -67,8 +67,9 @@ export function ReviewUnitRow({ secret, reviewUnit }: ReviewUnitRowProps) {
       // No `x-init="init()"`: Alpine already invokes a data object's own
       // `init` (`reactiveData["init"] && evaluate(el, ...)` in its module
       // build), so the explicit directive is a second call. The islands on
-      // the unmounted Settings screen carry it, but that screen has never
-      // been exercised in a browser, so it is not a precedent.
+      // the Settings screen carry it; when this was written that screen was
+      // unmounted (2026-08-06 → 2026-10-09) and had not been exercised in a
+      // browser, so it was not taken as a precedent.
       x-data="reviewUnitRow"
       data-secret={secret}
       data-review-unit={reviewUnit}

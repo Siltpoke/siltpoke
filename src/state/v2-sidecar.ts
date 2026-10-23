@@ -328,9 +328,9 @@ function parseEvidenceBlock(lines: string[]): V2RubricTrigger[] {
       const n = parseInt(t.slice(t.indexOf(":") + 1).trim(), 10);
       if (!Number.isNaN(n)) current.line = n;
     } else if (/^snippet\s*:/.test(t)) {
-      current.snippet = unquote(t.slice(t.indexOf(":") + 1).trim());
+      current.snippet = unquoteEscaped(t.slice(t.indexOf(":") + 1).trim());
     } else if (/^message\s*:/.test(t)) {
-      current.message = unquote(t.slice(t.indexOf(":") + 1).trim());
+      current.message = unquoteEscaped(t.slice(t.indexOf(":") + 1).trim());
     } else if (/^signal_source\s*:/.test(t)) {
       current.signal_source = unquote(t.slice(t.indexOf(":") + 1).trim());
     }
@@ -341,6 +341,12 @@ function parseEvidenceBlock(lines: string[]): V2RubricTrigger[] {
 
 function unquote(s: string): string {
   return s.replace(/^["']|["']$/g, "");
+}
+
+/** snippet/message are written double-quoted with `\` and `"` escaped
+ * (archive.ts, demo-seed.ts) — undo both in one pass. */
+function unquoteEscaped(s: string): string {
+  return unquote(s).replace(/\\(["\\])/g, "$1");
 }
 
 function parseChangedFilesBlock(lines: string[]): string[] {

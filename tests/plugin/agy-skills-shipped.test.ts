@@ -5,10 +5,16 @@
 // declared only `hooks`, so `agy plugin install` reported
 // `skills: skipped (not found)` and the conversational setup guide in
 // `skills/siltpoke/SKILL.md` never reached agy users — the plugin installed
-// and did nothing, with no error. Fix = plugin.json now declares a `skills`
-// key AND `scripts/build-dist.ts` (`copyAgyPluginSelfContained`) actually
-// copies the repo-root `skills/` tree into `.antigravity-plugin/skills/`,
-// since agy `plugin install <dir>` copies ONLY that subdir.
+// and did nothing, with no error. Fix = `scripts/build-dist.ts`
+// (`copyAgyPluginSelfContained`) copies the repo-root `skills/` tree into
+// `.antigravity-plugin/skills/`, since agy `plugin install <dir>` copies ONLY
+// that subdir. agy finds `./skills/` by folder name.
+//
+// The `[9]` fix also added `"skills": "./skills/"` to plugin.json. agy 1.4.2
+// and 1.4.4 reject that value ("syntax error … unexpected token "./skills/". The
+// loader skips this plugin") — the WHOLE plugin, Stop hook included, so agy
+// sessions got no review at all. Measured 2026-10-21 with `agy plugin
+// validate`: an internal design note
 //
 // These tests assert real filesystem effects, not string-matching: they run
 // the real copy function and read files back off disk. A stubbed writer
@@ -26,19 +32,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { copyAgyPluginSelfContained } from "../../scripts/build-dist";
 
-describe("agy plugin.json declares a skills key that resolves to a real dir", () => {
-  test("plugin.json parses and its skills path exists on disk after the build copy, with a SKILL.md in it", () => {
+describe("agy plugin ships ./skills/ without naming it in plugin.json", () => {
+  test("plugin.json has no skills key, and ./skills/ exists on disk after the build copy, with a SKILL.md in it", () => {
     const manifest = JSON.parse(
       readFileSync(join(".antigravity-plugin", "plugin.json"), "utf8"),
-    ) as { skills?: string };
-    expect(manifest.skills).toBe("./skills/");
+    ) as Record<string, unknown>;
+    // agy rejects this key and skips the whole plugin (header above).
+    expect(Object.keys(manifest)).not.toContain("skills");
 
     // Run the REAL copy against the real repo tree (dist/ + hooks/agy-stop.sh
     // already exist here from a prior build — same precondition buildAll()
     // relies on). This is the exact function `bun run build:dist` calls.
     copyAgyPluginSelfContained();
 
-    const shippedSkillsDir = join(".antigravity-plugin", manifest.skills as string);
+    const shippedSkillsDir = join(".antigravity-plugin", "skills");
     expect(existsSync(shippedSkillsDir)).toBe(true);
 
     const shippedSkillFile = join(shippedSkillsDir, "siltpoke", "SKILL.md");
@@ -54,6 +61,25 @@ describe("agy plugin.json declares a skills key that resolves to a real dir", ()
     );
     expect(shipped).toBe(source);
     expect(shipped.length).toBeGreaterThan(0);
+  });
+});
+
+// Defect [49]: an agy install sees ONLY .antigravity-plugin/, and agy-stop.sh
+// sources its helpers behind a `-r` test — a helper that was not copied makes
+// the wrapper skip it in silence. That is exactly how a new helper would ship
+// to every host except agy with nothing going red.
+describe("every helper agy-stop.sh sources travels with the agy plugin", () => {
+  test("each lib/*.sh the wrapper names is shipped, byte for byte", () => {
+    copyAgyPluginSelfContained();
+    const wrapper = readFileSync(join("hooks", "agy-stop.sh"), "utf8");
+    const named = [...new Set([...wrapper.matchAll(/\/lib\/([a-z0-9-]+\.sh)/g)].map((m) => m[1] as string))].sort();
+    // Not vacuous: the wrapper really does name these two.
+    expect(named).toEqual(["record-host.sh", "resolve-bun.sh"]);
+    for (const name of named) {
+      const shipped = join(".antigravity-plugin", "hooks", "lib", name);
+      expect(existsSync(shipped)).toBe(true);
+      expect(readFileSync(shipped, "utf8")).toBe(readFileSync(join("hooks", "lib", name), "utf8"));
+    }
   });
 });
 

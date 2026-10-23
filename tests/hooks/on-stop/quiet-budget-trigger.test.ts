@@ -186,7 +186,7 @@ test("wake bypass overrides quiet + budget gates", async () => {
 
 // REPLACES "on_demand trigger mode without bypass: skips". That test covered
 // the axis this branch deletes — and covered its worst property: `on_demand`
-// fired only on a wake marker whose command `/siltpoke-wake` was removed in
+// fired only on a wake marker whose command `/siltpoke:siltpoke-wake` was removed in
 // #279, so anyone who set it got no review ever and no way to ask for one.
 // What matters now is that such a config STOPS doing that.
 test("AC10/AC11 — a config still carrying `triggerMode: on_demand` reviews, and is not rewritten", async () => {

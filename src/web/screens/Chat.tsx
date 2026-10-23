@@ -86,7 +86,7 @@ export function Chat() {
           </template>
           <div
             x-show="streaming"
-            x-text="buffer"
+            x-text="buffer || waitNote"
             class="chat-streaming"
             aria-live="polite"
             style={{

@@ -1,9 +1,22 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   checkOllamaInstalled,
   setupOllamaInteractive,
   OLLAMA_MODEL,
 } from "../../src/installer/setup-ollama";
+
+// The pull is recorded in the install receipt ([61] P1.3): every call that
+// reaches it gets a sandbox env, and a `hasModel` stub so no `ollama list` runs.
+let sandbox: string;
+let env: NodeJS.ProcessEnv;
+beforeEach(() => {
+  sandbox = mkdtempSync(join(tmpdir(), "siltpoke-ollama-"));
+  env = { HOME: sandbox };
+});
+afterEach(() => rmSync(sandbox, { recursive: true, force: true }));
 
 describe("setup-ollama", () => {
   test("checkOllamaInstalled false when binary missing", async () => {
@@ -22,6 +35,7 @@ describe("setup-ollama", () => {
     const writes: string[] = [];
     const order: string[] = [];
     const result = await setupOllamaInteractive({
+      env,
       io: {
         write: (s) => {
           writes.push(s);
@@ -30,6 +44,7 @@ describe("setup-ollama", () => {
       },
       deps: {
         checkInstalled: async () => true,
+        hasModel: async () => false,
         pull: async () => {
           order.push("pull");
         },
@@ -48,8 +63,10 @@ describe("setup-ollama", () => {
     const writes: string[] = [];
     const result = await setupOllamaInteractive({
       io: { write: (s) => writes.push(s) },
+      env,
       deps: {
         checkInstalled: async () => true,
+        hasModel: async () => false,
         pull: async () => {},
         validate: async () => false, // pull ok, validation fails
       },

@@ -136,10 +136,11 @@ test("uninstall: no settings.json → no_settings", async () => {
   expect(r.status).toBe("no_settings");
 });
 
-test("uninstall: happy path restores settings.json from backup", async () => {
+test("uninstall: happy path gives the old status line back and removes siltpoke's hooks", async () => {
   await freshInstall();
   const installed = readFileSync(join(claudeHome, "settings.json"), "utf8");
   expect(installed).toContain("wrapper.ts");
+  expect(installed).toContain("handle-session-start.ts");
 
   const r = await runUninstall({
     env,
@@ -149,12 +150,217 @@ test("uninstall: happy path restores settings.json from backup", async () => {
     uninstallAutostartFn: stubAutostartCleanup,
   });
   expect(r.status).toBe("uninstalled");
-  expect(r.backup_restored).toBeTruthy();
   expect(r.siltpoke_home_purged).toBe(false);
+  expect(r.settings_changed).toEqual([
+    "statusLine restored",
+    "Stop hook removed",
+    "SessionStart hook removed",
+  ]);
 
   const after = JSON.parse(readFileSync(join(claudeHome, "settings.json"), "utf8"));
   expect(after.statusLine.command).toBe("old-cmd");
-  expect(after.hooks?.Stop).toBeUndefined();
+  expect(after.hooks).toBeUndefined();
+}, INSTALL_TIMEOUT_MS);
+
+function settingsNow(): Record<string, any> {
+  return JSON.parse(readFileSync(join(claudeHome, "settings.json"), "utf8"));
+}
+
+function writeSettings(s: unknown): void {
+  writeFileSync(join(claudeHome, "settings.json"), JSON.stringify(s, null, 2));
+}
+
+// Defect [62] (audit §71.1): the backup is a copy of the whole file from setup
+// time. Copying it back erased everything the user changed afterwards.
+test("uninstall [62]: a key the user added after setup survives", async () => {
+  await freshInstall();
+  const s = settingsNow();
+  s.enabledPlugins = { "other@market": true };
+  s.permissions = { allow: ["Bash(ls:*)"] };
+  writeSettings(s);
+
+  await runUninstall({
+    env,
+    repoRoot,
+    noninteractive: false,
+    io: fakeIO(["n"]),
+    uninstallAutostartFn: stubAutostartCleanup,
+  });
+
+  const after = settingsNow();
+  expect(after.enabledPlugins).toEqual({ "other@market": true });
+  expect(after.permissions).toEqual({ allow: ["Bash(ls:*)"] });
+  expect(after.statusLine.command).toBe("old-cmd");
+  expect(JSON.stringify(after)).not.toContain("wrapper.ts");
+  expect(JSON.stringify(after)).not.toContain("on-stop.ts");
+  expect(JSON.stringify(after)).not.toContain("/hooks/stop");
+  expect(JSON.stringify(after)).not.toContain("handle-session-start.ts");
+}, INSTALL_TIMEOUT_MS);
+
+test("uninstall [62]: the user's own Stop and SessionStart hooks survive", async () => {
+  await freshInstall();
+  const s = settingsNow();
+  s.hooks.Stop.push({ matcher: "", hooks: [{ type: "command", command: "say done" }] });
+  s.hooks.SessionStart.push({ matcher: "", hooks: [{ type: "command", command: "echo hi" }] });
+  s.hooks.PreToolUse = [{ matcher: "Bash", hooks: [{ type: "command", command: "lint" }] }];
+  writeSettings(s);
+
+  const r = await runUninstall({
+    env,
+    repoRoot,
+    noninteractive: false,
+    io: fakeIO(["n"]),
+    uninstallAutostartFn: stubAutostartCleanup,
+  });
+
+  expect(r.status).toBe("uninstalled");
+  const after = settingsNow();
+  expect(after.hooks).toEqual({
+    Stop: [{ matcher: "", hooks: [{ type: "command", command: "say done" }] }],
+    SessionStart: [{ matcher: "", hooks: [{ type: "command", command: "echo hi" }] }],
+    PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "lint" }] }],
+  });
+}, INSTALL_TIMEOUT_MS);
+
+test("uninstall [62]: someone else's /hooks/stop hooks survive; siltpoke's old loopback http entry goes", async () => {
+  await freshInstall();
+  const s = settingsNow();
+  const foreignCurl = { type: "command", command: "curl -X POST https://ci.example.com/hooks/stop" };
+  const foreignHttp = { type: "http", url: "https://ci.example.com/hooks/stop" };
+  const oldOurs = { type: "http", url: "http://127.0.0.1:9876/hooks/stop" };
+  s.hooks.Stop.push({ matcher: "", hooks: [foreignCurl, foreignHttp] });
+  s.hooks.Stop.push({ matcher: "", hooks: [oldOurs] });
+  writeSettings(s);
+
+  await runUninstall({
+    env,
+    repoRoot,
+    noninteractive: false,
+    io: fakeIO(["n"]),
+    uninstallAutostartFn: stubAutostartCleanup,
+  });
+
+  expect(settingsNow().hooks).toEqual({
+    Stop: [{ matcher: "", hooks: [foreignCurl, foreignHttp] }],
+  });
+}, INSTALL_TIMEOUT_MS);
+
+test("uninstall [62]: with no earlier status line saved, the statusLine key is removed", async () => {
+  await freshInstall();
+  rmSync(join(tmp, ".siltpoke", "inner.txt"), { force: true });
+
+  const r = await runUninstall({
+    env,
+    repoRoot,
+    noninteractive: false,
+    io: fakeIO(["n"]),
+    uninstallAutostartFn: stubAutostartCleanup,
+  });
+
+  expect(r.settings_changed[0]).toBe("statusLine removed");
+  expect(settingsNow().statusLine).toBeUndefined();
+}, INSTALL_TIMEOUT_MS);
+
+test("uninstall [62]: a user's padding on the status line is kept when the command goes back", async () => {
+  await freshInstall();
+  const s = settingsNow();
+  s.statusLine.padding = 2;
+  writeSettings(s);
+
+  await runUninstall({
+    env,
+    repoRoot,
+    noninteractive: false,
+    io: fakeIO(["n"]),
+    uninstallAutostartFn: stubAutostartCleanup,
+  });
+
+  expect(settingsNow().statusLine).toEqual({ type: "command", command: "old-cmd", padding: 2 });
+}, INSTALL_TIMEOUT_MS);
+
+test("uninstall [62]: a symlinked settings.json stays a link and its target is updated", async () => {
+  await freshInstall();
+  const fs = require("node:fs");
+  const real = join(tmp, "dotfiles-settings.json");
+  fs.renameSync(join(claudeHome, "settings.json"), real);
+  fs.symlinkSync(real, join(claudeHome, "settings.json"));
+
+  await runUninstall({
+    env,
+    repoRoot,
+    noninteractive: false,
+    io: fakeIO(["n"]),
+    uninstallAutostartFn: stubAutostartCleanup,
+  });
+
+  expect(fs.lstatSync(join(claudeHome, "settings.json")).isSymbolicLink()).toBe(true);
+  expect(JSON.parse(readFileSync(real, "utf8")).statusLine.command).toBe("old-cmd");
+}, INSTALL_TIMEOUT_MS);
+
+test("uninstall [62]: a status line the user changed since setup is left alone", async () => {
+  await freshInstall();
+  const s = settingsNow();
+  s.statusLine = { type: "command", command: "my-new-line" };
+  writeSettings(s);
+
+  const r = await runUninstall({
+    env,
+    repoRoot,
+    noninteractive: false,
+    io: fakeIO(["n"]),
+    uninstallAutostartFn: stubAutostartCleanup,
+  });
+
+  expect(settingsNow().statusLine).toEqual({ type: "command", command: "my-new-line" });
+  expect(r.settings_changed).not.toContain("statusLine restored");
+}, INSTALL_TIMEOUT_MS);
+
+test("uninstall [62]: the backup file is kept and named in the output", async () => {
+  await freshInstall();
+  const backupsBefore = require("node:fs")
+    .readdirSync(claudeHome)
+    .filter((n: string) => n.startsWith("settings.json.pre-siltpoke-"));
+  expect(backupsBefore.length).toBeGreaterThan(0);
+
+  const contentBefore = readFileSync(join(claudeHome, backupsBefore[0]), "utf8");
+
+  const { io, output } = capturingIO(["n"]);
+  const r = await runUninstall({
+    env,
+    repoRoot,
+    noninteractive: false,
+    io,
+    uninstallAutostartFn: stubAutostartCleanup,
+  });
+
+  const backupsAfter = require("node:fs")
+    .readdirSync(claudeHome)
+    .filter((n: string) => n.startsWith("settings.json.pre-siltpoke-"));
+  expect(backupsAfter).toEqual(backupsBefore);
+  expect(readFileSync(join(claudeHome, backupsBefore[0]), "utf8")).toBe(contentBefore);
+  // The real timestamped file, not the `settings.json.pre-siltpoke` pointer.
+  expect(r.backup_kept).toBe(require("node:fs").realpathSync(join(claudeHome, backupsBefore[0])));
+  expect(output()).toContain(r.backup_kept as string);
+  expect(output()).not.toContain("restored settings.json from");
+}, INSTALL_TIMEOUT_MS);
+
+test("uninstall [62]: an unreadable settings.json is left byte-for-byte as it was", async () => {
+  await freshInstall();
+  const broken = '{ "statusLine": { "command": "bun x/src/face/wrapper.ts" }, oops';
+  writeFileSync(join(claudeHome, "settings.json"), broken);
+
+  const { io, output } = capturingIO(["n"]);
+  const r = await runUninstall({
+    env,
+    repoRoot,
+    noninteractive: false,
+    io,
+    uninstallAutostartFn: stubAutostartCleanup,
+  });
+
+  expect(readFileSync(join(claudeHome, "settings.json"), "utf8")).toBe(broken);
+  expect(r.settings_changed).toEqual([]);
+  expect(output()).toContain("not valid JSON");
 }, INSTALL_TIMEOUT_MS);
 
 test("uninstall: --purge deletes ~/.siltpoke/", async () => {
@@ -170,7 +376,7 @@ test("uninstall: --purge deletes ~/.siltpoke/", async () => {
   expect(existsSync(join(tmp, ".siltpoke"))).toBe(false);
 }, INSTALL_TIMEOUT_MS);
 
-test("uninstall: no backup found falls back to inner.txt", async () => {
+test("uninstall: with no backup the status line still comes back from inner.txt", async () => {
   await freshInstall();
   // remove backups + symlink so the fallback path engages
   const entries = require("node:fs").readdirSync(claudeHome) as string[];
@@ -186,12 +392,13 @@ test("uninstall: no backup found falls back to inner.txt", async () => {
     io: fakeIO(["n"]),
     uninstallAutostartFn: stubAutostartCleanup,
   });
-  expect(r.inner_fallback_used).toBe(true);
+  expect(r.backup_kept).toBeNull();
   const after = JSON.parse(readFileSync(join(claudeHome, "settings.json"), "utf8"));
   expect(after.statusLine.command).toBe("old-cmd");
+  expect(after.hooks).toBeUndefined();
 }, INSTALL_TIMEOUT_MS);
 
-test("uninstall: broken backup symlink falls through to inner.txt instead of crashing", async () => {
+test("uninstall: a broken backup symlink does not crash it", async () => {
   await freshInstall();
   // Delete the actual backup files but leave the symlink dangling
   const fs = await import("node:fs");
@@ -213,7 +420,7 @@ test("uninstall: broken backup symlink falls through to inner.txt instead of cra
     uninstallAutostartFn: stubAutostartCleanup,
   });
   expect(r.status).toBe("uninstalled");
-  expect(r.inner_fallback_used).toBe(true);
+  expect(r.settings_changed).toContain("statusLine restored");
 }, INSTALL_TIMEOUT_MS);
 
 test("install: refuses to back up settings.json that already points at a different siltpoke checkout", async () => {
@@ -317,4 +524,47 @@ test("uninstall: autostart cleanup failure never blocks uninstall (AC10)", async
   });
   expect(r.status).toBe("uninstalled");
   expect(r.autostart_removed).toBe(false);
+}, INSTALL_TIMEOUT_MS);
+
+// The closing line has to say what this run did to Claude Code, not a fixed
+// sentence with a command name cut out of the wrapper path.
+async function closingLine(): Promise<{ line: string; changed: string[] }> {
+  const { io, output } = capturingIO(["n"]);
+  const r = await runUninstall({
+    env,
+    repoRoot,
+    noninteractive: false,
+    io,
+    uninstallAutostartFn: stubAutostartCleanup,
+  });
+  const line = output().split("\n").find((l) => l.trim().startsWith("done.")) ?? "";
+  return { line, changed: r.settings_changed };
+}
+
+test("uninstall closing line: status line restored -> restart so the status line change takes effect, no command fragment", async () => {
+  await freshInstall();
+  const { line, changed } = await closingLine();
+  expect(changed).toContain("statusLine restored");
+  expect(line).toBe("  done. Restart Claude Code so the status line change takes effect.");
+  expect(line).not.toContain("bun");
+  expect(line).not.toContain("wrap");
+}, INSTALL_TIMEOUT_MS);
+
+test("uninstall closing line: nothing of siltpoke's in settings -> no restart is asked for", async () => {
+  writeSettings({ theme: "dark", statusLine: { type: "command", command: "my-line" } });
+  const { line, changed } = await closingLine();
+  expect(changed).toEqual([]);
+  expect(line).toBe("  done. Nothing in Claude Code needed changing, so no restart is needed.");
+  expect(line).not.toContain("Restart");
+});
+
+test("uninstall closing line: only hooks removed (status line was the user's) -> restart is for the hooks, not the status line", async () => {
+  await freshInstall();
+  const s = settingsNow();
+  s.statusLine = { type: "command", command: "my-new-line" };
+  writeSettings(s);
+  const { line, changed } = await closingLine();
+  expect(changed).toEqual(["Stop hook removed", "SessionStart hook removed"]);
+  expect(line).toBe("  done. Restart Claude Code so the removed hooks stop running.");
+  expect(line).not.toContain("status line");
 }, INSTALL_TIMEOUT_MS);

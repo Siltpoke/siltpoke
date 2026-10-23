@@ -252,8 +252,7 @@ const CONTRAST_ROUTES = [
   "/timeline",
   "/memory",
   "/critic", // redirects to /timeline (critic.tsx) — not a distinct page
-  // "/settings" removed 2026-08-06 — the route is unmounted; scanning a 404 would
-  // collapse `examined` and trip the floor below for an unrelated reason.
+  "/settings", // back 2026-10-09 with its mount (defect [49])
   "/rubric",
   "/preference-log",
   // "a retired page" removed 2026-08-06 — the route is unmounted, and page.goto does not throw
@@ -286,6 +285,7 @@ const EXAMINED_FLOOR: Record<(typeof CONTRAST_ROUTES)[number], number> = {
   "/": 50,
   "/timeline": 25,
   "/memory": 130,
+  "/settings": 30,
   "/critic": 25,
   "/rubric": 55,
   "/preference-log": 12,
@@ -449,8 +449,9 @@ test.describe("contrast walk negative control", () => {
     // above — a probe engineered to LOSE, so the green cases mean something.
     await page.goto("/");
     await page.evaluate(() => localStorage.setItem("siltpokeTheme", "dark"));
-    // Was /settings until 2026-08-06; that route is unmounted, and a 404 has no <h1>
-    // for the probe to wrap, which would make this negative control pass vacuously.
+    // /memory since 2026-08-06, when /settings was unmounted (a 404 has no <h1> for the
+    // probe to wrap, which would make this negative control pass vacuously). /settings is
+    // mounted again as of 2026-10-09; the control stays here, it needs any page with an <h1>.
     await page.goto("/memory");
     await page.waitForLoadState("networkidle");
     const result = await page.evaluate<WalkResult>(`(() => {

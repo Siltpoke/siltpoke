@@ -152,8 +152,8 @@ function setupA(): string {
   return makeHome("multiday", lines);
 }
 
-/** Oldest row of setup A's newest window (late j=180 at limit 20) — the expected `before` anchor. */
-const WINDOW_OLDEST_ISO = iso(START_OF_TODAY_MS + 1180);
+/** Oldest row of setup A's newest window (late j=188 at limit 12: newest 12 = j 199..188) — the expected `before` anchor. */
+const WINDOW_OLDEST_ISO = iso(START_OF_TODAY_MS + 1188);
 
 // ── Route-level helpers (outside-observable surface only) ─────────────────────
 
@@ -198,17 +198,17 @@ function keyPresent(html: string, sid: string, ms: number): boolean {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("newest window + Load-older control presence", () => {
-  test(">20 today rows under range=today — page 1 is exactly the newest 20 today rows, and the Load-older control is present with before=<oldest window row> preserving range+status", async () => {
+  test(">12 today rows under range=today — page 1 is exactly the newest 12 today rows, and the Load-older control is present with before=<oldest window row> preserving range+status", async () => {
     const home = setupA();
     const html = await getTimeline(home, "/timeline?range=today");
 
-    // The newest window: exactly 20 rail rows.
-    expect(railRowCount(html)).toBe(20);
+    // The newest window: exactly 12 rail rows.
+    expect(railRowCount(html)).toBe(12);
     // Newest and oldest rows OF THE WINDOW are present…
     expect(keyPresent(html, "s-late-199", START_OF_TODAY_MS + 1199)).toBe(true);
-    expect(keyPresent(html, "s-late-180", START_OF_TODAY_MS + 1180)).toBe(true);
+    expect(keyPresent(html, "s-late-188", START_OF_TODAY_MS + 1188)).toBe(true);
     // …while today rows BEYOND the window are not (they belong to page 2)…
-    expect(keyPresent(html, "s-late-179", START_OF_TODAY_MS + 1179)).toBe(false);
+    expect(keyPresent(html, "s-late-187", START_OF_TODAY_MS + 1187)).toBe(false);
     expect(keyPresent(html, "s-early-9", START_OF_TODAY_MS + 9)).toBe(false);
     // …and no other-day rows leak in (page 1).
     expect(html).not.toContain("|s-2d-");
@@ -239,7 +239,7 @@ describe("newest window + Load-older control presence", () => {
   });
 
   test("sharp edge: an EXACTLY-full window whose only older rows are OUT of range shows no control — hasMore must mean range-passing, not merely window-full", async () => {
-    // 30 yesterday rows, then exactly 20 today rows (one full window).
+    // 30 yesterday rows, then exactly 12 today rows (one full window).
     const lines: string[] = [];
     for (let k = 0; k < 30; k++) {
       lines.push(
@@ -250,7 +250,7 @@ describe("newest window + Load-older control presence", () => {
         }),
       );
     }
-    for (let j = 0; j < 20; j++) {
+    for (let j = 0; j < 12; j++) {
       lines.push(
         firedLine({ ms: START_OF_TODAY_MS + 1000 + j, sid: `s-td-${j}`, bubble: `today row ${j}` }),
       );
@@ -258,7 +258,7 @@ describe("newest window + Load-older control presence", () => {
     const home = makeHome("exact-full", lines);
 
     const html = await getTimeline(home, "/timeline?range=today");
-    expect(railRowCount(html)).toBe(20); // window really is full
+    expect(railRowCount(html)).toBe(12); // window really is full
     expect(html).not.toContain("|s-yd-"); // no other-day rows
     // The range is exhausted despite a full window: no control.
     expect(loadOlderHref(html)).toBeNull();
@@ -272,7 +272,7 @@ describe("newest window + Load-older control presence", () => {
 
 describe("following the Load-older href shows the next-older window", () => {
   test("under range=7d, following the Load-older chain crosses the day boundary (reaches rows from days before today), never leaks rows beyond 7d, preserves the filter every hop, visits each row once, and terminates", async () => {
-    // At limit 20 the 240-row 7d range spans many windows, so the day
+    // At limit 12 the 240-row 7d range spans exactly 20 windows, so the day
     // boundary is crossed several hops in (not on page 2). "Activating the
     // control" = issuing the GET the anchor points to; we follow the whole
     // chain and assert the properties over the walk.
@@ -286,7 +286,7 @@ describe("following the Load-older href shows the next-older window", () => {
     for (; hops <= 30; hops++) {
       expect(hops).toBeLessThan(30); // must terminate well before the guard
       const html = await getTimeline(home, path);
-      expect(railRowCount(html)).toBeLessThanOrEqual(20);
+      expect(railRowCount(html)).toBeLessThanOrEqual(12);
       // Rows beyond the 7d range never appear on any page.
       expect(html).not.toContain("|s-10d-");
       // Dedupe within the page first (a fired row's key appears in both its
@@ -343,7 +343,7 @@ describe("following the Load-older href shows the next-older window", () => {
 
   test("honesty edge: the Load-older chain TERMINATES — following hrefs from range=all visits every row exactly once and ends without a control", async () => {
     const home = setupA();
-    const GUARD = 20;
+    const GUARD = 30; // 22 windows at 12/page need > 22 hops of headroom
     const pageCounts: number[] = [];
     const seenKeys = new Set<string>();
     const hrefsFollowed = new Set<string>();
@@ -364,8 +364,8 @@ describe("following the Load-older href shows the next-older window", () => {
       path = next;
     }
 
-    // 260 rows in exactly 13 windows of 20 (260 / 20 = 13).
-    expect(pageCounts).toEqual(Array.from({ length: 13 }, () => 20));
+    // 260 rows = 21 full windows of 12 (252) + a terminal page of 8 (260 - 252).
+    expect(pageCounts).toEqual([...Array.from({ length: 21 }, () => 12), 8]);
     expect(seenKeys.size).toBe(260); // every row reached exactly once, no gaps
   });
 });
@@ -378,16 +378,16 @@ describe("filter-contextual totals match the visible set", () => {
   // Every fired fixture row is 15 tok / $0.001 — expected strings are hand
   // computed: N rows → N turns · 15N tok · $0.001N.
 
-  test("full newest window (range=7d) — summary leads with the 240-row range total + showing 20, page sums 300 tok · $0.02", async () => {
+  test("full newest window (range=7d) — summary leads with the 240-row range total + showing 12, page sums 180 tok · $0.01", async () => {
     // DELIBERATE UPDATE (timeline true-pagination): honest totals — the
     // 7d range holds 240 turns (10 early + 30 two-days-ago + 200 late), the
-    // page shows 20; tokens/$ stay contextual to the visible page.
+    // page shows 12 (12 × 15 tok = 180; 12 × $0.001 = $0.012 → $0.01); tokens/$ stay contextual to the visible page.
     const home = setupA();
     const html = await getTimeline(home, "/timeline?range=7d");
     expect(summaryText(html)).toBe(
-      "240 turns in range · showing 20 · 300 tok · $0.02 · 0 acked / 0 dismissed",
+      "240 turns in range · showing 12 · 180 tok · $0.01 · 0 acked / 0 dismissed",
     );
-    expect(railRowCount(html)).toBe(20); // list and page totals describe the same set
+    expect(railRowCount(html)).toBe(12); // list and page totals describe the same set
   });
 
   test("a kind filter shrinks the visible set — summary counts ONLY the 5 visible critical rows (75 tok · $0.0050), not the 200-row raw window", async () => {
@@ -400,10 +400,10 @@ describe("filter-contextual totals match the visible set", () => {
     expect(html).not.toContain("3.0k tok");
   });
 
-  test("on the terminal Load-older page (range=today) the summary reflects THAT page's visible set — 10 turns · 150 tok · $0.01", async () => {
-    // At limit 20 today's 210 rows span 11 windows; the oldest (terminal)
-    // window is a partial page of 10. Walk older to it and assert its
-    // summary describes that page's visible set.
+  test("on the terminal Load-older page (range=today) the summary reflects THAT page's visible set — 6 turns · 90 tok · $0.0060", async () => {
+    // At limit 12 today's 210 rows span 18 windows (17 × 12 = 204, +6); the
+    // oldest (terminal) window is a partial page of 6 (early rows 0..5). Walk
+    // older to it and assert its summary describes that page's visible set.
     const home = setupA();
     let path: string | null = "/timeline?range=today";
     let last = "";
@@ -415,14 +415,14 @@ describe("filter-contextual totals match the visible set", () => {
       if (href === null) break;
       path = href;
     }
-    expect(railRowCount(last)).toBe(10);
+    expect(railRowCount(last)).toBe(6);
     // Cross-check: today's terminal page still shows no other-day rows.
     expect(last).not.toContain("|s-2d-");
     expect(last).not.toContain("|s-yd-");
     // DELIBERATE UPDATE (timeline true-pagination): the range total
-    // (210 today turns) leads; tok/$ still sum the visible 10 rows.
+    // (210 today turns) leads; tok/$ still sum the visible 6 rows (6 × 15 = 90 tok; 6 × $0.001 = $0.006).
     expect(summaryText(last)).toBe(
-      "210 turns in range · showing 10 · 150 tok · $0.01 · 0 acked / 0 dismissed",
+      "210 turns in range · showing 6 · 90 tok · $0.0060 · 0 acked / 0 dismissed",
     );
     expect(last).not.toContain("200 turns"); // not an earlier page's totals
     // The terminal page exhausts today: no further OLDER control.

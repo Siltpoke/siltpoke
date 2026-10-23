@@ -93,6 +93,12 @@ export interface ReviewUnitFacts {
   storedTree?: string;
   /** True when git could not resolve `storedHead` — rebased or force-pushed away. */
   storedHeadVanished?: boolean;
+  /**
+   * True when `storedHead` exists but is not an ancestor of `head` — the user
+   * switched to a branch that does not contain the last reviewed commit
+   * (defect [60]). Absent when it could not be decided.
+   */
+  storedHeadNotAncestor?: boolean;
   unit: ReviewUnit;
   /** True when HEAD is the repo's default branch, so there is no branch to diff. */
   onDefaultBranch?: boolean;
@@ -207,6 +213,16 @@ export function decideReviewUnit(facts: ReviewUnitFacts): ReviewUnitDecision {
       revisionRange: `${facts.mergeBase}..${facts.head}`,
       advanceAnchorTo: here,
     };
+  }
+
+  // Defect [60] — the anchor is on a branch HEAD has left. `<anchor>..HEAD`
+  // would then show the other branch's work as undone in this turn, and the
+  // reviewer reports a deletion that never happened. Recover the way AC15
+  // does: review the working tree once, adopt HEAD. Placed after AC16 so a
+  // rebase that only relocated commits (same tree) still skips, and after the
+  // PR unit, whose range comes from the merge-base and never used the anchor.
+  if (facts.storedHeadNotAncestor === true) {
+    return { fire: true, reason: "anchor_unusable", advanceAnchorTo: here };
   }
 
   // AC2, AC4, AC6 — the commit unit. Also where `pr` lands when there is no

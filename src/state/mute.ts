@@ -98,7 +98,7 @@ export function clearMute(homeBase: string): boolean {
  * - Indefinite → true
  * - Timed but expired (`until_ms <= now.getTime()`) → false —
  *   router treats expired as not-muted; file lingers harmlessly until
- *   `/siltpoke-unmute` runs)
+ *   `/siltpoke:siltpoke-unmute` runs)
  * - Timed and not expired → true
  */
 export function isMuted(homeBase: string, now: Date): boolean {

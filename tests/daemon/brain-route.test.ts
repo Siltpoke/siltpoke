@@ -6,11 +6,11 @@
  *   GET  /api/brain                 -> resolved brain view (read-only)
  *   POST /api/brain/roles/:role     -> set brain.roles[role] (secret-gated)
  *
- * The POST reuses the SAME `runBrainSet` the `/siltpoke-brain` command calls,
+ * The POST reuses the SAME `runBrainSet` the `/siltpoke:siltpoke-brain` command calls,
  * so the dashboard and the command are one source of truth by construction.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -173,28 +173,26 @@ describe("POST /api/brain/review-by-builder/:builder (Brain select v2 T3)", () =
     });
   });
 
-  test("model on codex -> 400, no write (its spawn argv has no -m)", async () => {
+  test("model on codex -> saved (its argv carries -m)", async () => {
     const app = buildApp();
     const res = await app.request("/api/brain/review-by-builder/agy", {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({ reviewer: "codex", model: "gpt-5.5" }),
+      body: JSON.stringify({ reviewer: "codex", model: "gpt-5.6-luna" }),
     });
-    expect(res.status).toBe(400);
-    expect(existsSync(join(home, "config.json"))).toBe(false);
+    expect(res.status).toBe(200);
+    expect(existsSync(join(home, "config.json"))).toBe(true);
   });
 
-  // AC9: the same refusal on the ROLE route. The dashboard drops the field in
-  // the browser (role-row.ts), so before this the route was the way past it.
-  test("role route: model on codex -> 400, no write", async () => {
+  test("role route: model on codex -> saved", async () => {
     const app = buildApp();
     const res = await app.request("/api/brain/roles/review", {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({ family: "codex", model: "gpt-5.5" }),
+      body: JSON.stringify({ family: "codex", model: "gpt-5.6-luna" }),
     });
-    expect(res.status).toBe(400);
-    expect(existsSync(join(home, "config.json"))).toBe(false);
+    expect(res.status).toBe(200);
+    expect(existsSync(join(home, "config.json"))).toBe(true);
   });
 
   test("bad builder -> 400, no write", async () => {
@@ -278,5 +276,69 @@ describe("DELETE /api/brain/roles/:role — undo a global pin", () => {
     const res = await app.request("/api/brain/roles/review", { method: "DELETE" });
     expect(res.status).toBe(401);
     expect(existsSync(join(home, "config.json"))).toBe(false);
+  });
+});
+
+// Defect [49], AC13; spec §12.3 — the Settings page's three daily caps (one per role).
+describe("POST /api/brain/daily-caps", () => {
+  const post = (body: unknown, headers = authHeaders()): Promise<Response> =>
+    Promise.resolve(
+      buildApp().request("/api/brain/daily-caps", {
+        method: "POST",
+        headers,
+        body: typeof body === "string" ? body : JSON.stringify(body),
+      }),
+    );
+
+  test("writes all three caps and returns them", async () => {
+    const res = await post({ review: 80, chat: 0, extract: 7 });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, review: 80, chat: 0, extract: 7 });
+    expect(readConfig().brain).toEqual({ quota_daily_cap: 80, chat_quota_daily_cap: 0, extract_quota_daily_cap: 7 });
+  });
+
+  test("without the secret: 401 and nothing written", async () => {
+    const res = await post({ review: 80, chat: 80, extract: 80 }, { "Content-Type": "application/json" });
+    expect(res.status).toBe(401);
+    expect(existsSync(join(home, "config.json"))).toBe(false);
+  });
+
+  test("with a wrong secret: 401 and nothing written", async () => {
+    const res = await post(
+      { review: 80, chat: 80, extract: 80 },
+      { "Content-Type": "application/json", "X-Siltpoke-Secret": "nope" },
+    );
+    expect(res.status).toBe(401);
+    expect(existsSync(join(home, "config.json"))).toBe(false);
+  });
+
+  test("a bad number: 400, says which cap, nothing written", async () => {
+    const res = await post({ review: 80, chat: -1, extract: 5 });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain("chat");
+    expect(existsSync(join(home, "config.json"))).toBe(false);
+  });
+
+  test("a missing cap or a body that is not JSON: 400, nothing written", async () => {
+    expect((await post({ review: 80 })).status).toBe(400);
+    expect((await post({ review: 80, chat: 80 })).status).toBe(400);
+    expect((await post("not json")).status).toBe(400);
+    expect((await post("null")).status).toBe(400);
+    expect(existsSync(join(home, "config.json"))).toBe(false);
+  });
+
+  test("leaves the role pins alone", async () => {
+    await buildApp().request("/api/brain/roles/chat", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ family: "codebuddy" }),
+    });
+    await post({ review: 3, chat: 4, extract: 5 });
+    expect(readConfig().brain).toEqual({
+      roles: { chat: { provider: "codebuddy" } },
+      quota_daily_cap: 3,
+      chat_quota_daily_cap: 4,
+      extract_quota_daily_cap: 5,
+    });
   });
 });

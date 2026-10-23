@@ -35,14 +35,59 @@ for _candidate in "${ANTIGRAVITY_PLUGIN_ROOT:-}" "${AGY_PLUGIN_ROOT:-}" "${CLAUD
     break
   fi
 done
-if [ -z "$PLUGIN_ROOT" ] && command -v codex >/dev/null 2>&1; then
-  _candidate=$(codex plugin list --json 2>/dev/null | jq -r '.installed[]? | select(.name=="siltpoke") | .source.path' 2>/dev/null)
-  if [ -n "$_candidate" ] && [ -f "$_candidate/dist/siltpoke-cli.js" ]; then
-    PLUGIN_ROOT="$_candidate"
+# Rung (b): the copy this very SKILL.md was loaded from. If you (the agent)
+# know the path of the SKILL.md you are reading, set SILTPOKE_SKILL_FILE to it
+# before running this block: the host that loaded the skill is the host whose
+# plugin copy we want, and no other signal is as direct.
+if [ -z "$PLUGIN_ROOT" ] && [ -n "${SILTPOKE_SKILL_FILE:-}" ]; then
+  _skill_root=$(cd "$(dirname "$SILTPOKE_SKILL_FILE")/../.." 2>/dev/null && pwd) || _skill_root=""
+  if [ -n "$_skill_root" ]; then
+    for _candidate in "$_skill_root" "$(dirname "$_skill_root")"; do
+      if [ -f "$_candidate/dist/siltpoke-cli.js" ]; then
+        PLUGIN_ROOT="$_candidate"
+        break
+      fi
+    done
   fi
 fi
-if [ -z "$PLUGIN_ROOT" ] && [ -n "${HOME:-}" ] && [ -f "${HOME}/.gemini/config/plugins/siltpoke/dist/siltpoke-cli.js" ]; then
-  PLUGIN_ROOT="${HOME}/.gemini/config/plugins/siltpoke"
+# Rungs (c)/(d): which host is running this skill decides which copy goes first.
+# With both codex and agy installed, codex's copy must not answer for agy
+# (defect [54]). SILTPOKE_HOST=agy|codex says so outright; otherwise look for
+# the host among this shell's ancestor processes. Unknown host = codex first,
+# the order this ladder always had.
+_host="${SILTPOKE_HOST:-}"
+if [ -z "$PLUGIN_ROOT" ] && [ -z "$_host" ]; then
+  _pid=$$
+  _n=0
+  while [ "$_n" -lt 10 ] && [ -n "$_pid" ] && [ "$_pid" -gt 1 ] 2>/dev/null; do
+    _comm=$(ps -o comm= -p "$_pid" 2>/dev/null | sed 's|.*/||')
+    case "$_comm" in
+      agy*|antigravity*|Antigravity*) _host=agy; break ;;
+      codex*) _host=codex; break ;;
+    esac
+    _pid=$(ps -o ppid= -p "$_pid" 2>/dev/null | tr -d ' ')
+    _n=$((_n + 1))
+  done
+fi
+_try_agy() {
+  if [ -z "$PLUGIN_ROOT" ] && [ -n "${HOME:-}" ] && [ -f "${HOME}/.gemini/config/plugins/siltpoke/dist/siltpoke-cli.js" ]; then
+    PLUGIN_ROOT="${HOME}/.gemini/config/plugins/siltpoke"
+  fi
+}
+_try_codex() {
+  if [ -z "$PLUGIN_ROOT" ] && command -v codex >/dev/null 2>&1; then
+    _candidate=$(codex plugin list --json 2>/dev/null | jq -r '.installed[]? | select(.name=="siltpoke") | .source.path' 2>/dev/null) || _candidate=""
+    if [ -n "$_candidate" ] && [ -f "$_candidate/dist/siltpoke-cli.js" ]; then
+      PLUGIN_ROOT="$_candidate"
+    fi
+  fi
+}
+if [ "$_host" = "agy" ]; then
+  _try_agy
+  _try_codex
+else
+  _try_codex
+  _try_agy
 fi
 if [ -z "$PLUGIN_ROOT" ]; then
   printf '%s\n' "Could not find a Siltpoke plugin install (checked ANTIGRAVITY_PLUGIN_ROOT / AGY_PLUGIN_ROOT / CLAUDE_PLUGIN_ROOT, codex plugin list, and ~/.gemini/config/plugins/siltpoke)." >&2
@@ -74,13 +119,27 @@ agy exports either of the first two to a skill-run shell is UNVERIFIED; this
 rung is free to try and costs nothing when the var is unset. Every variable the
 block reads — `HOME` included — is read through `${VAR:-}`, so a caller running
 with `set -u` gets the designed "could not find" message rather than a raw
-`parameter not set` abort. **(b)** the
-codex form, run only when a `codex` binary is present on PATH. This rung needs
+`parameter not set` abort. **(b)** the copy this SKILL.md itself was loaded
+from: if you know the path of the SKILL.md you are reading, set
+`SILTPOKE_SKILL_FILE` to it before the block (the root is two directories above
+`skills/siltpoke/`, or one more when the copy sits under `.codex-plugin/` /
+`.antigravity-plugin/`). **(c)/(d)** the host-specific installs, in an order
+that follows the HOST RUNNING THIS SKILL (defect [54]): with both Codex and agy
+installed, agy tries its own directory first and Codex its own listing first.
+The host is `SILTPOKE_HOST=agy|codex` if set, else detected from the shell's
+ancestor processes (best effort — what agy exposes to a skill-run shell is
+UNVERIFIED, so if you are in agy and both are installed, set
+`SILTPOKE_HOST=agy` or `SILTPOKE_SKILL_FILE` to be safe; each shell tool
+call is a fresh shell, so the assignment must be on the SAME invocation as the
+block, e.g. `SILTPOKE_HOST=agy sh -c '<block>'` or a first line in the same
+command); an unknown host keeps
+the old order, codex first. The codex form runs only when a `codex` binary is
+present on PATH. It needs
 `jq`; the block does NOT carry a `jq`-less fallback, it just yields nothing and
-falls through. So on a codex box with no `jq`, if rung (c) does not save you
+falls through. So on a codex box with no `jq`, if the agy rung does not save you
 either, resolve the path yourself from `codex plugin list`'s plain-text PATH
 column (or a `python3 -c` one-liner over the same `--json` output) before
-running anything below. **(c)** the agy
+running anything below. The agy
 form — agy installs the whole plugin directory, `dist/` included, to
 `$HOME/.gemini/config/plugins/siltpoke`. A rung only counts once
 `dist/siltpoke-cli.js` is confirmed to exist under the candidate path — an
@@ -194,7 +253,10 @@ skill is `"$BUN" "$PLUGIN_ROOT/dist/<entrypoint>"`.
 
    It validates `species` against the 5-item list and each dial as an
    integer 0-10, writes `~/.siltpoke/config.json`, wires the statusline into
-   `~/.claude/settings.json`, and deletes the answers file on success. It
+   `~/.claude/settings.json` — and into agy's
+   `~/.gemini/antigravity-cli/settings.json` when this plugin is installed in
+   agy (an agy statusline that belongs to the user or another tool is left
+   alone) — and deletes the answers file on success. It
    asks nothing further — no host picker, no overwrite confirmation.
 
 5. **Translate failures, don't dump the raw trace:**
@@ -213,8 +275,10 @@ skill is `"$BUN" "$PLUGIN_ROOT/dist/<entrypoint>"`.
 
 6. **Confirm success.** Once step 4 exits clean, tell the user their pet is
    created and Siltpoke reviews are now active (the Stop hook's config gate
-   now passes). Mention: restart Codex/Claude Code for the statusline face
-   to appear, and that `doctor` below can verify the whole install.
+   now passes). Mention: restart Codex/Claude Code/agy for the statusline face
+   to appear, and that `doctor` below can verify the whole install. Relay the
+   kernel's summary lines as-is — if one says agy's statusline was left alone
+   or not installed, tell the user plainly; do not overwrite it yourself.
 
 ## Other commands (plugin-native, bundled)
 
@@ -229,7 +293,9 @@ resolved above:
 - Forward a review into chat: `"$BUN" "$PLUGIN_ROOT/dist/siltpoke-cli.js" mark-forwarded <id-or-latest>`
 - Mute reviews: `"$BUN" "$PLUGIN_ROOT/dist/siltpoke-cli.js" mute "<duration>"`
 - Unmute reviews: `"$BUN" "$PLUGIN_ROOT/dist/siltpoke-cli.js" unmute`
+- Wake Siltpoke when reviews have stopped (the pet says "I stopped reviewing"): `"$BUN" "$PLUGIN_ROOT/dist/siltpoke-cli.js" wake`
 - Menu-bar pet (macOS only): `"$BUN" "$PLUGIN_ROOT/dist/siltpoke-cli.js" menubar <install|status|remove>`
+- Uninstall — undo what setup changed (status line, dashboard, menu bar) before the plugin itself is removed; pass the output on, including its "Still to do" and "Not removed, on purpose" lists, and do not delete anything on those lists yourself: `"$BUN" "$PLUGIN_ROOT/dist/siltpoke-cli.js" uninstall`
 - Manual / command list: `"$BUN" "$PLUGIN_ROOT/dist/siltpoke-cli.js" help`
 
 **Not yet available to a plugin-native install:** listing/dismissing pending

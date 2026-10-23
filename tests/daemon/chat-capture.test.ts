@@ -1028,7 +1028,7 @@ describe("Page-context chat", () => {
     const { app } = mount({ initial: memWith([fact({ status: "active" })]) });
     const res = await app.request("/api/chat/context-preview?page=/memory");
     const json = await res.json();
-    expect(json).toEqual({ page_label: "Memory Book", facts_count: 1 });
+    expect(json).toEqual({ page_label: "Memory Book", facts_count: 1, code_access: "no_project" });
     expect(captured).toHaveLength(0);
   });
 });

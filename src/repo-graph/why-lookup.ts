@@ -58,7 +58,7 @@ export async function lookupWhy(input: WhyLookupInput): Promise<WhyAnchor> {
     const sessions = idx[hit.sha]!.sessions;
     if (sessions.length !== 1) return session(sessions[0]!);
     const s = sessions[0]!;
-    if (s.host !== "claude-code") return session(s);                              // unsupported read host — do NOT open transcript
+    if (s.host !== "claude-code" && s.host !== "qoder") return session(s);        // codex/codebuddy/agy are not Claude-native transcripts — do NOT open (qoder IS Claude-shaped)
     const raw = (input.readTranscript ?? ((p) => { try { return readFileSync(p, "utf8"); } catch { return null; } }))(s.transcript_path);
     if (raw === null) return session(s);
     const events = raw.split("\n").map((l) => { try { return JSON.parse(l) as TranscriptEvent; } catch { return null; } }).filter((e): e is TranscriptEvent => e !== null);

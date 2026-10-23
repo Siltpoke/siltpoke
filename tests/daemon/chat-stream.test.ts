@@ -476,3 +476,36 @@ describe("buildTranscript context exclusion", () => {
     );
   });
 });
+
+describe("raw output tap for the chat call record", () => {
+  const done = JSON.stringify({ type: "result", subtype: "success", result: "done", usage: { input_tokens: 1, output_tokens: 1 } });
+
+  test("onRawLine sees every non-empty stdout line, including one that is not JSON", async () => {
+    const lines = [
+      JSON.stringify({ type: "system", subtype: "init", model: "claude-haiku-4-5-20251001" }),
+      "oops not json",
+      "",
+      JSON.stringify({ type: "assistant", message: { id: "msg_1", content: [{ type: "text", text: "hi" }] } }),
+      done,
+    ];
+    const seen: string[] = [];
+    await collectWith({ spawnFn: fakeSpawn(lines), onRawLine: (l) => seen.push(l) });
+    expect(seen).toEqual(lines.filter((l) => l.length > 0));
+  });
+
+  test("onExit receives the exit code streamChat computed", async () => {
+    let code: number | undefined;
+    const { spawnFn } = fakeProc({ lines: [done], exitCode: 3 });
+    await collectWith({ spawnFn, onExit: (c) => { code = c; } });
+    expect(code).toBe(3);
+  });
+
+  test("onExit fires for a stopped call too", async () => {
+    let code: number | undefined;
+    const { spawnFn } = fakeProc({ hang: true });
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 10);
+    await collectWith({ spawnFn, signal: ac.signal, onExit: (c) => { code = c; } });
+    expect(code).toBe(143);
+  });
+});

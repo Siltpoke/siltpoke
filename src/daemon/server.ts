@@ -5,6 +5,9 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { Hono } from "hono";
 import { compress } from "hono/compress";
+import { resolveChatProvider } from "../brain/chat-provider";
+import { cliVersionLookupFor } from "../chat/cli-version";
+import { localRunStore } from "../chat/run-store";
 import { type ResolveAnchorResult, resolveAnchorContext } from "../chat/anchor-context";
 import { type ResolveCritiqueResult, resolveCritiqueContext } from "../chat/critique-context";
 import { openIndex } from "../chat/fts5-index";
@@ -25,7 +28,6 @@ import { loadQuietHoursConfig } from "../state/quiet-hours";
 import { loadDailyRollup } from "../state/usage";
 import { atomicWrite } from "../utils/atomic-write";
 import { acquireLock, type LockHandle, LockHeldError, releaseLock } from "../utils/process-lock";
-// mountSettingsRoutes import dropped 2026-08-06 with its mount (see the note below).
 import { mountChatWebRoutes } from "../web/routes/chat";
 import { mountCriticRoutes } from "../web/routes/critic";
 import { mountFewShotRoutes } from "../web/routes/few-shot";
@@ -37,6 +39,7 @@ import { loadDefaultRegistry, mountPreviewRoutes } from "../web/routes/preview";
 import { mountRepoGraphWebRoutes } from "../web/routes/repo-graph";
 import { mountRepoMemoryRoutes } from "../web/routes/repo-memory";
 import { mountRubricRoutes } from "../web/routes/rubric";
+import { mountSettingsRoutes } from "../web/routes/settings";
 import { ensureClientBundle, mountStaticRoutes } from "../web/routes/static";
 import { mountTimelineRoutes } from "../web/routes/timeline";
 import { mountTraceWebRoutes } from "../web/routes/traces";
@@ -76,6 +79,7 @@ export interface DaemonOptions {
   secret: string;
   homeBase?: string;
   projectCwd?: string;
+  startCwd?: string; // the folder the daemon started in, before neutral-cwd.ts moved it to `/`
   handleStopHook?: (event: HookEvent) => Promise<unknown>;
   /**
    * Path to the legacy `report.pid` file. When set and the file
@@ -207,7 +211,7 @@ async function resolveBindFailure(
  * Helper — call before Bun.serve to evict any prior process still holding the
  * dashboard port, whether it was recorded in the current-generation
  * `siltpoked.pid` or the legacy `report.pid`. BOTH spawn paths (launchd
- * autostart + `/siltpoke-dashboard` detached) write `siltpoked.pid`, so a
+ * autostart + `/siltpoke:siltpoke-dashboard` detached) write `siltpoked.pid`, so a
  * restart must evict a prior holder from either file — evicting only
  * `report.pid` (the original PQ2 migration mitigation) let two live daemons
  * race to bind :9876, and the loser crash-flapped under `KeepAlive`.
@@ -306,7 +310,7 @@ export async function resolveCritiqueAnchorImpl(
 /**
  * Acquire the daemon singleton lock, resolving the "already running" collision
  * out-of-line (keeps startDaemon's cyclomatic complexity in check). In
- * production both spawn paths (launchd autostart + /siltpoke-dashboard detached)
+ * production both spawn paths (launchd autostart + /siltpoke:siltpoke-dashboard detached)
  * share the one ~/.siltpoke/siltpoked.lock, so a re-setup / restart while a
  * daemon is up hits acquireLock's LockHeldError BEFORE Bun.serve — this, not
  * EADDRINUSE, is the routine collision. Decide via the PORT, not the lock: if a
@@ -346,7 +350,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   // Evict any prior process still holding the dashboard port BEFORE calling
   // Bun.serve. Skip when `port === 0`: ephemeral test ports never collide.
   // Check BOTH the current-gen siltpoked.pid (written by every `siltpoked
-  // start`, i.e. both the launchd autostart and the /siltpoke-dashboard detached
+  // start`, i.e. both the launchd autostart and the /siltpoke:siltpoke-dashboard detached
   // spawn) AND the legacy report.pid — a prior holder can live in either.
   if (opts.port !== 0) {
     const legacyPidPath =
@@ -467,6 +471,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         `[siltpoked] chat-index recovery failed: ${err instanceof Error ? err.message : String(err)}\n`,
       );
     });
+  // Chat call records untouched for RUN_RETENTION_DAYS go at start (spec 2026-10-13 §10.2).
+  const chatRunStore = localRunStore(homeBase);
+  void chatRunStore.prune(new Date()).catch(() => {});
   // Test seam: when SILTPOKE_TEST_MOCK_STREAM=1 the chat route bypasses the
   // real `claude -p` subprocess and returns a canned SSE reply. This lets
   // Playwright e2e tests run without a live ANTHROPIC_API_KEY.
@@ -553,6 +560,12 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     secret: opts.secret,
     index: chatIndex,
     streamFactory: mockStreamFactory,
+    // Defect [49]: which agent a message goes to is decided per send. Left
+    // unwired under the mock-stream seam, where no agent is launched at all
+    // and the canned reply must not depend on what this machine has installed.
+    resolveChatProvider: mockStreamFactory ? undefined : () => resolveChatProvider(homeBase),
+    runStore: chatRunStore,
+    cliVersionLookup: cliVersionLookupFor,
     resolveAnchor,
     resolveCritiqueAnchor,
     getGraphStorageDir,
@@ -598,8 +611,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
 
 
   // Settings — review-brain selector (Slice C). API + SSR screen share the one
-  // brain.roles config the /siltpoke-brain command writes.
+  // brain.roles config the /siltpoke:siltpoke-brain command writes.
   mountBrainRoutes(app, { homeBase, secret: opts.secret });
+  // Settings: the review-brain selector and which agent dashboard chat uses.
+  mountSettingsRoutes(app, { homeBase, secret: opts.secret, runStore: chatRunStore });
 
   // Chat screen (SSE consumer; chat-stream island).
   mountChatWebRoutes(app, { secret: opts.secret });
@@ -623,7 +638,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   // not global — so the route resolves the requesting project per request
   // (via homeBase) instead of the `cwd` frozen at daemon boot (which froze to
   // `/` under launchd). `cwd` is kept only as the last-resort fallback.
-  mountExplainRoutes(app, { homeBase, cwd: process.cwd(), secret: opts.secret });
+  const startCwd = opts.startCwd ?? process.cwd();
+  mountExplainRoutes(app, { homeBase, cwd: startCwd, secret: opts.secret });
 
   // /repo-graph: subgraph + search JSON API.
   // SSR shell `GET /repo-graph` lives in src/web/routes/repo-graph;
@@ -631,7 +647,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   // Bug B: create the TaskRegistry here so stopDaemon can call stopWatchers()
   // on it, preventing finalize-watcher poll timers from pinning the event loop.
   const taskRegistry = new TaskRegistry(homeBase);
-  mountRepoGraphRoutes(app, { cwd: process.cwd(), secret: opts.secret, home: homeBase, taskRegistry });
+  mountRepoGraphRoutes(app, { cwd: startCwd, secret: opts.secret, home: homeBase, taskRegistry });
   // /api/repo-graph/seen* -- watermark delta + advance/mark-all. Extracted to
   // its own mount (fast-follow; repo-graph.tsx was 2x
   // the 800-LOC hard cap) -- same `home`/`secret` deps as the mount above.
@@ -662,7 +678,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   // /repo-graph SSR shell + Alpine island hydration.
   // `home: homeBase` — same fix as the API mount above: the resolver reads
   // per-request project state from the daemon's home, not the frozen cwd.
-  mountRepoGraphWebRoutes(app, { cwd: process.cwd(), secret: opts.secret, home: homeBase });
+  mountRepoGraphWebRoutes(app, { cwd: startCwd, secret: opts.secret, home: homeBase });
 
   // Web sub-app: static assets + dev preview (env-gated).
   // Build the client island bundle if it's missing (gitignored artifact — a

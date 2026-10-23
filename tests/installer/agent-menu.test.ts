@@ -1,14 +1,27 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentPresence } from "../../src/installer/agent-detect";
 import {
   buildAgentChoices,
   filterPresetByPresence,
-  selectAndInstallAgents,
+  selectAndInstallAgents as realSelectAndInstallAgents,
 } from "../../src/installer/agent-menu";
 import type { Exec } from "../../src/installer/prereq";
 import type { WizardIO } from "../../src/installer/wizard";
+
+// Installing Claude Code / codex writes the install receipt: every call gets a
+// sandbox home, never the real one ([61] P1.3).
+let sandbox: string;
+beforeAll(() => {
+  sandbox = mkdtempSync(join(tmpdir(), "siltpoke-agent-menu-"));
+});
+afterAll(() => rmSync(sandbox, { recursive: true, force: true }));
+const selectAndInstallAgents = (o: Parameters<typeof realSelectAndInstallAgents>[0]) =>
+  realSelectAndInstallAgents({ env: { HOME: sandbox }, ...o });
 
 const bare: AgentPresence = {
   claude: false,

@@ -38,6 +38,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { addProjectRoot } from "../installer/receipt";
 import { atomicWrite } from "../utils/atomic-write";
 
 export interface SessionBaseline {
@@ -125,9 +126,14 @@ export function sessionBaselinePath(stateDir: string, sessionId: string): string
  * and for cross-upgrade continuity). Pruning failures are swallowed — a full
  * baselines directory must never break SessionStart.
  */
-export async function writeSessionBaseline(cwd: string, baseline: SessionBaseline): Promise<void> {
+export async function writeSessionBaseline(
+  cwd: string,
+  baseline: SessionBaseline,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
   const stateDir = stateDirFor(cwd);
   await mkdir(stateDir, { recursive: true });
+  rememberProject(cwd, env);
   const payload = JSON.stringify(baseline, null, 2);
 
   // tmp+rename, not a bare write: the LEGACY slot is shared by every session in
@@ -142,6 +148,20 @@ export async function writeSessionBaseline(cwd: string, baseline: SessionBaselin
   if (perSession === null) return; // unusable id → legacy slot only, never throw
   atomicWrite(perSession, payload);
   await pruneSessionBaselines(stateDir).catch(() => 0);
+}
+
+/**
+ * Add this repo to the install receipt's `projects` list (spec §2.3) so a purge
+ * can enumerate every `{repo}/.siltpoke/` it has to offer. No-op when already
+ * listed, so calling it on every write also picks up repos whose folder
+ * predates receipts. Best-effort: SessionStart must never fail over a receipt.
+ */
+function rememberProject(cwd: string, env: NodeJS.ProcessEnv): void {
+  try {
+    addProjectRoot(cwd, env);
+  } catch {
+    // unwritable receipt: the planner's second source (~/.siltpoke/projects/*) still has the repo
+  }
 }
 
 /** Drop per-session baselines older than the retention window. Returns the count removed. */
@@ -264,7 +284,11 @@ function parseBaselineFile(file: string, sessionId: string): ResolvedBaseline | 
  * Returns `null` when `cwd` is not a git repo — the honest answer, and the
  * pre-existing behaviour for that case.
  */
-export function resolveOrCaptureSessionHeadSha(cwd: string, sessionId: string): string | null {
+export function resolveOrCaptureSessionHeadSha(
+  cwd: string,
+  sessionId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
   const existing = readSessionBaseline(cwd, sessionId);
   if (existing !== null) return existing.head_sha;
 
@@ -289,6 +313,7 @@ export function resolveOrCaptureSessionHeadSha(cwd: string, sessionId: string): 
   // reintroduce exactly the cross-session clobbering that per-session keying
   // exists to prevent (see this module's header).
   try {
+    rememberProject(cwd, env);
     atomicWrite(
       perSession,
       JSON.stringify(

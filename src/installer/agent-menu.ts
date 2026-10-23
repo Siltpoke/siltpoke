@@ -6,6 +6,7 @@ export type { SupportedAgent } from "./agent-types";
 
 import type { AgentPresence } from "./agent-detect";
 import { installClaude, installCodex } from "./agent-offer";
+import { askInstall, type ConsentOpts, HOW_TO } from "./consent";
 import { secondaryHostAdapters } from "./host-adapter";
 import { type Locale, t } from "./i18n";
 import { askMultiSelectTTY } from "./multiselect-tty";
@@ -136,23 +137,34 @@ async function resolveClaudeHost(opts: {
   presence: AgentPresence;
   io: WizardIO;
   exec: Exec;
+  env?: NodeJS.ProcessEnv;
+  consent?: ConsentOpts;
 }): Promise<{ exit: boolean }> {
-  const { claudeSelected, presence, io, exec } = opts;
+  const { claudeSelected, presence, io, exec, env, consent } = opts;
   if (claudeSelected) {
-    if (!presence.claude) installClaude(exec, io);
+    if (!presence.claude) {
+      // [63]: one question before the install; a No leaves nothing and says how.
+      const ok = await askInstall(io, "Claude Code is not installed. Install it now?", HOW_TO.claude, consent);
+      if (!ok) {
+        io.write(NO_HOST_MSG);
+        return { exit: true };
+      }
+      installClaude(exec, io, env);
+    }
     return { exit: false };
   }
   if (!presence.claude) {
-    const wantsClaude = await askYesNo(
+    const wantsClaude = await askInstall(
       io,
       "No Claude Code selected. siltpoke needs a coding-agent host — install Claude Code now?",
-      { default: "yes" },
+      HOW_TO.claude,
+      consent,
     );
     if (!wantsClaude) {
       io.write(NO_HOST_MSG);
       return { exit: true };
     }
-    installClaude(exec, io);
+    installClaude(exec, io, env);
     return { exit: false };
   }
   const keep = await askYesNo(io, "siltpoke needs Claude Code as its host — keep it?", {
@@ -175,8 +187,12 @@ export async function selectAndInstallAgents(opts: {
   exec: Exec;
   platform?: NodeJS.Platform;
   locale: Locale;
+  /** Env for the install receipt (`~/.siltpoke/receipt.json`); defaults to process.env. */
+  env?: NodeJS.ProcessEnv;
+  /** `--yes` / no-terminal policy for the install questions ([63]). */
+  consent?: ConsentOpts;
 }): Promise<AgentSelectionResult> {
-  const { presence, io, exec, platform, locale } = opts;
+  const { presence, io, exec, platform, locale, env, consent } = opts;
   const { items, defaults } = buildAgentChoices(presence);
   const picked = await askMultiSelectTTY(io, t("agents.pick", locale), items, defaults);
 
@@ -193,12 +209,17 @@ export async function selectAndInstallAgents(opts: {
     presence,
     io,
     exec,
+    env,
+    consent,
   });
   if (claudeGate.exit) return { exit: true, presetAgents: [] };
 
   // Codex: install if selected + absent.
   let codexOk = survivors.includes("codex");
-  if (codexOk && !presence.codex) codexOk = installCodex(exec, io, platform);
+  if (codexOk && !presence.codex) {
+    codexOk = await askInstall(io, "Codex is not installed. Install it now (npm install -g @openai/codex)?", HOW_TO.codex, consent);
+    if (codexOk) codexOk = installCodex(exec, io, platform, env);
+  }
 
   // Non-Claude hosts wired only if already present — siltpoke does not
   // install codebuddy/qoder/agy binaries for the user: codebuddy/qoder are

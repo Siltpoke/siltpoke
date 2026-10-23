@@ -297,6 +297,22 @@ test("install: Codex-only setup works without Claude settings", async () => {
   expect(cfg.agents).toEqual(["codex"]);
 });
 
+test("install [65]: agy with the user's own status line — kept, and the install output says so", async () => {
+  writeSettings({ statusLine: { command: "old" } });
+  const agyDir = join(tmp, ".gemini", "antigravity-cli");
+  mkdirSync(agyDir, { recursive: true });
+  writeFileSync(join(agyDir, "settings.json"), JSON.stringify({ statusLine: { type: "command", command: "my-agy-line" } }));
+  const out: string[] = [];
+  const io: WizardIO = { readLine: async () => "", write: (s) => out.push(s) };
+
+  const r = await runInstall({ env, repoRoot, noninteractive: true, presetAgents: ["claude-code", "antigravity"], io });
+
+  expect(r.status).toBe("installed");
+  const agy = JSON.parse(readFileSync(join(agyDir, "settings.json"), "utf8"));
+  expect(agy.statusLine.command).toBe("my-agy-line");
+  expect(out.join("")).toContain("kept your own status line");
+});
+
 test("install: agy selected via presetAgents writes hooks.json but does NOT symlink slash-commands (mirrors codex exclusion)", async () => {
   writeSettings({ statusLine: { command: "old" } });
 
@@ -366,6 +382,9 @@ test("install: accepting the menu-bar question dispatches runMenubarSetupFn (dar
   });
   expect(r.status).toBe("installed");
   expect(calls.length).toBe(1);
+  // [61] P1.3: the shim, login item and receipt land under the install's home,
+  // not the real one (same rule as autostart, [66]).
+  expect(calls[0]).toMatchObject({ home: env.HOME, env });
 });
 
 test("install: declining the menu-bar question never dispatches runMenubarSetupFn", async () => {

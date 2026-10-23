@@ -1,15 +1,26 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runBootstrap } from "../../src/cli/bootstrap";
 import type { PlcExec } from "../../src/installer/plc-install";
 import type { Exec } from "../../src/installer/prereq";
+import { readReceipt } from "../../src/installer/receipt";
 
 // Hermetic stand-in for the optional project-lifecycle plugin install step —
 // without this, runBootstrap's default plcExec shells out to a real `claude`
 // binary via Bun.spawnSync, which is absent on a Linux CI runner (and was,
 // pre-fix, fatal to the whole bootstrap when absent).
 const noopPlcExec: PlcExec = () => ({ status: 0, stdout: "", stderr: "" });
+
+// runBootstrap writes the install receipt; keep it in a sandbox.
+let home: string;
+beforeEach(() => {
+  home = mkdtempSync(join(tmpdir(), "bs-p2-"));
+});
+afterEach(() => rmSync(home, { recursive: true, force: true }));
 
 function fakeIO(answers: string[] = []) {
   let i = 0;
@@ -38,7 +49,7 @@ describe("runBootstrap P2 phases", () => {
     const { exec } = presentExec(["bun", "git"]); // no claude
     let ranInstall = false;
     const res = await runBootstrap({
-      exec, io, claudeHome: "/tmp/x", platform: "darwin",
+      exec, io, claudeHome: "/tmp/x", env: { HOME: home },platform: "darwin",
       runInstallFn: async () => { ranInstall = true; },
     });
     expect(res.status).toBe("no-host");
@@ -50,7 +61,7 @@ describe("runBootstrap P2 phases", () => {
     const { exec } = presentExec(["bun", "git", "claude", "codex"]);
     let ranInstall = false;
     const res = await runBootstrap({
-      exec, io, claudeHome: "/tmp/x", platform: "darwin", check: true,
+      exec, io, claudeHome: "/tmp/x", env: { HOME: home },platform: "darwin", check: true,
       runInstallFn: async () => { ranInstall = true; },
     });
     expect(res.status).toBe("planned");
@@ -63,11 +74,24 @@ describe("runBootstrap P2 phases", () => {
     const { exec } = presentExec(["bun", "git", "claude", "codex"]);
     let seenPreset: string[] | undefined;
     const res = await runBootstrap({
-      exec, io, claudeHome: "/tmp/x", platform: "darwin",
+      exec, io, claudeHome: "/tmp/x", env: { HOME: home },platform: "darwin",
       runInstallFn: async (_io, preset) => { seenPreset = preset; },
       plcExecFn: noopPlcExec,
     });
     expect(res.status).toBe("installed");
     expect(seenPreset).toEqual(["claude-code", "codex"]);
+  });
+
+  test("the receipt env reaches Claude Code's installer and the PLC step (both land in the sandbox receipt)", async () => {
+    const { io } = fakeIO(["", "", "1"]); // locale default, editor default, pick Claude Code
+    const { exec } = presentExec(["bun", "git"]); // claude absent → bootstrap installs it
+    await runBootstrap({
+      exec, io, claudeHome: "/tmp/x", env: { HOME: home }, platform: "darwin",
+      runInstallFn: async () => {},
+      plcExecFn: noopPlcExec,
+    });
+    const ids = readReceipt({ HOME: home })?.entries.map((e) => e.id) ?? [];
+    expect(ids).toContain("tool:claude-code");
+    expect(ids).toContain("tool:plc");
   });
 });

@@ -60,7 +60,7 @@ export async function markForwarded(
   }
 
   // `idOrLatest` is an ADDRESS, and "latest" is a sentinel rather than an
-  // identity — `/siltpoke-last` runs `siltpoke-cli mark-forwarded` with no
+  // identity — `/siltpoke:siltpoke-last` runs `siltpoke-cli mark-forwarded` with no
   // argument, so the shipped path always passes it. Recording the sentinel
   // wrote rows that join back to no critique at all (measured on the real
   // store the day the awaited write started landing: `critique_id: "latest"`).
@@ -70,7 +70,7 @@ export async function markForwarded(
   // Awaited on purpose. This used to be fire-and-forget, and this file is
   // also a CLI entry whose process.exit(0) fired before the append reached
   // disk — so a `forward` never landed in preference-log.jsonl. This is the
-  // one of the three CLI writers with a real shipped caller: /siltpoke-last
+  // one of the three CLI writers with a real shipped caller: /siltpoke:siltpoke-last
   // runs `siltpoke-cli mark-forwarded` after surfacing a review, so every
   // forward a user has ever produced was dropped here. (mark-forwarded
   // writes no feedback-archive entry, so nothing recorded it elsewhere.)

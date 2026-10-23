@@ -15,7 +15,8 @@ import { join } from "node:path";
 import { BrainError } from "../../src/brain/brain";
 import { callBrain } from "../../src/brain/brain";
 import { makeGuardedCallBrain } from "../../src/brain/brain-guarded";
-import { brainUnhealthySignal, readBrainHealth } from "../../src/state/brain-health";
+import { readBrainHealth } from "../../src/state/brain-health";
+import { brainUnhealthySignal } from "../../src/state/brain-signal";
 
 /** Verbatim shape of what `claude -p --output-format json` wrote in the sandbox. */
 const NOT_LOGGED_IN_STDOUT = JSON.stringify({

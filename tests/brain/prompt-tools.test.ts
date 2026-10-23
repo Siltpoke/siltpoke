@@ -187,7 +187,7 @@ test("tsc only with findings: other tools omitted from section body", () => {
 
   // not_applicable eslint mentioned in skipped header
   expect(section).toContain("eslint");
-  expect(section).toContain("not_applicable");
+  expect(section).toContain("eslint (not applicable here)");
 });
 
 // ---------------------------------------------------------------------------
@@ -217,9 +217,9 @@ test("skipped tools header lists each non-ok tool with status", () => {
   const { section } = buildToolOutputSection(results);
 
   expect(section).toContain("eslint");
-  expect(section).toContain("not_installed");
+  expect(section).toContain("eslint (not installed or could not be started)");
   expect(section).toContain("ripgrep");
-  expect(section).toContain("timeout");
+  expect(section).toContain("ripgrep (timed out before finishing)");
 });
 
 // ---------------------------------------------------------------------------
@@ -445,7 +445,7 @@ test("buildToolOutputSection: all 4 tools non-ok → section has skipped header,
 
   const { section, evidenceCorpus } = buildToolOutputSection(results);
 
-  expect(section).toContain("Tools skipped:");
+  expect(section).toContain("Tools skipped (NOT RUN");
   expect(section).not.toContain("Tools ran:");
   expect(section).not.toContain("### tsc");
   expect(section).not.toContain("### eslint");

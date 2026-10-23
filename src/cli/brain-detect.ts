@@ -3,7 +3,7 @@
 /**
  * `siltpoke brain detect` — which other reviewer CLIs are installed.
  *
- * `/siltpoke-setup` §8 reads this to decide whether to offer cross-family
+ * `/siltpoke:siltpoke-setup` §8 reads this to decide whether to offer cross-family
  * review at all. Read-only: it never writes config. It checks presence on PATH
  * only, not login state — a login probe per family would be a spawn per family
  * at setup time, each with its own auth command.

@@ -1,6 +1,20 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
-import { describe, test, expect } from "bun:test";
-import { ensureBun, ensureGit, type Exec } from "../../src/installer/prereq";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { type Exec, ensureBun, ensureGit } from "../../src/installer/prereq";
+
+// ensureBun/ensureGit write the install receipt; keep it in a sandbox.
+let home: string;
+let env: NodeJS.ProcessEnv;
+beforeEach(() => {
+  home = mkdtempSync(join(tmpdir(), "siltpoke-prereq-ensure-"));
+  env = { HOME: home };
+});
+afterEach(() => {
+  rmSync(home, { recursive: true, force: true });
+});
 
 const io = (answer: boolean) => ({
   readLine: async () => (answer ? "y" : "n"),
@@ -11,7 +25,7 @@ describe("ensureBun", () => {
   test("present → no install", async () => {
     const calls: string[][] = [];
     const exec = (_c: string, a: string[]) => { calls.push(a); return { status: a.includes("bun") ? 0 : 1, stdout: "/x/bun" }; };
-    const r = await ensureBun(exec, io(true));
+    const r = await ensureBun(exec, io(true), undefined, env);
     expect(r.action).toBe("present");
     expect(calls.some((a) => a.join(" ").includes("bun.com/install"))).toBe(false);
   });
@@ -23,14 +37,14 @@ describe("ensureBun", () => {
       cmds.push([c, ...a].join(" "));
       return { status: 0, stdout: "" };
     };
-    const r = await ensureBun(exec, io(true));
+    const r = await ensureBun(exec, io(true), undefined, env);
     expect(r.action).toBe("installed");
     expect(cmds.some((s) => s.includes("bun.com/install"))).toBe(true);
   });
 
   test("absent + decline → declined, no install", async () => {
     const exec = (_c: string, _a: string[]) => ({ status: 1, stdout: "" });
-    const r = await ensureBun(exec, io(false));
+    const r = await ensureBun(exec, io(false), undefined, env);
     expect(r.action).toBe("declined");
   });
 });
@@ -43,7 +57,7 @@ describe("ensureGit", () => {
       cmds.push([c, ...a].join(" "));
       return { status: 0, stdout: "" };
     };
-    const r = await ensureGit(exec, io(true));
+    const r = await ensureGit(exec, io(true), undefined, env);
     expect(r.action).toBe("gui-pending");
     expect(cmds.some((s) => s.includes("xcode-select") && s.includes("--install"))).toBe(true);
   });
@@ -55,7 +69,7 @@ describe("ensureGit", () => {
       if (a[0] === "-v") return { status: 1, stdout: "" }; // git absent
       return { status: 0, stdout: "" };
     };
-    await ensureGit(exec, ioObj, "darwin");
+    await ensureGit(exec, ioObj, "darwin", env);
     expect(writes.join("")).toContain("Install Apple developer tools now?");
   });
 });
@@ -69,7 +83,7 @@ describe("win32 provisioning", () => {
       cmds.push(joined);
       return { status: 0, stdout: "" };
     };
-    const r = await ensureBun(exec, io(true), "win32");
+    const r = await ensureBun(exec, io(true), "win32", env);
     expect(r.action).toBe("installed");
     expect(cmds.some((s) => s.includes("powershell") && s.includes("bun.sh/install.ps1"))).toBe(true);
   });
@@ -82,7 +96,7 @@ describe("win32 provisioning", () => {
       cmds.push([c, ...a].join(" "));
       return { status: 0, stdout: "" };
     };
-    const r = await ensureGit(exec, io(true), "win32");
+    const r = await ensureGit(exec, io(true), "win32", env);
     expect(r.action).toBe("installed");
     expect(cmds.some((s) => s.includes("winget") && s.includes("Git.Git"))).toBe(true);
   });
@@ -94,7 +108,7 @@ describe("win32 provisioning", () => {
       if (c === "where") return { status: 1, stdout: "" }; // git AND winget absent
       return { status: 0, stdout: "" };
     };
-    const r = await ensureGit(exec, ioObj, "win32");
+    const r = await ensureGit(exec, ioObj, "win32", env);
     expect(r.action).toBe("guide");
     expect(writes.join("")).toContain("gitforwindows.org");
   });

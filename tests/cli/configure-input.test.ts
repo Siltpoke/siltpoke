@@ -86,7 +86,7 @@ describe("configure input — validation + --answers-file", () => {
     ).rejects.toThrow(/missing --name/);
   });
 
-  // --answers-file: the shell-injection defense. /siltpoke-setup writes the four
+  // --answers-file: the shell-injection defense. /siltpoke:siltpoke-setup writes the four
   // answers with the Write tool (no shell) and passes ONE fixed path, so no user
   // byte is ever interpolated into a command line.
   test("--answers-file takes the pet from JSON; shell metacharacters stay LITERAL", async () => {
@@ -234,7 +234,7 @@ describe("configure input — validation + --answers-file", () => {
   });
 
   test("the conversational `language` key is read (not silently dropped for `lang`)", async () => {
-    // The rewritten /siltpoke-setup writes the key as `language`. The kernel must
+    // The rewritten /siltpoke:siltpoke-setup writes the key as `language`. The kernel must
     // accept it — reading only `lang` would land an empty speaking-language on
     // every conversational install.
     const answers = join(home, "a.json");

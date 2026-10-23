@@ -31,6 +31,38 @@ describe("resolveDaemonPath", () => {
     expect(warnings).toEqual([]);
   });
 
+  // Defect [49]: dashboard chat can launch any of the five agents, so the daemon
+  // has to be able to find the other four as well.
+  test("the other four agents' folders are on the PATH too, after bun and claude", () => {
+    const where: Record<string, string> = {
+      bun: "/Users/tester/.bun/bin/bun",
+      claude: "/Users/tester/.local/bin/claude",
+      codex: "/opt/codex/bin/codex",
+      agy: "/opt/agy/agy",
+      qodercli: "/Users/tester/.qoder/bin/qodercli",
+      codebuddy: "/Users/tester/.nvm/versions/node/v22/bin/codebuddy",
+    };
+    const { path, warnings } = resolveDaemonPath({ which: (bin) => where[bin] ?? null, home });
+    const dirs = path.split(":");
+    expect(dirs.slice(0, 6)).toEqual([
+      "/Users/tester/.bun/bin",
+      "/Users/tester/.local/bin",
+      "/opt/codex/bin",
+      "/opt/agy",
+      "/Users/tester/.qoder/bin",
+      "/Users/tester/.nvm/versions/node/v22/bin",
+    ]);
+    expect(warnings).toEqual([]);
+  });
+
+  test("a missing agent other than claude is not a warning — most users have one or two", () => {
+    const which = (bin: string): string | null =>
+      bin === "bun" ? "/b/bun" : bin === "claude" ? "/c/claude" : bin === "codebuddy" ? "/cb/codebuddy" : null;
+    const { path, warnings } = resolveDaemonPath({ which, home });
+    expect(path.split(":").slice(0, 3)).toEqual(["/b", "/c", "/cb"]);
+    expect(warnings).toEqual([]);
+  });
+
   test("de-dupes: a dir never appears twice, order preserved", () => {
     // bun resolves to a fallback dir already in the list.
     const which = (bin: string): string | null => {

@@ -53,19 +53,6 @@ export function swapStatusLine(
   return { next, oldStatusLineCommand: old };
 }
 
-export function restoreStatusLine(
-  input: unknown,
-  oldCommand: string | null,
-): Record<string, unknown> {
-  const next = clone(asSettings(input));
-  if (oldCommand === null) {
-    delete next.statusLine;
-  } else {
-    next.statusLine = { type: "command", command: oldCommand };
-  }
-  return next;
-}
-
 function findStopMatcher(
   matchers: HookMatcher[],
   hookCommand: string,
@@ -110,31 +97,6 @@ export function registerStopHook(
   return next;
 }
 
-export function unregisterStopHook(
-  input: unknown,
-  hookCommand: string,
-): Record<string, unknown> {
-  const next = clone(asSettings(input));
-  if (!Array.isArray(next.hooks?.Stop)) return next;
-  const filtered = next
-    .hooks?.Stop?.map((m) => ({
-      ...m,
-      hooks: (m.hooks ?? []).filter(
-        (h) => !(h.type === "command" && h.command === hookCommand),
-      ),
-    }))
-    .filter((m) => (m.hooks ?? []).length > 0);
-  if (filtered.length > 0) {
-    next.hooks!.Stop = filtered;
-  } else {
-    delete next.hooks?.Stop;
-    if (next.hooks && Object.keys(next.hooks).length === 0) {
-      delete next.hooks;
-    }
-  }
-  return next;
-}
-
 export interface StopHookPair {
   httpUrl: string;
   command: string;
@@ -160,12 +122,22 @@ export function buildStopCurlCommand(httpUrl: string, secret: string): string {
 // /hooks/stop route. registerStopHookPair removes these on sight (migration,
 // AC7) and hasStopHookPair treats their presence as "not installed" so a
 // setup re-run takes the migration branch.
+//
+// Both matchers must recognise ONLY siltpoke's entries: setup and uninstall
+// delete whatever they match, and a user's own hook on some other server's
+// `/hooks/stop` is not ours (defect [62] review). The daemon only ever listened
+// on loopback, and our curl command always carries the secret header.
 function isStaleHttpStopEntry(h: HookEntry): boolean {
-  return (
-    h.type === "http" &&
-    typeof h.url === "string" &&
-    h.url.includes("/hooks/stop")
-  );
+  if (h.type !== "http" || typeof h.url !== "string") return false;
+  try {
+    const u = new URL(h.url);
+    return (
+      (u.hostname === "127.0.0.1" || u.hostname === "localhost") &&
+      u.pathname === "/hooks/stop"
+    );
+  } catch {
+    return false;
+  }
 }
 
 function isOurCurlEntry(h: HookEntry): boolean {
@@ -173,8 +145,27 @@ function isOurCurlEntry(h: HookEntry): boolean {
     h.type === "command" &&
     typeof h.command === "string" &&
     h.command.startsWith("curl ") &&
+    h.command.includes("X-Siltpoke-Secret:") &&
     h.command.includes("/hooks/stop")
   );
+}
+
+/**
+ * A hook entry that talks to siltpoke's daemon — the curl fast path, or the
+ * older http shape. The entry's own text says it is siltpoke's, so an
+ * uninstall may take it without a receipt (`[61]` PR 2, spec §8 D-A).
+ */
+export function isSiltpokeDaemonStopEntry(h: unknown): boolean {
+  if (typeof h !== "object" || h === null) return false;
+  const entry = h as HookEntry;
+  if (isOurCurlEntry(entry)) return true;
+  // The older http shape names siltpoke only by its port or its secret header.
+  // A loopback `/hooks/stop` on some other port is the user's own server
+  // (review round 1): setup's migration may match it in a file setup is
+  // writing anyway, an uninstall that has no receipt may not.
+  if (!isStaleHttpStopEntry(entry)) return false;
+  const hasSecret = Object.keys(entry.headers ?? {}).some((k) => k.toLowerCase() === "x-siltpoke-secret");
+  return hasSecret || new URL(entry.url as string).port === "9876";
 }
 
 function isOurPairEntry(h: HookEntry, pair: StopHookPair): boolean {

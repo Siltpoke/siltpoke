@@ -39,6 +39,7 @@
       "genAiSystem": "anthropic",
       "acceptsModel": true
     },
+    "toolCalls": "not_recorded",
     "memoryFunnel": {
       "rules_in_store": 0,
       "rules_scope_matched": 0,
@@ -49,11 +50,12 @@
       "base": 27,
       "memory": 0,
       "recent": 0,
-      "tool_output": 374,
+      "tool_output": 440,
       "caller_impact": 0,
       "reverse_deps": 0,
       "anti_examples": 0,
-      "total": 1346
+      "project_notes": 0,
+      "total": 1383
     }
   },
   "writeCalled": true

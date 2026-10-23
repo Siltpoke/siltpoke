@@ -10,9 +10,9 @@
 
 Siltpoke is an **independent second mind** that rides along while you
 build with your CLI coding agent. It catches what you missed, helps you
-understand the codebase you shipped, and learns what you actually care
-about — a pet that earns its opinions, remembers your projects, and is
-wholly yours. On the token budget you already have.
+understand the codebase you shipped, and remembers your projects — a pet
+that earns its opinions and is wholly yours. On the token budget you
+already have.
 
 **🌐 [siltpoke.com](https://siltpoke.com)**
 
@@ -45,7 +45,7 @@ project:
   your code, and Siltpoke receives nothing — GitHub sees that request the
   way it would if you opened the releases page yourself. Turn it off with
   `"updateCheck": { "enabled": false }` in `~/.siltpoke/config.json`;
-  `/siltpoke-doctor` shows whether it is on.
+  `/siltpoke:siltpoke-doctor` shows whether it is on.
 - **Chat.** Talk to it with all of the above in context.
 
 And it's a **Tamagotchi** — pet it, level it up, unlock poses. The pet
@@ -54,14 +54,17 @@ Runs **~$0.04–$0.10/day** on typical use, thanks to prompt caching.
 
 ## Setup (90 seconds)
 
-> **Platforms: macOS and Linux.** Windows is **not supported yet** — not
-> "rough", not "untested": the plugin registers its review hook as
-> `sh ./hooks/stop.sh`, and a stock Windows box has no `sh`, so the hook never
-> starts. Everything else installs and looks healthy — the pet appears, the
-> commands work, the config file says you are set up — and no review ever
-> happens, silently. WSL works, because inside WSL you are on Linux. Native
-> Windows support is being built; until it lands, this is a warning rather
-> than a caveat.
+> **Runs on macOS and Linux. On Windows, reviews work, but only one reviewer
+> has been confirmed.** On a real Windows 10 machine (2026-09-29) a commit
+> triggered the review hook and the reviewer answered — with `claude` as the
+> reviewer. All five reviewer CLIs are wired for Windows, but the other four
+> (`codebuddy`, `qoder`, `codex`, `agy`) have not run on a Windows machine yet.
+> Also not yet checked there: an install path that contains a space, and a diff
+> that contains Chinese characters or emoji. So on Windows today, treat a
+> missing review as worth reporting rather than as something you configured
+> wrong — `/siltpoke:siltpoke-doctor` has a row for whether the hook can start. The
+> dashboard works either way. WSL remains the fully proven path, because that
+> is Linux.
 
 **Prefer to have your coding agent do the whole install?** Paste one of
 [`docs/install-prompts/`](docs/install-prompts/) into it — one file per host
@@ -74,18 +77,18 @@ Everything below is the same thing done by hand.
 ```
 /plugin marketplace add Siltpoke/siltpoke
 /plugin install siltpoke
-/siltpoke-setup
+/siltpoke:siltpoke-setup
 ```
 
 Siltpoke's reviewer runs on [Bun](https://bun.sh/). If you don't have it:
 `curl -fsSL https://bun.sh/install | bash`
 
-`/siltpoke-setup` creates your pet (name, species, language, personality —
+`/siltpoke:siltpoke-setup` creates your pet (name, species, language, personality —
 `AskUserQuestion` cards, no terminal wizard), puts its face in your
 statusline (wraps one you already have), and installs the dashboard
 daemon. Restart Claude Code and the face appears.
 
-Want to skip the questions? `/siltpoke-setup` has an **express** option — one
+Want to skip the questions? `/siltpoke:siltpoke-setup` has an **express** option — one
 confirmation for a default pet (a slime, its own personality, your language) —
 or take the full custom flow to shape species, name, and the five personality
 dials yourself.
@@ -95,11 +98,11 @@ install, no extra bill. Want reviews to stay entirely on your machine
 instead? Ask Siltpoke to set up a local model (Ollama); it's not on by
 default (a several-GB download) but it's one ask away.
 
-Trouble? `/siltpoke-doctor` runs an install-health checklist, or see
+Trouble? `/siltpoke:siltpoke-doctor` runs an install-health checklist, or see
 [docs § Troubleshooting](https://siltpoke.com/docs.html#troubleshooting).
 
 **Already running Siltpoke from source?** `bun run setup` still works.
-Running `/siltpoke-setup` migrates you onto the plugin and turns off the
+Running `/siltpoke:siltpoke-setup` migrates you onto the plugin and turns off the
 old Stop hook in `settings.json`, so reviews don't fire twice.
 
 ### Codex
@@ -281,26 +284,28 @@ claude plugin install project-lifecycle@project-life-cycle
 
 ## Daily use
 
-In Claude Code there are only 11 commands — everything else (review
+In Claude Code there are only 12 commands — everything else (review
 history, chat, memory, timeline, code-map) lives in the dashboard, not
 behind a slash command. This list is the whole set; there is no hidden
 one:
 
 ```
-/siltpoke-setup                   Create/recreate your pet, redo install
-/siltpoke-last                    Pull the most recent review into the chat
+/siltpoke:siltpoke-setup                   Create/recreate your pet, redo install
+/siltpoke:siltpoke-last                    Pull the most recent review into the chat
                                   (and record that it landed — this is the
                                   only path a review reaches a conversation)
-/siltpoke-dashboard               Open dashboard → http://127.0.0.1:9876
-/siltpoke-brain                   Show or set which CLI + model reviews your code
-/siltpoke-mute <duration>         Silence reviews (pair-programming, demos)
-/siltpoke-unmute                  Clear an active mute
-/siltpoke-doctor                  Install-health checklist
-/siltpoke-wake                    Reviews went quiet? Clear the stuck breaker
+/siltpoke:siltpoke-dashboard               Open dashboard → http://127.0.0.1:9876
+/siltpoke:siltpoke-brain                   Show or set which CLI + model reviews your code
+/siltpoke:siltpoke-mute <duration>         Silence reviews (pair-programming, demos)
+/siltpoke:siltpoke-unmute                  Clear an active mute
+/siltpoke:siltpoke-doctor                  Install-health checklist
+/siltpoke:siltpoke-wake                    Reviews went quiet? Clear the stuck breaker
                                   and review the next turn
-/siltpoke-restart-daemon          Restart the dashboard daemon (stop + start)
-/siltpoke-menubar <cmd>           Pet in the macOS menu bar via SwiftBar (install/status/remove)
-/siltpoke-help                    The full manual, generated from the CLI itself
+/siltpoke:siltpoke-restart-daemon          Restart the dashboard daemon (stop + start)
+/siltpoke:siltpoke-menubar <cmd>           Pet in the macOS menu bar via SwiftBar (install/status/remove)
+/siltpoke:siltpoke-uninstall               Undo what setup changed (status line, dashboard,
+                                  menu bar) — run it BEFORE removing the plugin
+/siltpoke:siltpoke-help                    The full manual, generated from the CLI itself
 ```
 
 Reviewing a review itself — marking one **seen** or **wrong** — is not a
@@ -309,7 +314,7 @@ dashboard's review history, because a button you can see beats a command
 you have to remember.
 
 Full reference (including how to switch the reviewer to a local Ollama
-model): **`/siltpoke-help`** in-chat, or
+model): **`/siltpoke:siltpoke-help`** in-chat, or
 [docs § Slash commands](https://siltpoke.com/docs.html#slash-commands).
 
 In Codex, use the Siltpoke skill/plugin surface instead of slash
@@ -318,10 +323,29 @@ commands: ask naturally for "Siltpoke inbox", "Siltpoke memory", or
 
 ## Uninstall
 
-**Installed via the plugin?** `/plugin uninstall siltpoke` removes the
-plugin (commands + hooks). Your pet's data stays in `~/.siltpoke/` —
-delete that folder yourself if you want it gone too (there's no
-automated purge for plugin installs yet).
+**Installed via the plugin?** Three steps, in this order:
+
+```bash
+/siltpoke:siltpoke-uninstall                       # in Claude Code: gives your status line back,
+                                          # stops the dashboard, removes the menu-bar pet
+claude plugin uninstall siltpoke          # in a terminal: removes the plugin (commands + hooks)
+sh ~/.siltpoke/bin/uninstall.sh --purge   # optional: deletes your pet's data in ~/.siltpoke
+```
+
+Installed Siltpoke for one project only (`--scope local` or `--scope project`)?
+Run the second command in that project's folder and add the same scope:
+`claude plugin uninstall siltpoke --scope local`.
+
+Already ran `claude plugin uninstall` first? That is fine. Your own status
+line comes back by itself the next time Claude Code draws it, and
+`sh ~/.siltpoke/bin/uninstall.sh` does the rest of the cleanup without the
+plugin. Removing the plugin alone used to leave the pet in the status line;
+it no longer does.
+
+Siltpoke never deletes `bun`, SwiftBar itself, or the `.siltpoke/` folder
+inside your projects — the uninstall output lists them, and you decide.
+`--purge` deletes your data only once no coding agent still has the plugin
+installed, and only if your status line was put back.
 
 **Installed from source?**
 

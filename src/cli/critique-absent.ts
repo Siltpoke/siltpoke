@@ -4,7 +4,7 @@
  * What to say when there is no review to show.
  *
  * WHY THIS EXISTS — audit defect `[5c]`. One string served two different
- * facts. A brand-new user's very first `/siltpoke-last` answered
+ * facts. A brand-new user's very first `/siltpoke:siltpoke-last` answered
  *
  *   # Siltpoke: review 'latest' not found.
  *
@@ -78,7 +78,7 @@ export function critiqueNotFound(idOrLatest: string): string {
   return (
     `# Siltpoke: no review with id '${idOrLatest}'.\n\n` +
     "This project does have reviews — that id just is not one of them. " +
-    "Run `/siltpoke-last` with no argument for the most recent one.\n"
+    "Run `/siltpoke:siltpoke-last` with no argument for the most recent one.\n"
   );
 }
 
@@ -88,7 +88,7 @@ export function critiqueNotFound(idOrLatest: string): string {
  *
  * Reachable without anything exotic — `src/state/critique.ts:406` treats the
  * copy to `latest.md` as NON-FATAL on purpose, so a disk or permission hiccup
- * leaves the archive written and the pointer missing. `/siltpoke-last` always
+ * leaves the archive written and the pointer missing. `/siltpoke:siltpoke-last` always
  * shells out with no argument, so `idOrLatest` is the sentinel `"latest"`,
  * which the user never typed.
  *
@@ -101,7 +101,7 @@ export function latestPointerMissing(): string {
     "# Siltpoke: reviews exist, but the `latest` pointer is missing.\n\n" +
     "Your reviews are still on disk under `.siltpoke/critiques/archive/`; only " +
     "the shortcut to the newest one is gone (writing it is allowed to fail " +
-    "without losing the review). Ask for one by id — `/siltpoke-last <id>` — " +
+    "without losing the review). Ask for one by id — `/siltpoke:siltpoke-last <id>` — " +
     "or let the next review run, which rewrites the pointer.\n"
   );
 }

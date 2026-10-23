@@ -7,7 +7,10 @@
  */
 import { test, expect, describe } from "bun:test";
 import {
+  bucketIdOfPath,
   projectArchitecture,
+  ROOT_BUCKET_ID,
+  subdirsWithPath,
   type ArchitectureProjection,
 } from "../../src/repo-graph/project-architecture";
 import type { ArchitectureOverlay } from "../../src/repo-graph/architecture-parser";
@@ -217,5 +220,128 @@ describe("projectArchitecture — degraded mode (no overlay)", () => {
     expect(ids).toEqual(["bar", "foo"]);
     // degraded: each subdir is its own panel → group id = subdir id
     expect(proj.subdirs.find((s) => s.id === "foo")!.group).toBe("foo");
+  });
+});
+
+describe("projectArchitecture — files at the repo root (degraded mode)", () => {
+  // agent-runtime shape: main.py at the root beside utils/. main.py used to
+  // land in no bucket, so both Code Map views drew 4 of the 5 indexed files.
+  const graph = makeGraph(
+    ["main.ts", "utils/a.ts", "utils/b.ts"],
+    [["main.ts", "./utils/a"]],
+  );
+  const proj = projectArchitecture(graph, null, makeMeta());
+
+  test("the root files get a bucket with a non-empty id and a file count", () => {
+    const root = proj.subdirs.find((s) => s.path === "");
+    expect(root).toBeDefined();
+    expect(root!.id).toBe(ROOT_BUCKET_ID);
+    expect(root!.files).toBe(1);
+    expect(root!.group).toBe(ROOT_BUCKET_ID);
+    expect(proj.groups.map((g) => g.id)).toContain(ROOT_BUCKET_ID);
+  });
+
+  test("bucketIdOfPath resolves a root file to the root bucket, and deeper files still go deeper", () => {
+    expect(bucketIdOfPath(proj.subdirs, "main.ts")).toBe(ROOT_BUCKET_ID);
+    expect(bucketIdOfPath(proj.subdirs, "utils/a.ts")).toBe("utils");
+  });
+
+  test("every indexed file resolves to some bucket", () => {
+    for (const n of graph.nodes) expect(bucketIdOfPath(proj.subdirs, n.path)).not.toBeNull();
+  });
+
+  test("an import from a root file draws an edge out of the root bucket", () => {
+    expect(proj.edges).toEqual([{ source: ROOT_BUCKET_ID, target: "utils", weight: 1 }]);
+  });
+});
+
+describe("subdirsWithPath", () => {
+  // Review of 19d66ecb: the island filtered with `path.length > 0`, so the
+  // root bucket never reached bucketIdOfPath and a jump to main.py did nothing.
+  test("keeps the root bucket (empty path) and drops only path-less entries", () => {
+    const kept = subdirsWithPath([
+      { id: ROOT_BUCKET_ID, path: "" },
+      { id: "utils", path: "utils/" },
+      { id: "legacy" },
+    ]);
+    expect(kept.map((s) => s.id)).toEqual([ROOT_BUCKET_ID, "utils"]);
+    expect(bucketIdOfPath(kept, "main.py")).toBe(ROOT_BUCKET_ID);
+  });
+});
+
+describe("projectArchitecture — other (non-code) files, Auto view", () => {
+  // agent-runtime shape: README.md + requirements.txt at the root, docs/ and
+  // tests/ with no indexed code, a note inside utils/.
+  const graph = makeGraph(["main.ts", "utils/a.ts", "utils/b.ts"]);
+  const others = ["README.md", "requirements.txt", "docs/plan.md", "docs/notes.md", "tests/test_a.py", "utils/NOTES.md"];
+  const proj = projectArchitecture(graph, null, makeMeta(), others);
+  const byId = new Map(proj.subdirs.map((s) => [s.id, s]));
+
+  test("code buckets keep their code counts and gain an other-file count", () => {
+    expect(byId.get(ROOT_BUCKET_ID)).toMatchObject({ files: 1, otherFiles: 2 });
+    expect(byId.get("utils")).toMatchObject({ files: 2, otherFiles: 1 });
+  });
+
+  test("folders with no code get their own boxes instead of falling into (root)", () => {
+    expect(byId.get("docs")).toMatchObject({ path: "docs/", files: 0, otherFiles: 2 });
+    expect(byId.get("tests")).toMatchObject({ path: "tests/", files: 0, otherFiles: 1 });
+    expect(proj.groups.map((g) => g.id)).toEqual(expect.arrayContaining(["docs", "tests"]));
+  });
+
+  test("every other file resolves through bucketIdOfPath to the box that counts it", () => {
+    const counted = new Map<string, number>();
+    for (const p of others) {
+      const id = bucketIdOfPath(proj.subdirs, p);
+      expect(id).not.toBeNull();
+      counted.set(id!, (counted.get(id!) ?? 0) + 1);
+    }
+    for (const s of proj.subdirs) expect(counted.get(s.id) ?? 0).toBe(s.otherFiles ?? 0);
+  });
+
+  test("code buckets are exactly what they are without other files", () => {
+    const plain = projectArchitecture(graph, null, makeMeta());
+    const codeOnly = proj.subdirs.filter((s) => s.files > 0).map(({ otherFiles: _o, ...s }) => s);
+    expect(codeOnly).toEqual(plain.subdirs);
+    expect(proj.edges).toEqual(plain.edges);
+  });
+
+  test("an authored CLAUDE.md overlay view ignores other files", () => {
+    const withOverlay = projectArchitecture(graph, OVERLAY, makeMeta(), others);
+    expect(withOverlay).toEqual(projectArchitecture(graph, OVERLAY, makeMeta()));
+  });
+
+  test("no other-files list (an older index) changes nothing", () => {
+    expect(projectArchitecture(graph, null, makeMeta(), null)).toEqual(projectArchitecture(graph, null, makeMeta()));
+  });
+});
+
+describe("projectArchitecture — other-file boxes never share an id", () => {
+  // Review of the other-files branch: tests/ mirroring src/ gave a second
+  // "daemon" box, and every id-keyed reader merged the two.
+  const graph = makeGraph(["src/daemon/a.ts", "src/web/b.ts", "src/cli/c.ts"]);
+  const others = ["tests/daemon/a.test.ts", "tests/web/b.test.ts", "docs/daemon/notes.md", "README.md"];
+  const proj = projectArchitecture(graph, null, makeMeta(), others);
+
+  test("ids are unique", () => {
+    const ids = proj.subdirs.map((s) => s.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  test("a colliding box takes its path as id; the code box keeps its name", () => {
+    const byPath = new Map(proj.subdirs.map((s) => [s.path, s.id]));
+    expect(byPath.get("src/daemon/")).toBe("daemon");
+    expect(byPath.get("tests/daemon/")).toBe("tests/daemon");
+    expect(byPath.get("docs/daemon/")).toBe("docs/daemon");
+  });
+
+  test("every file — code and other — resolves to the box (by path) that counts it", () => {
+    const counted = new Map<string, number>();
+    for (const p of [...others, ...graph.nodes.map((n) => n.path)]) {
+      const id = bucketIdOfPath(proj.subdirs, p);
+      const box = proj.subdirs.find((s) => s.id === id);
+      expect(box).toBeDefined();
+      counted.set(box!.path, (counted.get(box!.path) ?? 0) + 1);
+    }
+    for (const s of proj.subdirs) expect(counted.get(s.path) ?? 0).toBe(s.files + (s.otherFiles ?? 0));
   });
 });

@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { NUDGE_TEXT, nudgeLine } from "../../src/hooks/hook-guard-core";
 
 const REPO = process.cwd();
 let home: string;
@@ -32,23 +33,24 @@ beforeEach(() => { home = mkdtempSync(join(tmpdir(), "siltpoke-guard-")); });
 afterEach(() => { rmSync(home, { recursive: true, force: true }); });
 
 describe("stop.sh guard", () => {
-  test("no ~/.siltpoke/config.json → exit 0, nudge ONCE on stderr", () => {
+  test("no ~/.siltpoke/config.json → exit 0, nudge ONCE as systemMessage on stdout", () => {
     const first = runGuard({});
     expect(first.exitCode).toBe(0);
-    expect(new TextDecoder().decode(first.stderr)).toContain("/siltpoke-setup");
-    expect(existsSync(join(home, ".siltpoke", ".nudged"))).toBe(true);
+    // [stderr, stdout] — defect [33]: see setup-nudge-marker.test.ts
+    expect([first.stderr, first.stdout].map((b) => new TextDecoder().decode(b))).toEqual(["", nudgeLine(NUDGE_TEXT)]);
+    expect(existsSync(join(home, ".siltpoke", ".setup-nudged"))).toBe(true);
 
     // Second turn: still exit 0, but SILENT — a nudge every turn is spam.
     const second = runGuard({});
     expect(second.exitCode).toBe(0);
-    expect(new TextDecoder().decode(second.stderr)).toBe("");
+    expect([second.stderr, second.stdout].map((b) => new TextDecoder().decode(b))).toEqual(["", ""]);
   });
 
   test("bun missing → exit 0, silent after the first nudge", () => {
     // Empty PATH ⇒ `command -v bun` finds nothing.
     mkdirSync(join(home, ".siltpoke"), { recursive: true });
     writeFileSync(join(home, ".siltpoke", "config.json"), "{}");
-    writeFileSync(join(home, ".siltpoke", ".nudged"), "");
+    writeFileSync(join(home, ".siltpoke", ".setup-nudged"), "");
     const r = runGuard({ PATH: "" });
     expect(r.exitCode).toBe(0);
     expect(new TextDecoder().decode(r.stderr)).toBe("");
@@ -69,7 +71,7 @@ describe("stop.sh guard", () => {
     // not set" crash — the `set -u` safety this test originally existed for.
     mkdirSync(join(home, ".siltpoke"), { recursive: true });
     writeFileSync(join(home, ".siltpoke", "config.json"), "{}");
-    writeFileSync(join(home, ".siltpoke", ".nudged"), "");
+    writeFileSync(join(home, ".siltpoke", ".setup-nudged"), "");
     const r = Bun.spawnSync(["sh", join(REPO, "hooks", "stop.sh")], {
       env: (() => {
         const e: Record<string, string | undefined> = { ...process.env, HOME: home };
@@ -182,7 +184,7 @@ describe("stop.sh guard", () => {
       const first = runGuard({});
       expect(first.exitCode).toBe(0);
       expect(new TextDecoder().decode(first.stderr)).toBe("");
-      expect(existsSync(join(siltpokeDir, ".nudged"))).toBe(false);
+      expect(existsSync(join(siltpokeDir, ".setup-nudged"))).toBe(false);
 
       const second = runGuard({});
       expect(second.exitCode).toBe(0);

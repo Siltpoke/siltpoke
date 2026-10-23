@@ -8,6 +8,7 @@ import {
   formatJson,
   parseArgs,
 } from "../../src/cli/explain";
+import type { ExplainOutcome } from "../../src/explain/explain";
 import type { ExplainResult } from "../../src/explain/types";
 import type { StalenessVerdict } from "../../src/repo-graph/staleness-verdict";
 
@@ -52,6 +53,26 @@ function makeResult(overrides: Partial<ExplainResult["meta"]> = {}): ExplainResu
   };
 }
 
+/** An "explained" outcome with every required field filled; override per test. */
+function explainedOutcome(
+  r: ExplainResult = makeResult(),
+  over: Partial<Extract<ExplainOutcome, { kind: "explained" }>> = {},
+): Extract<ExplainOutcome, { kind: "explained" }> {
+  return {
+    kind: "explained",
+    result: r,
+    lowConfidence: false,
+    truncated: false,
+    usage: r.meta.brain_usage,
+    softCapExceeded: false,
+    softCapUsd: 0.05,
+    hardCapExceeded: false,
+    hardCapUsd: 0.1,
+    staleness: FRESH_STALENESS,
+    ...over,
+  };
+}
+
 describe("parseArgs", () => {
   test("positional target captured", () => {
     const opts = parseArgs(["runDoctor"]);
@@ -88,16 +109,7 @@ describe("parseArgs", () => {
 
 describe("formatHuman", () => {
   test("explained result includes H1 + cost line + cache path", () => {
-    const out = formatHuman({
-      kind: "explained",
-      result: makeResult(),
-      lowConfidence: false,
-      truncated: false,
-      usage: makeResult().meta.brain_usage,
-      softCapExceeded: false,
-      softCapUsd: 0.05,
-      staleness: FRESH_STALENESS,
-    });
+    const out = formatHuman(explainedOutcome());
     expect(out).toContain("runDoctor");
     expect(out).toContain("[src/cli/doctor.ts:42-87]");
     expect(out).toContain("$0.003");
@@ -106,16 +118,7 @@ describe("formatHuman", () => {
 
   test("low confidence emits warning banner", () => {
     const r = makeResult({ low_confidence: true, evidence_score: 0.5 });
-    const out = formatHuman({
-      kind: "explained",
-      result: r,
-      lowConfidence: true,
-      truncated: false,
-      usage: r.meta.brain_usage,
-      softCapExceeded: false,
-      softCapUsd: 0.05,
-      staleness: FRESH_STALENESS,
-    });
+    const out = formatHuman(explainedOutcome(r, { lowConfidence: true }));
     expect(out.toLowerCase()).toMatch(/low.confidence|⚠/);
   });
 
@@ -161,31 +164,12 @@ describe("formatHuman", () => {
     });
     expect(out).toContain("Run /siltpoke-index first");
   });
-
-  test("cost_cap_exceeded shows the offending cost", () => {
-    const out = formatHuman({
-      kind: "cost_cap_exceeded",
-      usage: makeResult().meta.brain_usage,
-      costUsd: 0.025,
-    });
-    expect(out).toContain("0.025");
-    expect(out.toLowerCase()).toContain("cost");
-  });
 });
 
 describe("formatJson", () => {
   test("explained envelope shape", () => {
     const out = JSON.parse(
-      formatJson({
-        kind: "explained",
-        result: makeResult(),
-        lowConfidence: false,
-        truncated: false,
-        usage: makeResult().meta.brain_usage,
-        softCapExceeded: false,
-        softCapUsd: 0.05,
-        staleness: FRESH_STALENESS,
-      }),
+      formatJson(explainedOutcome()),
     );
     expect(out.success).toBe(true);
     expect(out.data.kind).toBe("explained");
@@ -233,6 +217,6 @@ describe("EXIT_CODE", () => {
     expect(EXIT_CODE.pre_check_failed).toBe(1);
     expect(EXIT_CODE.ambiguous).toBe(1);
     expect(EXIT_CODE.not_found).toBe(2);
-    expect(EXIT_CODE.cost_cap_exceeded).toBe(3);
+    expect("cost_cap_exceeded" in EXIT_CODE).toBe(false);
   });
 });

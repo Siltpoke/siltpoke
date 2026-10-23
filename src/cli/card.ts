@@ -6,13 +6,15 @@ import { basename, join } from "node:path";
 import { readProgression } from "../state/progression";
 import { readState, isStale } from "../state/state";
 import { loadPersonality } from "../brain/personality";
-import { loadDailyRollup } from "../state/usage";
+import { dayKey, loadDailyRollup } from "../state/usage";
 import { loadBudgetConfig } from "../state/budget-config";
 import { loadReviewUnit } from "../config/review-unit-config";
 import { readStatus } from "../state/critique-status";
 import { readMute } from "../state/mute";
-import { readBrainHealth, brainUnhealthySignal } from "../state/brain-health";
+import { readBrainHealth } from "../state/brain-health";
+import { brainUnhealthySignal } from "../state/brain-signal";
 import { siltpokeRoot } from "../installer/paths";
+import { lastLocalDays, localDayOf } from "../utils/local-day";
 
 export interface CardOptions {
   homeBase?: string;
@@ -90,19 +92,11 @@ export function buildSparkline(
   days: number = 7,
 ): string {
   const buckets = new Array<number>(days).fill(0);
-  const todayKey = now.toISOString().slice(0, 10);
-  const todayMs = Date.parse(`${todayKey}T00:00:00Z`);
+  // Local days, oldest first: the user's own calendar, not UTC (C2).
+  const keys = lastLocalDays(now, days);
   for (const ts of timestamps) {
-    const t = Date.parse(ts);
-    if (!Number.isFinite(t)) continue;
-    // Align timestamp to its own UTC midnight so a 12:00 timestamp on today
-    // doesn't read as -1 day relative to today's midnight reference.
-    const tKey = new Date(t).toISOString().slice(0, 10);
-    const tMidnightMs = Date.parse(`${tKey}T00:00:00Z`);
-    const offsetDays = Math.round((todayMs - tMidnightMs) / 86_400_000);
-    if (offsetDays < 0 || offsetDays >= days) continue;
-    const bucketIdx = days - 1 - offsetDays;
-    buckets[bucketIdx] = (buckets[bucketIdx] ?? 0) + 1;
+    const idx = keys.indexOf(localDayOf(ts) ?? "");
+    if (idx >= 0) buckets[idx] = (buckets[idx] ?? 0) + 1;
   }
   const max = buckets.reduce((m, v) => Math.max(m, v), 0);
   if (max === 0) return " ".repeat(days);
@@ -185,10 +179,11 @@ async function countPendingCritiques(projectBase: string): Promise<number> {
 async function buildPerProjectSummary(
   rows: { ts: string; cwd: string }[],
   todayKey: string,
+  resetAtMinutes: number,
 ): Promise<ProjectSummary[]> {
   const byCwd = new Map<string, number>();
   for (const row of rows) {
-    if (!row.ts.startsWith(todayKey)) continue;
+    if (localDayOf(row.ts, resetAtMinutes) !== todayKey) continue;
     byCwd.set(row.cwd, (byCwd.get(row.cwd) ?? 0) + 1);
   }
   // Also surface projects with pending critiques but no calls today.
@@ -218,7 +213,7 @@ async function buildPerProjectSummary(
 }
 
 function formatMuteDisplay(mute: { indefinite: boolean; until_ms: number | null }, now: Date): string {
-  if (mute.indefinite) return "muted (indefinite — /siltpoke-unmute to resume)";
+  if (mute.indefinite) return "muted (indefinite — /siltpoke:siltpoke-unmute to resume)";
   if (mute.until_ms === null) return "muted";
   const remainingMs = mute.until_ms - now.getTime();
   if (remainingMs <= 0) return ""; // expired — caller treats as not-muted
@@ -302,7 +297,9 @@ export async function runCard(opts: CardOptions = {}): Promise<CardResult> {
   );
   const projects = await buildPerProjectSummary(
     brainRows,
-    now.toISOString().slice(0, 10),
+    // Same day as the totals above it (loadDailyRollup with the budget's resetAt).
+    dayKey(now, budgetConfig.resetAtMinutes),
+    budgetConfig.resetAtMinutes,
   );
 
   // v1.1-I — surface active mute status on the card so the user doesn't

@@ -65,7 +65,7 @@ async function get(): Promise<{ html: string; payload: Record<string, unknown> }
   const html = await res.text();
   const match = /data-initial="([^"]+)"/.exec(html);
   expect(match).not.toBeNull();
-  const raw = match![1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+  const raw = match![1]!.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
   return { html, payload: JSON.parse(raw) };
 }
 

@@ -14,7 +14,7 @@
  * Breaker windows:
  *   - resource:  failure #1 → 15min, #2+ consecutive → 60min
  *   - ambiguous: opens after 3 consecutive — 5 → 15 → 60min
- *   - permanent: latched until /siltpoke-wake or a passing doctor re-verify
+ *   - permanent: latched until /siltpoke:siltpoke-wake or a passing doctor re-verify
  *   - throttle:  no breaker (handled by the 1-retry policy)
  *   - any success → full reset (counters + breaker), last_failure RETAINED
  *     so doctor keeps showing the last-failure record.
@@ -24,6 +24,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { FailureClass } from "../brain/failure-classify";
 import { atomicWrite } from "../utils/atomic-write";
+import { DEFAULT_QUOTA_DAILY_CAP, loadQuotaDailyCapSync } from "../config/brain-quota-cap-config";
 import { loadBudgetConfigSync } from "./budget-config";
 import { dayKey } from "./usage";
 
@@ -67,8 +68,6 @@ export interface BrainHealth {
 
 const FILE = "brain-health.json";
 export const OUTER_RETRY_DAILY_CAP = 5;
-export const QUOTA_CALL_DAILY_CAP = 50;
-const SIGNAL_AGE_OUT_MS = 24 * 60 * 60 * 1000;
 const MIN = 60_000;
 
 /**
@@ -248,7 +247,7 @@ export function recordFailure(
 
   // A latched permanent breaker survives differently-classed failures (e.g.
   // an ambiguous failure via the /siltpoke-review path, which has no breaker
-  // pre-check) — permanent clears ONLY via /siltpoke-wake or doctor re-verify.
+  // pre-check) — permanent clears ONLY via /siltpoke:siltpoke-wake or doctor re-verify.
   if (health.breaker?.class === "permanent" && failure.class !== "permanent") {
     return {
       ...health,
@@ -319,7 +318,7 @@ export function isBreakerOpen(health: BrainHealth, now: Date): BreakerStatus {
   if (b.class === "permanent") {
     return {
       open: true,
-      reason: `permanent failure latched since ${b.opened_at} — clear via /siltpoke-wake or a passing doctor re-verify`,
+      reason: `permanent failure latched since ${b.opened_at} — clear via /siltpoke:siltpoke-wake or a passing doctor re-verify`,
     };
   }
   if (now.getTime() < Date.parse(b.next_eligible_at)) {
@@ -376,18 +375,32 @@ export function tryConsumeOuterRetry(basePath: string, now: Date): boolean {
 // ── Daily quota-call cap (brake for quota-billed providers, AC8) ─────────────
 // Keyed per-provider-name (T6): codex and agy are independent quota families
 // and must never share a pool — exhausting one must not gate the other.
+// Since defect [49] a key is a BUCKET, not always a bare provider name: chat
+// counts under `chat:<provider>` (the caller builds the key — see
+// `quotaBucket` in src/brain/brain-guarded.ts). Nothing here parses a key.
 
 export function canConsumeQuotaCall(
   health: BrainHealth,
   providerName: string,
   now: Date,
-  cap: number = QUOTA_CALL_DAILY_CAP,
+  cap: number = DEFAULT_QUOTA_DAILY_CAP,
   resetAtMinutes = 0,
 ): boolean {
   const today = dayOf(now, resetAtMinutes);
   const entry = health.quota_calls_today[providerName];
   const used = entry?.date === today ? entry.count : 0;
-  return used < cap;
+  return cap === 0 || used < cap;
+}
+
+/** How many calls `key` has made today — 0 when its entry is from another day. */
+export function quotaUsedToday(
+  health: BrainHealth,
+  key: string,
+  now: Date,
+  resetAtMinutes = 0,
+): number {
+  const entry = health.quota_calls_today[key];
+  return entry?.date === dayOf(now, resetAtMinutes) ? entry.count : 0;
 }
 
 export function consumeQuotaCall(
@@ -416,12 +429,15 @@ export function consumeQuotaCall(
  * true. Residual ms-window read→write race is accepted (bounded cost: one
  * extra call beyond the cap; this is a brake, not a ledger). Other
  * providers' entries in the map are untouched — independent pools.
+ *
+ * `cap` defaults to the REVIEW cap whatever the key is. A caller counting in
+ * another bucket (`chat:<provider>`) must pass that bucket's cap.
  */
 export function tryConsumeQuotaCall(
   basePath: string,
   providerName: string,
   now: Date,
-  cap: number = QUOTA_CALL_DAILY_CAP,
+  cap: number = loadQuotaDailyCapSync(basePath),
 ): boolean {
   const { resetAtMinutes } = loadBudgetConfigSync(basePath);
   const fresh = readBrainHealth(basePath);
@@ -430,95 +446,21 @@ export function tryConsumeQuotaCall(
   return true;
 }
 
-// ── Surfacing predicate (card ⚠ line + dashboard strip) ──────────────────────
-
-export interface UnhealthySignal {
-  show: boolean;
-  /** One-liner for the card / strip, "" when show=false. */
-  line: string;
-  /** The raw failure excerpt, for a `title`/tooltip. Empty when show=false.
-   *  It used to lead the line; a JSON tail is what a debugger wants and what
-   *  everyone else has to read past. */
-  detail: string;
-}
-
-/** "40m" / "1h" / "1h 30m". Minutes are rounded, hours are not folded away:
- *  `Math.round(90/60)` is 2, and a strip that turns an hour and a half into
- *  "2h" is wrong in the direction that matters for a countdown. */
-function coarseDuration(ms: number): string {
-  const mins = Math.max(0, Math.round(ms / 60_000));
-  if (mins < 60) return `${mins}m`;
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return m === 0 ? `${h}h` : `${h}h ${m}m`;
-}
-
 /**
- * Shared predicate for the state-card ⚠ line and the dashboard health strip:
- * surface when consecutive_failures ≥ 2 OR the failing class is permanent
- * (which surfaces at the FIRST failure). 24h age-out; clears automatically
- * when a success resets consecutive_failures to 0.
- *
- * The line distinguishes THREE states, because the first version had only one
- * and said the wrong thing for most of the time it was on screen. It read
- * `⚠ brain: resource ×4 — <80 chars of raw stderr>` in the present tense for a
- * full day after the last failure. Observed live: four failures at 15:34Z,
- * `last_attempt_ts` still 15:34Z an hour later, the breaker open that whole
- * hour — so nothing had even been attempted, and the strip was reporting a
- * live fault. "I am not currently trying" had no rendering, so it rendered as
- * "I am failing".
- *
- *   - breaker open on a timer → PAUSED, with the time left. The honest present
- *     tense: the brain is not failing, it is not being called.
- *   - breaker latched (permanent) → says so, and names the way out. A
- *     countdown here would be a lie; nothing expires.
- *   - breaker closed, failures still counted → past tense with an age, so a
- *     strip left over from this morning cannot read as one from this minute.
- *
- * The raw excerpt moves to `detail` (a tooltip) in all three.
+ * Give back one call consumed today — for a call whose process never started
+ * (install audit §110 W5, Windows Run 4: reviewer set to codex, codex not
+ * installed, `Executable not found`, and `quota_calls_today` still said 1).
+ * The cap counts calls made; a spawn that failed before the process existed
+ * made none. Never below 0; a slot from a previous day is not touched.
  */
-export function brainUnhealthySignal(
-  health: BrainHealth,
-  now: Date,
-): UnhealthySignal {
-  const f = health.last_failure;
-  const NONE: UnhealthySignal = { show: false, line: "", detail: "" };
-  if (f === null || health.consecutive_failures < 1) return NONE;
-  const escalated =
-    health.consecutive_failures >= 2 || f.class === "permanent";
-  if (!escalated) return NONE;
-  const ageMs = now.getTime() - Date.parse(f.ts);
-  if (!Number.isFinite(ageMs) || ageMs > SIGNAL_AGE_OUT_MS) return NONE;
-
-  const detail = f.stderr_excerpt.trim().length > 0
-    ? f.stderr_excerpt.trim().slice(0, 200)
-    : `exit ${f.exit_code ?? "?"}, no stderr`;
-  const n = health.consecutive_failures;
-  const times = `${n} ${f.class} failure${n === 1 ? "" : "s"}`;
-
-  const b = health.breaker;
-  if (b !== null && b.class === "permanent") {
-    // The ONE case that keeps the reason in the line. A permanent failure is
-    // an auth/flag problem where the reason IS the action — `/siltpoke-wake`
-    // does nothing about an invalid API key — and the statusline card renders
-    // this same string with no tooltip to put it in.
-    return {
-      show: true,
-      line: `⚠ brain stopped after ${times} — ${detail.slice(0, 80)} · clear with /siltpoke-wake or a passing doctor`,
-      detail,
-    };
-  }
-  const remainingMs = b === null ? 0 : Date.parse(b.next_eligible_at) - now.getTime();
-  if (b !== null && Number.isFinite(remainingMs) && remainingMs > 0) {
-    return {
-      show: true,
-      line: `⚠ brain paused after ${times} — retrying in ${coarseDuration(remainingMs)}`,
-      detail,
-    };
-  }
-  return {
-    show: true,
-    line: `⚠ brain: ${times}, last ${coarseDuration(ageMs)} ago — the next call will retry`,
-    detail,
-  };
+export function refundQuotaCall(basePath: string, key: string, now: Date): void {
+  const { resetAtMinutes } = loadBudgetConfigSync(basePath);
+  const fresh = readBrainHealth(basePath);
+  const today = dayOf(now, resetAtMinutes);
+  const entry = fresh.quota_calls_today[key];
+  if (entry === undefined || entry.date !== today || entry.count <= 0) return;
+  writeBrainHealth(basePath, {
+    ...fresh,
+    quota_calls_today: { ...fresh.quota_calls_today, [key]: { date: today, count: entry.count - 1 } },
+  });
 }

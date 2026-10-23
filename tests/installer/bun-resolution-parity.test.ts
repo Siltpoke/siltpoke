@@ -4,7 +4,7 @@
 // Three implementations of "where is bun" now exist, on purpose:
 //   1. hooks/lib/resolve-bun.sh      — sourced by the five hook guards
 //   2. the inline snippet in src/installer/shim.ts — the statusline + daemon shims
-//   3. resolveBunPath() in src/installer/bun-path.ts — what /siltpoke-doctor reads
+//   3. resolveBunPath() in src/installer/bun-path.ts — what /siltpoke:siltpoke-doctor reads
 //
 // They are separate because each runs somewhere the others cannot reach (the
 // shims live outside the plugin root and must work while it is mid-upgrade).

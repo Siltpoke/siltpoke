@@ -55,6 +55,28 @@ import { tokens } from "../../tokens/tokens";
 export * from "./memory-book-helpers";
 
 /**
+ * Timeline rows per page. A row costs ~7 ms to draw (50 rows 0.35–0.44 s, 342
+ * rows 2.2–3.0 s on the live page, 2026-10-15), so a page stays small however
+ * far you go — unlike the "show more" it replaced, which grew with each click.
+ * The data still arrives whole; only what is drawn is limited.
+ */
+const TIMELINE_PAGE = 10;
+
+/**
+ * After a page turn, bring the top of the timeline back into view — otherwise
+ * the reader is left at the bottom of the new page, where the buttons were.
+ * No-op outside a browser.
+ */
+function scrollTimelineToTop(data: unknown): void {
+  if (typeof document === "undefined") return;
+  const scroll = () =>
+    document.querySelector(".memory-timeline")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const alpine = data as { $nextTick?: (fn: () => void) => void };
+  if (alpine.$nextTick) alpine.$nextTick(scroll);
+  else scroll();
+}
+
+/**
  * The page's resolved proj_hash as a `?repo=` query suffix, read from the
  * `[data-proj-hash]` attribute Layout.tsx sets on the root `<html>` element
  * (per-request project resolution — see src/daemon/project-context.ts). Every
@@ -92,11 +114,23 @@ export interface MemoryBookData {
    * closeModal — a full page reload is the only way to re-arm it.
    */
   _recapFetched: boolean;
+  /**
+   * Requested timeline page, 0-based. Read it through pageNumber(): when the
+   * list shrinks below it, the last page that still has rows is shown. Any
+   * filter or sort change goes back to page 1.
+   */
+  page: number;
   TYPE_COLORS: Record<MemoryType, string>;
   STATUS_COLORS: Record<MemoryStatus, string>;
   init(): void;
   filteredMemories(): MemoryEventClient[];
   groups(): MemoryGroup[];
+  /** Pages in the filtered timeline — at least 1, even when it is empty. */
+  pageCount(): number;
+  /** The page shown, 1-based. */
+  pageNumber(): number;
+  nextPage(): void;
+  prevPage(): void;
   byEntityGroups(): EntityMemoryGroup[];
   memoriesForModal(): DecoratedRow[];
   samples(type: MemoryType): DecoratedRow[];
@@ -178,6 +212,7 @@ export function makeMemoryBookData(): MemoryBookData {
     parsing: false,
     toast: null as string | null,
     _recapFetched: false,
+    page: 0,
 
     TYPE_COLORS: {
       semantic: TYPE_META.semantic.color,
@@ -224,7 +259,32 @@ export function makeMemoryBookData(): MemoryBookData {
     groups(): MemoryGroup[] {
       // Pass the full memories list so decorateRow can resolve supersede partner
       // texts even when filtering hides the partner from the visible set.
-      return groupByDate(this.filteredMemories(), this.todayKey, this.memories);
+      const start = (this.pageNumber() - 1) * TIMELINE_PAGE;
+      return groupByDate(
+        this.filteredMemories().slice(start, start + TIMELINE_PAGE),
+        this.todayKey,
+        this.memories,
+      );
+    },
+
+    pageCount(): number {
+      return Math.max(1, Math.ceil(this.filteredMemories().length / TIMELINE_PAGE));
+    },
+
+    pageNumber(): number {
+      // Display-only clamp: `page` keeps the page she chose, so a list that
+      // shrinks and grows back returns to it. Page turns store the clamped value.
+      return Math.min(this.page, this.pageCount() - 1) + 1;
+    },
+
+    nextPage(): void {
+      this.page = Math.min(this.pageNumber(), this.pageCount() - 1);
+      scrollTimelineToTop(this);
+    },
+
+    prevPage(): void {
+      this.page = Math.max(this.pageNumber() - 2, 0);
+      scrollTimelineToTop(this);
     },
 
     byEntityGroups(): EntityMemoryGroup[] {
@@ -331,14 +391,17 @@ export function makeMemoryBookData(): MemoryBookData {
 
     setFilterType(type: MemoryType | ""): void {
       this.filterType = type;
+      this.page = 0;
     },
 
     setFilterStatus(status: MemoryStatus | ""): void {
       this.filterStatus = status;
+      this.page = 0;
     },
 
     toggleSort(): void {
       this.sortDesc = !this.sortDesc;
+      this.page = 0;
     },
 
     sortLabel(): string {
@@ -891,12 +954,27 @@ export function makeMemoryBookData(): MemoryBookData {
      * target element is not currently in the DOM (filtered / not rendered).
      */
     jumpToFact(id: string | null): void {
-      if (!id || typeof document === "undefined") return;
-      const el = document.querySelector(`[data-event-id="${id}"]`);
-      if (!el) return;
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-      el.classList.add("memory-row-highlight");
-      setTimeout(() => el.classList.remove("memory-row-highlight"), 1500);
+      if (!id) return;
+      // The target may sit on another page (a supersede partner is often an
+      // older, retired fact). Turn to its page, then scroll once Alpine has
+      // rendered it. Only from the timeline: the by-type modal reuses the same
+      // rows, and turning the hidden timeline behind it helps nobody.
+      const index =
+        this.view === "timeline" ? this.filteredMemories().findIndex((m) => m.id === id) : -1;
+      const targetPage = index >= 0 ? Math.floor(index / TIMELINE_PAGE) : -1;
+      const turned = targetPage >= 0 && targetPage !== this.pageNumber() - 1;
+      if (turned) this.page = targetPage;
+      if (typeof document === "undefined") return;
+      const highlight = () => {
+        const el = document.querySelector(`[data-event-id="${id}"]`);
+        if (!el) return;
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.add("memory-row-highlight");
+        setTimeout(() => el.classList.remove("memory-row-highlight"), 1500);
+      };
+      const alpine = this as unknown as { $nextTick?: (fn: () => void) => void };
+      if (turned && alpine.$nextTick) alpine.$nextTick(highlight);
+      else highlight();
     },
   };
 }

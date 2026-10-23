@@ -6,6 +6,8 @@ import type { BrainCallResult, BrainUsage, CallBrainOptions } from "../brain/bra
 import type { DiffCoverage } from "../brain/hunk-selection";
 import type { MemoryFunnel, PromptSectionBytes } from "../brain/prompt-assembly";
 import type { BrainProviderMeta } from "../brain/provider";
+import type { ToolCallsField } from "../brain/tool-calls";
+import type { InjectionAlert } from "./injection-alert";
 import type { BrainOutput } from "../brain/schema";
 import type { CoreMemory } from "../memory/memory";
 import type { RecentEntry } from "../memory/recent";
@@ -30,6 +32,13 @@ export type CriticSource = "stop-hook" | "review-cli";
  */
 export type BrainContext = {
   personalitySystemPrompt: string;
+  /**
+   * The configured output language, expanded (`expandLanguage`) — the same
+   * value the system prompt's `{language}` got. Restated as the last lines of
+   * the reviewer's user message (defect [74]). Absent → the message is the
+   * bare pre-[74] one (eval harnesses).
+   */
+  outputLanguage?: string;
   memory: CoreMemory | null;
   recent: RecentEntry[];
   fileTypes?: Set<string>;
@@ -152,12 +161,15 @@ export type V2ResultFields = {
 /**
  * Provider truth carried on every branch (track #7 T3, AC7/AC14) — resolved
  * once at the top of runCritic (independent of tool classification), so it
- * is known even on HARD_SUPPRESS. `servedModel` is only ever set on branches
- * where a Brain call actually returned (PASSIVE_BUBBLE / NORMAL).
+ * is known even on HARD_SUPPRESS. `servedModel` and `toolCalls` are only ever
+ * set on branches where a Brain call actually returned (PASSIVE_BUBBLE / NORMAL).
  */
 export type ProviderResultFields = {
   providerMeta?: BrainProviderMeta;
   servedModel?: string;
+  toolCalls?: ToolCallsField;
+  /** Set only when an injection signal fired (self report or outside read); absent otherwise. Warn-only. */
+  injectionAlert?: InjectionAlert;
 };
 
 /**
@@ -175,7 +187,35 @@ export type MemoryFunnelFields = {
 };
 
 export type RunCriticResult =
-  | ({ decision: "HARD_SUPPRESS"; reason: string; diffSnapshotId?: string; diffSummary?: DiffSummary; summaryError?: string; timing?: TimingTrace; /** Set when the suppression was caused by the quota-billed-provider daily call cap, or (track #7 T4) by the agy provider's pre-spawn argv-too-large abstain — lets the Stop hook write an honest `skipped: "quota_cap"` / `skipped: "agy_prompt_too_large"` telemetry row instead of a generic HARD_SUPPRESS free-text reason. */ skipCode?: "quota_cap" | "agy_prompt_too_large" } & V2ResultFields & ProviderResultFields & MemoryFunnelFields)
+  | ({
+      decision: "HARD_SUPPRESS";
+      reason: string;
+      diffSnapshotId?: string;
+      diffSummary?: DiffSummary;
+      summaryError?: string;
+      timing?: TimingTrace;
+      /**
+       * Set when the suppression was caused by the quota-billed-provider daily
+       * call cap, or (track #7 T4) by the agy provider's pre-spawn
+       * argv-too-large abstain — lets the Stop hook write an honest
+       * `skipped: "quota_cap"` / `skipped: "agy_prompt_too_large"` telemetry row
+       * instead of a generic HARD_SUPPRESS free-text reason.
+       */
+      skipCode?: "quota_cap" | "agy_prompt_too_large";
+      /**
+       * Set when this suppression means the unit was NOT looked at — a Brain
+       * call that produced no reply (spawn error, timeout, rejected reply), or
+       * a `runTools` throw before any prompt existed. NOT set for a pre-spawn
+       * abstain: `skipCode` is a policy skip whose answer never changes on a
+       * retry, so it consumes the unit rather than freezing the range.
+       * The Stop hook reads it to decide whether the review unit was consumed:
+       * such a turn must leave the anchor where it was, or that commit's diff is
+       * unreachable by every later `<anchor>..HEAD` range (defect `[27]`,
+       * measured 2026-09-24). Absent on the abstention floor and the true no-op
+       * — those DID look.
+       */
+      brainFailed?: true;
+    } & V2ResultFields & ProviderResultFields & MemoryFunnelFields)
   /**
    * PASSIVE_BUBBLE. `evidenceLabel` is the literal `"not_checked"`, never a
    * wider `EvidenceLabel`: this phase does not call `guardCritique` at all —

@@ -12,6 +12,9 @@
 
 import type { CoreMemory } from "../memory/memory";
 import { readActiveFacts } from "../memory/recall";
+import { readHomePageText } from "./home-page-context";
+import { readSettingsPageText } from "./settings-page-context";
+import { readTimelinePageText } from "./timeline-page-context";
 
 export interface PageContext {
   pageLabel: string;
@@ -22,6 +25,12 @@ export interface PageContext {
 export interface PageContextDeps {
   homeBase: string;
   readMemory?: (homeBase: string) => Promise<CoreMemory | null>;
+  /** Test seam — the Settings page as text. Default: `readSettingsPageText`. */
+  readSettingsPage?: (homeBase: string) => Promise<string>;
+  /** Test seam — the Timeline page as text. Default: `readTimelinePageText`. */
+  readTimelinePage?: (homeBase: string) => Promise<string>;
+  /** Test seam — the Home page as text. Default: `readHomePageText`. */
+  readHomePage?: (homeBase: string) => Promise<string>;
 }
 
 const PAGE_SYSTEM_PROMPT =
@@ -31,7 +40,7 @@ const PAGE_SYSTEM_PROMPT =
 
 const LABELS: Record<string, string> = {
   "/memory": "Memory Book",
-  "/repo-graph": "Repo Graph",
+  "/repo-graph": "Code Map", // renamed in #214; the route kept its old path
   "/": "Home",
 };
 
@@ -70,6 +79,22 @@ function labelOnly(pageId: string): PageContext {
   return { pageLabel: label, contextBundle: "", systemPrompt: `${PAGE_SYSTEM_PROMPT}\n\nThe user is on the ${label} page.` };
 }
 
+/** A page whose content is read as text: label only when the text is empty or the read fails. */
+async function pageAsText(pageId: string, read: () => Promise<string>, about: string): Promise<PageContext> {
+  try {
+    const bundle = await read();
+    if (!bundle) return labelOnly(pageId);
+    const label = pageLabelFor(pageId);
+    return {
+      pageLabel: label,
+      contextBundle: bundle,
+      systemPrompt: `${PAGE_SYSTEM_PROMPT}\n\nThe user is on the ${label} page, ${about}.`,
+    };
+  } catch {
+    return labelOnly(pageId);
+  }
+}
+
 export async function assemblePageContext(pageId: string, deps: PageContextDeps): Promise<PageContext | null> {
   if (!pageId) return null;
   const label = pageLabelFor(pageId);
@@ -83,6 +108,29 @@ export async function assemblePageContext(pageId: string, deps: PageContextDeps)
     } catch {
       return labelOnly(pageId);
     }
+  }
+  // told only "the user is on the Settings page", chat
+  // asked her what was on it. It now gets the page as text; /timeline too.
+  if (pageId === "/settings") {
+    return pageAsText(
+      pageId,
+      () => (deps.readSettingsPage ?? readSettingsPageText)(deps.homeBase),
+      "which shows which agent and model each of Siltpoke's own roles uses, their daily caps and today's counts, and the coding agents seen on this machine",
+    );
+  }
+  if (pageId === "/") {
+    return pageAsText(
+      pageId,
+      () => (deps.readHomePage ?? readHomePageText)(deps.homeBase),
+      "which shows their pet, its stats and XP, and today's token budget",
+    );
+  }
+  if (pageId === "/timeline") {
+    return pageAsText(
+      pageId,
+      () => (deps.readTimelinePage ?? readTimelinePageText)(deps.homeBase),
+      "which lists Siltpoke's reviews of their coding agents' turns, newest first, and opens the newest one",
+    );
   }
   return labelOnly(pageId);
 }

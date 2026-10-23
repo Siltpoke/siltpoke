@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { BrainError } from "../../../src/brain/brain";
 import { classifyBrainFailure } from "../../../src/brain/failure-classify";
 import { makeCodexProvider } from "../../../src/brain/providers/codex";
+import { codexSandboxArgs } from "../../../src/brain/providers/codex-sandbox";
 import { z } from "zod";
 import { brainOutputSchema } from "../../../src/brain/schema";
 
@@ -69,7 +70,7 @@ test("codex provider meta matches spec §1 (quota billing, openai gen_ai.system)
     name: "codex",
     billing: "quota",
     genAiSystem: "openai",
-    acceptsModel: false,
+    acceptsModel: true,
   });
 });
 
@@ -114,6 +115,25 @@ test("servedModel fallback: ~/.codex/config.toml model key (the practical produc
     spawnFn: fakeSpawn({ stdoutText: happyJsonl, stderrText: "" }),
   });
   expect(servedModel).toBe("gpt-5.5");
+});
+
+test("a chosen model is passed as -m and is the served model, over codex's config file", async () => {
+  const home = mkdtempSync(join(tmpdir(), "codex-test-cfg-"));
+  mkdirSync(join(home, ".codex"), { recursive: true });
+  writeFileSync(join(home, ".codex", "config.toml"), 'model = "gpt-5.5"\n');
+  let argv: string[] = [];
+  const spy = ((cmd: string[], o: unknown) => {
+    argv = cmd;
+    return (fakeSpawn({ stdoutText: happyJsonl, stderrText: "" }) as unknown as (c: string[], o: unknown) => unknown)(cmd, o);
+  }) as unknown as typeof Bun.spawn;
+  const { servedModel } = await makeCodexProvider({ configHome: home }).call({
+    systemPrompt: "s",
+    contextBundle: "c",
+    model: "gpt-5.6-luna",
+    spawnFn: spy,
+  });
+  expect(argv[argv.indexOf("-m") + 1]).toBe("gpt-5.6-luna");
+  expect(servedModel).toBe("gpt-5.6-luna");
 });
 
 // ── 3. usage normalization arithmetic (AC6) ─────────────────────────────
@@ -184,9 +204,11 @@ test("argv shape survives a realistic multi-line system prompt (single -c elemen
   expect(seenArgv).toContain("--json");
   expect(seenArgv).toContain("--ephemeral");
   expect(seenArgv).toContain("--skip-git-repo-check");
-  expect(seenArgv[seenArgv.indexOf("-s") + 1]).toBe("read-only");
-  // whole multi-line prompt rides ONE argv element after -c
-  const cIdx = seenArgv.indexOf("-c");
+  expect(seenArgv.slice(seenArgv.indexOf("--skip-git-repo-check") + 1, seenArgv.indexOf("-C"))).toEqual(
+    codexSandboxArgs(seenArgv[seenArgv.indexOf("-C") + 1] as string),
+  );
+  // whole multi-line prompt rides ONE argv element after the -c that follows -C
+  const cIdx = seenArgv.indexOf("-c", seenArgv.indexOf("-C"));
   expect(seenArgv[cIdx + 1]).toBe(`developer_instructions=${multiLinePrompt}`);
   expect(seenArgv[seenArgv.indexOf("--output-schema") + 1]).toMatch(/\.json$/);
   expect(seenArgv[seenArgv.length - 1]).toBe("-");

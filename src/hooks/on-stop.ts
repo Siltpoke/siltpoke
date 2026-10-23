@@ -13,7 +13,7 @@ import {
 import { isSiltpokedPing, resolveDaemonPort } from "../daemon/port";
 import { resolveDaemonEntry } from "../installer/daemon-path";
 import { siltpokeRoot } from "../installer/paths";
-import type { HookEvent } from "../router/router";
+import { type HookEvent, isSiltpokeInternal } from "../router/router";
 import { appendJsonLine, handleStopHook } from "./handle-stop";
 
 export type { HookEvent } from "../router/router";
@@ -26,9 +26,22 @@ async function readStdinAll(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+/**
+ * The daemon spawn seam.
+ *
+ * `detached` is part of the type, not an optional extra a caller may drop: the
+ * whole point of this spawn is a child that outlives the hook process, and a
+ * test double that silently accepted a spawn WITHOUT it would let the Windows
+ * regression back in while staying green.
+ */
 export type DaemonSpawnFn = (
   cmd: string[],
-  opts: { stdio: ["ignore", "ignore", "ignore"] },
+  opts: {
+    stdio: ["ignore", "ignore", "ignore"];
+    detached: true;
+    /** Never carries SILTPOKE_INTERNAL — a daemon must not look like a child. */
+    env?: NodeJS.ProcessEnv;
+  },
 ) => { unref(): void };
 
 export interface RunHookOptions {
@@ -78,12 +91,33 @@ function respawnDisabled(env: NodeJS.ProcessEnv): boolean {
  */
 export { resolveDaemonEntry as resolveDaemonTarget };
 
-function respawnDaemonDetached(spawnFn?: DaemonSpawnFn): void {
+function respawnDaemonDetached(spawnFn?: DaemonSpawnFn, hookEnv: NodeJS.ProcessEnv = process.env): void {
   try {
+    // Defence in depth (defect [73]): the daemon outlives this hook, and a
+    // daemon that inherited SILTPOKE_INTERNAL=1 would treat every request as a
+    // siltpoke-spawned child.
+    //
+    // Same for SILTPOKE_HOST (defect [69]): it names the host of THIS hook run.
+    // The daemon serves every host for as long as it lives (src/installer/
+    // last-host.ts: it "never sees SILTPOKE_HOST"; chat reads `last-host`).
+    // Inherited, it pinned the reviving host as the author and default reviewer
+    // of every later request the daemon handled.
+    const { SILTPOKE_INTERNAL: _internal, SILTPOKE_HOST: _host, ...daemonEnv } = hookEnv;
     const spawn: DaemonSpawnFn = spawnFn ?? ((cmd, opts) => Bun.spawn(cmd, opts));
     const daemonScript = resolveDaemonEntry(import.meta.dir);
-    const proc = spawn(["bun", daemonScript, "start"], {
+    // This function is named respawnDaemonDetached and did not pass `detached`.
+    // Third site with the same gap; see src/cli/dashboard.ts for the why. A
+    // hook's child is the one that most needs its own process group: the hook
+    // process is short-lived by design, so anything still tied to it dies
+    // almost immediately.
+    //
+    // `process.execPath` rather than a bare "bun" for the same reason as the
+    // other two — a hook runs in a non-login shell, and on Windows in no shell
+    // at all.
+    const proc = spawn([process.execPath, daemonScript, "start"], {
       stdio: ["ignore", "ignore", "ignore"],
+      detached: true,
+      env: daemonEnv,
     });
     proc.unref();
   } catch {
@@ -112,13 +146,13 @@ export async function maybeRespawnDaemon(env: NodeJS.ProcessEnv, spawnFn?: Daemo
     // (install.ts, daemon-config.ts callers, doctor.ts, etc.) resolves via
     // siltpokeRoot() — NOT raw `env.HOME` (that would read `~/config.json`,
     // which is never written, so this gate would silently never fire even
-    // after the user opts in via `/siltpoke-dashboard`).
+    // after the user opts in via `/siltpoke:siltpoke-dashboard`).
     const home = siltpokeRoot(env);
     const daemonCfg = await loadDaemonConfig(home);
     if (!daemonCfg.enabled) return;
     const port = resolveDaemonPort(env);
     if (await probeDaemon(port)) return;
-    respawnDaemonDetached(spawnFn);
+    respawnDaemonDetached(spawnFn, env);
   } catch {
     // best-effort — respawn must never break the hook
   }
@@ -265,6 +299,12 @@ export async function runHook(opts: RunHookOptions): Promise<void> {
 if (import.meta.main) {
   try {
     const raw = await readStdinAll();
+    // Defect [73]: source installs wire THIS file directly (no .sh wrapper), so a
+    // siltpoke-spawned child session lands here. Exit before handleStopHook (which
+    // would append a recursion_guard row) and before any daemon respawn. The guard
+    // lives in the entry, not runHook: handleStopHook's recursion_guard row is a
+    // tested contract for direct callers.
+    if (isSiltpokeInternal(process.env)) process.exit(0);
     await runHook({ rawJson: raw });
     process.exit(0);
   } catch (err) {

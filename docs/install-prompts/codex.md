@@ -12,17 +12,21 @@ Run `uname -s`. If it fails, or prints anything that is not `Darwin` or `Linux`
 (on Windows it will not exist, or a Git-Bash shell prints `MINGW64_NT-...`),
 **stop here and tell me this, in my language, before installing anything:**
 
-> Siltpoke does not support native Windows yet. It will install, the pet will
-> appear, the commands will work and the config will say the setup is fine —
-> but the review hook is registered as `sh ./hooks/stop.sh`, Windows has no
-> `sh`, so no review will ever run and nothing will say so. If you have WSL,
-> run this again inside WSL and everything works, because that is Linux.
-> Otherwise, wait for native Windows support.
+> **On native Windows, reviews work, but only one reviewer has been confirmed.**
+> On a real Windows 10 machine (2026-09-29) a commit triggered the review hook
+> and the reviewer answered — with `claude` as the reviewer. All five reviewer
+> CLIs are wired for Windows, but the other four (`codebuddy`, `qoder`,
+> `codex`, `agy`) have not run on a Windows machine yet. Also not yet checked
+> there: an install path that contains a space, and a diff that contains
+> Chinese characters or emoji. The pet, the statusline, and the dashboard work.
+> If you have WSL, run this again inside WSL — that is Linux, and it is the
+> fully proven path.
 
 Then ask whether I want to continue anyway. **Do not install unless I say yes**,
-and if I do, say once more that reviews will not fire. Project Life Cycle has no
-such problem — it is prompts and commands, no hook — so offer to install only
-PLC instead.
+and if I do, say once more that on native Windows reviews are **confirmed only with
+`claude` as the reviewer**, and that the Siltpoke doctor's **review hook can start** row (say "check my Siltpoke install") is where to look if
+none appear — a missing review there is worth reporting, not my fault. Project Life Cycle has no such problem — it is prompts and commands, no
+hook — so offer to install only PLC instead.
 
 ## Step 0 — What do I already have, and what do I want?
 
@@ -52,6 +56,8 @@ The `@siltpoke` part is required — a bare `codex plugin add siltpoke` fails.
 2. Read the section "Codex setup" in `~/plugins/project-lifecycle/README.md` and follow it exactly: it adds one entry to `~/.agents/plugins/marketplace.json`, then runs `codex plugin add project-lifecycle@<marketplace-name>`. If that file already exists, show me the change before you write it. If you cannot tell the marketplace name, show me the file and ask.
 
 Then run `codex plugin list` and confirm each one I picked shows as installed and enabled. Do not claim success from the install output alone. **If Siltpoke is not in that list, stop here and show me the error** — do not go on to Step 3; setup on a plugin that is not installed looks like it worked, but reviews will never run.
+
+**Tell me this before my next Codex session:** the next time I open Codex it will show **"Hooks need review"**. Siltpoke's review runs from those hooks, and Codex does not run a hook until I trust it. I should pick **Trust all and continue** (or review them and trust Siltpoke's). "Continue without trusting" means no review ever runs, with nothing on screen to say so. If I already chose that, `/hooks` inside Codex lets me trust them later.
 
 ## Step 3 — Set up Siltpoke (skip if I did not pick it)
 

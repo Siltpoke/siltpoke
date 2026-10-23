@@ -27,6 +27,8 @@
  */
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runSetupHintCli } from "./agy-setup-hint";
+import { runWirePetCli } from "./agy-wire-pet";
 import { maybeRecordWhy } from "./why-index-wiring";
 
 async function readStdinAll(): Promise<string> {
@@ -123,6 +125,17 @@ export type AgyReviewSpawnFn = (
   cmd: string[],
   opts: {
     stdio: ["pipe", "ignore", "ignore"];
+    /**
+     * REQUIRED, not optional.
+     *
+     * This file's own header has said since it was written that it hands the
+     * payload to "a DETACHED background process (the same fire-and-forget
+     * pattern on-stop.ts already uses for daemon respawn)". It did not pass
+     * `detached`, and neither did the three sites it names as its model —
+     * making this the fifth piece of text in the codebase asserting a property
+     * nothing enforced. Required in the type means the compiler enforces it.
+     */
+    detached: true;
     env?: Record<string, string | undefined>;
   },
 ) => {
@@ -138,8 +151,15 @@ function dispatchAgyReview(
 ): void {
   try {
     const spawn: AgyReviewSpawnFn = spawnFn ?? ((cmd, opts) => Bun.spawn(cmd, opts));
-    const proc = spawn(["bun", onStopTarget], {
+    // `process.execPath`, not a bare "bun": agy's Stop hook is synchronous, so
+    // this parent exits almost immediately, and the command it leaves behind is
+    // resolved by whatever shell the host uses — a non-login one on Unix, none
+    // at all on Windows, where `where.exe bun` finds nothing even with bun
+    // installed. `detached` for the same reason the daemon needed it: without
+    // it this child dies with the hook process and the review is silently lost.
+    const proc = spawn([process.execPath, onStopTarget], {
       stdio: ["pipe", "ignore", "ignore"],
+      detached: true,
       env: { ...env, SILTPOKE_SUPPRESSION_ENABLED: env.SILTPOKE_SUPPRESSION_ENABLED ?? "1" },
     });
     if (proc.stdin) {
@@ -230,6 +250,21 @@ export async function runAgyStopHook(
  */
 export function writeStopResponse(out: { write(chunk: string): void } = process.stdout): void {
   out.write("{}");
+}
+
+if (import.meta.main && process.argv.includes("--wire-pet")) {
+  // Setup already ran (config.json exists) but agy's statusline never got the
+  // pet — defect [53]. Same contract as --setup-hint: no stdin, no output.
+  runWirePetCli(process.argv, process.env);
+  process.exit(0);
+}
+
+if (import.meta.main && process.argv.includes("--setup-hint")) {
+  // Before setup: wire agy's statusline to the setup hint, then leave. No
+  // stdin, no review, and no `{}` — hooks/agy-stop.sh discards all output on
+  // this path and answers agy itself.
+  runSetupHintCli(process.argv, process.env);
+  process.exit(0);
 }
 
 if (import.meta.main) {

@@ -120,21 +120,27 @@ test("codebuddy: reviewer_model reaches the spawned --model argv", async () => {
 // instead of closing it, which is how `brain show` came to display a model the
 // process never received. resolveRole now strips a model codex cannot send
 // (spec brain-select-four-gaps §3.1); the argv half of the assertion is unchanged.
-test("codex: reviewer_model is STRIPPED at resolve, and never reaches argv", async () => {
+// a model codex lists for the
+// account is accepted under ChatGPT auth (probed 2026-10-16), so it is handed
+// over as `-m` like every other agent's.
+test("codex: reviewer_model survives resolve and reaches argv as -m", async () => {
   const resolved = resolveRole(
-    parseBrainConfig(JSON.stringify({ reviewer_provider: "codex", reviewer_model: "gpt-5.5" })),
+    parseBrainConfig(JSON.stringify({ reviewer_provider: "codex", reviewer_model: "gpt-5.6-luna" })),
     "review",
   );
   expect(resolved.family).toBe("codex");
-  expect(resolved.model).toBeUndefined();
-  // ... and the codex adapter never emits a --model / -m flag either.
+  expect(resolved.model).toBe("gpt-5.6-luna");
   const argv = await argvForConfig(
-    JSON.stringify({ reviewer_provider: "codex", reviewer_model: "gpt-5.5" }),
+    JSON.stringify({ reviewer_provider: "codex", reviewer_model: "gpt-5.6-luna" }),
   );
   expect(argv[0]).toBe("codex");
-  expect(argv).not.toContain("--model");
+  expect(argv[argv.indexOf("-m") + 1]).toBe("gpt-5.6-luna");
+});
+
+test("codex with no model chosen: no -m, so codex's own config decides", async () => {
+  const argv = await argvForConfig(JSON.stringify({ reviewer_provider: "codex" }));
+  expect(argv[0]).toBe("codex");
   expect(argv).not.toContain("-m");
-  expect(argv).not.toContain("gpt-5.5");
 });
 
 // AC3, the half that is actually ground truth (spec brain-select-four-gaps).

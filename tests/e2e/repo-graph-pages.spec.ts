@@ -135,3 +135,49 @@ test("10. [fixture] explain button shows Generate when no cache", async ({ page 
     timeout: 5_000,
   });
 });
+
+test("defect [76]. a cached file's Re-generate is its own one-line button; only it sends force", async ({ page }) => {
+  // Mark every file cached so the foot draws "Open explanation" + "Re-generate",
+  // and answer the explain POST with a 409 so nothing paid runs: we only read the body.
+  await page.route("**/api/repo-graph/files*", async (route) => {
+    const res = await route.fetch();
+    const json = await res.json();
+    for (const f of json?.data?.files ?? json?.files ?? []) f.explainState = "valid";
+    await route.fulfill({ response: res, json });
+  });
+  const forces: boolean[] = [];
+  await page.route("**/api/repo-graph/explain", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    forces.push(route.request().postDataJSON().force);
+    await route.fulfill({ status: 409, json: { error: "busy" } });
+  });
+
+  await page.goto(FIXTURE_URL);
+  const alpha = page.locator(".c4-node", { hasText: "alpha" });
+  await expect(alpha).toBeVisible({ timeout: 10_000 });
+  await alpha.click({ force: true });
+  await page.waitForTimeout(300);
+  await alpha.click();
+  const aFile = page.locator(".node.kind-file", { hasText: "a.ts" });
+  await expect(aFile).toBeVisible({ timeout: 10_000 });
+  await aFile.click();
+
+  const open = page.locator("#rg-expl-btn");
+  const regen = page.locator("#rg-expl-regen");
+  await expect(open).toContainText(/open explanation/i, { timeout: 5_000 });
+  expect(await regen.evaluate((el) => el.tagName)).toBe("BUTTON");
+  const o = (await open.boundingBox())!;
+  const r = (await regen.boundingBox())!;
+  expect(r.height).toBeLessThan(44); // one line, not "Re-" / "generate"
+  expect(r.height).toBeGreaterThanOrEqual(28); // a real hit area
+  expect(r.y - (o.y + o.height)).toBeGreaterThan(20); // clear of the primary button
+
+  await open.click();
+  await expect.poll(() => forces.length).toBe(1);
+  expect(forces).toEqual([false]);
+  await page.keyboard.press("Escape"); // the 409 note modal covers the panel
+  await expect(page.locator("#rg-ex-overlay.open")).toHaveCount(0);
+  await page.locator("#rg-expl-regen").click();
+  await expect.poll(() => forces.length).toBe(2);
+  expect(forces).toEqual([false, true]);
+});

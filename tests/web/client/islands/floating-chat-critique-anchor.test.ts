@@ -75,7 +75,7 @@ describe("openCritiqueChat() + send() — critique_anchor open path", () => {
     expect(body.critique_anchor).toEqual({ proj_hash: "abc123abc123", critique_id: "c-1a2b" });
     expect(body.anchor).toBeUndefined();
     expect(d.active()?.serverSessionId).toBe("s-critique");
-    expect(d.active()?.messages.at(-1)).toEqual({ role: "assistant", text: "here's what I see." });
+    expect(d.active()?.messages.at(-1)).toEqual({ role: "assistant", text: "here's what I see.", at: expect.any(String) });
   });
 
   test("openCritiqueChat() on the SAME critique twice re-focuses the existing conversation instead of duplicating it (Fix 3)", () => {

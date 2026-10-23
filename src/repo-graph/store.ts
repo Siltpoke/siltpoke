@@ -24,6 +24,7 @@ import {
   emptyGraph,
   emptyQueryIndex,
   type Fingerprints,
+  type OtherFiles,
   type QueryIndex,
   type RepoGraph,
   type RepoGraphMeta,
@@ -34,6 +35,7 @@ const GRAPH_FILE = "graph.json";
 const QUERY_INDEX_FILE = "queryIndex.json";
 const FINGERPRINTS_FILE = "fingerprints.json";
 const META_FILE = "meta.json";
+const OTHER_FILES_FILE = "other-files.json";
 const SEEN_FILE = "seen.json";
 
 async function atomicWriteJson(path: string, data: unknown): Promise<void> {
@@ -94,6 +96,27 @@ export async function readFingerprints(storageDir: string): Promise<Fingerprints
 export async function writeFingerprints(storageDir: string, fp: Fingerprints): Promise<void> {
   await ensureStorageDir(storageDir);
   await atomicWriteJson(join(storageDir, FINGERPRINTS_FILE), fp);
+}
+
+/** null when the index predates other-files.json, or the file is malformed —
+ * the reader shows nothing rather than "zero other files". */
+export async function readOtherFiles(storageDir: string): Promise<OtherFiles | null> {
+  const path = join(storageDir, OTHER_FILES_FILE);
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = JSON.parse(await readFile(path, "utf8")) as OtherFiles;
+    if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.files) || !parsed.files.every((f) => typeof f === "string")) {
+      return null;
+    }
+    return { schemaVersion: 1, files: parsed.files, truncated: parsed.truncated === true };
+  } catch {
+    return null;
+  }
+}
+
+export async function writeOtherFiles(storageDir: string, others: OtherFiles): Promise<void> {
+  await ensureStorageDir(storageDir);
+  await atomicWriteJson(join(storageDir, OTHER_FILES_FILE), others);
 }
 
 export async function readMeta(storageDir: string): Promise<RepoGraphMeta | null> {

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Jiaqi Duan
 import { writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
 import { bunForCommandString } from "./bun-path";
-import { join, dirname } from "node:path";
+import { join, dirname, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { resolveDaemonEntry, resolveDaemonLauncher, resolveDaemonPath } from "./daemon-path";
@@ -30,9 +30,28 @@ interface UnitInput {
 /**
  * Canonical systemd user-unit location. Shared by installAutostart /
  * uninstallAutostart and the doctor autostart-presence check (track #6 T5).
+ *
+ * systemd searches `$XDG_CONFIG_HOME/systemd/user` (fallback
+ * `~/.config/systemd/user`), so a unit written anywhere else never takes
+ * effect for a user with XDG_CONFIG_HOME set (defect [72]). Per the XDG Base
+ * Directory spec an empty or non-absolute value is invalid and ignored.
+ * `env` is threaded from the caller like `home`; it defaults to the process env.
  */
-export function defaultUnitPath(): string {
-  return join(homedir(), ".config", "systemd", "user", "siltpoked.service");
+export function defaultUnitPath(
+  home: string = homedir(),
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const xdg = env.XDG_CONFIG_HOME;
+  const configHome = xdg && isAbsolute(xdg) ? xdg : join(home || homedir(), ".config");
+  return join(configHome, "systemd", "user", "siltpoked.service");
+}
+
+/**
+ * Where the daemon's logs go. SILTPOKE_HOME still wins (a deliberate override);
+ * otherwise `<home>/.siltpoke` for the home being installed into (defect [66]).
+ */
+function logRootFor(home?: string): string {
+  return !home ? siltpokeRoot() : siltpokeRoot({ ...process.env, HOME: home });
 }
 
 function escapeExecPath(s: string): string {
@@ -40,11 +59,11 @@ function escapeExecPath(s: string): string {
   return s.replace(/ /g, "\\x20");
 }
 
-export function renderUnit({
-  bunPath,
-  daemonScript,
-  daemonPath,
-}: UnitInput): string {
+export function renderUnit(
+  { bunPath, daemonScript, daemonPath }: UnitInput,
+  home?: string,
+): string {
+  const logRoot = logRootFor(home);
   return `[Unit]
 Description=Siltpoke daemon
 After=default.target
@@ -55,15 +74,20 @@ ExecStart=${escapeExecPath(bunPath)} ${escapeExecPath(daemonScript)} start
 Environment="PATH=${daemonPath}"
 Restart=always
 RestartSec=10
-StandardOutput=append:${siltpokeRoot()}/logs/daemon.log
-StandardError=append:${siltpokeRoot()}/logs/daemon.err
+StandardOutput=append:${logRoot}/logs/daemon.log
+StandardError=append:${logRoot}/logs/daemon.err
 
 [Install]
 WantedBy=default.target
 `;
 }
 
-export async function installAutostart(home: string = homedir()): Promise<void> {
+export async function installAutostart(
+  home: string = homedir(),
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  // An empty home (HOME="") means unset, not "the current directory".
+  home = home || homedir();
   if (process.platform !== "linux") {
     process.stderr.write(
       "installAutostart (systemd-user) requires Linux. For macOS use installer/launchd.ts.\n",
@@ -92,17 +116,21 @@ export async function installAutostart(home: string = homedir()): Promise<void> 
   for (const w of warnings) {
     process.stderr.write(`warning: ${w}\n`);
   }
-  const unit = renderUnit({
-    bunPath: launcher.program,
-    daemonScript: launcher.script,
-    daemonPath,
-  });
+  const unit = renderUnit(
+    {
+      bunPath: launcher.program,
+      daemonScript: launcher.script,
+      daemonPath,
+    },
+    home,
+  );
 
-  const unitPath = defaultUnitPath();
+  // Under the `home` we were given, never os.homedir() (defect [66]).
+  const unitPath = defaultUnitPath(home, env);
   mkdirSync(dirname(unitPath), { recursive: true });
   writeFileSync(unitPath, unit);
 
-  mkdirSync(join(siltpokeRoot(), "logs"), { recursive: true });
+  mkdirSync(join(logRootFor(home), "logs"), { recursive: true });
 
   spawnSync("systemctl", ["--user", "daemon-reload"], { stdio: "inherit" });
   const r = spawnSync(
@@ -119,7 +147,11 @@ export async function installAutostart(home: string = homedir()): Promise<void> 
 export interface UninstallAutostartOptions {
   /** Injectable exec — tests never touch systemctl. Defaults to real spawnSync. */
   exec?: ExecSyncFn;
-  /** Defaults to ~/.config/systemd/user/siltpoked.service. */
+  /** Home to remove from. Defaults to os.homedir(). Ignored when unitPath is set. */
+  home?: string;
+  /** Env for XDG_CONFIG_HOME. Defaults to process.env. Ignored when unitPath is set. */
+  env?: NodeJS.ProcessEnv;
+  /** Defaults to $XDG_CONFIG_HOME (or <home>/.config)/systemd/user/siltpoked.service. */
   unitPath?: string;
 }
 
@@ -136,7 +168,7 @@ export interface UninstallAutostartResult {
 export async function uninstallAutostart(
   opts: UninstallAutostartOptions = {},
 ): Promise<UninstallAutostartResult> {
-  const unitPath = opts.unitPath ?? defaultUnitPath();
+  const unitPath = opts.unitPath ?? defaultUnitPath(opts.home, opts.env);
   if (!existsSync(unitPath)) {
     return { removed: false };
   }

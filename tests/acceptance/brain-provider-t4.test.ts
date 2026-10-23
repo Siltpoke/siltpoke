@@ -66,14 +66,15 @@ import { runCritic, type RunCriticDeps, type RunCriticOpts } from "../../src/cri
 import type { RunToolsOpts, RunToolsResult } from "../../src/critic/tools/run-tools";
 import { normalizeCodexStop, runCodexStopHook } from "../../src/hooks/codex-stop";
 import { shouldFire, type HookEvent } from "../../src/router/router";
+import { DEFAULT_QUOTA_DAILY_CAP } from "../../src/config/brain-quota-cap-config";
 import {
   freshBrainHealth,
-  QUOTA_CALL_DAILY_CAP,
   readBrainHealth,
   writeBrainHealth,
 } from "../../src/state/brain-health";
 import type { CallBrainOptions, BrainCallResult } from "../../src/brain/brain";
 import { resetQuotaWarnStateForTests } from "../../src/brain/brain-guarded";
+import { dayKey } from "../../src/state/usage";
 
 // ---------------------------------------------------------------------------
 // Global Bun.spawn patch plumbing (mirrors brain-provider-t1/t2/t3.test.ts).
@@ -442,15 +443,18 @@ describe("AC4 — recursion suppression via runCodexStopHook (real entry point)"
 // ---------------------------------------------------------------------------
 
 describe("AC8 — per-day call cap (50/day) for quota-billed providers", () => {
+  // The cap is keyed on the LOCAL day (src/state/brain-health.ts `dayOf` → usage.ts
+  // `dayKey`). A UTC day here failed all three tests wherever the local date and
+  // the UTC date differ — every US evening (small item [10] of the chat mainline).
   function todayStr(): string {
-    return new Date().toISOString().slice(0, 10);
+    return dayKey(new Date());
   }
 
   function preSeedQuotaCalls(homeBase: string, count: number): void {
-    // Keyed per-provider-name (T6) — this describe block drives codex only.
+    // Keyed per ROLE since spec §12.3 — every review call, whichever agent, is "review".
     const health = {
       ...freshBrainHealth(),
-      quota_calls_today: { codex: { date: todayStr(), count } },
+      quota_calls_today: { review: { date: todayStr(), count } },
     };
     writeBrainHealth(homeBase, health);
   }
@@ -459,7 +463,7 @@ describe("AC8 — per-day call cap (50/day) for quota-billed providers", () => {
     const { cwd, homeBase } = makeTmpDirs("ac8-cap-reached");
     try {
       writeConfig(homeBase, { reviewer_provider: "codex" });
-      preSeedQuotaCalls(homeBase, QUOTA_CALL_DAILY_CAP);
+      preSeedQuotaCalls(homeBase, DEFAULT_QUOTA_DAILY_CAP);
       const calls = installFakeBunSpawn({
         codex: { stdoutText: codexHappyEvents("should never be seen"), exitCode: 0 },
       });
@@ -475,7 +479,7 @@ describe("AC8 — per-day call cap (50/day) for quota-billed providers", () => {
 
       const health = readBrainHealth(homeBase);
       expect(health.quota_calls_today).toEqual({
-        codex: { date: todayStr(), count: QUOTA_CALL_DAILY_CAP },
+        review: { date: todayStr(), count: DEFAULT_QUOTA_DAILY_CAP },
       });
     } finally {
       rmSync(cwd, { recursive: true, force: true });
@@ -487,7 +491,7 @@ describe("AC8 — per-day call cap (50/day) for quota-billed providers", () => {
     const { cwd, homeBase } = makeTmpDirs("ac8-under-cap");
     try {
       writeConfig(homeBase, { reviewer_provider: "codex" });
-      preSeedQuotaCalls(homeBase, QUOTA_CALL_DAILY_CAP - 1);
+      preSeedQuotaCalls(homeBase, DEFAULT_QUOTA_DAILY_CAP - 1);
       const calls = installFakeBunSpawn({
         codex: { stdoutText: codexHappyEvents("codex found a slip"), exitCode: 0 },
       });
@@ -500,7 +504,7 @@ describe("AC8 — per-day call cap (50/day) for quota-billed providers", () => {
 
       const health = readBrainHealth(homeBase);
       expect(health.quota_calls_today).toEqual({
-        codex: { date: todayStr(), count: QUOTA_CALL_DAILY_CAP },
+        review: { date: todayStr(), count: DEFAULT_QUOTA_DAILY_CAP },
       });
     } finally {
       rmSync(cwd, { recursive: true, force: true });
@@ -508,7 +512,7 @@ describe("AC8 — per-day call cap (50/day) for quota-billed providers", () => {
     }
   });
 
-  test("claude default config (reviewer_provider unset) -> quota counter is NEVER consumed, even on a successful call", async () => {
+  test("claude default config (reviewer_provider unset) -> the review counter IS consumed like every agent (spec §12.3)", async () => {
     const { cwd, homeBase } = makeTmpDirs("ac8-claude-default");
     try {
       // No config.json at all — "unset" per AC1's historical-compatible default.
@@ -524,9 +528,9 @@ describe("AC8 — per-day call cap (50/day) for quota-billed providers", () => {
       expect(calls.some((c) => c.argv[0] === "codex")).toBe(false);
 
       const health = readBrainHealth(homeBase);
-      // Unchanged from the pre-seeded value — claude (billing "usd") never
-      // touches this counter, cap or no cap.
-      expect(health.quota_calls_today).toEqual({ codex: { date: todayStr(), count: 10 } });
+      // Spec §12.3 (the maintainer 2026-10-14): claude is counted like the other
+      // four — a subscription spends plan quota too. This used to assert the opposite.
+      expect(health.quota_calls_today).toEqual({ review: { date: todayStr(), count: 11 } });
     } finally {
       rmSync(cwd, { recursive: true, force: true });
       rmSync(homeBase, { recursive: true, force: true });

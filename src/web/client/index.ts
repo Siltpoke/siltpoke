@@ -52,10 +52,12 @@ import "./islands/staleness-badge";
 // bound advance/mark-all.
 import "./islands/since-you-looked";
 // Progress a retired map — which a retired surface the detail rail shows (pure x-show).
-// Settings — review-brain selector (family/model -> POST /api/brain/roles/review).
-import "./islands/brain-settings";
-// Settings — directly-selectable per-role rows (review/extract → POST /api/brain/roles/:role).
-import "./islands/role-row";
+// Settings — one daily cap per role (chat / review / extract → POST /api/brain/daily-caps).
+import "./islands/daily-caps";
+// Settings — the Change model window (→ GET /api/brain/models, POST /api/brain/roles/:role).
+import "./islands/model-picker";
+// Chat panel — the chip that says which agent answers chat (GET /api/brain).
+import "./islands/chat-agent-chip";
 // Timeline (/timeline) — ⏱ which unit of work closes before a review fires (→ POST /api/config).
 import "./islands/review-unit";
 // Knowledge screen — ⌘K / Ctrl-K command-palette search overlay (Task 13).

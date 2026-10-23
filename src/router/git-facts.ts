@@ -66,6 +66,16 @@ async function git(cwd: string, args: string[]): Promise<string | undefined> {
   }
 }
 
+/** Exit code of a git command whose answer IS its exit code; undefined on timeout or spawn failure. */
+async function gitExitCode(cwd: string, args: string[]): Promise<number | undefined> {
+  try {
+    const r = await spawnWithTimeout({ argv: ["git", ...args], cwd, timeoutMs: GIT_TIMEOUT_MS });
+    return r.timedOut ? undefined : (r.exitCode ?? undefined);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Which branch is this repo's trunk?
  *
@@ -210,6 +220,18 @@ export async function collectReviewUnitFacts(opts: {
     storedHeadVanished = resolved === undefined || resolved.length === 0;
   }
 
+  // Defect [60]: an anchor that still exists can be off this branch (the user
+  // switched branches). `--is-ancestor` answers with its exit code: 0 yes,
+  // 1 no — including two branches with no shared history, where a plain
+  // `merge-base` would fail and look undecided. Anything else (timeout, a git
+  // error) leaves this undecided, and the decision keeps its old behaviour.
+  let storedHeadNotAncestor: boolean | undefined;
+  if (anchor !== undefined && storedHeadVanished === false && anchor.head !== head) {
+    const code = await gitExitCode(cwd, ["merge-base", "--is-ancestor", anchor.head, head]);
+    if (code === 0) storedHeadNotAncestor = false;
+    else if (code === 1) storedHeadNotAncestor = true;
+  }
+
   let onDefaultBranch: boolean | undefined;
   let mergeBase: string | undefined;
   if (unit === "pr") {
@@ -277,6 +299,7 @@ export async function collectReviewUnitFacts(opts: {
     // by accident on some future refactor.
     storedTree: anchor !== undefined && anchor.tree.length > 0 ? anchor.tree : undefined,
     storedHeadVanished,
+    storedHeadNotAncestor,
     unit,
     onDefaultBranch,
     mergeBase,

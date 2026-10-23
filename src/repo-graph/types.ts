@@ -99,6 +99,13 @@ export interface FileFingerprint {
   content_sha256: string;
   ast_sig: string;
   /**
+   * Which extractor wrote this file's nodes (`EXTRACTOR_VERSION` in
+   * fingerprint.ts). The builder reuses stored nodes only when this equals the
+   * current version; absent means "older than the field" and forces one
+   * re-parse.
+   */
+  extractor?: number;
+  /**
    * True when tree-sitter recovered from unparseable spans in this file
    * (ERROR / MISSING nodes) instead of parsing it cleanly. Persisted so an
    * incremental build — which reuses cached files WITHOUT re-parsing — can
@@ -265,6 +272,8 @@ export interface RepoGraphMeta {
    * "unknown" and show nothing, never as a count of 0.
    */
   imports_outside_root?: { count: number; examples: string[] };
+  /** HEAD commit when this index finished; absent for non-git repos and pre-2026-09-26 indexes. */
+  head_commit?: string;
 }
 
 export function emptyCounters(): RepoGraphMetaCounters {
@@ -288,4 +297,16 @@ export function emptyQueryIndex(): QueryIndex {
 
 export function emptyFingerprints(): Fingerprints {
   return { schemaVersion: 1, files: {} };
+}
+
+/** Project files that are not in the code graph (non-code files, everything
+ * under docs/ and tests/), listed at index time so Code Map can draw them as
+ * plain files. Stored apart from graph.json on purpose: nothing that reads
+ * the code graph sees them. */
+export interface OtherFiles {
+  schemaVersion: 1;
+  /** Project-relative paths with forward slashes. */
+  files: string[];
+  /** The walk stopped listing at its cap. */
+  truncated: boolean;
 }

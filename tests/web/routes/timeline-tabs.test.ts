@@ -460,7 +460,7 @@ describe("Feedback tab", () => {
     // FeedbackSection composed as-is: GET+POST /api/critique/:id/feedback.
     expect(html).toContain("/api/critique/cq-fb/feedback");
     expect(html).toContain('data-feedback-textarea="cq-fb"');
-    expect(html).toContain("feedback · your note (saved to siltpoke memory)");
+    expect(html).toContain("feedback · your note (kept with this review — the reviewer does not read it yet)");
   });
 
   test("ack/dismiss (RowActions) write through the existing /api/critic/action", async () => {

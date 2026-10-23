@@ -34,7 +34,7 @@ export interface WakeResult {
    * True when an active mute will swallow this wake anyway. `handle-stop.ts`
    * runs `checkMuteGate` BEFORE `consumeWake` — "mute beats wake" — so a
    * muted user who is told "the next turn gets a review" gets nothing, and
-   * `/siltpoke-doctor` has no mute row to explain it. Saying so here is the
+   * `/siltpoke:siltpoke-doctor` has no mute row to explain it. Saying so here is the
    * only surface that can.
    */
   muted: boolean;
@@ -61,7 +61,7 @@ export async function runWake(opts: WakeOptions = {}): Promise<WakeResult> {
 
   // Defect [11]: clear the breaker HERE, not only when the Stop hook happens
   // to spend the marker. A latched `permanent` breaker is the case that makes
-  // this matter — the user was told "clear via /siltpoke-wake", and a clear
+  // this matter — the user was told "clear via /siltpoke:siltpoke-wake", and a clear
   // that silently expires with the 5-minute marker is not a clear. The Stop
   // hook still clears on the marker too (it is idempotent), and the marker
   // keeps its own job: bypassing the quiet-hours, budget, review-unit and
@@ -133,14 +133,14 @@ export function formatWakeHuman(result: WakeResult, now: Date = new Date()): str
   const mins = Math.max(1, Math.round((result.expires_at_ms - now.getTime()) / 60_000));
   const mutedNote = result.muted
     ? `But Siltpoke is muted${result.muted_until === "indefinite" ? " indefinitely" : ` until ${result.muted_until}`}, and mute beats wake — ` +
-      `nothing will be reviewed until you run /siltpoke-unmute.\n`
+      `nothing will be reviewed until you run /siltpoke:siltpoke-unmute.\n`
     : "";
   if (result.breaker_cleared) {
     return (
       `Siltpoke woken. The ${result.breaker_class} breaker that was stopping reviews is cleared — ` +
       `the next Stop hook will call the Brain again.\n` +
       `If it fails again the breaker reopens, so fix the cause first ` +
-      `(run /siltpoke-doctor to see the last failure).\n` +
+      `(run /siltpoke:siltpoke-doctor to see the last failure).\n` +
       mutedNote
     );
   }

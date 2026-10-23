@@ -109,6 +109,30 @@ test("happy path: parses event stream and validates reflection JSON", async () =
   expect(usage.total_cost_usd).toBe(0.0002);
 });
 
+// Reflection runs in the reviewed project's folder and its rule is stored for
+// every later review. In a planted repo (2026-10-19) the project's
+// SessionStart hook ran 3/3 and its CLAUDE.md steered 3/3 learned rules; with
+// these flags, 0/3 and 0/3.
+test("both modes reach claude read-only and without the project's settings", async () => {
+  for (const mode of ["dismiss", "acted_on"] as const) {
+    let argv: string[] = [];
+    const base = fakeSpawn({ stdoutText: envelopeWithResult(JSON.stringify(validReflection)) });
+    await callReflection({
+      critiqueBody: "x",
+      userReason: "y",
+      mode,
+      spawnFn: ((cmd: string[], o: unknown) => {
+        argv = cmd;
+        return (base as unknown as (c: string[], o: unknown) => unknown)(cmd, o);
+      }) as unknown as typeof Bun.spawn,
+    });
+    const i = argv.indexOf("--setting-sources");
+    expect(i).toBeGreaterThan(-1);
+    expect(argv[i + 1]).toBe("user");
+    expect(argv.slice(-3)).toEqual(["--tools", "Read,Grep,Glob", "--strict-mcp-config"]);
+  }
+});
+
 test("happy path: strips markdown code fence around inner JSON", async () => {
   const fenced = `\`\`\`json\n${JSON.stringify(validReflection)}\n\`\`\``;
   const env = envelopeWithResult(fenced);

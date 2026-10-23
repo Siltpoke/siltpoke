@@ -261,4 +261,27 @@ describe("GrepCallerResolver — real rg fixture", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  rgTest("finds a caller whose only call site lives in a file with a literal NUL byte", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "caller-resolver-nul-"));
+    try {
+      writeFileSync(join(dir, "def.ts"), "export function widget(a: number) {\n  return a + 1;\n}\n");
+      writeFileSync(
+        join(dir, "nul-use.ts"),
+        Buffer.concat([
+          Buffer.from("const k = `${a}"),
+          Buffer.from([0]),
+          Buffer.from("${b}`;\nconst v = widget(2);\n"),
+        ]),
+      );
+      const set = await new GrepCallerResolver().resolveCallers("widget", {
+        cwd: dir,
+        excludeFiles: ["def.ts"],
+      });
+      expect(set.unavailable).toBe(false);
+      expect(set.callers).toEqual([{ file: "nul-use.ts", line: 2 }]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

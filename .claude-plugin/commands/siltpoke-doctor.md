@@ -20,15 +20,16 @@ failing row already carries the path and the actionable detail.
 For JSON (piping into another tool), add `--json`. For a one-line
 summary, add `--quiet`.
 
-If all checks pass: say so concisely. Don't pad with prose — the card
-already says "Install healthy."
+If all checks pass with no ⚠ row: say so concisely. Don't pad with prose —
+the card already says "Install healthy." If any row is ⚠, the install is not
+called healthy: read each ⚠ row's detail back to the user.
 
 If a check fails: read the detail line back to the user verbatim, then
 help them act on it. Common fixes:
 
 - `settings.json` missing / Stop hook not wired / statusline missing →
-  re-run `/siltpoke-setup` (idempotent — it will not clobber the pet).
-- `config.json` missing or missing fields → `/siltpoke-setup` again; that
+  re-run `/siltpoke:siltpoke-setup` (idempotent — it will not clobber the pet).
+- `config.json` missing or missing fields → `/siltpoke:siltpoke-setup` again; that
   is what creates the pet.
 - `global.json` schema mismatch → possibly a stalled migration. Report the
   detail verbatim rather than guessing at a fix.

@@ -37,9 +37,14 @@ import {
   recordFailure,
   recordSuccess,
   tryConsumeOuterRetry,
+  refundQuotaCall,
   tryConsumeQuotaCall,
-  QUOTA_CALL_DAILY_CAP,
 } from "../state/brain-health";
+import {
+  loadChatQuotaDailyCapSync,
+  loadExtractQuotaDailyCapSync,
+  loadQuotaDailyCapSync,
+} from "../config/brain-quota-cap-config";
 import { loadBudgetConfig, evaluateBudget } from "../state/budget-config";
 import { loadDailyRollup } from "../state/usage";
 
@@ -78,9 +83,54 @@ export function resetAgyClaudeFamilyWarnStateForTests(): void {
   hasWarnedAgyClaudeFamily = false;
 }
 
+/**
+ * Which role a call is made for. It picks the daily counter the call is taken
+ * from and the cap it is checked against. The counter is the ROLE, whichever
+ * agent answers (spec §12.3): switching agents does not restart the count, and
+ * claude is counted like the other four. The key in `brain-health.json` →
+ * `quota_calls_today` is the role name itself; per-agent keys written before
+ * §12.3 (`codex`, `chat:qoder`) are left alone and never read.
+ */
+export type QuotaUse = "review" | "chat" | "extract";
+
+const CAP_KEY = {
+  review: "quota_daily_cap",
+  chat: "chat_quota_daily_cap",
+  extract: "extract_quota_daily_cap",
+} as const;
+const LOAD_CAP = {
+  review: loadQuotaDailyCapSync,
+  chat: loadChatQuotaDailyCapSync,
+  extract: loadExtractQuotaDailyCapSync,
+};
+/** The role's name as the Settings page shows it. */
+const ROLE_LABEL = { review: "review", chat: "chat", extract: "summarizer" } as const;
+
+function consumeRoleCall(homeBase: string, usedBy: QuotaUse, now: Date): boolean {
+  return tryConsumeQuotaCall(homeBase, usedBy, now, LOAD_CAP[usedBy](homeBase));
+}
+
+/**
+ * The slot is taken before the spawn (the cap must stop a call before it
+ * starts). When the process then never started — `spawnError` is set only
+ * there, by every provider — no call was made, so the slot goes back (§110 W5).
+ */
+function refundIfNeverStarted(err: unknown, homeBase: string, usedBy: QuotaUse, now: Date): void {
+  if (err instanceof BrainError && (err.failure?.spawnError ?? "").length > 0) {
+    // writeBrainHealth swallows its own write failures, so this cannot mask
+    // the caller's error.
+    refundQuotaCall(homeBase, usedBy, now);
+  }
+}
+
 export interface GuardedBrainDeps {
   /** ~/.siltpoke — where brain-health.json and the budget files live. */
   homeBase: string;
+  /**
+   * Which role's daily counter and cap this call uses. Absent = "review" (the
+   * critic). Role-routed callers pass their role (role-brain.ts).
+   */
+  usedBy?: QuotaUse;
   /**
    * Call target abstraction (track #7 T1) — defaults to the claude provider
    * (a byte-identical wrap of callBrain). Only the critic seam supplies a
@@ -115,7 +165,7 @@ async function defaultBudgetOk(homeBase: string, now: Date): Promise<boolean> {
 
 /**
  * What gets recorded as the failure's excerpt — and therefore what the
- * dashboard banner, the statusline card and `/siltpoke-doctor` show the user.
+ * dashboard banner, the statusline card and `/siltpoke:siltpoke-doctor` show the user.
  *
  * It used to be `spawnError + stderr + stdout` concatenated and tail-sliced.
  * With `--output-format json` that tail lands in the MIDDLE of the JSON
@@ -153,6 +203,7 @@ function enforceCapAndWarn(
   opts: CallBrainOptions,
   homeBase: string,
   now: Date,
+  usedBy: QuotaUse,
 ): void {
   // Warn-once (AC13): informational, independent of whether the cap below
   // ends up blocking this particular call — the user opted into a
@@ -161,7 +212,7 @@ function enforceCapAndWarn(
   if (provider.meta.billing === "quota" && !hasWarnedQuotaProvider) {
     hasWarnedQuotaProvider = true;
     console.warn(
-      `[siltpoke] reviewer_provider="${provider.meta.name}" is quota-billed and eval-gated (review quality not yet certified for this provider) — spend is plan quota (not USD), and the served model is not pinnable under this provider's auth.`,
+      `[siltpoke] reviewer_provider="${provider.meta.name}" is quota-billed and eval-gated (review quality not yet certified for this provider) — spend is plan quota (not USD).`,
     );
   }
 
@@ -184,20 +235,19 @@ function enforceCapAndWarn(
     );
   }
 
-  // Per-day call cap for quota-billed providers (AC8) — the runaway brake
-  // the token budget gate can't see (a zero-usage quota failure is
-  // invisible to evaluateBudget's token sums). Checked BEFORE spawn: a
-  // blocked call never reaches the call target — a true $0 skip. USD
-  // providers (claude) never consume or check this counter.
-  if (provider.meta.billing === "quota") {
-    if (!tryConsumeQuotaCall(homeBase, provider.meta.name, now)) {
-      throw new BrainError(
-        `[brain-quota-cap] daily call cap (${QUOTA_CALL_DAILY_CAP}/day) reached for quota-billed provider "${provider.meta.name}" — call skipped, $0 spent`,
-        undefined,
-        undefined,
-        "quota_cap",
-      );
-    }
+  // Per-day call cap per role (AC8, spec §12.3) — the runaway brake the
+  // token budget gate can't see (a zero-usage quota failure is invisible to
+  // evaluateBudget's token sums). Checked BEFORE spawn: a blocked call never
+  // reaches the call target. Every agent, claude included: a subscription
+  // spends plan quota whoever bills it.
+  if (!consumeRoleCall(homeBase, usedBy, now)) {
+    const cap = LOAD_CAP[usedBy](homeBase);
+    throw new BrainError(
+      `[brain-quota-cap] daily ${ROLE_LABEL[usedBy]} call cap (${cap}/day) reached — "${provider.meta.name}" call skipped. Raise it on the Settings page or with "brain": { "${CAP_KEY[usedBy]}": N } in ~/.siltpoke/config.json (0 = no cap); the count resets at the next day boundary.`,
+      undefined,
+      undefined,
+      "quota_cap",
+    );
   }
 }
 
@@ -251,8 +301,10 @@ export function makeGuardedCallBrain(
     );
   }
 
+  const usedBy = deps.usedBy ?? "review";
+
   return async (opts: CallBrainOptions): Promise<BrainCallResult> => {
-    enforceCapAndWarn(provider, opts, deps.homeBase, now());
+    enforceCapAndWarn(provider, opts, deps.homeBase, now(), usedBy);
 
     let firstError: BrainError;
     try {
@@ -263,6 +315,7 @@ export function makeGuardedCallBrain(
       );
       return result;
     } catch (err) {
+      refundIfNeverStarted(err, deps.homeBase, usedBy, now());
       // Non-subprocess failures (schema validation, JSON parse) pass
       // through untouched — out of classifier scope.
       if (!(err instanceof BrainError) || err.failure === undefined) throw err;
@@ -290,19 +343,14 @@ export function makeGuardedCallBrain(
     if (!tryConsumeOuterRetry(deps.homeBase, now())) {
       throw enrichedFirst;
     }
-    // Quota-billed providers: the retry is a SECOND spawn and must ALSO
-    // clear the daily call cap (AC8), or a throttled quota-billed provider
-    // could double-spend past the cap via the throttle-retry path alone —
-    // the pre-spawn check above only ever covers the FIRST attempt. Same
-    // fresh-reread-consume-at-decision-time discipline as the outer-retry
-    // cap. Refused → no retry, throw the same enriched first error (mirrors
-    // the outer-retry-refused exit immediately above). USD providers
-    // (claude) never touch this counter, so this never blocks a claude
-    // retry.
-    if (
-      provider.meta.billing === "quota" &&
-      !tryConsumeQuotaCall(deps.homeBase, provider.meta.name, now())
-    ) {
+    // The retry is a SECOND spawn and must ALSO clear the role's daily call
+    // cap (AC8), or a throttled agent could double-spend past the cap via
+    // the throttle-retry path alone — the pre-spawn check above only ever
+    // covers the FIRST attempt. Same fresh-reread-consume-at-decision-time
+    // discipline as the outer-retry cap. Refused → no retry, throw the same
+    // enriched first error (mirrors the outer-retry-refused exit immediately
+    // above). Every agent, claude included (spec §12.3).
+    if (!consumeRoleCall(deps.homeBase, usedBy, now())) {
       throw enrichedFirst;
     }
 
@@ -325,6 +373,7 @@ export function makeGuardedCallBrain(
       );
       return result;
     } catch (err2) {
+      refundIfNeverStarted(err2, deps.homeBase, usedBy, now());
       if (!(err2 instanceof BrainError) || err2.failure === undefined) throw err2;
       const cls2 = classifyBrainFailure(err2.failure);
       throw recordAndEnrich(err2, cls2, 2);
@@ -349,8 +398,15 @@ export function makeGuardedCallRaw(
   const callRaw = deps.callRawFn ?? ((opts: CallBrainOptions) => provider.callRaw(opts));
   const now = deps.nowFn ?? (() => new Date());
 
+  const usedBy = deps.usedBy ?? "review";
+
   return async (opts: CallBrainOptions): Promise<CallRawResult> => {
-    enforceCapAndWarn(provider, opts, deps.homeBase, now());
-    return callRaw(opts);
+    enforceCapAndWarn(provider, opts, deps.homeBase, now(), usedBy);
+    try {
+      return await callRaw(opts);
+    } catch (err) {
+      refundIfNeverStarted(err, deps.homeBase, usedBy, now());
+      throw err;
+    }
   };
 }

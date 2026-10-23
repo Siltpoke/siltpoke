@@ -8,7 +8,9 @@
  * file-length warn threshold.
  */
 
+import type { ToolCallsField } from "../brain/tool-calls";
 import type { EvidenceLabel } from "../critic/evidence-guard";
+import type { InjectionAlert } from "../critic/injection-alert";
 import type { AuditAbsenceKind } from "./audit-absence";
 import type { PreferenceStats } from "../preference-log/stats";
 import type { BudgetConfig, BudgetDecision } from "./budget-config";
@@ -113,6 +115,18 @@ export interface CriticCall {
    * field, separate component (`EvidenceMark`).
    */
   evidence_label: EvidenceLabel | null;
+  /**
+   * The row's prompt-injection alert (`injection_alert`), `null` when the row
+   * has none or carries a malformed one. Absence is "no signal", never proof
+   * the reviewer read nothing outside the project — see `tool_calls`.
+   */
+  injection_alert: InjectionAlert | null;
+  /**
+   * What the reviewer's tool calls were: a list (possibly empty), or
+   * `"not_recorded"` (this agent does not report them). `null` on every row
+   * written before #1090 — "nobody recorded an answer", not "it used none".
+   */
+  tool_calls: ToolCallsField | null;
   /**
    * How many cited items the evidence check dropped as unverifiable on this
    * review. 0 on every row that predates the check labelling instead of
@@ -330,15 +344,12 @@ export interface CriticTelemetry {
     rollup: DailyRollup | null;
   };
   /**
-   * Quiet-hours config snapshot.
-   *
-   * `triggerConfig` used to sit beside this and was removed in S5 with
-   * `trigger-modes.ts`. It had no reader anywhere in `src/web/` or
-   * `src/daemon/` — the three test fixtures that set it were passing
-   * `{ mode: "diff" }`, which was never a valid `TriggerMode`, and nothing ever
-   * noticed.
+   * Quiet-hours config snapshot. (`triggerConfig` sat beside it until S5; it
+   * had no reader, and its test fixtures set an invalid `{ mode: "diff" }`.)
    */
   quietConfig: QuietHoursConfig;
+  /** Review daily call cap as configured now (0 = none) — for the quota_cap row note. */
+  reviewDailyCap?: number;
   /** Top-down "why is critic silent?" gate diagnostic. */
   gateState: CriticGateState;
   /** Distinct project values found across the read window, sorted alphabetically. */

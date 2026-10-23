@@ -1,5 +1,14 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runMenubarSetup } from "../../src/installer/menubar-setup";
+
+// The setup records what it does in the install receipt ([61]); every run here
+// writes it into this sandbox, never the developer's real ~/.siltpoke.
+const sandbox = mkdtempSync(join(tmpdir(), "menubar-setup-"));
+const sandboxEnv = { HOME: sandbox };
+afterAll(() => rmSync(sandbox, { recursive: true, force: true }));
 
 function fakeIO(answers: string[]) {
   let i = 0;
@@ -17,6 +26,7 @@ test("non-darwin: zero side-effects", async () => {
   const writes: string[] = [];
   const execs: string[] = [];
   const r = await runMenubarSetup({
+    env: sandboxEnv,
     io: fakeIO([]).io,
     platform: "linux",
     writeFile: (p) => writes.push(p),
@@ -36,6 +46,7 @@ test("declining install writes nothing", async () => {
   const writes: string[] = [];
   const execs: string[] = [];
   const r = await runMenubarSetup({
+    env: sandboxEnv,
     io: fakeIO(["n"]).io,
     platform: "darwin",
     home: "/Users/t",
@@ -63,6 +74,7 @@ test("no brew on PATH → reason no-brew, zero writes", async () => {
   const writes: string[] = [];
   const { io, out } = fakeIO(["y"]); // consents to install, but brew itself is missing
   const r = await runMenubarSetup({
+    env: sandboxEnv,
     io,
     platform: "darwin",
     home: "/Users/t",
@@ -81,6 +93,7 @@ test("accepting writes the plugin shim", async () => {
   const writes: Array<[string, string]> = [];
   const execs: string[] = [];
   const r = await runMenubarSetup({
+    env: sandboxEnv,
     io: fakeIO(["y"]).io,
     platform: "darwin",
     home: "/Users/t",
@@ -111,6 +124,7 @@ test("nonInteractive + SwiftBar absent → no-swiftbar, no prompt read, no brew,
   const execs: string[] = [];
   const { io, out } = fakeIO([]); // NO answers queued — a non-interactive run must not readLine
   const r = await runMenubarSetup({
+    env: sandboxEnv,
     io,
     platform: "darwin",
     home: "/Users/t",
@@ -133,6 +147,7 @@ test("nonInteractive + SwiftBar absent → no-swiftbar, no prompt read, no brew,
 test("rendererPath overrides the shim renderer (plugin bundled card, not src wrapper.ts)", async () => {
   const writes: Array<[string, string]> = [];
   const r = await runMenubarSetup({
+    env: sandboxEnv,
     io: fakeIO([]).io,
     platform: "darwin",
     home: "/Users/t",
@@ -155,6 +170,7 @@ test("honors SwiftBar's existing PluginDirectory pref (writes shim there, does n
   const writes: Array<[string, string]> = [];
   const execs: string[] = [];
   const r = await runMenubarSetup({
+    env: sandboxEnv,
     io: fakeIO([]).io,
     platform: "darwin",
     home: "/Users/t",
@@ -179,6 +195,7 @@ test("no pref set → points SwiftBar at our default dir via defaults write, the
   const writes: Array<[string, string]> = [];
   const execs: string[] = [];
   const r = await runMenubarSetup({
+    env: sandboxEnv,
     io: fakeIO([]).io,
     platform: "darwin",
     home: "/Users/t",
@@ -201,6 +218,7 @@ test("SwiftBar already installed (app present) skips consent prompt and proceeds
   const execs: string[] = [];
   const { io, out } = fakeIO([]); // no answers consumed — no prompt should be asked
   const r = await runMenubarSetup({
+    env: sandboxEnv,
     io,
     platform: "darwin",
     home: "/Users/t",
@@ -221,6 +239,7 @@ test("ok path registers the SwiftBar login-item (autostart:true) (AC20 wiring)",
   const writes: string[] = [];
   const execs: string[] = [];
   const r = await runMenubarSetup({
+    env: sandboxEnv,
     io: fakeIO([]).io,
     platform: "darwin",
     home: "/Users/t",

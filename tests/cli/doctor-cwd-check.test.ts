@@ -9,7 +9,7 @@
  * sync checks live in doctor.checks.test.ts.
  */
 import { expect, test } from "bun:test";
-import { checkProjectResolutionUnderRoot } from "../../src/cli/doctor";
+import { checkProjectResolutionUnderRoot } from "../../src/cli/doctor-project-resolution-check";
 
 test("passes when a live project resolves under a forced cwd=/", async () => {
   const r = await checkProjectResolutionUnderRoot({

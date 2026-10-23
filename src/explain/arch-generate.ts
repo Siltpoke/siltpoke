@@ -21,6 +21,7 @@ import { join } from "node:path";
 import type { BrainUsage } from "../brain/brain";
 import { aggregateBySuperGroup } from "../repo-graph/aggregator";
 import type { ArchitectureOverlay } from "../repo-graph/architecture-parser";
+import { headCommitField } from "../repo-graph/git-stamp";
 import { projectArchitecture } from "../repo-graph/project-architecture";
 import { readFingerprints, readGraph, readMeta } from "../repo-graph/store";
 import type { RepoGraph } from "../repo-graph/types";
@@ -80,7 +81,11 @@ const EST_OUTPUT_TOKENS = 31_000;
 const EST_CLI_CONTEXT_TOKENS = 20_000;
 
 const ARCH_DEFAULT_SOFT_CAP_USD = Number(process.env.SILTPOKE_ARCH_SOFT_CAP_USD) || 0.6;
-const ARCH_DEFAULT_HARD_CAP_USD = Number(process.env.SILTPOKE_ARCH_HARD_CAP_USD) || 2.0;
+// The hard cap cannot stop a run: the cost is only known after the Brain has
+// been billed. An over-cap model is kept and flagged, never discarded (defect
+// [38]: a $2.30 run on a 670-file repo was thrown away, and the page silently
+// went back to the Generate button).
+export const ARCH_DEFAULT_HARD_CAP_USD = Number(process.env.SILTPOKE_ARCH_HARD_CAP_USD) || 2.0;
 /** The model every current caller runs (the daemon generate route exposes no
  * model param, so it ALWAYS runs this default) — exported so route-level
  * null-cost fallbacks don't have to guess the model. If a model
@@ -113,6 +118,10 @@ export interface ArchGenerateCtx {
    * Date.now() inside generate. When absent (legacy/CLI callers), durationMs
    * is omitted from the written meta (no undefined on disk). */
   taskStartedTs?: string;
+  /** Absolute repo root, used to stamp `ArchModelMeta.headCommit` at generate
+   * time (Code Map export stamp, spec §4). Absent on legacy/CLI callers —
+   * headCommit is then omitted from the written meta (no undefined on disk). */
+  projectRoot?: string;
 }
 
 export interface ArchEstimate {
@@ -130,36 +139,12 @@ export interface ArchEstimate {
   truncatedSubdirCount: number;
 }
 
-/** The model's output cap. `EST_OUTPUT_TOKENS = 31_000` is the assumed output;
- * the real `claude -p` run is capped at 32K and big-repo runs PEG it (the
- * recalibration comment on EST_OUTPUT_TOKENS records 30,824-32,858 observed
- * output on budget-capped contexts). So EST_OUTPUT_TOKENS sitting hard against
- * this cap IS the "near the ceiling" anchor — no second magic number
- * (Contingency 3): the predicate reuses it rather than inventing a threshold. */
-export const ARCH_OUTPUT_CAP_TOKENS = 32_000;
-
-/**
- * Pre-flight truncation predicate — PURE, repo-size-sensitive.
- *
- * Honest-signal grounding: `EST_OUTPUT_TOKENS` is a FLAT constant
- * and cannot tell a large repo from a small one. The only repo-size-sensitive
- * signal the pre-flight produces is on the INPUT side: `arch-context.ts`'s
- * budget-sharder reports `truncatedSubdirCount > 0` exactly when it had to
- * compress/shard subdir content to fit the 200K window. A budget-capped context
- * is *why* the model pegs its output cap (`EST_OUTPUT_TOKENS` lands hard against
- * `ARCH_OUTPUT_CAP_TOKENS`) → truncation risk. So budget pressure ⇒ warn.
- *
- * Conservative by design (spec: accept false negatives over false-positive nag):
- * a repo whose whole context fit comfortably (`truncatedSubdirCount === 0`)
- * never warns — matching the byte-identical no-regress path in `arch-context.ts`.
- *
- * Advisory only — the caller surfaces a heads-up line; it NEVER blocks.
- */
-export function archGenerateMayTruncate(
-  est: Pick<ArchEstimate, "truncatedSubdirCount">,
-): boolean {
-  return est.truncatedSubdirCount > 0;
-}
+// Pre-flight truncation predicate + its output-cap anchor: pulled out to
+// `./arch-preflight` (self-contained — no dependency on this file's locals
+// beyond the ArchEstimate SHAPE, which it takes structurally) to keep this
+// file under its length pin. Re-exported so existing import sites
+// (`../../explain/arch-generate`) are unaffected.
+export { ARCH_OUTPUT_CAP_TOKENS, archGenerateMayTruncate } from "./arch-preflight";
 
 export type ArchGenerateOutcome =
   | {
@@ -169,6 +154,9 @@ export type ArchGenerateOutcome =
       costUsd: number;
       softCapExceeded: boolean;
       softCapUsd: number;
+      /** True iff the cost exceeded the hard cap. The model is still kept. */
+      hardCapExceeded: boolean;
+      hardCapUsd: number;
       /** Share of claims that survived the grounding pass (0–100). */
       groundedPct: number;
       /** True when served from the on-disk cache (no Brain call). */
@@ -176,7 +164,6 @@ export type ArchGenerateOutcome =
       context: Pick<ArchContext, "estTokens" | "subdirCount" | "symbolCount" | "capped" | "droppedSubdirs">;
     }
   | { kind: "pre_check_failed"; message: string }
-  | { kind: "cost_cap_exceeded"; usage: BrainUsage; costUsd: number; hardCapUsd: number }
   // malformed / integrity_failed run AFTER the Brain call — money was spent even
   // though the result was rejected. They carry `usage`+`costUsd` so the caller
   // records that spend (honest-metrics: a paid op MUST be recorded regardless of
@@ -354,10 +341,18 @@ export function finalizeArchModel(
   };
 }
 
+/** Elapsed ms since the registry's startedTs; undefined when absent or unparseable. */
+function durationSince(startedTs: string | undefined): number | undefined {
+  if (startedTs === undefined) return undefined;
+  const parsed = Date.parse(startedTs);
+  if (!Number.isFinite(parsed)) return undefined;
+  return Math.max(0, Date.now() - parsed);
+}
+
 /**
  * Run one grounded C4 generate. Returns a validated `ArchModelDoc` (no coords,
- * no tier — those are downstream). Atomic: hard-cap aborts pre-doc; malformed →
- * typed failure; never a partial model.
+ * no tier — those are downstream). Atomic: malformed → typed failure; never a
+ * partial model. Over the hard cap → still generated, flagged hardCapExceeded.
  */
 export async function runArchGenerate(ctx: ArchGenerateCtx): Promise<ArchGenerateOutcome> {
   const softCap = ctx.costSoftCapUsd ?? ARCH_DEFAULT_SOFT_CAP_USD;
@@ -379,6 +374,8 @@ export async function runArchGenerate(ctx: ArchGenerateCtx): Promise<ArchGenerat
         costUsd: cached.meta.costUsd,
         softCapExceeded: cached.meta.costUsd > softCap,
         softCapUsd: softCap,
+        hardCapExceeded: cached.meta.costUsd > hardCap,
+        hardCapUsd: hardCap,
         groundedPct: cached.meta.groundedPct,
         fromCache: true,
         context: ctxStats,
@@ -392,16 +389,12 @@ export async function runArchGenerate(ctx: ArchGenerateCtx): Promise<ArchGenerat
     signal: ctx.signal,
     onSpawn: ctx.onSpawn,
     resultFilePath: ctx.resultFilePath,
+    cwd: ctx.projectRoot,
   });
   // A null total_cost_usd from the SDK must never ledger/compare
   // as $0 (silent under-charge: the hard cap, the registry record AND the
   // usage ledger all read this figure). Fall back to the token-derived cost.
   const costUsd = usage.total_cost_usd ?? archCostFromUsage(usage, ctx.model ?? ARCH_DEFAULT_MODEL);
-
-  // Hard cap aborts BEFORE producing a doc — no partial state.
-  if (costUsd > hardCap) {
-    return { kind: "cost_cap_exceeded", usage, costUsd, hardCapUsd: hardCap };
-  }
 
   const parsed = parseArchDocFromText(raw);
   if (!parsed.ok) return { kind: "malformed", message: parsed.error, usage, costUsd };
@@ -416,20 +409,14 @@ export async function runArchGenerate(ctx: ArchGenerateCtx): Promise<ArchGenerat
   const doc = final.doc;
 
   // Step 10 — integrity gate + atomic persist. A malformed model is rejected
-  // (nothing written); a cost-capped run already returned above, so the cache
-  // never sees an over-budget model.
+  // (nothing written). An over-cap model IS written — it is already paid for.
   //
   // Duration: use the registry's startedTs (single source of truth, never
   // a second clock). Absent when called from a legacy/CLI site (no taskStartedTs
   // → omit the field; undefined is not written to JSON).
   // Guard Date.parse: an unparseable string returns NaN; Math.max(0, NaN) is NaN
   // and JSON.stringify would write null — silently wrong. Only use a finite result.
-  const durationMs = ((): number | undefined => {
-    if (ctx.taskStartedTs === undefined) return undefined;
-    const parsed = Date.parse(ctx.taskStartedTs);
-    if (!Number.isFinite(parsed)) return undefined;
-    return Math.max(0, Date.now() - parsed);
-  })();
+  const durationMs = durationSince(ctx.taskStartedTs);
   const cacheMeta: ArchModelMeta = {
     schemaVersion: 1,
     fingerprint: inputs.fingerprint,
@@ -446,6 +433,7 @@ export async function runArchGenerate(ctx: ArchGenerateCtx): Promise<ArchGenerat
     citedClaims: final.citedClaims,
     totalClaims: final.totalClaims,
     topologyBlindClaims: final.topologyBlindClaims,
+    ...headCommitField(ctx.projectRoot),
   };
   const written = writeArchModel(ctx.graphStorageDir, doc, cacheMeta, inputs.validSubdirIds);
   if (!written.ok) return { kind: "integrity_failed", message: written.error, usage, costUsd };
@@ -457,6 +445,8 @@ export async function runArchGenerate(ctx: ArchGenerateCtx): Promise<ArchGenerat
     costUsd,
     softCapExceeded: costUsd > softCap,
     softCapUsd: softCap,
+    hardCapExceeded: costUsd > hardCap,
+    hardCapUsd: hardCap,
     groundedPct: final.groundedPct,
     fromCache: false,
     context: ctxStats,

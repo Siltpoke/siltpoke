@@ -28,6 +28,10 @@ export function feedbackKey(c: CriticCall): string {
  * Per-critique feedback box with append-only edit history.
  * Each instance owns its own Alpine `x-data` scope so save/load state
  * does not leak between cards.
+ *
+ * Defect [36] (install audit §51.1): the note is kept with the review for the
+ * user to look back on; nothing routes it to the reviewer yet, so the copy
+ * must not say it teaches the reviewer.
  */
 export function FeedbackSection({ critiqueId }: { critiqueId: string }) {
   const endpoint = `/api/critique/${critiqueId}/feedback`;
@@ -98,7 +102,7 @@ export function FeedbackSection({ critiqueId }: { critiqueId: string }) {
 
   return (
     <div x-data={alpine} x-init="load()">
-      <Section title="feedback · your note (saved to siltpoke memory)">
+      <Section title="feedback · your note (kept with this review — the reviewer does not read it yet)">
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {/* View mode: render the saved text inline as plain prose,
               no box / border. Matches a reviewer's marginalia, not an
@@ -132,7 +136,7 @@ export function FeedbackSection({ critiqueId }: { critiqueId: string }) {
             x-model="draft"
             rows={3}
             data-feedback-textarea={critiqueId}
-            placeholder="optional note — what was useful, wrong, or missing. Empty = no note. Brain reads recent entries to learn your preferences."
+            placeholder="optional note — what was useful, wrong, or missing. Empty = no note. Saved for you to look back on; it does not change future reviews yet."
             style={{
               fontFamily: tokens.font.mono,
               fontSize: 11,

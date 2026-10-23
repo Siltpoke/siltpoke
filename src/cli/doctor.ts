@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * /siltpoke-doctor — install-health diagnostic CLI.
+ * /siltpoke:siltpoke-doctor — install-health diagnostic CLI.
  *
  * Runs 15 sync install-health checks, plus 1 async project-resolution check
  * that CAN fail the exit code, plus 4 warn-only async rows (daemon alive +
@@ -15,36 +15,44 @@
  *   --json    Emit { all_pass, fail_count, checks: [{name, pass, detail}] }
  *   --quiet   Suppress per-check output; print 1-line summary
  */
-import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
+
 import type { Stats } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { withAgyPluginFallback } from "./doctor-agy-plugin";
+import { loadUpdateCheckConfigSync } from "../config/update-check-config";
 import {
   resolveAgyHooksJsonPath,
   resolveClaudeHome,
-  resolveCodexHome,
   siltpokeRoot,
 } from "../installer/paths";
-import { loadUpdateCheckConfigSync } from "../config/update-check-config";
-import { cachePath, parseCache } from "../update/check";
-import { resolveDaemonProject } from "../memory/active-project";
 import { globalSchema } from "../memory/schema-v3";
+import { cachePath, parseCache } from "../update/check";
+import { aHost, type DoctorHost, hostOfRunningCopy, hostOnThisMachine, setupAdviceFor, wiringPathFor } from "./doctor-agy-plugin-host";
 import { checkBrainHealth } from "./doctor-brain-check";
 import { checkAutostart, checkDaemonAlive, checkDaemonStaleness } from "./doctor-daemon-check";
 import { checkIndexStaleness } from "./doctor-index-staleness-check";
 import { pluginOwnsStopHook } from "./doctor-plugin-hook-check";
 import { isPluginInstall } from "./doctor-plugin-install";
-import { checkStopHook } from "./doctor-stop-hook-check";
+import { checkProjectResolutionUnderRoot } from "./doctor-project-resolution-check";
 import { checkProjectRoots } from "./doctor-project-roots-check";
 import { checkBrainRoles } from "./doctor-reviewer-check";
 import { checkStatuslineInterpreter } from "./doctor-statusline-check";
 import { checkStatuslineRenders } from "./doctor-statusline-run-check";
+import { checkCodexHooksHaveRun } from "./doctor-codex-hook-check";
+import { checkRipgrep } from "./doctor-ripgrep-check";
+import { checkStopHook } from "./doctor-stop-hook-check";
 
 export function defaultRepoRoot(): string {
   const here = dirname(fileURLToPath(import.meta.url));
-  // src/cli/doctor.ts → src/cli → src → repo
+  // Source: src/cli/ is two below the root. Bundled: dist/ is ONE below — two
+  // lands above the plugin, and [24]'s pointer check never matched (defect [32]).
+  if (basename(here) === "dist") return resolve(here, "..");
   return resolve(here, "..", "..");
 }
+
+import { checkReviewHookCanStart } from "./doctor-hook-start-check";
 
 export interface CheckResult {
   /** Short human-readable check name (used as checklist row label). */
@@ -68,6 +76,8 @@ export interface DoctorOptions {
   siltpokeHome?: string;
   /** Override the user's HOME (the pointer files live under it). For tests. */
   home?: string;
+  /** Override the env read for XDG_CONFIG_HOME in the autostart check (defect [72]). For tests. */
+  env?: NodeJS.ProcessEnv;
   /** Override repo root (used for slash symlink target verification). */
   repoRoot?: string;
   /**
@@ -78,6 +88,14 @@ export interface DoctorOptions {
   pluginInstall?: boolean;
   /** Deterministic Brain re-verify — defaults to "claude resolvable on PATH". For tests. */
   brainReverifyFn?: () => boolean;
+  /**
+   * Injectable project resolver, used by `checkProjectResolutionUnderRoot`.
+   * On `DoctorOptions` rather than that function's own parameter type because
+   * the async checks are now all invoked through one `DoctorOptions` signature
+   * (`DoctorAsyncCheck`), which a seam declared only on the callee cannot
+   * reach. For tests.
+   */
+  resolve?: (input: { home: string }) => Promise<{ source: string; project_root: string | null }>;
   /** Override the /api/daemon-health URL for the staleness check. Defaults to the local daemon. */
   daemonHealthUrl?: string;
   /** Injectable fetch for the daemon-staleness/alive checks (tests stub without a live server). Defaults to `fetch`. */
@@ -111,6 +129,9 @@ export interface DoctorOptions {
    * result would depend on the machine running the test, not on the fixture.
    */
   codexConfigPath?: string;
+  /** Override qoder's / codebuddy's home for host detection (`[89]`). For tests. */
+  qoderHome?: string;
+  codebuddyHome?: string;
   /**
    * Override the plugin's own hooks.json path for the Stop-hook check.
    * Defaults to `${CLAUDE_PLUGIN_ROOT}/hooks/hooks.json`. For tests.
@@ -138,12 +159,15 @@ export function readJson(path: string): { ok: true; value: unknown } | { ok: fal
   }
 }
 
+export type { DoctorHost };
+export { setupAdviceFor };
+
 /**
  * Which host is this user actually running Siltpoke under?
  *
  * WHY — audit defect `[16]`: under an agy HOME, `doctor` printed two red rows
  * about `~/.claude/settings.json` and Claude Code's Stop-hook registration, and
- * told the user to run `/siltpoke-setup`. agy has neither of those files nor
+ * told the user to run `/siltpoke:siltpoke-setup`. agy has neither of those files nor
  * that command; it is wired through `~/.gemini/config/hooks.json`. So the rows
  * were both false and unactionable, and `skills/siltpoke/SKILL.md` lists
  * `doctor` as available, so agy users really do reach them.
@@ -151,49 +175,17 @@ export function readJson(path: string): { ok: true; value: unknown } | { ok: fal
  * CONSERVATIVE ON PURPOSE: this only ever reports a NON-Claude host on positive
  * evidence that one is wired. A machine with nothing detected stays
  * `claude-code`, because "Claude Code user who has not run setup yet" is a real
- * state that must keep its red row and its `/siltpoke-setup` advice — that row
+ * state that must keep its red row and its `/siltpoke:siltpoke-setup` advice — that row
  * is what defect `[2]` fixed, and downgrading it here would quietly undo it.
  */
-export type DoctorHost = "claude-code" | "codex" | "antigravity";
-
 export function detectDoctorHost(opts: DoctorOptions = {}): DoctorHost {
-  if (existsSync(opts.claudeHome ?? resolveClaudeHome())) return "claude-code";
-  if (existsSync(opts.agyHooksJsonPath ?? resolveAgyHooksJsonPath())) return "antigravity";
-  if (existsSync(opts.codexConfigPath ?? join(resolveCodexHome(), "config.toml"))) return "codex";
-  return "claude-code";
-}
-
-/**
- * The one sentence that tells this host's user how to set Siltpoke up.
- *
- * Verbatim from the three Stop-hook nudges (`hooks/stop.sh`,
- * `hooks/codex-stop.sh`, `hooks/agy-stop.sh`) that defect `[8]` fixed — the
- * wording was settled there, and a second spelling would be a second thing to
- * keep in sync. `tests/plugin/host-aware-nudge.test.ts` holds the invariant
- * that a non-Claude host is never handed a `/siltpoke-` command; doctor was
- * outside that guard until now.
- */
-export function setupAdviceFor(host: DoctorHost): string {
-  switch (host) {
-    case "codex":
-      return "Run `/skills` and pick siltpoke";
-    case "antigravity":
-      return 'Ask your agent to "set up Siltpoke"';
-    default:
-      return "Run `/siltpoke-setup`";
-  }
+  // [81]: the copy that is running says whose it is; only otherwise is the machine read.
+  return hostOfRunningCopy(opts, opts.repoRoot ?? defaultRepoRoot()) ?? hostOnThisMachine(opts);
 }
 
 /** Where this host keeps the wiring doctor should be looking at. */
 export function hostWiringPath(host: DoctorHost, opts: DoctorOptions): string {
-  switch (host) {
-    case "codex":
-      return join(resolveCodexHome(), "hooks.json");
-    case "antigravity":
-      return opts.agyHooksJsonPath ?? resolveAgyHooksJsonPath();
-    default:
-      return join(opts.claudeHome ?? resolveClaudeHome(), "settings.json");
-  }
+  return wiringPathFor(host, opts, opts.repoRoot ?? defaultRepoRoot());
 }
 
 function checkSettingsJson(opts: DoctorOptions): CheckResult {
@@ -208,7 +200,7 @@ function checkSettingsJson(opts: DoctorOptions): CheckResult {
       name,
       pass: true,
       status: "info",
-      detail: `skipped — this is a ${host} install, wired through ${hostWiringPath(host, opts)}, not ${path}`,
+      detail: `skipped — this is ${aHost(host)} install, wired through ${hostWiringPath(host, opts)}, not ${path}`,
     };
   }
   if (!r.ok) {
@@ -309,12 +301,12 @@ function checkGlobalSchema(opts: DoctorOptions): CheckResult {
   if (!r.ok) {
     if (r.reason === "missing") {
       // Absent is the correct state on a fresh install, and this branch is
-      // audit defect [2]. `/siltpoke-setup` never writes this file —
+      // audit defect [2]. `/siltpoke:siltpoke-setup` never writes this file —
       // src/cli/install.ts has zero references to it — and src/memory/global.ts
       // creates it the first time a review awards XP. `readGlobal()` returns
       // null when it is absent and every caller falls back to defaultGlobal(),
       // so nothing is broken. Treating absent as a hard failure meant a new
-      // user's very first `/siltpoke-doctor` reported "1 of 18 checks failed"
+      // user's very first `/siltpoke:siltpoke-doctor` reported "1 of 18 checks failed"
       // on a perfectly healthy install. The sibling wake.json and inner.txt
       // checks have carried this branch all along; this one was missing it.
       return {
@@ -349,7 +341,7 @@ function checkSlashSymlinks(opts: DoctorOptions): CheckResult {
       name: "slash command symlinks intact",
       pass: true,
       status: "info",
-      detail: `skipped — a ${host} install has no Claude Code slash-command symlinks. ${setupAdviceFor(host)} if Siltpoke is not wired.`,
+      detail: `skipped — ${aHost(host)} install has no Claude Code slash-command symlinks. ${setupAdviceFor(host)} if Siltpoke is not wired.`,
     };
   }
   const platform = opts.platform ?? process.platform;
@@ -460,7 +452,7 @@ interface AgyHookEntryShape {
   command?: unknown;
 }
 
-function checkAgyHooksJson(opts: DoctorOptions): CheckResult {
+function checkAgyGlobalHooksJson(opts: DoctorOptions): CheckResult {
   const name = "~/.gemini/config/hooks.json siltpoke-review Stop registered (agy)";
   const path = opts.agyHooksJsonPath ?? resolveAgyHooksJsonPath();
   if (!existsSync(path)) {
@@ -471,7 +463,7 @@ function checkAgyHooksJson(opts: DoctorOptions): CheckResult {
       name,
       pass: true,
       status: "info",
-      detail: `${path} absent — Antigravity not wired (optional: it is wired during setup only when agy is present on the machine, same wire-only-if-present rule as codebuddy/qoder)`,
+      detail: `${path} absent — Antigravity not wired (no global hooks.json, and no agy plugin hooks.json with an agy-stop Stop entry; optional: it is wired during setup only when agy is present on the machine, same wire-only-if-present rule as codebuddy/qoder)`,
     };
   }
   const r = readJson(path);
@@ -504,69 +496,117 @@ function checkAgyHooksJson(opts: DoctorOptions): CheckResult {
   return { name, pass: true, detail: null };
 }
 
-/**
- * Standing guard for the whole cwd=/ project-resolution bug class (daemon
- * per-request project-resolution track, T13). Runs the same resolver the
- * daemon uses for every request (`resolveDaemonProject`, src/memory/active-
- * project.ts) and asserts a live project resolves, so a silent re-regression
- * becomes a visible doctor row instead of a symptom discovered days later.
- *
- * `resolveDaemonProject` is already cwd-independent (it resolves from
- * ?repo=/pin/recency against the projects store, never `process.cwd()`), so
- * this check does NOT force `process.chdir("/")` — that would mutate the
- * live CLI process's cwd for every check that runs after it (a much bigger
- * side effect than a diagnostic warrants) without adding coverage the
- * resolver's own cwd-independence doesn't already give us. The value here is
- * a STANDING assertion that a live project resolves, not a cwd probe.
- *
- * Async (queries the projects store), so it is NOT folded into the sync
- * `runAllChecks()` array — it runs alongside the other async daemon checks
- * in `runDoctorCli` below, following that same async-check pattern, and
- * (unlike the warn-only daemon rows) DOES affect the exit code: a resolved
- * source with no `project_root` is a genuine fault, not a healthy-empty state.
- */
-export async function checkProjectResolutionUnderRoot(
-  opts: DoctorOptions & {
-    /** Injectable resolver seam. Defaults to the real `resolveDaemonProject`. For tests. */
-    resolve?: (input: { home: string }) => Promise<{ source: string; project_root: string | null }>;
-  },
-): Promise<CheckResult> {
-  const name = "project resolution survives cwd=/";
-  const home = opts.siltpokeHome ?? siltpokeRoot();
-  const resolveFn = opts.resolve ?? ((i: { home: string }) => resolveDaemonProject({ home: i.home }));
-  const r = await resolveFn({ home });
-  if (r.source === "none") {
-    // Empty install (no projects registered yet) is not an error — warn only.
-    return { name, pass: true, status: "warn", detail: "no active project yet — run a review or open a repo" };
-  }
-  if (!r.project_root) {
-    return { name, pass: false, detail: `resolver returned source=${r.source} but no project_root` };
-  }
-  return { name, pass: true, detail: null };
-}
-
 // ---------------------------------------------------------------------------
 // Orchestration + output.
 // ---------------------------------------------------------------------------
 
-export function runAllChecks(opts: DoctorOptions = {}): CheckResult[] {
-  return [
-    checkSettingsJson(opts),
-    checkStopHook(opts),
-    checkInnerTxt(opts),
-    checkWakeJson(opts),
-    checkGlobalSchema(opts),
-    checkSlashSymlinks(opts),
-    checkConfigJson(opts),
-    checkBrainHealth(opts),
-    checkAutostart(opts),
-    ...checkBrainRoles(opts),
-    checkAgyHooksJson(opts),
-    checkProjectRoots(opts),
-    checkStatuslineInterpreter(opts),
-    checkStatuslineRenders(opts),
-    checkUpdateCheck(opts),
-  ];
+/**
+ * One row-producer, plus the label its row carries if it throws. `label` is
+ * used ONLY on the crash path, where there is no returned row to take a name
+ * from — it is not a second source of truth for the row name (audit §42.1
+ * says why no equality invariant is asserted on it). Most `run`s produce one
+ * row; `checkBrainRoles` produces several.
+ */
+export interface DoctorCheck {
+  readonly label: string;
+  readonly run: (opts: DoctorOptions) => CheckResult | CheckResult[];
+}
+
+export const DOCTOR_CHECKS: readonly DoctorCheck[] = [
+  { label: "settings.json", run: checkSettingsJson },
+  { label: "Stop hook registered", run: checkStopHook },
+  { label: "codex hooks have run", run: checkCodexHooksHaveRun },
+  { label: "inner.txt", run: checkInnerTxt },
+  { label: "wake.json", run: checkWakeJson },
+  { label: "global schema", run: checkGlobalSchema },
+  { label: "slash command symlinks intact", run: checkSlashSymlinks },
+  { label: "config.json", run: checkConfigJson },
+  { label: "Brain health", run: checkBrainHealth },
+  { label: "daemon autostart configured", run: checkAutostart },
+  { label: "Brain roles", run: checkBrainRoles },
+  { label: "agy hooks.json", run: (o) => withAgyPluginFallback(checkAgyGlobalHooksJson(o), o.agyHooksJsonPath) },
+  { label: "project roots", run: checkProjectRoots },
+  { label: "statusline interpreter runnable", run: checkStatuslineInterpreter },
+  { label: "statusline renders (real run)", run: checkStatuslineRenders },
+  { label: "update check", run: checkUpdateCheck },
+  { label: "ripgrep available", run: (o) => checkRipgrep(o) },
+  // Last: the row that explains the silence every row above can report healthy
+  // through — wired, registered, rendering, and no review ever. See
+  // doctor-hook-start-check.ts.
+  { label: "review hook can start", run: checkReviewHookCanStart },
+];
+
+/** The row a check gets when it threw: "unknown", not "broken" — calling a
+ * crash a failed check claims more than the evidence supports. */
+function crashRow(label: string, err: unknown): CheckResult {
+  const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  return {
+    name: label,
+    pass: false,
+    detail: `this check crashed, so its answer is unknown — every other row below still ran. ${msg}`,
+  };
+}
+
+/**
+ * Run every check, and let none of them take the checklist down with it.
+ *
+ * Defect `[29]` (audit §36.5 / §42.1): this was an array literal, so the first
+ * check to throw aborted the whole thing and `/siltpoke:siltpoke-doctor` printed nothing
+ * at all — on Windows, every time. Doctor exists to speak when other things are
+ * broken, so dying of the fault it reports is the one failure it cannot have.
+ * `checks` is injected only by the crash-path tests.
+ */
+export function runAllChecks(
+  opts: DoctorOptions = {},
+  checks: readonly DoctorCheck[] = DOCTOR_CHECKS,
+): CheckResult[] {
+  const results: CheckResult[] = [];
+  for (const check of checks) {
+    try {
+      const produced = check.run(opts);
+      results.push(...(Array.isArray(produced) ? produced : [produced]));
+    } catch (err) {
+      results.push(crashRow(check.label, err));
+    }
+  }
+  return results;
+}
+
+/** The async sibling of `DoctorCheck`. Same contract, awaited. */
+export interface DoctorAsyncCheck {
+  readonly label: string;
+  readonly run: (opts: DoctorOptions) => Promise<CheckResult | CheckResult[]>;
+}
+
+/** The rows that need I/O, in the order they are printed. */
+export const DOCTOR_ASYNC_CHECKS: readonly DoctorAsyncCheck[] = [
+  // The only async row that can fail the exit code — see its doc comment.
+  { label: "project resolution survives cwd=/", run: checkProjectResolutionUnderRoot },
+  { label: "daemon alive (/api/ping)", run: checkDaemonAlive },
+  { label: "daemon running latest code", run: checkDaemonStaleness },
+  { label: "index staleness", run: checkIndexStaleness },
+];
+
+/**
+ * Same guard as `runAllChecks`, for the rows that need I/O. The first cut of
+ * the `[29]` fix guarded the sync array and left these five inline in
+ * `runDoctorCli`, three with no try/catch anywhere — the same defect, just
+ * relocated.
+ */
+export async function runAllAsyncChecks(
+  opts: DoctorOptions = {},
+  checks: readonly DoctorAsyncCheck[] = DOCTOR_ASYNC_CHECKS,
+): Promise<CheckResult[]> {
+  const results: CheckResult[] = [];
+  for (const check of checks) {
+    try {
+      const produced = await check.run(opts);
+      results.push(...(Array.isArray(produced) ? produced : [produced]));
+    } catch (err) {
+      results.push(crashRow(check.label, err));
+    }
+  }
+  return results;
 }
 
 export function formatChecklist(
@@ -574,9 +614,11 @@ export function formatChecklist(
   opts: { quiet?: boolean } = {},
 ): string {
   const fails = results.filter((r) => !r.pass);
+  const warns = results.filter((r) => r.status === "warn").length;
   if (opts.quiet) {
     if (fails.length === 0) {
-      return `siltpoke-doctor: all ${results.length} checks passed.\n`;
+      const tail = warns === 0 ? "" : `, with ${warns} warning${warns === 1 ? "" : "s"} (run without --quiet)`;
+      return `siltpoke-doctor: all ${results.length} checks passed${tail}.\n`;
     }
     const names = fails.map((r) => r.name).join(" · ");
     return `siltpoke-doctor: ${fails.length} of ${results.length} checks failed (${names}). Run without --quiet for details.\n`;
@@ -595,7 +637,12 @@ export function formatChecklist(
   }
   lines.push("");
   if (fails.length === 0) {
-    lines.push(`All ${results.length} checks passed. Install healthy.`);
+    // A ⚠ row above "Install healthy" contradicts it (§110 W2): say so instead.
+    lines.push(
+      warns === 0
+        ? `All ${results.length} checks passed. Install healthy.`
+        : `All ${results.length} checks passed, with ${warns} warning${warns === 1 ? "" : "s"} above — read ${warns === 1 ? "it" : "them"}.`,
+    );
   } else {
     lines.push(`${fails.length} of ${results.length} checks failed.`);
   }
@@ -609,6 +656,7 @@ export function formatJson(results: readonly CheckResult[]): string {
     {
       all_pass: failCount === 0,
       fail_count: failCount,
+      warn_count: results.filter((r) => r.status === "warn").length,
       checks: results,
     },
     null,
@@ -621,7 +669,7 @@ export function formatJson(results: readonly CheckResult[]): string {
 // ---------------------------------------------------------------------------
 
 /**
- * The whole `/siltpoke-doctor` CLI as one callable: parse flags, run every
+ * The whole `/siltpoke:siltpoke-doctor` CLI as one callable: parse flags, run every
  * check, render, hand back the text + exit code.
  *
  * Exported (rather than living inline under `import.meta.main`) so the plugin
@@ -642,17 +690,11 @@ export async function runDoctorCli(
     repoRoot: defaultRepoRoot(),
     ...overrides,
   };
-  // 15 sync install-health checks, then the async project-resolution check
-  // (CAN fail the exit code — see checkProjectResolutionUnderRoot doc), then
-  // 4 async warn-only rows (daemon alive/staleness, index staleness, tracks.yaml)
-  // that never affect it.
-  const results = [
-    ...runAllChecks(opts),
-    await checkProjectResolutionUnderRoot(opts),
-    await checkDaemonAlive(opts),
-    await checkDaemonStaleness(opts),
-    await checkIndexStaleness(opts), // ← warn-only
-  ];
+  // The sync install-health rows, then the I/O ones: project resolution (the
+  // one async row that CAN fail the exit code — see its doc), then the four
+  // warn-only rows. BOTH halves are crash-guarded; the async half used to be
+  // an inline list of awaits and was the surviving half of defect `[29]`.
+  const results = [...runAllChecks(opts), ...(await runAllAsyncChecks(opts))];
   const failCount = results.filter((r) => !r.pass).length;
 
   const output = args.has("--json")

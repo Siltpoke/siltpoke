@@ -36,11 +36,11 @@ import type { CheckResult, DoctorOptions } from "./doctor";
 import { defaultRepoRoot, type DoctorHost, detectDoctorHost } from "./doctor";
 
 /** How this host's user switches the reviewer. Only Claude Code has the
- * `/siltpoke-brain` slash command; the [16] invariant forbids handing any
+ * `/siltpoke:siltpoke-brain` slash command; the [16] invariant forbids handing any
  * other host a `/siltpoke-` command, so they are pointed at their agent. */
 function reviewerAdviceFor(host: DoctorHost): string {
   return host === "claude-code"
-    ? "run `/siltpoke-brain set-builder <builder> <reviewer>` — e.g. `set-builder claude codex` when you build in Claude Code"
+    ? "run `/siltpoke:siltpoke-brain set-builder <builder> <reviewer>` — e.g. `set-builder claude codex` when you build in Claude Code"
     : "ask your agent to have Siltpoke use a different reviewer for the agent you build with";
 }
 

@@ -224,3 +224,28 @@ export function loadBrainConfigSync(homeBase: string): BrainConfig {
     return parseBrainConfig(null, envForRead());
   }
 }
+
+/**
+ * The role exactly as the user wrote it in config.json, or undefined when they
+ * did not (or wrote something this parser cannot use).
+ *
+ * `parseBrainConfig` always fills every role — chat falls back to `main`, and
+ * `main` to claude — so its result cannot tell a choice from a default. Dashboard
+ * chat needs that difference (defect [49]): only a real choice may outrank the
+ * agent the user worked in last. `brain.main` is deliberately NOT a choice here.
+ */
+export function explicitRoleSync(homeBase: string, role: BrainRole): RoleConfig | undefined {
+  try {
+    const path = join(homeBase, "config.json");
+    if (!existsSync(path)) return undefined;
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (typeof parsed !== "object" || parsed === null) return undefined;
+    const brain = (parsed as { brain?: unknown }).brain;
+    if (typeof brain !== "object" || brain === null) return undefined;
+    const roles = (brain as { roles?: unknown }).roles;
+    if (typeof roles !== "object" || roles === null) return undefined;
+    return asRoleConfig((roles as Record<string, unknown>)[role]);
+  } catch {
+    return undefined; // unreadable or malformed config -> no choice, never throw
+  }
+}

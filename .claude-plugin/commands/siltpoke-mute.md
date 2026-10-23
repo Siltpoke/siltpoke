@@ -9,7 +9,7 @@ Accepted durations — this is the COMPLETE list of legal values:
 - `15m` / `30m` — minutes (`<N>m`)
 - `1h` / `4h` — hours (`<N>h`)
 - `1d` / `2d` — days (`<N>d`)
-- `indefinite` — silent until `/siltpoke-unmute`
+- `indefinite` — silent until `/siltpoke:siltpoke-unmute`
 
 Run:
 
@@ -30,6 +30,6 @@ wake bypass) — mute beats wake. While mute is active, no review fires.
 Tell the user verbatim from the CLI output (it includes the wall-clock
 expiry time). Then mention:
 
-- `/siltpoke-unmute` clears the mute marker immediately.
+- `/siltpoke:siltpoke-unmute` clears the mute marker immediately.
 - Expired mutes auto-release; no need to clean up if they walked away.
-- The dashboard (`/siltpoke-dashboard`) shows the mute while it is active.
+- The dashboard (`/siltpoke:siltpoke-dashboard`) shows the mute while it is active.

@@ -24,7 +24,7 @@ If the output says **`no reviews yet`**, there is nothing pending for this
 project — Siltpoke writes a review after a turn in which code actually
 changed, so a fresh install has none. Say so plainly and stop; do NOT run
 the mark-forwarded step. This is a normal state, not a failure: do not
-suggest `/siltpoke-doctor` or imply the install is broken.
+suggest `/siltpoke:siltpoke-doctor` or imply the install is broken.
 
 If instead it says **`no review with id '<x>'`**, the project DOES have
 reviews and that particular id is not one of them. Re-run `last` with no

@@ -18,6 +18,7 @@
  */
 import { homedir } from "node:os";
 import { aggregateBySuperGroup } from "./aggregator";
+import { containerForPath, deriveContainers, ROOT_CONTAINER_PATH } from "./bucketing";
 import { computeContainerStats } from "./container-stats";
 import type { ArchitectureOverlay } from "./architecture-parser";
 import { emptyCounters, type RepoGraph, type RepoGraphMeta } from "./types";
@@ -91,6 +92,9 @@ export interface ProjectionSubdir {
   inbound: number;
   /** Total import weight OUT of this subdir (↑out badge). */
   outbound: number;
+  /** Non-code files drawn in this box (docs, tests, config) — never parsed.
+   * Absent when the index predates other-files.json or the view is authored. */
+  otherFiles?: number;
 }
 
 export interface ProjectionEdge {
@@ -126,8 +130,15 @@ export interface ArchitectureProjection {
   edges: ProjectionEdge[];
 }
 
-/** "src/explain/" → "explain"; "lib/foo/" → "foo". Last non-empty segment. */
+/** Id of the bucket holding files that sit directly at the repo root
+ * (`ROOT_CONTAINER_PATH`). Parentheses keep it apart from any real
+ * directory name a bucket id is otherwise taken from. */
+export const ROOT_BUCKET_ID = "(root)";
+
+/** "src/explain/" → "explain"; "lib/foo/" → "foo". Last non-empty segment.
+ * The root container ("") → ROOT_BUCKET_ID. */
 export function subdirId(path: string): string {
+  if (path === ROOT_CONTAINER_PATH) return ROOT_BUCKET_ID;
   const segments = path.replace(/\/+$/, "").split("/").filter(Boolean);
   return segments.length ? segments[segments.length - 1]! : path;
 }
@@ -146,13 +157,22 @@ export function bucketIdOfPath(
 ): string | null {
   let best: { id: string; len: number } | null = null;
   for (const s of subdirs) {
-    if (!s.path) continue;
-    const prefix = s.path.endsWith("/") ? s.path : `${s.path}/`;
+    // The root bucket's empty prefix claims whatever no deeper bucket does.
+    const prefix =
+      s.path === ROOT_CONTAINER_PATH ? "" : s.path.endsWith("/") ? s.path : `${s.path}/`;
     if (filePath.startsWith(prefix) && (!best || prefix.length > best.len)) {
       best = { id: s.id, len: prefix.length };
     }
   }
   return best?.id ?? null;
+}
+
+/** The subdirs that carry a path, typed so `bucketIdOfPath` accepts them. An
+ * EMPTY path is kept: it is the repo-root bucket, not a missing path. */
+export function subdirsWithPath<T extends { id: string; path?: string }>(
+  subdirs: readonly T[],
+): Array<T & { path: string }> {
+  return subdirs.filter((sd): sd is T & { path: string } => typeof sd.path === "string");
 }
 
 /**
@@ -162,6 +182,8 @@ export function bucketIdOfPath(
  * distinct group rather than all collapsing onto "src".
  */
 function groupSlug(panelName: string): { id: string; short: string } {
+  // Degraded mode names the root container's panel by its path, "".
+  if (panelName === ROOT_CONTAINER_PATH) return { id: ROOT_BUCKET_ID, short: ROOT_BUCKET_ID };
   // Degraded-mode panels are bare paths ("src/foo/"): no whitespace, slashed.
   // Rich-mode human names may contain slashes too ("State / persistence") but
   // always carry whitespace — so a path is "slashed AND space-free".
@@ -185,16 +207,72 @@ function basename(absPath: string): string {
 }
 
 /**
+ * Put other (non-code) files into boxes, in place. The code buckets are never
+ * re-derived: a file goes to the code bucket that already claims it, except
+ * that the root bucket only takes files sitting directly at the root (else it
+ * would swallow all of `docs/`). Files no code bucket takes get boxes of their
+ * own, derived by the same structural rule as code. Afterwards
+ * `bucketIdOfPath(subdirs, file)` names the box that counts each file — the
+ * new boxes are never deeper than a code bucket that claimed something.
+ */
+function addOtherFiles(subdirs: ProjectionSubdir[], groups: ProjectionGroup[], others: readonly string[]): void {
+  const counts = new Map<string, number>();
+  const unclaimed: string[] = [];
+  for (const p of others) {
+    const b = bucketIdOfPath(subdirs, p);
+    if (b !== null && !(b === ROOT_BUCKET_ID && p.includes("/"))) counts.set(b, (counts.get(b) ?? 0) + 1);
+    else unclaimed.push(p);
+  }
+  for (const s of subdirs) s.otherFiles = counts.get(s.id) ?? 0;
+
+  const { containers } = deriveContainers(unclaimed);
+  const own = new Map<string, number>();
+  for (const p of unclaimed) {
+    const c = containerForPath(p, containers);
+    if (c !== null) own.set(c, (own.get(c) ?? 0) + 1);
+  }
+  // Ids are the box's last path segment, and tests/ usually mirrors src/
+  // (tests/daemon/ beside src/daemon/): every reader keys boxes by id, so a
+  // taken id would merge two boxes. A taken id falls back to the full path.
+  const taken = new Set(subdirs.map((s) => s.id));
+  for (const path of containers) {
+    const short = subdirId(path);
+    const id = taken.has(short) ? path.replace(/\/+$/, "") : short;
+    taken.add(id);
+    subdirs.push({
+      id,
+      group: id,
+      path,
+      files: 0,
+      funcCount: 0,
+      recurringBasenames: [],
+      purpose: "",
+      inbound: 0,
+      outbound: 0,
+      otherFiles: own.get(path) ?? 0,
+    });
+    if (!groups.some((g) => g.id === id)) {
+      groups.push({ id, title: path, short, accent: GROUP_ACCENTS[groups.length % GROUP_ACCENTS.length]! });
+    }
+  }
+}
+
+/**
  * Build the architecture-level projection for one repo.
  *
  * @param graph   raw repo graph (`readGraph(storage_dir)`)
  * @param overlay parsed CLAUDE.md §Architecture (null → degraded mode)
  * @param meta    repo meta (`readMeta(storage_dir)`) — drives the `repo` block
+ * @param others  `readOtherFiles(storage_dir)?.files` — non-code files drawn as
+ *                plain files in the derived (no-overlay) view only; null/absent
+ *                (an older index, or a caller that does not draw them) changes
+ *                nothing.
  */
 export function projectArchitecture(
   graph: RepoGraph,
   overlay: ArchitectureOverlay | null,
   meta: RepoGraphMeta,
+  others: readonly string[] | null = null,
 ): ArchitectureProjection {
   const aggregated = aggregateBySuperGroup(graph, overlay, meta.anchorMap);
 
@@ -252,6 +330,10 @@ export function projectArchitecture(
       outbound: outbound.get(id) ?? 0,
     };
   });
+
+  // An authored overlay is the author's chosen boxes — other files are drawn
+  // only in the derived view, and never reach `aggregated` (the Generate prompt).
+  if (overlay === null && others && others.length > 0) addOtherFiles(subdirs, groups, others);
 
   // Defensive: a hand-edited or pre-schema meta may lack counters;
   // fall back to zeros instead of throwing (which 500s the whole SSR page).

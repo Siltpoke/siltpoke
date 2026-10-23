@@ -338,11 +338,11 @@ test("Quota cap blocks immediately when already exhausted externally", async () 
   });
   writeBrainHealth(tmp, {
     ...freshBrainHealth(),
-    quota_calls_today: { codex: { date: new Date().toISOString().slice(0, 10), count: 50 } },
+    quota_calls_today: { review: { date: new Date().toISOString().slice(0, 10), count: 50 } },
   });
   const guarded = makeGuardedCallBrain({ homeBase: tmp, provider });
   await expect(guarded({ systemPrompt: "s", contextBundle: "c" })).rejects.toThrow(
-    /daily call cap \(50\/day\) reached for quota-billed provider "codex"/,
+    /daily review call cap \(50\/day\) reached — "codex" call skipped/,
   );
   expect(calls).toBe(0);
 });
@@ -350,7 +350,7 @@ test("Quota cap blocks immediately when already exhausted externally", async () 
 test("Quota cap resets on date rollover", async () => {
   writeBrainHealth(tmp, {
     ...freshBrainHealth(),
-    quota_calls_today: { codex: { date: "2020-01-01", count: 50 } }, // exhausted on a stale date
+    quota_calls_today: { review: { date: "2020-01-01", count: 50 } }, // exhausted on a stale date
   });
   let calls = 0;
   const provider = makeQuotaProvider(async () => {
@@ -362,11 +362,13 @@ test("Quota cap resets on date rollover", async () => {
   expect(calls).toBe(1);
 });
 
-test("claude (usd) path NEVER consumes the quota-call counter", async () => {
+// Spec §12.3 (the maintainer 2026-10-14): claude is counted like the other four —
+// this test used to assert the opposite ("NEVER consumes").
+test("claude (usd) path consumes the review counter like every agent", async () => {
   const guarded = makeGuardedCallBrain({ homeBase: tmp, callBrainFn: async () => OK });
   await guarded({ systemPrompt: "s", contextBundle: "c" });
   await guarded({ systemPrompt: "s", contextBundle: "c" });
-  expect(readBrainHealth(tmp).quota_calls_today).toEqual({});
+  expect(readBrainHealth(tmp).quota_calls_today.review?.count).toBe(2);
 });
 
 // ── T4 AC13: warn-once for quota-billed providers ─────────────────────────
@@ -414,7 +416,7 @@ test("Quota-billed throttle retry: count=49 pre-seeded -> first attempt consumes
   const today = new Date().toISOString().slice(0, 10);
   writeBrainHealth(tmp, {
     ...freshBrainHealth(),
-    quota_calls_today: { codex: { date: today, count: 49 } },
+    quota_calls_today: { review: { date: today, count: 49 } },
   });
   let calls = 0;
   const provider: ReviewerBrainProvider = {
@@ -439,14 +441,14 @@ test("Quota-billed throttle retry: count=49 pre-seeded -> first attempt consumes
   }
   expect(calls).toBe(1); // retry refused — no second spawn
   expect(msg).toContain("class=throttle attempts=1"); // enriched FIRST error, not a fresh quota error
-  expect(readBrainHealth(tmp).quota_calls_today).toEqual({ codex: { date: today, count: 50 } });
+  expect(readBrainHealth(tmp).quota_calls_today).toEqual({ review: { date: today, count: 50 } });
 });
 
 test("Quota-billed throttle retry: count=48 pre-seeded -> first consumes 48->49, retry consumes 49->50 -> exactly 2 spawns", async () => {
   const today = new Date().toISOString().slice(0, 10);
   writeBrainHealth(tmp, {
     ...freshBrainHealth(),
-    quota_calls_today: { codex: { date: today, count: 48 } },
+    quota_calls_today: { review: { date: today, count: 48 } },
   });
   let calls = 0;
   const provider: ReviewerBrainProvider = {
@@ -467,7 +469,67 @@ test("Quota-billed throttle retry: count=48 pre-seeded -> first consumes 48->49,
   const result = await guarded({ systemPrompt: "s", contextBundle: "c" });
   expect(calls).toBe(2);
   expect(result.output.bubble_short).toBe("ok");
-  expect(readBrainHealth(tmp).quota_calls_today).toEqual({ codex: { date: today, count: 50 } });
+  expect(readBrainHealth(tmp).quota_calls_today).toEqual({ review: { date: today, count: 50 } });
+});
+
+// Defect [49] step 4: a caller that says it is chat takes BOTH attempts from
+// chat's bucket — the retry must not fall back to review's.
+test("Throttle retry for a chat caller: both attempts count under chat, review's count is untouched", async () => {
+  const today = new Date().toISOString().slice(0, 10);
+  writeBrainHealth(tmp, {
+    ...freshBrainHealth(),
+    quota_calls_today: { review: { date: today, count: 7 } },
+  });
+  let calls = 0;
+  const provider: ReviewerBrainProvider = {
+    meta: { name: "codex", billing: "quota", genAiSystem: "openai", acceptsModel: false },
+    callRaw: notUsedCallRaw,
+    call: async () => {
+      calls++;
+      if (calls === 1) throw throttleError();
+      return OK;
+    },
+  };
+  const guarded = makeGuardedCallBrain({
+    homeBase: tmp,
+    provider,
+    usedBy: "chat",
+    sleepFn: noSleep,
+    checkBudgetFn: async () => true,
+  });
+  await guarded({ systemPrompt: "s", contextBundle: "c" });
+  expect(calls).toBe(2);
+  expect(readBrainHealth(tmp).quota_calls_today).toEqual({
+    review: { date: today, count: 7 },
+    chat: { date: today, count: 2 },
+  });
+});
+
+test("Throttle retry for a chat caller is refused by CHAT's cap, not review's", async () => {
+  writeFileSync(
+    join(tmp, "config.json"),
+    JSON.stringify({ brain: { quota_daily_cap: 9, chat_quota_daily_cap: 1 } }),
+  );
+  let calls = 0;
+  const provider: ReviewerBrainProvider = {
+    meta: { name: "codex", billing: "quota", genAiSystem: "openai", acceptsModel: false },
+    callRaw: notUsedCallRaw,
+    call: async () => {
+      calls++;
+      throw throttleError();
+    },
+  };
+  const guarded = makeGuardedCallBrain({
+    homeBase: tmp,
+    provider,
+    usedBy: "chat",
+    sleepFn: noSleep,
+    checkBudgetFn: async () => true,
+  });
+  await expect(guarded({ systemPrompt: "s", contextBundle: "c" })).rejects.toThrow(
+    "class=throttle attempts=1",
+  );
+  expect(calls).toBe(1);
 });
 
 // ── T7: agy cross-family-honesty warn-once (warn, allow — never block) ────
@@ -576,7 +638,7 @@ test("claude (usd) provider with a claude- model string: never warns the agy-spe
   expect(familyWarnings.length).toBe(0);
 });
 
-test("USD (claude) throttle retry never touches the quota-call counter", async () => {
+test("USD (claude) throttle retry takes a second slot from the review counter (§12.3)", async () => {
   let calls = 0;
   const guarded = makeGuardedCallBrain({
     homeBase: tmp,
@@ -589,8 +651,8 @@ test("USD (claude) throttle retry never touches the quota-call counter", async (
     checkBudgetFn: async () => true,
   });
   await guarded({ systemPrompt: "s", contextBundle: "c" });
-  expect(calls).toBe(2); // retry proceeds unconditionally for usd providers
-  expect(readBrainHealth(tmp).quota_calls_today).toEqual({});
+  expect(calls).toBe(2);
+  expect(readBrainHealth(tmp).quota_calls_today.review?.count).toBe(2);
 });
 
 // ── T4 fixup FIX2: pre-spawn quota-cap BrainError carries code:"quota_cap";
@@ -600,7 +662,7 @@ test("USD (claude) throttle retry never touches the quota-call counter", async (
 test("Pre-spawn quota-cap BrainError carries code:\"quota_cap\"", async () => {
   writeBrainHealth(tmp, {
     ...freshBrainHealth(),
-    quota_calls_today: { codex: { date: new Date().toISOString().slice(0, 10), count: 50 } },
+    quota_calls_today: { review: { date: new Date().toISOString().slice(0, 10), count: 50 } },
   });
   const provider: ReviewerBrainProvider = {
     meta: { name: "codex", billing: "quota", genAiSystem: "openai", acceptsModel: false },
@@ -623,7 +685,7 @@ test("Retry-refusal re-throw (throttle, quota cap hit mid-retry) does NOT carry 
   const today = new Date().toISOString().slice(0, 10);
   writeBrainHealth(tmp, {
     ...freshBrainHealth(),
-    quota_calls_today: { codex: { date: today, count: 49 } },
+    quota_calls_today: { review: { date: today, count: 49 } },
   });
   const provider: ReviewerBrainProvider = {
     meta: { name: "codex", billing: "quota", genAiSystem: "openai", acceptsModel: false },

@@ -5,7 +5,7 @@
 //
 // src/cli/install.ts interleaves ASKING (three TTY wizards) with WRITING. A
 // slash command has no TTY, so the asking cannot survive the move to a plugin:
-// it moves up to the model layer (`AskUserQuestion` in /siltpoke-setup) and
+// it moves up to the model layer (`AskUserQuestion` in /siltpoke:siltpoke-setup) and
 // arrives here as DATA — an --answers-file the model writes with the Write tool
 // (never a shell), or, for CI and headless installs, plain flags. This file
 // therefore asks NOTHING — answers in, files out. See ./configure-input.ts for
@@ -18,18 +18,20 @@ import { existsSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { type DialSet, speciesDefaults } from "../brain/personality";
+import { type AgyStatuslineOutcome, wireAgyStatusline } from "../installer/agy-statusline";
 import type { AutostartDispatchResult } from "../installer/autostart";
 import { backupSettings } from "../installer/backup";
-import { archetypeOf } from "../installer/personality-seed";
+import { bunForCommandString, recordBunPath } from "../installer/bun-path";
 import { siltpokeRoot } from "../installer/paths";
+import { archetypeOf } from "../installer/personality-seed";
 import { swapStatusLine } from "../installer/settings-mutator";
+import { markDone, recordBefore } from "../installer/receipt";
+import { claudeStatuslineEntry, recordedAutostart } from "../installer/receipt-sites";
+import { resolvePluginRoot, writeDaemonShim, writeShim } from "../installer/shim";
 import {
   buildStatuslineCommand,
   type StatuslineInterpreterDeps,
 } from "../installer/statusline-interpreter";
-import { resolvePluginRoot, writeDaemonShim, writeShim } from "../installer/shim";
-import { recordBunPath } from "../installer/bun-path";
-import { removeLegacyStopHook, type Settings } from "./configure-legacy-sweep";
 import { atomicWrite } from "../utils/atomic-write";
 import {
   answersFilePath,
@@ -40,6 +42,7 @@ import {
   readAnswersFile,
   validateOptions,
 } from "./configure-input";
+import { removeLegacyStopHook, type Settings } from "./configure-legacy-sweep";
 
 // The input layer lives in ./configure-input.ts (parsing + the allow-lists).
 // Re-exported here because this module is the kernel's public face.
@@ -56,6 +59,13 @@ export {
 /** Seams so tests never reach the real launchctl/systemctl. */
 export interface ConfigureDeps {
   installAutostart?: () => Promise<AutostartDispatchResult>;
+  /**
+   * Environment the autostart unit path is resolved from (`XDG_CONFIG_HOME`,
+   * defect [72]). Defaults to `process.env`; `HOME` is always the `home` arg.
+   */
+  env?: NodeJS.ProcessEnv;
+  /** Platform the receipt resolves the autostart unit path for. Defaults to `process.platform`. */
+  platform?: string;
   /**
    * Platform / binary-lookup seams for the statusLine interpreter (defect [10]).
    * Tests drive the win32 branch from macOS through these.
@@ -82,6 +92,8 @@ export interface ConfigureResult {
   configPath: string;
   /** `skipped` = not requested. `failed` = requested, and the wiring threw. */
   statusline: "installed" | "failed" | "skipped";
+  /** agy's statusline (defect `[35]`); `no-agy` when agy has no siltpoke plugin or none was asked for. */
+  agyStatusline: AgyStatuslineOutcome;
   /**
    * A discriminated outcome, NOT the dispatcher's raw status.
    *
@@ -288,7 +300,50 @@ async function wireSettings(
 
   // Back up BEFORE mutating — the user's settings.json is theirs.
   if (hasSettings) await backupSettings(claudeHome);
+  // Receipt (spec §2.1): written pending BEFORE the file changes, done after.
+  const receiptEnv = { ...process.env, HOME: home };
+  const entry = claudeStatuslineEntry(settingsPath, join(siltpokeDir, "inner.txt"));
+  if (wantStatusline) recordBefore(entry, receiptEnv);
   atomicWrite(settingsPath, `${JSON.stringify(next, null, 2)}\n`);
+  if (wantStatusline) markDone(entry.id, receiptEnv);
+}
+
+/**
+ * Claude Code's settings.json. A failure here must not take the pet down with
+ * it — the config is already on disk and usable; the user's own settings.json
+ * is backed up.
+ */
+async function wireClaude(
+  wantStatusline: boolean,
+  home: string,
+  siltpokeDir: string,
+  warn: (msg: string) => void,
+  deps: ConfigureDeps,
+): Promise<ConfigureResult["statusline"]> {
+  try {
+    await wireSettings(home, siltpokeDir, wantStatusline, warn, deps.statuslineInterpreter);
+    return wantStatusline ? "installed" : "skipped";
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    warn(`warning: settings.json wiring failed (${msg}); the pet is installed either way`);
+    // Only downgrade what was actually asked for: a skipped statusline that
+    // hit an unrelated sweep failure is still `skipped`, not `failed`.
+    return wantStatusline ? "failed" : "skipped";
+  }
+}
+
+/**
+ * agy's statusline (defect `[35]`) — a no-op unless the plugin is installed in
+ * agy. Same failure rule as settings.json: the pet is already on disk and stays.
+ */
+function wireAgy(home: string, warn: (msg: string) => void): AgyStatuslineOutcome {
+  try {
+    return wireAgyStatusline({ ...process.env, HOME: home }, bunForCommandString());
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    warn(`warning: agy statusline wiring failed (${msg}); the pet is installed either way`);
+    return "unwritable";
+  }
 }
 
 export async function configure(
@@ -313,26 +368,10 @@ export async function configure(
   await writeConfig(siltpokeDir, opts, home);
 
   // 2. settings.json: legacy Stop-hook sweep (always) + statusLine (opt-in).
-  //    A failure here must not take the pet down with it — the config is
-  //    already on disk and usable; the user's own settings.json is backed up.
-  let statusline: ConfigureResult["statusline"] = opts.statusline
-    ? "installed"
-    : "skipped";
-  try {
-    await wireSettings(
-      home,
-      siltpokeDir,
-      opts.statusline,
-      warn,
-      deps.statuslineInterpreter,
-    );
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    warn(`warning: settings.json wiring failed (${msg}); the pet is installed either way`);
-    // Only downgrade what was actually asked for: a skipped statusline that
-    // hit an unrelated sweep failure is still `skipped`, not `failed`.
-    if (opts.statusline) statusline = "failed";
-  }
+  const statusline = await wireClaude(opts.statusline, home, siltpokeDir, warn, deps);
+
+  // 2b. agy's statusline — only when a statusline was asked for (wireAgy).
+  const agyStatusline = opts.statusline ? wireAgy(home, warn) : "no-agy";
 
   // 3. Daemon autostart (opt-in).
   //
@@ -353,14 +392,18 @@ export async function configure(
     if (resolvePluginRoot(home) !== null) {
       await writeDaemonShim(home);
     }
-    const install =
+    // One env for the writer and the receipt, so both resolve the same unit path.
+    const autostartEnv = { ...(deps.env ?? process.env), HOME: home };
+    const rawInstall =
       deps.installAutostart ??
       (async () => {
         const { installAutostartForPlatform } = await import("../installer/autostart");
         // Same `home` the shim was written under — do not let the platform
         // module re-derive os.homedir() and land on a different one.
-        return installAutostartForPlatform({ home });
+        return installAutostartForPlatform({ home, env: autostartEnv });
       });
+    // Recorded before the unit is written, done only on `installed` (spec §2.1).
+    const install = () => recordedAutostart(autostartEnv, rawInstall, deps.platform);
     try {
       const result = await install();
       autostart = result.status === "installed" ? "installed" : { declined: result.status };
@@ -381,6 +424,7 @@ export async function configure(
     species: opts.species,
     configPath: join(siltpokeDir, "config.json"),
     statusline,
+    agyStatusline,
     autostart,
   };
 }
@@ -389,7 +433,7 @@ export async function configure(
  * The success summary, one line per thing the user can check.
  *
  * WHY IT EXISTS — the kernel used to print NOTHING on success (audit defect
- * `[5d]`). `/siltpoke-setup` runs it and then has to tell the user what
+ * `[5d]`). `/siltpoke:siltpoke-setup` runs it and then has to tell the user what
  * happened, and its only evidence was an exit code plus the answers file
  * having vanished. Every line here reports the RESULT, never the request, so a
  * statusline that failed to wire is never announced as installed.
@@ -405,9 +449,10 @@ export function summarize(r: ConfigureResult): string[] {
   } else {
     lines.push("siltpoke: statusline left off (you asked for it off)");
   }
+  lines.push(...agySummary(r.agyStatusline));
   if (r.autostart === "not-requested") {
     lines.push(
-      "siltpoke: background daemon off (opt-in — open /siltpoke-dashboard to start it)",
+      "siltpoke: background daemon off (opt-in — open /siltpoke:siltpoke-dashboard to start it)",
     );
   } else if (r.autostart === "installed") {
     lines.push("siltpoke: daemon autostart installed");
@@ -421,6 +466,23 @@ export function summarize(r: ConfigureResult): string[] {
     );
   }
   return lines;
+}
+
+function agySummary(outcome: AgyStatuslineOutcome): string[] {
+  if (outcome === "installed") {
+    return ["siltpoke: statusline installed in agy too — restart agy to see your pet"];
+  }
+  if (outcome === "occupied") {
+    return [
+      "siltpoke: agy's statusline already runs something else — left it alone, so your pet won't show in agy",
+    ];
+  }
+  if (outcome === "unwritable") {
+    return [
+      "siltpoke: agy statusline NOT installed — its settings.json is unreadable or a symlink (left untouched)",
+    ];
+  }
+  return [];
 }
 
 /**

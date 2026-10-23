@@ -83,7 +83,9 @@ export const CANONICAL_NAV: readonly NavSection[] = [
       { id: "timeline", label: "Timeline", href: "/timeline", icon: "history" },
       { id: "memory", label: "Memory", href: "/memory", icon: "memory" },
       { id: "repo-graph", label: "Code Map", href: "/repo-graph", icon: "repo-graph" },
-      // "Settings" removed 2026-08-06 with its route's unmount (src/daemon/server.ts).
+      // Back 2026-10-09 with its route (src/daemon/server.ts, defect [49]); it was
+      // removed 2026-08-06 when the page held the review-brain selector alone.
+      { id: "settings", label: "Settings", href: "/settings", icon: "settings" },
     ],
   },
 ];
@@ -113,9 +115,9 @@ export function setNavAvailability(flags: Partial<Record<Section, boolean>>): vo
 export function availableNavSections(
   sections: readonly NavSection[] = CANONICAL_NAV,
 ): readonly NavSection[] {
-  if (unavailable.size === 0) return sections;
+  const hidden = (id: Section): boolean => unavailable.has(id);
   return sections
-    .map((s) => ({ ...s, entries: s.entries.filter((e) => !unavailable.has(e.id)) }))
+    .map((s) => ({ ...s, entries: s.entries.filter((e) => !hidden(e.id)) }))
     .filter((s) => s.entries.length > 0);
 }
 

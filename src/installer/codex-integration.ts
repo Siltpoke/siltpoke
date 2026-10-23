@@ -6,6 +6,9 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { codexHooksJsonPath, resolveCodexHome } from "./paths";
+import { readJsonObjectForRewrite } from "./read-json-object";
+import { markDone, recordBefore } from "./receipt";
+import { codexHooksEntry } from "./receipt-sites";
 
 interface HookEntry {
   type?: string;
@@ -31,16 +34,9 @@ async function atomicWriteJson(path: string, data: unknown): Promise<void> {
   await rename(tmp, path);
 }
 
+/** Throws on a file that is not a JSON object, so it is never rewritten (defect [85]). */
 async function readJsonOrEmpty(path: string): Promise<CodexHooksConfig> {
-  if (!existsSync(path)) return {};
-  try {
-    const parsed = JSON.parse(await readFile(path, "utf8"));
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      ? parsed as CodexHooksConfig
-      : {};
-  } catch {
-    return {};
-  }
+  return readJsonObjectForRewrite(path) as CodexHooksConfig;
 }
 
 function ensureCommandHook(
@@ -170,7 +166,11 @@ export async function installCodexIntegration(
     timeout: 30,
     statusMessage: "Siltpoke reviews the completed Codex turn",
   });
+  // Receipt (spec §2.1): pending before hooks.json is rewritten, done after.
+  const entry = codexHooksEntry(hooksPath, repoRoot);
+  recordBefore(entry, env);
   await atomicWriteJson(hooksPath, config);
+  markDone(entry.id, env);
 
   return {
     codex_home: resolveCodexHome(env),

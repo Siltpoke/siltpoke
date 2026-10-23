@@ -193,7 +193,7 @@ export async function readIndexStalenessAt(opts: {
   // so the two are separated by whether any file was ever recorded.
   if (Object.keys(fingerprints.files).length === 0) return null;
 
-  const walk = await walkProject(root);
+  const walk = await walkProject(root, { listOthers: false }); // code files only — the check compares fingerprints
   const current: StalenessFile[] = [];
   const unreadable: string[] = [];
   for (const file of walk.files) {

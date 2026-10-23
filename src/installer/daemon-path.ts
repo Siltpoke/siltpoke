@@ -68,6 +68,15 @@ export function resolveDaemonPath(
     }
   }
 
+  // The other four coding agents (defect [49]): dashboard chat launches the one
+  // the user works in, and without its folder here the daemon can only fall
+  // back on the path a hook recorded (`last-host`). No warning for a missing
+  // one — most machines have one or two of these, not all five.
+  for (const bin of ["codex", "agy", "qodercli", "codebuddy"] as const) {
+    const resolved = which(bin);
+    if (resolved) dirs.push(dirname(resolved));
+  }
+
   // Fallbacks (with ~ / ${HOME} expanded to the real home).
   dirs.push(
     join(home, ".local", "bin"),

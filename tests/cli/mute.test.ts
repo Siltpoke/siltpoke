@@ -155,13 +155,13 @@ describe("formatters", () => {
     const out = formatMuteHuman(timedResult);
     expect(out).toContain("muted until");
     expect(out).toContain("1h from now");
-    expect(out).toContain("/siltpoke-unmute");
+    expect(out).toContain("/siltpoke:siltpoke-unmute");
   });
 
   test("formatMuteHuman indefinite says 'indefinitely'", () => {
     const out = formatMuteHuman(indefResult);
     expect(out).toContain("indefinitely");
-    expect(out).toContain("/siltpoke-unmute");
+    expect(out).toContain("/siltpoke:siltpoke-unmute");
     expect(out).not.toContain("until");
   });
 

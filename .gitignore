@@ -34,7 +34,10 @@ src/web/tokens/tokens.css
 # lines below can then carve out.
 public/static/*
 !public/static/index.js
+!public/static/export-standalone.js
 !public/static/tailwind.css
+!public/static/fonts/
+!public/static/fonts/*
 
 # Playwright e2e artifacts (traces, screenshots, reports)
 playwright-report/

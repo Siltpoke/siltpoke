@@ -88,6 +88,19 @@ function modelCacheExists(home: string): boolean {
 }
 
 describe("detached: returns {taskId} promptly, records after the request ends", () => {
+  test("[83] the Brain is told to run in the active project's root", async () => {
+    const cwds: Array<string | undefined> = [];
+    const provider: BrainProvider = async ({ cwd }) => {
+      cwds.push(cwd);
+      return { markdown: JSON.stringify(VALID_DOC), usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 1, output_tokens: 1, total_cost_usd: 0.01 } };
+    };
+    const home = seedHome();
+    const res = await generate(mount(home, provider), { repo: HASH });
+    expect(res.status).toBe(202);
+    await pollUntil(() => cwds.length >= 1);
+    expect(cwds).toEqual([join(home, "proj")]);
+  });
+
   test("a slow generate returns {taskId,running} 202 BEFORE the Brain completes, then records done+cost+ledger+cache detached", async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => { release = r; });
@@ -119,6 +132,22 @@ describe("detached: returns {taskId} promptly, records after the request ends", 
     expect(events[0]!.total_cost_usd).toBeCloseTo(0.4, 5);
     // the model reached the result-cache (reconnect reads it from here)
     expect(modelCacheExists(home)).toBe(true);
+  });
+
+  test("a cache-hit generate task records costUsd 0, not the saved model's cost ([75])", async () => {
+    const provider: BrainProvider = async () => ({
+      markdown: JSON.stringify(VALID_DOC),
+      usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 100, output_tokens: 50, total_cost_usd: 0.4 },
+    });
+    const home = seedHome();
+    const app = mount(home, provider);
+    await generate(app, { repo: HASH });
+    await pollUntil(() => readTasks(home).length === 1 && readTasks(home)[0]!.status === "done" && readEvents(home).length === 1);
+    await generate(app, { repo: HASH, force: false });
+    await pollUntil(() => readTasks(home).length === 2 && readTasks(home).every((t) => t.status !== "running"));
+    const costs = readTasks(home).map((t) => t.costUsd).sort((a, b) => (a ?? 0) - (b ?? 0));
+    expect(costs).toEqual([0, 0.4]);
+    expect(readEvents(home).filter((e) => e.kind === "arch_generate")).toHaveLength(1);
   });
 
   test("client disconnect does NOT cancel the detached run (listener removed) — it still reaches done", async () => {

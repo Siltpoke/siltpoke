@@ -212,3 +212,39 @@ describe("autoPromoteSeverity — no-op cases", () => {
     expect(critique.severity).toBe("info");
   });
 });
+
+describe("autoPromoteSeverity — [90] the model's bubble is never replaced", () => {
+  const risky = makeDiffSummary(["drops the tenant check"]);
+
+  test("risk branch: bubble_short is byte-identical after promotion, severity still raised", () => {
+    const critique = makeBrainOutput({ bubble_short: "Clean refactor", severity: "info" });
+    autoPromoteSeverity(critique, makeV2(), risky);
+    expect(critique.bubble_short).toBe("Clean refactor");
+    expect(critique.severity).toBe("low");
+    expect(critique.bubble_short).not.toMatch(/risks? flagged/);
+  });
+
+  test("rubric medium+ branch: bubble_short is kept too", () => {
+    const critique = makeBrainOutput({ bubble_short: "干净！", severity: "info" });
+    autoPromoteSeverity(critique, makeV2([makeMedTrigger()]), undefined);
+    expect(critique.bubble_short).toBe("干净！");
+    expect(critique.severity).toBe("low");
+    expect(critique.bubble_short).not.toMatch(/rubric: \d+ concern/);
+  });
+
+  test.each(["clean", "干净", "nice work", "cleanup of the helper", "All good ✓"])(
+    "bubble %p is untouched and severity is raised",
+    (bubble) => {
+      const critique = makeBrainOutput({ bubble_short: bubble, severity: "info" });
+      autoPromoteSeverity(critique, makeV2(), risky);
+      expect(critique.bubble_short).toBe(bubble);
+      expect(critique.severity).toBe("low");
+    },
+  );
+
+  test("an empty bubble stays empty (no 'see critique' filler)", () => {
+    const critique = makeBrainOutput({ bubble_short: "", severity: "info" });
+    autoPromoteSeverity(critique, makeV2([makeMedTrigger()]), undefined);
+    expect(critique.bubble_short).toBe("");
+  });
+});

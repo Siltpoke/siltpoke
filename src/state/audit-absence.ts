@@ -235,7 +235,7 @@ export const AUDIT_ABSENCE_COPY: Record<AuditAbsenceKind, string> = {
   brain_unavailable:
     "Siltpoke could not start the reviewer program on this machine. Check that it is installed.",
   nothing_to_review:
-    "Nothing to review here — no code changed on this turn, and every check came back clean.",
+    "Nothing to review here — no code changed on this turn.",
   brain_failed_other: "The review failed. The exact error is in the daemon log.",
   not_reviewed: "No review ran on this turn. The reason why is on the row itself.",
   unrecorded:

@@ -57,6 +57,18 @@ const tabBase = {
   cursor: "pointer",
 } as const;
 
+/** Timeline pager buttons (Previous / Next) — styled like the filter chips. */
+const pagerButton = {
+  fontFamily: tokens.font.body,
+  fontSize: 11.5,
+  fontWeight: 600,
+  padding: "5px 12px",
+  borderRadius: tokens.radius.pill,
+  color: tokens.color.ink3,
+  background: tokens.color.cream,
+  border: `1px solid ${tokens.color.edge}`,
+} as const;
+
 /** Empty-state row shared by the timeline and by-entity streams — same
  * markup, only the Alpine x-show guard (which "is empty" check) differs. */
 function StreamEmptyState({ showWhen }: { showWhen: string }) {
@@ -268,6 +280,48 @@ export function Memory({
               <template x-for="group in groups()" x-bind:key="group.date">
                 <DateGroupRow showSub={true} />
               </template>
+              {/* pager — the timeline shows 10 rows per page (memory-book.ts
+                  TIMELINE_PAGE); counts on the filter chips still cover every row.
+                  Hidden when everything fits on one page. Right-aligned, so
+                  Next → ends flush with the cards' right edge. */}
+              <div x-show="pageCount() > 1">
+                <div
+                  class="memory-pager"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "flex-end",
+                    gap: "12px",
+                    marginTop: "20px",
+                  }}
+                >
+                  <button
+                    type="button"
+                    class="memory-pager-prev"
+                    x-on:click="prevPage()"
+                    x-bind:disabled="pageNumber() === 1"
+                    x-bind:style="pageNumber() === 1 ? { opacity: 0.4, cursor: 'default' } : { opacity: 1, cursor: 'pointer' }"
+                    style={pagerButton}
+                  >
+                    ← Previous
+                  </button>
+                  <span
+                    class="memory-pager-label"
+                    x-text="'Page ' + pageNumber() + ' of ' + pageCount() + ' · ' + filteredMemories().length + ' memories'"
+                    style={{ fontFamily: tokens.font.mono, fontSize: 10.5, color: tokens.color.ink3 }}
+                  />
+                  <button
+                    type="button"
+                    class="memory-pager-next"
+                    x-on:click="nextPage()"
+                    x-bind:disabled="pageNumber() === pageCount()"
+                    x-bind:style="pageNumber() === pageCount() ? { opacity: 0.4, cursor: 'default' } : { opacity: 1, cursor: 'pointer' }"
+                    style={pagerButton}
+                  >
+                    Next →
+                  </button>
+                </div>
+              </div>
               {/* footer — x-show on the wrapper; the flex row lives on an inner
                   div so Alpine's display-restore doesn't drop it to block. */}
               <div x-show="filteredMemories().length > 0">

@@ -38,7 +38,7 @@ describe("doctor — check 1: settings.json valid", () => {
     expect(r.pass).toBe(false);
     expect(r.detail).toContain("does not exist");
     // Plugin-era remediation — no `bun src/cli/install.ts` in a plugin cache.
-    expect(r.detail).toContain("/siltpoke-setup");
+    expect(r.detail).toContain("/siltpoke:siltpoke-setup");
   });
 
   test("fails when settings.json is corrupt JSON", () => {
@@ -120,9 +120,9 @@ describe("doctor — check 2: Stop hook registered", () => {
     // substance the row must carry — info status, and the command THIS host
     // actually has — is what the two assertions above and below check.
     expect(r.detail).toBe(
-      "legacy http Stop hook shape detected. Run `/siltpoke-setup` to migrate to the silent curl fast path.",
+      "legacy http Stop hook shape detected. Run `/siltpoke:siltpoke-setup` to migrate to the silent curl fast path.",
     );
-    expect(r.detail).toContain("/siltpoke-setup");
+    expect(r.detail).toContain("/siltpoke:siltpoke-setup");
   });
 
   test("fails when hooks.Stop is missing", () => {
@@ -147,7 +147,7 @@ describe("doctor — check 2: Stop hook registered", () => {
     });
     const r = hookCheck();
     expect(r.pass).toBe(false);
-    expect(r.detail).toContain("Run `/siltpoke-setup`");
+    expect(r.detail).toContain("Run `/siltpoke:siltpoke-setup`");
   });
 
   test("fails when matcher has only on-stop command entry (no fast path)", () => {
@@ -347,7 +347,7 @@ describe("doctor — check 5: global.json schema v3", () => {
   });
 
   // Audit defect [2]. This test used to assert `pass === false` for an absent
-  // file — it pinned the defect as a contract. `/siltpoke-setup` never writes
+  // file — it pinned the defect as a contract. `/siltpoke:siltpoke-setup` never writes
   // global.json (src/cli/install.ts has zero references to it); it appears the
   // first time a review awards XP. So on a fresh install this row was the sole
   // ✗ in "1 of 18 checks failed", and the first thing a new user saw was a
@@ -423,7 +423,7 @@ describe("doctor — check 6: slash command symlinks", () => {
     const r = symlinksCheck();
     expect(r.pass).toBe(false);
     expect(r.detail).toContain("missing");
-    // No `/siltpoke-setup` equivalent re-links command files — plugin reinstall does.
+    // No `/siltpoke:siltpoke-setup` equivalent re-links command files — plugin reinstall does.
     expect(r.detail).toContain("Reinstall: /plugin install siltpoke");
   });
 
@@ -538,7 +538,7 @@ describe("doctor — check 11: agy hooks.json siltpoke-review Stop registered", 
     expect(r.pass).toBe(true);
     expect(r.status).toBe("info");
     expect(r.detail).toContain("not wired");
-    // Honest plugin-era wording — /siltpoke-setup does NOT wire agy hooks
+    // Honest plugin-era wording — /siltpoke:siltpoke-setup does NOT wire agy hooks
     // (only the from-source installer does), so this must not claim it does.
     expect(r.detail).not.toContain("bun run setup");
     expect(r.detail).not.toContain("bun src/");
@@ -565,7 +565,7 @@ describe("doctor — check 11: agy hooks.json siltpoke-review Stop registered", 
     const r = agyCheck(hooksPath);
     expect(r.pass).toBe(false);
     expect(r.detail).toContain("siltpoke-review");
-    // /siltpoke-setup does not wire agy hooks — must not claim it does.
+    // /siltpoke:siltpoke-setup does not wire agy hooks — must not claim it does.
     expect(r.detail).not.toContain("bun src/cli/install.ts");
   });
 

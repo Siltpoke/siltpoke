@@ -4,6 +4,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWrite } from "../utils/atomic-write";
 import type { AgentPresence } from "./agent-detect";
+import { isSymlink, readSettings } from "../hooks/agy-setup-hint";
+import { isOurAgyStatusLine } from "./agy-statusline";
 import type { SupportedAgent } from "./agent-types";
 import { installCodexIntegration } from "./codex-integration";
 import {
@@ -15,6 +17,9 @@ import {
   resolveCodexHome,
   resolveQoderHome,
 } from "./paths";
+import { readJsonObjectForRewrite } from "./read-json-object";
+import { markDone, recordBefore } from "./receipt";
+import { agyHooksEntry, agyStatuslineEntry, settingsHooksEntry } from "./receipt-sites";
 import { registerSessionStartHook } from "./register-session-start";
 import { bunForCommandString } from "./bun-path";
 import { registerStopHookPair, type StopHookPair } from "./settings-mutator";
@@ -45,7 +50,7 @@ export interface HostAdapter {
   writeHooks: (
     env: NodeJS.ProcessEnv,
     ctx: HostWireContext,
-  ) => Promise<{ path: string }>;
+  ) => Promise<{ path: string; note?: string }>;
 }
 
 function bunHookCommand(repoRoot: string, script: string): string {
@@ -53,18 +58,6 @@ function bunHookCommand(repoRoot: string, script: string): string {
   // command in a non-login shell, where bun's ~/.bash_profile PATH line is
   // never read — the hook would report 127, or silently never fire.
   return `${bunForCommandString()} ${join(repoRoot, "src", "hooks", script)}`;
-}
-
-function readJsonOrEmpty(path: string): Record<string, unknown> {
-  if (!existsSync(path)) return {};
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8"));
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
 }
 
 interface CcForkOpts {
@@ -99,7 +92,7 @@ export function ccForkHostAdapter(opts: CcForkOpts): HostAdapter {
     detect: (presence) => presence[opts.presenceKey] === true,
     writeHooks: async (env, ctx) => {
       const path = settingsPath(env);
-      const existing = readJsonOrEmpty(path);
+      const existing = readJsonObjectForRewrite(path);
       const stopPair: StopHookPair = {
         httpUrl: DAEMON_STOP_URL,
         command: bunHookCommand(ctx.repoRoot, stopScript),
@@ -110,7 +103,10 @@ export function ccForkHostAdapter(opts: CcForkOpts): HostAdapter {
         withStop,
         bunHookCommand(ctx.repoRoot, "handle-session-start.ts"),
       );
+      const entry = settingsHooksEntry(opts.id, path, ctx.repoRoot);
+      recordBefore(entry, env); // pending before the host's file changes (spec §2.1)
       atomicWrite(path, `${JSON.stringify(withSession, null, 2)}\n`);
+      markDone(entry.id, env);
       return { path };
     },
   };
@@ -176,15 +172,19 @@ const AGY_HOOK_NAME = "siltpoke-review";
 export async function writeAgyHooksJson(
   hooksPath: string,
   stopCommand: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ path: string }> {
-  const config = readJsonOrEmpty(hooksPath);
+  const config = readJsonObjectForRewrite(hooksPath);
   const next: Record<string, unknown> = {
     ...config,
     [AGY_HOOK_NAME]: {
       Stop: [{ type: "command", command: stopCommand, timeout: 30 } satisfies AgyHookEntry],
     },
   };
+  const entry = agyHooksEntry(hooksPath, AGY_HOOK_NAME);
+  recordBefore(entry, env);
   atomicWrite(hooksPath, `${JSON.stringify(next, null, 2)}\n`);
+  markDone(entry.id, env);
   return { path: hooksPath };
 }
 
@@ -199,24 +199,50 @@ interface AgySettingsShape {
  * ~/.gemini/antigravity-cli/settings.json — a manual probe rig from before
  * agy's real hooks.json mechanism was found (design doc §2, T1: this shape
  * never fired; agy has no Claude-shaped settings.json hook schema). Every
- * other key, including `statusLine`, is preserved; `statusLine.command` is
- * refreshed to the wrapper.ts --agent antigravity face command so the pet
- * renders even on a machine that never had a statusLine before.
+ * other key is preserved. `statusLine` is set to the wrapper.ts --agent
+ * antigravity face command only when the slot is empty or already siltpoke's
+ * (`isOurAgyStatusLine`, the plugin path's rule): defect [65] — this used to
+ * replace ANY statusLine, and the user's own command was saved nowhere. Like
+ * the plugin path, a symlinked or unparseable file (JSONC, a trailing comma)
+ * is not written at all — it used to be read as `{}` and overwritten whole.
  */
 export async function cleanAgyOrphanSettings(
   settingsPath: string,
   wrapperCommand: string,
-): Promise<{ path: string; hooksRemoved: boolean }> {
-  const current = readJsonOrEmpty(settingsPath) as AgySettingsShape;
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{
+  path: string;
+  hooksRemoved: boolean;
+  statusLineKept: boolean;
+  untouched: "symlink" | "unreadable" | null;
+}> {
+  if (isSymlink(settingsPath)) {
+    return { path: settingsPath, hooksRemoved: false, statusLineKept: true, untouched: "symlink" };
+  }
+  const parsed = readSettings(settingsPath);
+  if (parsed === null) {
+    return { path: settingsPath, hooksRemoved: false, statusLineKept: true, untouched: "unreadable" };
+  }
+  const current = parsed as AgySettingsShape;
   const hooksRemoved = current.hooks !== undefined;
   const { hooks: _droppedOrphanHooks, ...rest } = current;
-  const next: AgySettingsShape = {
-    ...rest,
-    statusLine: { type: "command", command: wrapperCommand },
-  };
+  const statusLineKept =
+    current.statusLine !== undefined && !isOurAgyStatusLine(current.statusLine?.command);
+  const next: AgySettingsShape = statusLineKept
+    ? rest
+    : { ...rest, statusLine: { type: "command", command: wrapperCommand } };
+  // The status line is recorded only when we put ours in the slot (spec §2.1).
+  const entry = agyStatuslineEntry(settingsPath);
+  if (!statusLineKept) recordBefore(entry, env);
   atomicWrite(settingsPath, `${JSON.stringify(next, null, 2)}\n`);
-  return { path: settingsPath, hooksRemoved };
+  if (!statusLineKept) markDone(entry.id, env);
+  return { path: settingsPath, hooksRemoved, statusLineKept, untouched: null };
 }
+
+const AGY_UNTOUCHED_NOTE = {
+  symlink: "is a symlink — left untouched, the pet is not shown in agy",
+  unreadable: "could not read it as JSON — left untouched, the pet is not shown in agy",
+} as const;
 
 /**
  * Antigravity (agy) is neither a CC-fork (ccForkHostAdapter) nor
@@ -239,9 +265,15 @@ export const agyHostAdapter: HostAdapter = {
     const settingsPath = join(resolveAntigravityHome(env), "settings.json");
     const stopCommand = bunHookCommand(ctx.repoRoot, "agy-stop.ts");
     const wrapperCommand = `${bunForCommandString()} ${join(ctx.repoRoot, "src", "face", "wrapper.ts")} --agent antigravity`;
-    await writeAgyHooksJson(hooksPath, stopCommand);
-    await cleanAgyOrphanSettings(settingsPath, wrapperCommand);
-    return { path: hooksPath };
+    await writeAgyHooksJson(hooksPath, stopCommand, env);
+    const { statusLineKept, untouched } = await cleanAgyOrphanSettings(settingsPath, wrapperCommand, env);
+    if (untouched) return { path: hooksPath, note: `${settingsPath} ${AGY_UNTOUCHED_NOTE[untouched]}` };
+    return statusLineKept
+      ? {
+          path: hooksPath,
+          note: `kept your own status line in ${settingsPath} — the pet is not shown in agy`,
+        }
+      : { path: hooksPath };
   },
 };
 

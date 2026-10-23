@@ -322,15 +322,6 @@ describe("runArchGenerate — outcomes", () => {
     expect("doc" in out).toBe(false);
   });
 
-  it("cost_cap_exceeded: over hard cap aborts BEFORE a doc", async () => {
-    const dir = await tmpRepo();
-    const out = await runArchGenerate(
-      ctxWith(dir, async () => ({ markdown: JSON.stringify(VALID_DOC), usage: usage(5.0) }), { costHardCapUsd: 2.0 }),
-    );
-    expect(out.kind).toBe("cost_cap_exceeded");
-    expect("doc" in out).toBe(false);
-  });
-
   it("pre_check_failed: no meta.json", async () => {
     const dir = await mkdtemp(join(tmpdir(), "arch-empty-"));
     const out = await runArchGenerate(ctxWith(dir, async () => ({ markdown: JSON.stringify(VALID_DOC), usage: usage(0.1) })));
@@ -360,7 +351,7 @@ describe("runArchGenerate — outcomes", () => {
     }
   });
 
-  it("null total_cost_usd cannot dodge the hard cap — derived cost over cap → cost_cap_exceeded", async () => {
+  it("null total_cost_usd cannot dodge the hard cap — derived cost over cap is flagged", async () => {
     const dir = await tmpRepo();
     const bigNullCost: BrainUsage = {
       input_tokens: 0,
@@ -374,8 +365,9 @@ describe("runArchGenerate — outcomes", () => {
         costHardCapUsd: 2.0,
       }),
     );
-    expect(out.kind).toBe("cost_cap_exceeded");
-    if (out.kind === "cost_cap_exceeded") expect(out.costUsd).toBeCloseTo(3.0, 6);
+    if (out.kind !== "generated") throw new Error(`expected generated, got ${out.kind}`);
+    expect(out.costUsd).toBeCloseTo(3.0, 6);
+    expect(out.hardCapExceeded).toBe(true);
   });
 
   it("estimateArchGenerate returns a cost estimate without calling Brain", async () => {
@@ -406,15 +398,6 @@ describe("runArchGenerate — cache", () => {
     expect(second.kind).toBe("generated");
     if (second.kind === "generated") expect(second.fromCache).toBe(true);
     expect(calls).toBe(1); // the cache hit did not call Brain again
-  });
-
-  it("cost-cap abort leaves NO cache (invariant preserved through cache path)", async () => {
-    const dir = await tmpRepo();
-    const out = await runArchGenerate(
-      ctxWith(dir, async () => ({ markdown: JSON.stringify(VALID_DOC), usage: usage(5.0) }), { costHardCapUsd: 2.0 }),
-    );
-    expect(out.kind).toBe("cost_cap_exceeded");
-    expect(existsSync(archModelPath(dir))).toBe(false);
   });
 
   it("integrity_failed: a malformed model is rejected, nothing cached", async () => {

@@ -6,6 +6,70 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-22
+
+### Added
+
+- **Dashboard chat uses the coding agent you use**, not only Claude Code, and
+  the chat panel says which agent is answering.
+- **Chat can see what you are looking at.** On the Code Map it reads your code
+  (when claude answers), and it knows which component and repository you
+  selected; on Home and Timeline it sees the page. When it cannot open your
+  files it says so in its first sentence instead of guessing from file names.
+- **A Runs window** beside chat shows each step a chat took, including the
+  commands codex ran and what they printed.
+- **The Settings page is now an Agents page**: which agent ran what, a daily
+  call cap per role (applied to every agent, Claude included), and a model
+  picker that also works for codex.
+- **`/siltpoke-uninstall`** removes what Siltpoke set up, one thing at a time,
+  asks before each, and ends with a report of what is actually gone.
+- **Code Map** draws docs, tests and config files too, can export a view as a
+  PNG or a clickable HTML file, and says when its numbers come from an old
+  index.
+
+### Security
+
+- **Reviewing someone else's project is safer.** Reviews, chat, Code Map
+  explanations and memory calls may only read files; the reviewed project's own
+  hooks no longer run; and instruction files in that project (`CLAUDE.md`,
+  `AGENTS.md`, `GEMINI.md`) are handed to the reviewer as data, not as
+  instructions. A claude or codex review now warns you when the project's text
+  tried to steer it — when the reviewer reports it, or its tool record shows a
+  read outside the project. A separate rule-based scan adds a hint; it catches
+  fewer than half of planted notes, so it can miss some.
+- On macOS, codex reviews and chat are confined to the project folder they run
+  in. codex can still open the project's own `AGENTS.md` with a shell command.
+
+### Fixed
+
+- **Windows**: reviews run with `claude` as reviewer — confirmed on a real
+  machine. The dashboard, `/siltpoke-doctor`, Code Map explain, chat and the
+  codex review hook are wired for Windows; those have not yet been run on a
+  real Windows machine.
+- A failed review no longer marks your commit as reviewed, and a failure that
+  cannot succeed stops instead of retrying forever.
+- Waking Siltpoke no longer reviews the same commits twice (when nothing is
+  left uncommitted); a commit made with
+  the same request as the last one is now reviewed.
+- A review no longer calls your code clean when the type checker never ran, and
+  a timed-out step stops at its time limit.
+- `/siltpoke-doctor` no longer gives false greens or false warnings on codex,
+  Qoder, CodeBuddy, Antigravity and Windows, and now says when ripgrep is
+  missing.
+- "Today" and the pet's day follow your own time zone everywhere.
+- The Timeline opens about 20 times faster; the Memory page opens faster.
+- Every command Siltpoke tells you to type now works as written
+  (`/siltpoke:siltpoke-…`).
+
+### Known limitation
+
+- **On native Windows, only the Claude Code host with `claude` as reviewer has
+  been run on a real machine.** The other four reviewers are wired and untested
+  there. **Antigravity (agy) as your coding agent on Windows does not trigger
+  reviews** yet. WSL works.
+- **Dashboard chat reads your project only when claude answers.** With codex or
+  agy answering, chat cannot open your files, and it says so.
+
 ## [1.3.0] - 2026-09-24
 
 ### Added

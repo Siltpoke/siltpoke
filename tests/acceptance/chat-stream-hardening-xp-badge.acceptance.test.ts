@@ -62,6 +62,7 @@ import { mountDashboardRoutes } from "../../src/daemon/routes/dashboard";
 // Single-table value check: the single surviving price table. Importing a
 // constant is the agreed structural-check level (see header note).
 import { ACTION_BASE_XP } from "../../src/state/progression";
+import { dayBefore, dayKey } from "../../src/state/usage";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..");
 const SRC_ROOT = join(REPO_ROOT, "src");
@@ -71,15 +72,11 @@ afterAll(() => {
   for (const d of tempDirs) rmSync(d, { recursive: true, force: true });
 });
 
-// ── Day keys (same UTC convention the routes use) ─────────────────────────────
+// ── Day keys (the local day the routes use) ───────────────────────────────────
 
 const NOW = new Date();
-const TODAY = NOW.toISOString().slice(0, 10);
-const YESTERDAY = (() => {
-  const d = new Date(NOW);
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
-})();
+const TODAY = dayKey(NOW);
+const YESTERDAY = dayBefore(TODAY);
 
 // ── Fixture helpers ───────────────────────────────────────────────────────────
 

@@ -744,7 +744,6 @@ describe("GET /api/repo-graph/explain (M5 cache-state)", () => {
     expect(body.data.cachedAt).toBe("2026-06-10T00:00:00.000Z");
   });
 });
-
 describe("POST /api/repo-graph/explain (M5 generate)", () => {
   test("runs runExplain (stub Brain) detached → 202 {taskId}, records done+cost (Explanation delivered via cache + reconnect)", async () => {
     const queryIndex = emptyQueryIndex();

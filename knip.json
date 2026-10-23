@@ -5,10 +5,12 @@
     "src/hooks/*.ts",
     "src/daemon/server.ts",
     "src/web/client/index.ts",
+    "src/web/client/export-standalone.ts",
     "scripts/*.ts",
     "tests/**/*.test.ts",
     "tests/**/*.test.tsx",
-    "tests/e2e/*.spec.ts"
+    "tests/e2e/*.spec.ts",
+    "tests/brain/fixtures/model-window-tz-probe.ts"
   ],
   "project": [
     "src/**/*.{ts,tsx}",

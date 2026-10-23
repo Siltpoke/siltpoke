@@ -22,12 +22,12 @@ test("sidebar renders all CANONICAL_NAV entries (all interactive, no disabled pl
 
   const nav = page.getByRole("navigation", { name: "Sidebar" });
 
-  for (const label of ["Home", "Timeline", "Memory", "Code Map"]) {
+  for (const label of ["Home", "Timeline", "Memory", "Code Map", "Settings"]) {
     await expect(nav.getByText(label, { exact: true }).first()).toBeVisible({ timeout: 10_000 });
   }
 
-  await expect(nav.getByText("Settings", { exact: true })).toHaveCount(0);
-  await expect(page.locator('[data-sidebar] a[href="/settings"]')).toHaveCount(0);
+  // Settings is back (2026-10-09, defect [49]): the link must lead to a real page.
+  await expect(page.locator('[data-sidebar] a[href="/settings"]')).toHaveCount(1);
 
   // Nav schema simplification removed every disabled placeholder entry, so no
   // nav item renders as a non-interactive <span aria-disabled="true">.

@@ -11,7 +11,7 @@
     "src/cli/configure.ts": 551,
     "src/cli/demo-seed.ts": 505,
     "src/cli/doctor.ts": 800,
-    "src/cli/install.ts": 805,
+    "src/cli/install.ts": 731,
     "src/cli/report.ts": 486,
     "src/critic/evidence-guard.ts": 700,
     "src/critic/phases/normal.ts": 498,

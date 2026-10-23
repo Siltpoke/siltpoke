@@ -32,6 +32,7 @@ import {
 } from "../../../src/state/progression";
 import { fixtureLines, type FixtureCall } from "../../web/routes/timeline-fixture-lines";
 import { E2E_HOME, type RestoreFn, swapInFile } from "./honesty-e2e-fixtures";
+import { dayKey } from "../../../src/state/usage";
 
 // ── seeded conversations (floating-chat history) ─────────────────────────────
 
@@ -56,7 +57,7 @@ export const CSH_STOP_PARTIAL =
 // ── timeline Load-older fixture ──────────────────────────────────────────────
 
 export const CSH_TIMELINE_BUBBLE_PREFIX = "E2E-CSH timeline row";
-/** One full window (limit 200 in the /timeline route) + 5 more → hasMore. */
+/** More rows than one /timeline page (12 turns per page; the dossier route uses 200) → hasMore. */
 export const CSH_TIMELINE_ROWS = 205;
 const CSH_TIMELINE_CWD = "/tmp/e2e-csh-timeline";
 
@@ -185,8 +186,8 @@ async function seedProgressionAtCap(): Promise<RestoreFn> {
   const base: Progression = existsSync(progressionPath)
     ? (JSON.parse(await readFile(progressionPath, "utf8")) as Progression)
     : { ...DEFAULT_PROGRESSION, stats_last_tick_at: new Date().toISOString() };
-  // Same UTC day-key derivation as xpPanelData / recordAction.
-  const today = new Date().toISOString().slice(0, 10);
+  // Same local day-key as xpPanelData / recordAction (dayKey).
+  const today = dayKey(new Date());
   const next: Progression = {
     ...base,
     action_xp: [
@@ -205,7 +206,8 @@ function buildTimelineOverflowLines(): string[] {
   // Oldest → newest (chronological append order, matching the real log).
   // Even 30-min spacing puts the whole set well inside the 7d range
   // (205 × 30min ≈ 4.3 days), so every row is range-passing and the
-  // window (limit 200) provably has 5 more rows behind it → hasMore.
+  // page (12 turns; the dossier route is the one with limit 200) provably has
+  // more rows behind it → hasMore.
   for (let i = 0; i < CSH_TIMELINE_ROWS; i++) {
     const n = i + 1;
     const minsAgo = (CSH_TIMELINE_ROWS - i) * 30;

@@ -147,6 +147,13 @@ export async function callReflection(
     model: opts.model ?? DEFAULT_MODEL,
     timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     spawnFn: opts.spawnFn,
+    // Runs in the reviewed project's folder (the Stop hook or the distil
+    // worker), and its output is stored as a rule every later review reads.
+    // Measured 2026-10-19 in a planted repo: before, its SessionStart hook ran
+    // 3/3 and its CLAUDE.md wrote a word into 3/3 learned rules; after, 0/3
+    // and 0/3. The job needs neither the project's settings nor any tool.
+    readOnly: true,
+    projectSettingsOff: true,
   });
 
   const innerText = extractJsonString(resultText);

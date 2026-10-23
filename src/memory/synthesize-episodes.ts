@@ -31,7 +31,6 @@ import { activeEventFragments, type EventFragment } from "./event-fragment";
 import type { CoreMemory } from "./memory";
 
 const NARRATIVE_MAX = 280;
-const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 const EPISODE_SYSTEM_PROMPT =
@@ -51,21 +50,24 @@ const EPISODE_SYSTEM_PROMPT =
  */
 export type SynthesizeFn = (prompt: string) => Promise<string>;
 
-/** Default `SynthesizeFn`: an isolated `claude-haiku-4-5-20251001` call via
- * `callBrainText` (plain-text variant — the narrative is free prose the
- * orchestrator wraps in an expected JSON envelope prompt-side, matching the
- * `callBrainText` module doc's rationale for small-model JSON unreliability
- * on short-prose asks). Lazily imported so unit tests that stub `synthesizeFn`
- * never touch `../brain/brain` (mirrors `extract-events.ts`). */
-async function defaultSynthesizeFn(prompt: string): Promise<string> {
-  const { callBrainText } = await import("../brain/brain");
-  const { text } = await callBrainText({
-    systemPrompt: EPISODE_SYSTEM_PROMPT,
-    contextBundle: prompt,
-    model: DEFAULT_MODEL,
-    timeoutMs: DEFAULT_TIMEOUT_MS,
-  });
-  return text;
+/** A text brain call, `makeRoleTextBrain`-shaped. */
+export type TextBrainFn = (opts: { systemPrompt: string; contextBundle: string; timeoutMs?: number }) => Promise<{
+  text: string;
+}>;
+
+/**
+ * The production `SynthesizeFn`: the narrator prompt through a role-routed
+ * text brain (`makeRoleTextBrain(homeBase, "extract")`, built in consolidate).
+ *
+ * This used to call `claude-haiku-4-5` directly through brain.ts's text call: it
+ * ignored the agent and model chosen for the Summarizer and was not counted
+ * against the Summarizer's daily cap (small item [9] of the chat mainline).
+ * There is no un-routed default any more — `synthesizeFn` is required — so a
+ * new caller cannot fall back to an uncounted call.
+ */
+export function roleSynthesizeFn(brainFn: TextBrainFn): SynthesizeFn {
+  return async (prompt) =>
+    (await brainFn({ systemPrompt: EPISODE_SYSTEM_PROMPT, contextBundle: prompt, timeoutMs: DEFAULT_TIMEOUT_MS })).text;
 }
 
 // ---------------------------------------------------------------------------
@@ -145,9 +147,9 @@ export type EpisodeNarrative = z.infer<typeof episodeNarrativeSchema>;
 // ---------------------------------------------------------------------------
 
 export interface SynthesizeEpisodesOptions {
-  /** Injectable Haiku call — defaults to the real `callBrainText` wiring;
-   * tests stub this (no live Haiku call in unit tests). */
-  synthesizeFn?: SynthesizeFn;
+  /** The narrator call. Production passes `roleSynthesizeFn(<extract role brain>)`;
+   * tests stub it. Required: an un-routed default skipped the daily cap. */
+  synthesizeFn: SynthesizeFn;
   /** Single authoritative "now" for the whole synthesis pass (matches the
    * rest of the memory pipeline's inject-don't-call-Date.now() convention). */
   now: Date;
@@ -190,7 +192,7 @@ export async function synthesizeEpisodes(
   memory: CoreMemory,
   opts: SynthesizeEpisodesOptions,
 ): Promise<EpisodeDraft[]> {
-  const synthesizeFn = opts.synthesizeFn ?? defaultSynthesizeFn;
+  const synthesizeFn = opts.synthesizeFn;
   const drafts: EpisodeDraft[] = [];
 
   let clusters: Map<string, EventFragment[]>;

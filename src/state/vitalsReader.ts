@@ -9,6 +9,7 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { VitalsSnapshot } from "./vitalsWriter";
+import { dayKey } from "./usage";
 
 export interface VitalsSeries {
   hp: number[];
@@ -46,7 +47,7 @@ async function readSnapshots(basePath: string): Promise<VitalsSnapshot[]> {
 }
 
 /**
- * Build the list of `days` UTC date strings ending with TODAY relative to
+ * Build the list of `days` local date strings ending with TODAY relative to
  * `now` (oldest first). Today is included because vitalsWriter now writes
  * a live today snapshot on every action — including today in the window
  * means the sparkline reflects current state instead of always trailing
@@ -54,10 +55,11 @@ async function readSnapshots(basePath: string): Promise<VitalsSnapshot[]> {
  */
 function buildDateRange(days: number, now: Date): string[] {
   const dates: string[] = [];
+  // Local days, as vitalsWriter and the pet's actions key them.
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(now);
-    d.setUTCDate(d.getUTCDate() - i);
-    dates.push(d.toISOString().slice(0, 10));
+    d.setDate(d.getDate() - i);
+    dates.push(dayKey(d));
   }
   return dates;
 }

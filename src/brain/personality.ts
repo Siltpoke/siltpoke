@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { languageName } from "./output-language";
 
 export interface PersonalityConfig {
   name: string;
@@ -139,5 +140,7 @@ export async function buildSystemPrompt(
     .replaceAll("{rigor}", String(effective.rigor))
     .replaceAll("{chattiness}", String(effective.chattiness))
     .replaceAll("{curiosity}", String(effective.curiosity))
-    .replaceAll("{language}", expandLanguage(effective.language));
+    // languageName: a hand-edited non-string/empty language reads as English,
+    // the same name the [74] tail in the user message carries.
+    .replaceAll("{language}", languageName(expandLanguage(effective.language)));
 }

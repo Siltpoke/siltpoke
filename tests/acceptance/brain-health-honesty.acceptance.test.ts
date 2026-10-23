@@ -401,7 +401,7 @@ test(
 // ─────────────────────────────────────────────────────────────────────────────
 
 test(
-  "after a Brain failure, /siltpoke-doctor shows a last-Brain-call check with result + failure class + reason excerpt + timestamp; the check renders even on a fresh install",
+  "after a Brain failure, /siltpoke:siltpoke-doctor shows a last-Brain-call check with result + failure class + reason excerpt + timestamp; the check renders even on a fresh install",
   async () => {
     // Control first: fresh home — the check ALWAYS renders ("regardless of
     // current health"), here as the none-recorded state.
@@ -484,7 +484,7 @@ test(
     // The permanent branch keeps the reason IN the line — the statusline has
     // no tooltip, and for this class the reason is the action.
     expect(cardPerm.stdout).toContain("Invalid API key");
-    expect(cardPerm.stdout).toContain("/siltpoke-wake");
+    expect(cardPerm.stdout).toContain("/siltpoke:siltpoke-wake");
   },
   120_000,
 );
@@ -509,7 +509,7 @@ test(
     expect(health.last_failure!.class).toBe("permanent");
     const card = await runCli(CARD_ENTRY, [], h);
     expect(card.stdout).toContain("1 permanent failure");
-    expect(card.stdout).toContain("/siltpoke-wake");
+    expect(card.stdout).toContain("/siltpoke:siltpoke-wake");
   },
   120_000,
 );

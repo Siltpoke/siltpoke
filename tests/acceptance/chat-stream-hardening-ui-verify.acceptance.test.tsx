@@ -64,8 +64,10 @@ import { Chat } from "../../src/web/screens/Chat";
 // ── Pet-voice copy table (hand-transcribed — independent oracle) ─────────────
 
 const SPEC_COPY: Record<string, string> = {
+  // No duration since defect [49]: each agent has its own time limit
+  // (spec 2026-10-09-49-chat-follows-provider-design §5 [3], the maintainer: "A").
   timeout:
-    "I waited a whole minute but my brain never answered. (backend timeout — try sending that again?)",
+    "I waited but my brain never answered. (backend timeout — try sending that again?)",
   spawn_failed:
     "I couldn't reach my brain at all just now. (couldn't start claude — is it installed and logged in?)",
   empty_exit: "My brain came back with… nothing. (empty response — try once more?)",

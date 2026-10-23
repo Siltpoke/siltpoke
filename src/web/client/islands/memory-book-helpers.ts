@@ -310,9 +310,19 @@ export function sortMemories(
   memories: MemoryEventClient[],
   desc: boolean,
 ): MemoryEventClient[] {
-  const sorted = [...memories].sort((a, b) =>
-    a.ts > b.ts ? -1 : a.ts < b.ts ? 1 : 0,
-  );
+  // By the moment, not the text: stored timestamps mix "Z" and "-07:00"
+  // spellings, and text order split one day into two groups with the same key
+  // (Alpine then drew them below the pager). Unparseable ones go after every
+  // parseable one, in text order, so the order stays consistent.
+  const sorted = [...memories].sort((a, b) => {
+    const ta = Date.parse(a.ts);
+    const tb = Date.parse(b.ts);
+    const badA = Number.isNaN(ta);
+    const badB = Number.isNaN(tb);
+    if (badA !== badB) return badA ? 1 : -1;
+    if (!badA && ta !== tb) return tb - ta;
+    return a.ts > b.ts ? -1 : a.ts < b.ts ? 1 : 0;
+  });
   return desc ? sorted : sorted.reverse();
 }
 

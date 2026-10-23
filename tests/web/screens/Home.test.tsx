@@ -237,12 +237,16 @@ describe("Home screen Wave 1.5b composition", () => {
   // tests/web/routes/nav.test.ts uses for its own flat-entry-count test),
   // but the new entry specifically is also named below rather than folded
   // silently into a bumped number.
-  test("sidebar has 4 total nav entries (PET 1 + WORK 3) — Decisions came out 2026-08-17 with its route", () => {
+  test("sidebar has 5 total nav entries (PET 1 + WORK 4)", () => {
     const html = render();
     const activeMatches = html.match(/aria-current="page"/g) ?? [];
     expect(activeMatches.length).toBe(1);
     const navItemMatches = html.match(/class="nav-item(?:\s|")/g) ?? [];
-    expect(navItemMatches.length).toBe(4);
+    expect(navItemMatches.length).toBe(5);
+    expect(html).toContain('href="/settings"');
+    expect(html).not.toContain('href="/progress"');
+    expect(html).not.toContain('href="/knowledge"');
+    expect(html).not.toContain('href="/knowledge/decisions"');
   });
 
   test("no disabled nav entries remain (placeholders removed, all routes live)", () => {

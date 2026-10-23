@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { resolveClaudeHome } from "../installer/paths";
 import { splitInterpreter } from "../installer/statusline-interpreter";
 import { type CheckResult, type DoctorOptions, detectDoctorHost } from "./doctor";
+import { aHost } from "./doctor-agy-plugin-host";
 
 const CHECK_NAME = "statusline interpreter runnable";
 
@@ -44,7 +45,7 @@ function interpreterToCheck(opts: DoctorOptions, path: string): CheckResult | st
       name: CHECK_NAME,
       pass: true,
       status: "info",
-      detail: `skipped — this is a ${host} install; ${path} is not what it is wired through`,
+      detail: `skipped — this is ${aHost(host)} install; ${path} is not what it is wired through`,
     };
   }
   const command = readStatuslineCommand(path);
@@ -56,7 +57,7 @@ function interpreterToCheck(opts: DoctorOptions, path: string): CheckResult | st
       pass: true,
       status: "info",
       detail:
-        "no Siltpoke statusLine to check — the pet's statusline is opt-in (`/siltpoke-setup --statusline`)",
+        "no Siltpoke statusLine to check — the pet's statusline is opt-in (`/siltpoke:siltpoke-setup --statusline`)",
     };
   }
   if (!command.includes("statusline.sh") && !command.includes("siltpoke")) {

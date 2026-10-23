@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { resolveDaemonEntry, resolveDaemonLauncher, resolveDaemonPath } from "./daemon-path";
 import { siltpokeRoot } from "./paths";
+import { leftRunningNote, otherAccountHome, realAccountProbe } from "./account-home";
 
 /** Minimal exec seam (status is all we read). Defaults to real spawnSync. */
 export type ExecSyncFn = (
@@ -31,8 +32,17 @@ interface PlistInput {
  * Canonical LaunchAgent plist location. Shared by installAutostart /
  * uninstallAutostart and the doctor autostart-presence check (track #6 T5).
  */
-export function defaultPlistPath(): string {
-  return join(homedir(), "Library", "LaunchAgents", "io.siltpoke.daemon.plist");
+export function defaultPlistPath(home: string = homedir()): string {
+  return join(home || homedir(), "Library", "LaunchAgents", "io.siltpoke.daemon.plist");
+}
+
+/**
+ * Where the daemon's logs go. SILTPOKE_HOME still wins (a deliberate override);
+ * otherwise `<home>/.siltpoke` for the home being installed into — not whatever
+ * HOME the process happens to carry (defect [66]).
+ */
+function logRootFor(home?: string): string {
+  return !home ? siltpokeRoot() : siltpokeRoot({ ...process.env, HOME: home });
 }
 
 function xmlEscape(s: string): string {
@@ -44,12 +54,11 @@ function xmlEscape(s: string): string {
     .replace(/'/g, "&apos;");
 }
 
-export function renderPlist({
-  bunPath,
-  daemonScript,
-  daemonPath,
-}: PlistInput): string {
-  const logRoot = xmlEscape(siltpokeRoot());
+export function renderPlist(
+  { bunPath, daemonScript, daemonPath }: PlistInput,
+  home?: string,
+): string {
+  const logRoot = xmlEscape(logRootFor(home));
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -92,7 +101,13 @@ export function loadLaunchAgent(
   }
 }
 
-export async function installAutostart(home: string = homedir()): Promise<void> {
+export async function installAutostart(
+  home: string = homedir(),
+  /** Injectable exec — tests never touch launchctl. Defaults to real spawnSync. */
+  execFn?: ExecSyncFn,
+): Promise<void> {
+  // An empty home (HOME="") means unset, not "the current directory".
+  home = home || homedir();
   if (process.platform !== "darwin") {
     process.stderr.write(
       "installAutostart (launchd) requires macOS. For Linux use installer/systemd.ts.\n",
@@ -124,21 +139,26 @@ export async function installAutostart(home: string = homedir()): Promise<void> 
   for (const w of warnings) {
     process.stderr.write(`warning: ${w}\n`);
   }
-  const xml = renderPlist({
-    bunPath: launcher.program,
-    daemonScript: launcher.script,
-    daemonPath,
-  });
+  const xml = renderPlist(
+    {
+      bunPath: launcher.program,
+      daemonScript: launcher.script,
+      daemonPath,
+    },
+    home,
+  );
 
-  const plistPath = defaultPlistPath();
+  // Under the `home` we were given, never os.homedir() — a test (or a HOME
+  // override) passing a temp home must not write the real ~/Library/LaunchAgents.
+  const plistPath = defaultPlistPath(home);
   mkdirSync(dirname(plistPath), { recursive: true });
   writeFileSync(plistPath, xml);
 
   // Ensure log dir exists for StandardOutPath/StandardErrorPath.
-  mkdirSync(join(siltpokeRoot(), "logs"), { recursive: true });
+  mkdirSync(join(logRootFor(home), "logs"), { recursive: true });
 
-  const exec: ExecSyncFn = (cmd, args) =>
-    spawnSync(cmd, args, { stdio: "ignore" });
+  const exec: ExecSyncFn =
+    execFn ?? ((cmd, args) => spawnSync(cmd, args, { stdio: "ignore" }));
   loadLaunchAgent(plistPath, "io.siltpoke.daemon", process.getuid?.() ?? 0, exec);
   process.stdout.write(`Installed LaunchAgent at ${plistPath}\n`);
 }
@@ -146,10 +166,14 @@ export async function installAutostart(home: string = homedir()): Promise<void> 
 export interface UninstallAutostartOptions {
   /** Injectable exec — tests never touch launchctl. Defaults to real spawnSync. */
   exec?: ExecSyncFn;
-  /** Defaults to ~/Library/LaunchAgents/io.siltpoke.daemon.plist. */
+  /** Home to remove from. Defaults to os.homedir(). Ignored when plistPath is set. */
+  home?: string;
+  /** Defaults to <home>/Library/LaunchAgents/io.siltpoke.daemon.plist. */
   plistPath?: string;
   /** Defaults to process.getuid() — the gui/<uid> launchd domain. */
   uid?: number;
+  /** `id -P` seam: decides whether `home` is this account's own. Defaults to the real one. */
+  probe?: (cmd: string, args: string[]) => { status: number; stdout: string };
 }
 
 export interface UninstallAutostartResult {
@@ -165,15 +189,22 @@ export interface UninstallAutostartResult {
 export async function uninstallAutostart(
   opts: UninstallAutostartOptions = {},
 ): Promise<UninstallAutostartResult> {
-  const plistPath = opts.plistPath ?? defaultPlistPath();
+  const plistPath = opts.plistPath ?? defaultPlistPath(opts.home);
   if (!existsSync(plistPath)) {
     return { removed: false };
   }
   const exec: ExecSyncFn =
     opts.exec ?? ((cmd, args) => spawnSync(cmd, args, { stdio: "ignore" }));
   const uid = opts.uid ?? process.getuid?.();
-  // Unload by label (ignore failure — not loaded is fine).
-  exec("launchctl", ["bootout", `gui/${uid}/io.siltpoke.daemon`]);
+  // launchd answers for the ACCOUNT. Under any other home, a bootout would stop
+  // the real account's daemon — leave it, remove only the files (`[86]`).
+  const account = otherAccountHome(opts.home || homedir(), opts.probe ?? realAccountProbe);
+  if (account === null) {
+    // Unload by label (ignore failure — not loaded is fine).
+    exec("launchctl", ["bootout", `gui/${uid}/io.siltpoke.daemon`]);
+  } else {
+    process.stdout.write(leftRunningNote("daemon service", opts.home || homedir(), account));
+  }
   try {
     rmSync(plistPath, { force: true });
   } catch {

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Jiaqi Duan
 /** @jsxImportSource hono/jsx */
 import { RECALL_SURFACE_ENABLED } from "../../chat/recall";
+import { ChatContextChips } from "./ChatContextChips";
 /**
  * Floating chat, rendered into
  * every dashboard page by the global Layout. `hx-preserve` keeps the element
@@ -114,18 +115,65 @@ export function FloatingChat({ secret }: FloatingChatProps = {}) {
           }}
         >
         <div
-          class="fc-panel relative flex flex-col bg-cream border border-[color-mix(in_srgb,var(--color-ink)_10%,transparent)] rounded-[18px] overflow-hidden font-body shadow-[var(--shadow-lg)]"
+          class="fc-panel relative flex flex-row bg-cream border border-[color-mix(in_srgb,var(--color-ink)_10%,transparent)] rounded-[18px] overflow-hidden font-body shadow-[var(--shadow-lg)]"
           {...{
-            ":class": "maximized ? 'pointer-events-auto w-[min(880px,92vw)] h-[min(86vh,860px)]' : 'w-96 h-[564px] max-h-[78vh]'",
+            // Chat column 800 maximized, 530 in the corner — the same widths
+            // `CHAT_BASE_PX` gives it beside Runs, so opening Runs never resizes the chat.
+            ":class": "maximized ? 'pointer-events-auto w-[min(800px,92vw)] h-[min(86vh,860px)]' : 'w-[min(530px,calc(100vw_-_40px))] h-[564px] max-h-[78vh]'",
+            // Runs or history open → the panel widens to hold
+            // History | Chat | divider | Runs (spec 2026-10-13 §10.1).
+            ":style": "runsPanelStyle()",
           }}
         >
+        {/* Past chats, left of the chat column. Opens and closes with the
+            header's clock button only, the way Runs does on the right. */}
+        <aside class="fc-hist" x-show="historyOpen" data-testid="chat-history-pane" aria-label="Past chats">
+          <div class="fc-runs-head">
+            <div>
+              <h2>Chats</h2>
+              <div class="fc-runs-sub" x-text="conversations.length + (conversations.length === 1 ? ' conversation' : ' conversations')"></div>
+            </div>
+          </div>
+          <div class="fc-hist-list">
+            <template x-for="g in historyGroups()" {...{ ":key": "g.label" }}>
+              <div>
+                <div class="fc-hist-g" x-text="g.label"></div>
+                <template x-for="r in g.rows" {...{ ":key": "r.id" }}>
+                  <div class="fc-hist-row" {...{ ":class": "r.id === activeId ? 'fc-hist-on' : ''" }}>
+                    <button type="button" class="fc-hist-open" {...{ "x-on:click": "openConversation(r.id)", ":title": "r.title" }}>
+                      <span class="fc-hist-t" x-text="r.title"></span>
+                      <span class="fc-hist-when" x-text="r.when"></span>
+                    </button>
+                    <button
+                      type="button"
+                      class="fc-hist-del"
+                      aria-label="Delete chat"
+                      {...{ "x-on:click.stop": "deleteConversation(r.id)" }}
+                    >🗑</button>
+                  </div>
+                </template>
+              </div>
+            </template>
+            <div x-show="conversations.length === 0" class="fc-hist-empty">No past chats.</div>
+          </div>
+        </aside>
+        {/* Chat column. `.fc-chat` is position:relative, so the dropdowns below
+            still anchor to the chat side when Runs is open. */}
+        <div class="fc-chat">
           {/* ── header: soft, light ── */}
           <div class="flex items-center gap-2 px-4 py-[13px] border-b border-b-[color-mix(in_srgb,var(--color-ink)_6%,transparent)]">
             <span class="w-2 h-2 rounded-full bg-ink opacity-[.85]"></span>
             <span class="font-semibold text-sm text-ink">siltpoke</span>
             <button
               type="button"
-              {...{ "x-on:click.stop": "toggleHistory()", ":style": "conversations.length ? 'opacity:.9;cursor:pointer' : 'opacity:.3;cursor:not-allowed'" }}
+              {...{
+                "x-on:click.stop": "toggleHistory()",
+                ":aria-expanded": "historyOpen ? 'true' : 'false'",
+                // Open → the same sky ring as the Runs button.
+                // Dimmer with no chats yet, but it still opens ("No past chats.").
+                ":style":
+                  "'cursor:pointer;' + (conversations.length || historyOpen ? 'opacity:.9' : 'opacity:.45') + (historyOpen ? ';border-color:var(--color-sky)' : '')",
+              }}
               title="Past chats"
               class="ml-auto w-[26px] h-[26px] rounded-md border border-[color-mix(in_srgb,var(--color-ink)_10%,transparent)] bg-transparent text-ink inline-flex items-center justify-center"
             >
@@ -149,6 +197,17 @@ export function FloatingChat({ secret }: FloatingChatProps = {}) {
               </svg>
             </button>
             )}
+            {/* Runs: every call this conversation made — who answered, with
+                which model, what was sent and what came back. */}
+            <button
+              type="button"
+              data-testid="chat-runs-button"
+              {...{ "x-on:click": "toggleRuns()", ":aria-expanded": "runsOpen ? 'true' : 'false'", ":style": "runsOpen ? 'border-color:var(--color-sky)' : ''" }}
+              title="Runs — what each answer ran on"
+              class="h-[26px] px-2 rounded-md border border-[color-mix(in_srgb,var(--color-ink)_10%,transparent)] bg-transparent text-ink text-[12px] cursor-pointer"
+            >
+              Runs
+            </button>
             {/* Maximize / restore button */}
             <button
               type="button"
@@ -186,32 +245,6 @@ export function FloatingChat({ secret }: FloatingChatProps = {}) {
             >
               ×
             </button>
-          </div>
-
-          {/* ── history dropdown (anchored to .fc-panel via relative) ── */}
-          <div
-            x-show="historyOpen"
-            {...{ "x-on:click.outside": "historyOpen = false" }}
-            class="absolute left-3 right-3 top-[52px] z-10 max-h-[60%] overflow-y-auto bg-cream border border-[color-mix(in_srgb,var(--color-ink)_12%,transparent)] rounded-[12px] shadow-[var(--shadow-lg)]"
-          >
-            <template x-for="c in sortedConversations()" {...{ ":key": "c.id" }}>
-              <div class="flex items-center gap-2 px-3 py-2 border-b border-b-[color-mix(in_srgb,var(--color-ink)_6%,transparent)] cursor-pointer">
-                <div class="flex-1 min-w-0" {...{ "x-on:click": "openConversation(c.id)" }}>
-                  <div class="text-[13px] text-ink truncate" x-text="c.title || c.label"></div>
-                  <div class="text-[11px] text-ink opacity-50 truncate flex items-center gap-1.5">
-                    <span class="truncate" x-text="c.pin"></span>
-                    <span x-show="fmtCreated(c.createdAt)" class="shrink-0 opacity-80" x-text="'· ' + fmtCreated(c.createdAt)"></span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  {...{ "x-on:click.stop": "deleteConversation(c.id)" }}
-                  aria-label="Delete chat"
-                  class="w-[22px] h-[22px] border-none bg-transparent text-ink opacity-50 text-sm cursor-pointer"
-                >🗑</button>
-              </div>
-            </template>
-            <div x-show="conversations.length === 0" class="px-3 py-4 text-center text-[12px] text-ink opacity-50">No past chats.</div>
           </div>
 
           {/* ── 🔗 related-chats dropdown — gated on RECALL_SURFACE_ENABLED; parked 2026-06-26. */}
@@ -307,6 +340,13 @@ export function FloatingChat({ secret }: FloatingChatProps = {}) {
                 // a shadow (Task 10b review round 1, Important 2).
                 {...{ ":style": "m.status === 'failed' ? 'align-self:stretch;max-width:100%;background:color-mix(in srgb, var(--color-bubbleFailUrgent) 5%, transparent);border:1px solid color-mix(in srgb, var(--color-bubbleFailUrgent) 18%, transparent);border-radius:12px' : m.status === 'cancelled' ? 'align-self:center;opacity:.45;font-size:11px;padding:2px 0' : m.role === 'user' ? 'align-self:flex-end;background:var(--color-ink);color:var(--color-cream);border-bottom-right-radius:5px' : 'align-self:flex-start;background:var(--color-cream);box-shadow:var(--shadow-sm);border-bottom-left-radius:5px'" }}
                 class="max-w-[82%] py-[9px] px-3 rounded-[15px] text-[13px] leading-[1.5] break-words text-ink"
+                {...{
+                  // Runs window link: with Runs open, clicking an answer
+                  // highlights its record (and the record highlights it back).
+                  ":data-msg-id": "m.id || null",
+                  ":class": "(m.id && m.id === selectedMsgId ? 'fc-msg-sel ' : '') + (runsOpen && m.role === 'assistant' ? 'cursor-pointer' : '')",
+                  "x-on:click": "runsOpen && m.role === 'assistant' && selectAnswer(m.id)",
+                }}
               >
                 {/* User messages: plain text (x-text handles XSS automatically). */}
                 <span x-show="m.role === 'user'" x-text="m.text"></span>
@@ -320,8 +360,24 @@ export function FloatingChat({ secret }: FloatingChatProps = {}) {
                   <span aria-hidden="true" class="shrink-0 opacity-70">⚠</span>
                   <span x-text="m.text"></span>
                 </div>
+                {/* choose_provider → one button per agent found; a click saves
+                    chat's agent and sends the same message again. */}
+                <div x-show="m.status === 'failed' && m.found && m.found.length > 0" class="flex flex-wrap items-center gap-1.5 mt-2" data-testid="chat-pick-agent">
+                  <span class="text-[12px] opacity-70">Use for chat:</span>
+                  <template x-for="f in (m.found || [])" {...{ ":key": "f" }}>
+                    <button
+                      type="button"
+                      {...{ "x-on:click": "pickAgent(f, i)", "x-text": "f", ":disabled": "streaming" }}
+                      class="rounded-full py-[4px] px-3 text-[12px] text-ink border border-[color-mix(in_srgb,var(--color-ink)_15%,transparent)] bg-transparent cursor-pointer opacity-80 hover:opacity-100 hover:bg-[color-mix(in_srgb,var(--color-ink)_4%,transparent)] transition-colors duration-150"
+                    ></button>
+                  </template>
+                </div>
+                <div x-show="m.pickNote" x-text="m.pickNote" class="text-[12px] mt-1 opacity-70"></div>
                 {/* Cancelled turn → quiet stopped marker. */}
                 <span x-show="m.status === 'cancelled'" x-text="m.text"></span>
+                {/* Timestamp only — sent time for yours, arrival time for the
+                    answer. Which agent and model answered is in Runs. */}
+                <span x-show="m.at" class="fc-msg-at" x-text="msgTime(m.at)"></span>
               </div>
             </template>
             {/* Typing dots — gated on isActiveStreaming() so they show ONLY on
@@ -494,28 +550,7 @@ export function FloatingChat({ secret }: FloatingChatProps = {}) {
             </div>
           </div>
 
-          {/* ── context-transparency chip bar — mirrors the 📍
-               pinned-node bar above (~line 206) for styling. Renders ABOVE the
-               composer, independent of `active()`: it's a declarative Alpine
-               x-text/x-show binding (no addEventListener), so it survives
-               hx-boost/alpine-morph in-app nav without the listener-drop
-               pitfall. INTENDED: the 🧠 facts chip shows on every page — the
-               user-facts recall injects into every chat message regardless of
-               page, so it is not conditioned on `node`/`page`. */}
-          <div class="pt-1.5 px-4 pb-1 text-[11px] text-ink opacity-50 flex items-center gap-2.5 flex-wrap">
-            <span x-show="contextChips().node" class="flex items-center gap-1 min-w-0">
-              <span>📍</span>
-              <span class="font-mono truncate max-w-[140px]" x-text="contextChips().node"></span>
-            </span>
-            <span class="flex items-center gap-1">
-              <span>📄</span>
-              <span x-text="contextChips().page"></span>
-            </span>
-            <span class="flex items-center gap-1">
-              <span>🧠</span>
-              <span x-text="contextChips().facts + ' facts'"></span>
-            </span>
-          </div>
+          <ChatContextChips />
 
           {/* ── composer: input pill + escape-hatch recall icon + send button ── */}
           <form
@@ -565,6 +600,48 @@ export function FloatingChat({ secret }: FloatingChatProps = {}) {
               ↑
             </button>
           </form>
+        </div>
+        {/* end chat column */}
+          {/* Divider: drag to resize Runs; double-click resets to 340 px; arrow keys work too. */}
+          {/* biome-ignore lint/a11y/useSemanticElements: a focusable, draggable splitter — <hr> cannot take focus or pointer drags. */}
+          <div
+            class="fc-grip"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize Runs"
+            aria-valuemin={340}
+            aria-valuemax={560}
+            aria-valuenow={340}
+            tabIndex={0}
+            {...{
+              "x-show": "runsOpen",
+              ":aria-valuenow": "runsWidth",
+              ":class": "_gripDrag ? 'fc-dragging' : ''",
+              "x-on:pointerdown": "gripDown($event)",
+              "x-on:pointermove": "gripMove($event)",
+              "x-on:pointerup": "gripUp()",
+              "x-on:pointercancel": "gripUp()",
+              "x-on:dblclick": "setRunsWidth(340)",
+              "x-on:keydown": "gripKey($event)",
+            }}
+          ></div>
+          <aside
+            class="fc-runs"
+            aria-label="Runs"
+            data-runs-root
+            {...{ "x-show": "runsOpen", "x-effect": "runsOpen; activeId; $nextTick(() => syncRuns())" }}
+          >
+            <div class="fc-runs-head">
+              <div>
+                <h2>Runs</h2>
+                <div class="fc-runs-sub" data-runs-sub></div>
+              </div>
+              {/* No ✕: Runs closes from the header's Runs button, as history does from its clock. */}
+            </div>
+            <div class="fc-runs-note" data-runs-note hidden></div>
+            {/* Filled by client/islands/chat-runs-panel.ts — x-ignore keeps Alpine out of it. */}
+            <div class="fc-runs-list" data-runs-list x-ignore></div>
+          </aside>
         </div>
         {/* end panel wrapper (corner ↔ centered-modal layout switcher) */}
         </div>

@@ -31,6 +31,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { codexSandboxArgs } from "../../src/brain/providers/codex-sandbox";
 import type { ProjectCapabilities } from "../../src/critic/capabilities";
 import { runCritic, type RunCriticDeps, type RunCriticOpts } from "../../src/critic/run-critic";
 import type { RunToolsOpts, RunToolsResult } from "../../src/critic/tools/run-tools";
@@ -233,18 +234,17 @@ describe("AC2 — codex exec argv shape, stdin payload, happy-path decision", ()
       expect(argv[2]).toBe("--json");
       expect(argv[3]).toBe("--ephemeral");
       expect(argv[4]).toBe("--skip-git-repo-check");
-      expect(argv[5]).toBe("-s");
-      expect(argv[6]).toBe("read-only");
-      expect(argv[7]).toBe("-C");
-      expect(typeof argv[8]).toBe("string");
-      expect((argv[8] as string).length).toBeGreaterThan(0);
-      expect(argv[9]).toBe("-c");
-      expect(argv[10]).toMatch(/^developer_instructions=/);
-      expect(argv[11]).toBe("--output-schema");
-      expect(typeof argv[12]).toBe("string");
-      expect((argv[12] as string).length).toBeGreaterThan(0);
-      expect(argv[13]).toBe("-");
-      expect(argv.length).toBe(14);
+      // The sandbox block (read scope + no AGENTS.md) sits between, for the folder `-C` names.
+      const c = argv.indexOf("-C");
+      expect(argv.slice(5, c)).toEqual(codexSandboxArgs(argv[c + 1] as string));
+      expect(argv[c + 1]).toBe(cwd);
+      expect(argv[c + 2]).toBe("-c");
+      expect(argv[c + 3]).toMatch(/^developer_instructions=/);
+      expect(argv[c + 4]).toBe("--output-schema");
+      expect(typeof argv[c + 5]).toBe("string");
+      expect((argv[c + 5] as string).length).toBeGreaterThan(0);
+      expect(argv[c + 6]).toBe("-");
+      expect(argv.length).toBe(c + 7);
 
       // Never a `-m`/model-pin flag (AC contingency: rejected under ChatGPT auth).
       expect(argv).not.toContain("-m");

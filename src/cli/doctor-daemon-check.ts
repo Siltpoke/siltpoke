@@ -14,7 +14,7 @@
  * slice): probes GET /api/ping with a short timeout — up → ✓. Down branches
  * on `daemon.enabled` (config.json, default false — see src/config/
  * daemon-config.ts): disabled is the expected default state → ◦ info "daemon:
- * off (opt-in — open /siltpoke-dashboard to enable)", never a failure.
+ * off (opt-in — open /siltpoke:siltpoke-dashboard to enable)", never a failure.
  * Enabled-but-unreachable is a genuine fault (the user opted in and it's not
  * there) → ✗ fail.
  *
@@ -163,14 +163,14 @@ const defaultDaemonPingUrl = (): string => `${daemonBaseUrl()}/api/ping`;
 const ALIVE_CHECK_NAME = "daemon alive (/api/ping)";
 const PING_TIMEOUT_MS = 500;
 
-const DAEMON_OFF_DETAIL = "daemon: off (opt-in — open /siltpoke-dashboard to enable)";
+const DAEMON_OFF_DETAIL = "daemon: off (opt-in — open /siltpoke:siltpoke-dashboard to enable)";
 const DAEMON_ENABLED_UNREACHABLE_DETAIL =
-  "daemon.enabled is true but /api/ping is unreachable — try /siltpoke-restart-daemon";
+  "daemon.enabled is true but /api/ping is unreachable — try /siltpoke:siltpoke-restart-daemon";
 /**
  * Distinct from "unreachable" on purpose: something DID answer on the port, it
  * just was not siltpoke. Restarting the daemon does not help here — the port
  * has to be freed, or siltpoke moved off it — so the row must not send the
- * user to `/siltpoke-restart-daemon`.
+ * user to `/siltpoke:siltpoke-restart-daemon`.
  */
 const DAEMON_PORT_TAKEN_DETAIL =
   "something is answering on the daemon's port but it is not siltpoked — free the port, or set SILTPOKE_DAEMON_PORT to another one";
@@ -179,7 +179,7 @@ const DAEMON_PORT_TAKEN_DETAIL =
  * Probe /api/ping with a short timeout. Up → ✓ pass. Down defers to
  * `daemon.enabled` (default false — the daemon is opt-in, see
  * src/config/daemon-config.ts): disabled is the normal, expected state → ◦
- * info row, never a failure. Enabled (the user opened `/siltpoke-dashboard`)
+ * info row, never a failure. Enabled (the user opened `/siltpoke:siltpoke-dashboard`)
  * but unreachable is a genuine fault → ✗ fail, since the respawn gate should
  * be keeping it alive. `fetchFn` and `loadDaemonConfigFn` are injectable for
  * tests (no live daemon / real config.json needed).
@@ -248,15 +248,16 @@ const AUTOSTART_CHECK_NAME = "daemon autostart configured";
  * Info-only check for the platform's boot artifact (launchd plist / systemd
  * user unit). NEVER fails the run: absent → ◦ info with the setup hint;
  * unsupported platform → ◦ skip note. `platform` / `autostartPath` are
- * injectable for tests.
+ * injectable for tests. Looks under `opts.home` when given — the same home
+ * the installer wrote to (defect [68], the read side of [66]).
  */
 export function checkAutostart(opts: DoctorOptions = {}): CheckResult {
   const platform = opts.platform ?? process.platform;
   let artifactPath: string;
   if (platform === "darwin") {
-    artifactPath = opts.autostartPath ?? defaultPlistPath();
+    artifactPath = opts.autostartPath ?? defaultPlistPath(opts.home);
   } else if (platform === "linux") {
-    artifactPath = opts.autostartPath ?? defaultUnitPath();
+    artifactPath = opts.autostartPath ?? defaultUnitPath(opts.home, opts.env);
   } else {
     return {
       name: AUTOSTART_CHECK_NAME,
@@ -278,7 +279,7 @@ export function checkAutostart(opts: DoctorOptions = {}): CheckResult {
     pass: true,
     status: "info",
     // Host-aware, like every other row that tells a user to set Siltpoke up.
-    // This one said "run `/siltpoke-setup`" to everybody — a command only
+    // This one said "run `/siltpoke:siltpoke-setup`" to everybody — a command only
     // Claude Code has — which is exactly what defect [16] fixed elsewhere.
     // It went unseen locally because the row only prints when autostart is
     // ABSENT, and it is present on the dev machine; a clean Linux CI runner

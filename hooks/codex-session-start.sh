@@ -4,6 +4,11 @@ set -u
 HOME="${HOME:-}"
 PAYLOAD="$(cat 2>/dev/null)"
 [ "${SILTPOKE_INTERNAL:-}" = "1" ] && exit 0
+# Defect [49]: record that the user is working in codex, for the dashboard
+# daemon (hooks/lib/record-host.sh). Before the bun lookup: it needs no bun.
+# Only codex's own hooks.json declares this wrapper, so the family is fixed.
+SILTPOKE_RECORD_LIB="${0%/*}/lib/record-host.sh"
+[ -r "$SILTPOKE_RECORD_LIB" ] && . "$SILTPOKE_RECORD_LIB" && siltpoke_record_host codex
 BUN=""
 # ${0%/*}, not $(dirname "$0"): dirname is an EXTERNAL command, so on a
 # maximally-broken PATH it is itself unresolvable and prints

@@ -12,7 +12,7 @@ bun "${CLAUDE_PLUGIN_ROOT}/dist/siltpoke-cli.js" unmute
 ```
 
 The CLI deletes `~/.siltpoke/mute.json` (the mute marker that
-`/siltpoke-mute` writes). Idempotent — running it on an already-unmuted
+`/siltpoke:siltpoke-mute` writes). Idempotent — running it on an already-unmuted
 Siltpoke is a no-op (exit 0, output says "wasn't muted").
 
 Tell the user verbatim from the CLI output:
@@ -20,4 +20,4 @@ Tell the user verbatim from the CLI output:
   marker was removed.
 - "Siltpoke wasn't muted. No change." — there was no marker to remove.
 
-Related: `/siltpoke-mute <duration>` to re-mute.
+Related: `/siltpoke:siltpoke-mute <duration>` to re-mute.

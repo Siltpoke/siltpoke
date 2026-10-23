@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * `/siltpoke-dashboard` must not hand the user a link to somebody else's app.
+ * `/siltpoke:siltpoke-dashboard` must not hand the user a link to somebody else's app.
  *
  * WHY — audit defect `[5b]` §26.3. `openDashboard`'s liveness probe accepted
  * any 2xx on `/api/ping` as "the daemon is up". A stranger holding the

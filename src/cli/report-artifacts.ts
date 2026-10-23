@@ -14,6 +14,7 @@ import type { I18nDict } from "./report-i18n";
 import { fmt } from "./report-i18n";
 import { esc, panelWrap } from "./report-dom";
 import { readJsonl, type FeedbackRow } from "./report-panels";
+import { dayKey } from "../state/usage";
 
 export { renderProjectDetail } from "./report-project-detail";
 
@@ -209,7 +210,7 @@ export function renderProgressionDetail(
     .join("");
   const titles = (prog.unlocked_titles ?? []).join(" · ") || "—";
   const poses = (prog.unlocked_poses ?? []).join(" · ") || "—";
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayKey = dayKey(new Date()); // pet_log days are local days
   const petsToday = petLog.find((d) => d.day === todayKey)?.count ?? 0;
 
   const body = `

@@ -102,3 +102,14 @@ test("no baselineSha ⇒ whole-file fallback (existing behavior unchanged)", asy
   const r = await lookupWhy({ cwd: "/r", file: "src/login.ts", blame: blameOK, readIndex: async () => idx1(), readTranscript: () => oneTurn });
   expect(r).toMatchObject({ rung: 1 });   // no baselineSha path still works
 });
+
+test("qoder-labelled single session with a Claude-format transcript still resolves to the turn level", async () => {
+  const r = await lookupWhy({ cwd: "/r", file: "src/login.ts", blame: blameOK, readIndex: async () => idx1("qoder"), readTranscript: () => oneTurn });
+  expect(r).toMatchObject({ rung: 1, anchor_scope: "turn", user_ask: "add rate limiting" });
+});
+
+test("codebuddy-labelled session stays session-level (transcript not opened)", async () => {
+  const r = await lookupWhy({ cwd: "/r", file: "src/login.ts", blame: blameOK, readIndex: async () => idx1("codebuddy"),
+    readTranscript: () => { throw new Error("must not be opened"); } });
+  expect(r).toMatchObject({ anchor_scope: "session" });
+});

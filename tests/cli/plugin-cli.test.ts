@@ -55,15 +55,15 @@ describe("plugin-cli dispatcher", () => {
     const code = await runPluginCli(["help"], c.io);
     expect(code).toBe(0);
     for (const cmd of [
-      "/siltpoke-setup",
-      "/siltpoke-last",
-      "/siltpoke-dashboard",
-      "/siltpoke-restart-daemon",
-      "/siltpoke-menubar",
-      "/siltpoke-mute",
-      "/siltpoke-unmute",
-      "/siltpoke-doctor",
-      "/siltpoke-help",
+      "/siltpoke:siltpoke-setup",
+      "/siltpoke:siltpoke-last",
+      "/siltpoke:siltpoke-dashboard",
+      "/siltpoke:siltpoke-restart-daemon",
+      "/siltpoke:siltpoke-menubar",
+      "/siltpoke:siltpoke-mute",
+      "/siltpoke:siltpoke-unmute",
+      "/siltpoke:siltpoke-doctor",
+      "/siltpoke:siltpoke-help",
     ]) {
       expect(c.out()).toContain(cmd);
     }
@@ -238,7 +238,7 @@ describe("plugin-cli dispatcher", () => {
   // Their proof is the end-to-end run from a copied plugin cache (task 6b report).
 });
 
-describe("plugin-cli brain detect — the verb /siltpoke-setup §8 calls", () => {
+describe("plugin-cli brain detect — the verb /siltpoke:siltpoke-setup §8 calls", () => {
   // brain-detect.test.ts proves the filter; this proves the dispatcher reaches
   // it. The content depends on this machine's PATH, so assert the shape, and
   // that it never falls through to the config verbs' usage error.

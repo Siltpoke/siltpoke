@@ -66,7 +66,7 @@ function extractPlugRootSnippet(): string {
 /** Run the extracted snippet, then print the resulting PLUGIN_ROOT so the test can read it. */
 function runSnippet(
   env: Record<string, string>,
-  opts: { nounset?: boolean } = {},
+  opts: { nounset?: boolean; errexit?: boolean; cwd?: string } = {},
 ): { stdout: string; stderr: string; exitCode: number } {
   const snippet = extractPlugRootSnippet();
   // `set -u` is opt-in per arm: a skill-run shell may have it on, and under it an
@@ -74,9 +74,9 @@ function runSnippet(
   // reaching the designed "could not find" message. Measured: an unguarded
   // ${HOME} in rung (c) died with `HOME: parameter not set` and every later line
   // of the sourced script was skipped.
-  const prelude = opts.nounset ? "set -u\n" : "";
+  const prelude = (opts.nounset ? "set -u\n" : "") + (opts.errexit ? "set -e\n" : "");
   const script = `${prelude}${snippet}\nprintf '%s' "$PLUGIN_ROOT"`;
-  const r = Bun.spawnSync([SHELL, "-c", script], { env });
+  const r = Bun.spawnSync([SHELL, "-c", script], { env, cwd: opts.cwd });
   return {
     stdout: new TextDecoder().decode(r.stdout),
     stderr: new TextDecoder().decode(r.stderr),
@@ -164,5 +164,126 @@ describe("skills/siltpoke/SKILL.md plugin-root resolution ladder", () => {
     );
     expect(exitCode).toBe(0);
     expect(stdout).toBe(root);
+  });
+});
+
+// Defect [54]: with BOTH codex and agy installed, a skill running inside agy
+// resolved codex's copy (the codex rung sat before the agy rung). The ladder now
+// orders those two rungs by the host running the skill. `codex` here is a stub
+// script on a private PATH dir — the real `codex plugin list` is never run.
+describe("host-aware ordering when codex AND agy are both installed ([54])", () => {
+  let home: string;
+  let stubDir: string;
+  let codexRoot: string;
+  let agyRoot: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "siltpoke-skill-both-"));
+    stubDir = join(home, "stubs");
+    codexRoot = join(home, "codex-copy");
+    agyRoot = join(home, ".gemini", "config", "plugins", "siltpoke");
+    for (const r of [codexRoot, agyRoot]) {
+      mkdirSync(join(r, "dist"), { recursive: true });
+      writeFileSync(join(r, "dist", "siltpoke-cli.js"), "");
+    }
+    mkdirSync(stubDir, { recursive: true });
+    const json = JSON.stringify({ installed: [{ name: "siltpoke", source: { path: codexRoot } }] });
+    writeFileSync(join(stubDir, "codex"), `#!/bin/sh\nprintf '%s' '${json}'\n`, { mode: 0o755 });
+    reachableBun(home);
+  });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+
+  const env = (extra: Record<string, string> = {}) => ({
+    HOME: home,
+    PATH: `${stubDir}:${SCRUBBED_PATH}`,
+    ...extra,
+  });
+
+  test("running as agy: agy's own copy wins, codex's is not chosen", () => {
+    const { stdout } = runSnippet(env({ SILTPOKE_HOST: "agy" }));
+    expect(stdout).toBe(agyRoot);
+    expect(stdout).not.toBe(codexRoot);
+  });
+
+  test("running as codex: codex's copy wins", () => {
+    expect(runSnippet(env({ SILTPOKE_HOST: "codex" })).stdout).toBe(codexRoot);
+  });
+
+  test("unknown host keeps the old order (codex first)", () => {
+    expect(runSnippet(env()).stdout).toBe(codexRoot);
+  });
+
+  test("host detected from an ancestor process named agy", () => {
+    // Stub `ps`: every process reports comm `agy`.
+    writeFileSync(
+      join(stubDir, "ps"),
+      "#!/bin/sh\ncase \"$*\" in *comm=*) echo /Applications/agy;; *ppid=*) echo 1;; esac\n",
+      { mode: 0o755 },
+    );
+    expect(runSnippet(env()).stdout).toBe(agyRoot);
+  });
+
+  test("only codex installed while running as agy: falls back to codex's copy", () => {
+    rmSync(join(home, ".gemini"), { recursive: true, force: true });
+    expect(runSnippet(env({ SILTPOKE_HOST: "agy" })).stdout).toBe(codexRoot);
+  });
+
+  test("only agy installed while running as codex: falls back to agy's copy", () => {
+    rmSync(join(stubDir, "codex"));
+    expect(runSnippet(env({ SILTPOKE_HOST: "codex" })).stdout).toBe(agyRoot);
+  });
+
+  test("SILTPOKE_SKILL_FILE: the copy the skill was loaded from wins over host order", () => {
+    const skillFile = join(agyRoot, "skills", "siltpoke", "SKILL.md");
+    mkdirSync(join(agyRoot, "skills", "siltpoke"), { recursive: true });
+    writeFileSync(skillFile, "");
+    const { stdout } = runSnippet(env({ SILTPOKE_SKILL_FILE: skillFile, SILTPOKE_HOST: "codex" }));
+    expect(stdout).toBe(agyRoot);
+  });
+
+  test("SILTPOKE_SKILL_FILE under .codex-plugin/skills resolves to the parent that holds dist", () => {
+    const skillFile = join(codexRoot, ".codex-plugin", "skills", "siltpoke", "SKILL.md");
+    mkdirSync(join(codexRoot, ".codex-plugin", "skills", "siltpoke"), { recursive: true });
+    writeFileSync(skillFile, "");
+    expect(runSnippet(env({ SILTPOKE_SKILL_FILE: skillFile, SILTPOKE_HOST: "agy" })).stdout).toBe(
+      codexRoot,
+    );
+  });
+
+  test("bad SILTPOKE_SKILL_FILE with a cwd that holds dist/ does NOT resolve to cwd", () => {
+    const cwd = join(home, "project");
+    mkdirSync(join(cwd, "dist"), { recursive: true });
+    writeFileSync(join(cwd, "dist", "siltpoke-cli.js"), "");
+    const { stdout } = runSnippet(
+      env({ SILTPOKE_SKILL_FILE: "", SILTPOKE_HOST: "agy" }),
+      { cwd },
+    );
+    expect(stdout).toBe(agyRoot);
+    const bad = runSnippet(
+      env({ SILTPOKE_SKILL_FILE: "/nonexistent/x/y/SKILL.md", SILTPOKE_HOST: "agy" }),
+      { cwd },
+    );
+    expect(bad.stdout).toBe(agyRoot);
+    expect(bad.stdout).not.toBe(".");
+    expect(bad.stdout).not.toBe(cwd);
+  });
+
+  test("under set -e a bad skill path and a failing codex stub still complete", () => {
+    writeFileSync(join(stubDir, "codex"), "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+    const { stdout, exitCode } = runSnippet(
+      env({ SILTPOKE_SKILL_FILE: "/nonexistent/x/y/SKILL.md", SILTPOKE_HOST: "codex" }),
+      { errexit: true },
+    );
+    expect(exitCode).toBe(0);
+    expect(stdout).toBe(agyRoot);
+  });
+
+  test("SILTPOKE_HOST=claude (not agy) keeps codex first", () => {
+    expect(runSnippet(env({ SILTPOKE_HOST: "claude" })).stdout).toBe(codexRoot);
+  });
+
+  test("env-var override still wins over everything", () => {
+    expect(
+      runSnippet(env({ SILTPOKE_HOST: "codex", ANTIGRAVITY_PLUGIN_ROOT: agyRoot })).stdout,
+    ).toBe(agyRoot);
   });
 });

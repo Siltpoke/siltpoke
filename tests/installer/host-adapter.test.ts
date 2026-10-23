@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 
 // Absolute bun in every command string (defect [22]): the host runs these in a
 // non-login shell, where bun's ~/.bash_profile PATH line is never read.
@@ -149,9 +149,10 @@ describe("agyHostAdapter", () => {
     expect(second).toBe(first);
   });
 
-  test("cleans the orphaned Claude-shaped `hooks` key from antigravity-cli/settings.json while preserving other keys, and refreshes statusLine", async () => {
-    const home = mkdtempSync(join(tmpdir(), "agy-"));
-    const env = { HOME: home } as NodeJS.ProcessEnv;
+  // Defect [65]: this used to replace ANY statusLine with the pet, and the
+  // user's own command was saved nowhere — the test above it pinned that.
+  // Now only an empty slot or one that is already siltpoke's is written.
+  function agySettings(home: string, statusCommand?: string): string {
     const settingsPath = join(home, ".gemini", "antigravity-cli", "settings.json");
     mkdirSync(join(home, ".gemini", "antigravity-cli"), { recursive: true });
     writeFileSync(
@@ -159,17 +160,96 @@ describe("agyHostAdapter", () => {
       JSON.stringify({
         model: { name: "performance" },
         hooks: { Stop: [{ type: "http", url: "http://127.0.0.1:9876/hooks/stop" }] },
-        statusLine: { type: "command", command: "some-old-command" },
+        ...(statusCommand === undefined ? {} : { statusLine: { type: "command", command: statusCommand } }),
       }),
     );
-    await agyHostAdapter.writeHooks(env, { repoRoot: "/repo", secret: "x" });
+    return settingsPath;
+  }
+
+  test("[65] the user's own statusLine is kept; the orphan `hooks` key is still cleaned, other keys kept", async () => {
+    const home = mkdtempSync(join(tmpdir(), "agy-"));
+    const settingsPath = agySettings(home, "some-old-command");
+    const res = await agyHostAdapter.writeHooks({ HOME: home }, { repoRoot: "/repo", secret: "x" });
     const written = JSON.parse(readFileSync(settingsPath, "utf8"));
     expect(written.hooks).toBeUndefined();
     expect(written.model).toEqual({ name: "performance" });
-    expect(written.statusLine).toEqual({
+    expect(written.statusLine).toEqual({ type: "command", command: "some-old-command" });
+    expect(res.note).toContain("kept your own status line");
+  });
+
+  test("[65] a command that only mentions wrapper.ts is not ours — kept", async () => {
+    const home = mkdtempSync(join(tmpdir(), "agy-"));
+    const theirs = "sh /opt/interface/wrapper.sh --agent antigravity";
+    const settingsPath = agySettings(home, theirs);
+    await agyHostAdapter.writeHooks({ HOME: home }, { repoRoot: "/repo", secret: "x" });
+    expect(JSON.parse(readFileSync(settingsPath, "utf8")).statusLine.command).toBe(theirs);
+  });
+
+  test("[65] a bare script path with no interpreter in front is not our shape — kept", async () => {
+    const home = mkdtempSync(join(tmpdir(), "agy-"));
+    const theirs = "/home/me/src/face/wrapper.ts --agent antigravity";
+    const settingsPath = agySettings(home, theirs);
+    await agyHostAdapter.writeHooks({ HOME: home }, { repoRoot: "/repo", secret: "x" });
+    expect(JSON.parse(readFileSync(settingsPath, "utf8")).statusLine.command).toBe(theirs);
+  });
+
+  test("[65] an older siltpoke pet (another bun, another checkout) is refreshed", async () => {
+    const home = mkdtempSync(join(tmpdir(), "agy-"));
+    const settingsPath = agySettings(home, "/old/bun /old/repo/src/face/wrapper.ts --agent antigravity");
+    const res = await agyHostAdapter.writeHooks({ HOME: home }, { repoRoot: "/repo", secret: "x" });
+    expect(JSON.parse(readFileSync(settingsPath, "utf8")).statusLine).toEqual({
       type: "command",
       command: `${process.execPath} ${WRAPPER_ARGS}`,
     });
+    expect(res.note).toBeUndefined();
+  });
+
+  test("[65] our own pet written from a path with a space is still recognized and refreshed", async () => {
+    const home = mkdtempSync(join(tmpdir(), "agy-"));
+    const settingsPath = agySettings(home, "/Users/First Last/.bun/bin/bun /Users/First Last/repo/src/face/wrapper.ts --agent antigravity");
+    const res = await agyHostAdapter.writeHooks({ HOME: home }, { repoRoot: "/repo", secret: "x" });
+    expect(JSON.parse(readFileSync(settingsPath, "utf8")).statusLine.command).toBe(`${process.execPath} ${WRAPPER_ARGS}`);
+    expect(res.note).toBeUndefined();
+  });
+
+  test("[65] an unparseable settings.json is left untouched, and the note says so", async () => {
+    const home = mkdtempSync(join(tmpdir(), "agy-"));
+    const settingsPath = agySettings(home);
+    const jsonc = '{\n  // my agy settings\n  "statusLine": { "type": "command", "command": "mine" },\n}\n';
+    writeFileSync(settingsPath, jsonc);
+    const res = await agyHostAdapter.writeHooks({ HOME: home }, { repoRoot: "/repo", secret: "x" });
+    expect(readFileSync(settingsPath, "utf8")).toBe(jsonc);
+    expect(res.note).toContain("could not read");
+  });
+
+  test("[65] JSON that is not an object (an array) is left untouched too", async () => {
+    const home = mkdtempSync(join(tmpdir(), "agy-"));
+    const settingsPath = agySettings(home);
+    writeFileSync(settingsPath, "[]");
+    const res = await agyHostAdapter.writeHooks({ HOME: home }, { repoRoot: "/repo", secret: "x" });
+    expect(readFileSync(settingsPath, "utf8")).toBe("[]");
+    expect(res.note).toContain("could not read");
+  });
+
+  test("[65] a symlinked settings.json is left untouched, and the note says so", async () => {
+    const home = mkdtempSync(join(tmpdir(), "agy-"));
+    const real = join(home, "real-settings.json");
+    writeFileSync(real, JSON.stringify({ statusLine: { type: "command", command: "mine" } }));
+    mkdirSync(join(home, ".gemini", "antigravity-cli"), { recursive: true });
+    symlinkSync(real, join(home, ".gemini", "antigravity-cli", "settings.json"));
+    const res = await agyHostAdapter.writeHooks({ HOME: home }, { repoRoot: "/repo", secret: "x" });
+    expect(JSON.parse(readFileSync(real, "utf8")).statusLine.command).toBe("mine");
+    expect(res.note).toContain("symlink");
+  });
+
+  test("[65] an empty slot gets the pet, orphan hooks cleaned, other keys kept", async () => {
+    const home = mkdtempSync(join(tmpdir(), "agy-"));
+    const settingsPath = agySettings(home);
+    await agyHostAdapter.writeHooks({ HOME: home }, { repoRoot: "/repo", secret: "x" });
+    const written = JSON.parse(readFileSync(settingsPath, "utf8"));
+    expect(written.hooks).toBeUndefined();
+    expect(written.model).toEqual({ name: "performance" });
+    expect(written.statusLine.command).toBe(`${process.execPath} ${WRAPPER_ARGS}`);
   });
 
   test("settings.json absent (fresh machine): writeHooks creates it with statusLine, no pre-existing hooks key to clean", async () => {

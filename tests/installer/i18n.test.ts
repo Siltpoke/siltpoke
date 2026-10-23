@@ -14,7 +14,7 @@ describe("i18n", () => {
     expect([...LOCALES].sort()).toEqual(["en", "zh"]);
   });
   test("agent-picker keys resolve in both locales (no en-fallback leak for zh)", () => {
-    const keys = ["agents.pick", "editor.pluginOffer", "editor.pickWhich", "done.terminalC"] as const;
+    const keys = ["agents.pick", "editor.pluginOffer", "editor.pickWhich", "done.wired", "done.hintEditor", "done.hintTerminal", "done.none"] as const;
     for (const k of keys) {
       const en = t(k, "en");
       const zh = t(k, "zh");

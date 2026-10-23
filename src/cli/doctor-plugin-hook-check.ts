@@ -15,7 +15,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { DoctorOptions } from "./doctor";
+import { type DoctorOptions, defaultRepoRoot } from "./doctor";
 
 interface PluginHookEntryShape {
   type?: unknown;
@@ -29,16 +29,21 @@ interface PluginHookMatcherShape {
  * Resolve the plugin's own hooks.json path. Defaults to
  * `${CLAUDE_PLUGIN_ROOT}/hooks/hooks.json`; injectable via
  * `opts.pluginHooksJsonPath` for tests (mirrors `opts.agyHooksJsonPath`).
- * Returns null when there's no plugin root to resolve against (non-plugin
- * install and no override supplied).
+ * Without the env var, falls back to doctor's own root (defect [32]); the
+ * return type keeps `null` for callers, though no path produces it today.
  */
 export function resolvePluginHooksJsonPath(opts: DoctorOptions): string | null {
   if (typeof opts.pluginHooksJsonPath === "string" && opts.pluginHooksJsonPath.length > 0) {
     return opts.pluginHooksJsonPath;
   }
-  const root = process.env.CLAUDE_PLUGIN_ROOT;
-  if (typeof root !== "string" || root.length === 0) return null;
-  return join(root, "hooks", "hooks.json");
+  const env = process.env.CLAUDE_PLUGIN_ROOT;
+  if (typeof env === "string" && env.length > 0) return join(env, "hooks", "hooks.json");
+  // Defect [32]: env-only made this row `Boolean(CLAUDE_PLUGIN_ROOT)` again —
+  // the exact [24] criterion — because the host does not set that variable for
+  // a doctor the user starts. Fall back to the root doctor resolved for itself.
+  // The only caller gates on isPluginInstall() first, and that is true only
+  // when this same root is the one the plugin-root pointer names.
+  return join(opts.repoRoot ?? defaultRepoRoot(), "hooks", "hooks.json");
 }
 
 /**

@@ -10,7 +10,7 @@
  * tamagotchi report page, which `src/daemon/server.ts` retired ("its legacy
  * GET /dashboard report page is retired") and which nothing in `src/` renders
  * any more (`buildReport` has no caller outside tests). The obvious second
- * home, `/settings`, is ALSO unmounted (server.ts, 2026-08-06). So no user
+ * home, `/settings`, was ALSO unmounted then (2026-08-06 → 2026-10-09). So no user
  * could reach the control anywhere, while the plan, the close report, and
  * `review-unit-config.ts`'s own doc comment all said "the dashboard writes
  * reviewUnit". The tests could not catch it: they asserted an HTML string,

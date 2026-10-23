@@ -234,3 +234,28 @@ describe("importersOf — production path", () => {
     },
   );
 });
+
+describe("importersOf — files containing a NUL byte", () => {
+  it.skipIf(!rgAvailable)(
+    "[production-path] finds an importer whose source file holds a literal NUL byte",
+    () => {
+      const dir = mkdtempRepo({ "src/a/foo.ts": "export const x = 1;\n" });
+      // Same shape as the real `${a}<NUL>${b}` key separators; rg would skip this file as binary.
+      writeFileSync(
+        join(dir, "src/consumer.ts"),
+        Buffer.concat([
+          Buffer.from("import { x } from './a/foo';\nconst k = `${x}"),
+          Buffer.from([0]),
+          Buffer.from("${x}`;\n"),
+        ]),
+      );
+      try {
+        const res = importersOf(["src/a/foo.ts"], { cwd: dir, scope: "imports" }); // real seams
+        expect(res.get("src/a/foo.ts")!.degraded).toBe(false);
+        expect(res.get("src/a/foo.ts")!.importers).toEqual(["src/consumer.ts"]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+});

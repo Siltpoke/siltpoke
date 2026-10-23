@@ -6,8 +6,10 @@ import { join } from "node:path";
 import { symlinkCommands } from "../../src/cli/install";
 
 let root: string, pluginDir: string, claudeDir: string;
+let env: NodeJS.ProcessEnv;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "sym-"));
+  env = { HOME: root }; // the install receipt lands here, never in the real home
   pluginDir = join(root, "plugin-cmds");
   claudeDir = join(root, "claude-cmds");
   mkdirSync(pluginDir, { recursive: true });
@@ -18,7 +20,7 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe("symlinkCommands", () => {
   test("win32: copies .md files as real files, not symlinks", async () => {
-    const linked = await symlinkCommands(pluginDir, claudeDir, "win32");
+    const linked = await symlinkCommands(pluginDir, claudeDir, "win32", env);
     expect(linked).toEqual(["siltpoke.md"]);
     const st = lstatSync(join(claudeDir, "siltpoke.md"));
     expect(st.isSymbolicLink()).toBe(false);
@@ -26,14 +28,14 @@ describe("symlinkCommands", () => {
   });
 
   test("darwin: creates a symlink", async () => {
-    await symlinkCommands(pluginDir, claudeDir, "darwin");
+    await symlinkCommands(pluginDir, claudeDir, "darwin", env);
     const st = lstatSync(join(claudeDir, "siltpoke.md"));
     expect(st.isSymbolicLink()).toBe(true);
   });
 
   test("win32: re-run overwrites idempotently", async () => {
-    await symlinkCommands(pluginDir, claudeDir, "win32");
-    const linked = await symlinkCommands(pluginDir, claudeDir, "win32");
+    await symlinkCommands(pluginDir, claudeDir, "win32", env);
+    const linked = await symlinkCommands(pluginDir, claudeDir, "win32", env);
     expect(linked).toEqual(["siltpoke.md"]);
   });
 });

@@ -260,11 +260,11 @@ describe("buildGroundedPopoverHtml — with serialized counts", () => {
     expect(html).not.toContain("an independent check");
   });
 
-  test("So-what FULL path: label stripped — opens 'Solid arrows and labels'", () => {
+  test("So-what FULL path: label stripped — opens 'Solid arrows'", () => {
     const html = buildGroundedPopoverHtml({ doc, groundedPct: 67, citedClaims: 2, totalClaims: 3 });
     expect(html).not.toContain("So what:"); // bold lead-in stripped
-    expect(html).toContain("Solid arrows and labels are evidence-backed"); // capitalized opening
-    expect(html).toContain("inferred ones render dashed"); // so-what phrasing intact
+    expect(html).toContain("Solid arrows are an import or a source citation checked just now"); // AC32 legend wording
+    expect(html).toContain("dashed ones are neither"); // so-what phrasing intact
   });
 
   test("topology-blind line present when K>0", () => {

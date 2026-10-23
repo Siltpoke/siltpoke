@@ -10,7 +10,7 @@
  * So the load-bearing test is not "does it print the time". It is: does it
  * fire on THAT case.
  *
- * Audience note: this banner is for a CODING AGENT — `/siltpoke-last` exists
+ * Audience note: this banner is for a CODING AGENT — `/siltpoke:siltpoke-last` exists
  * to paste a review into one — so it is deliberately more than one line. The
  * statusline bubble is the opposite surface and gets `[10:44] "…"` alone; that
  * split is tested in `tests/face/wrapper.test.ts`.

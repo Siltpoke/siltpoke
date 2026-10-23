@@ -1,9 +1,9 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { enqueuePending, pendingQueuePath } from "../../src/memory/pending-queue";
 import { maybeLaunchDistilWorker } from "../../src/memory/distil-launcher";
+import { enqueuePending, pendingQueuePath } from "../../src/memory/pending-queue";
 
 function entry() {
   return {
@@ -15,6 +15,30 @@ function entry() {
   };
 }
 function tmp() { return mkdtempSync(join(tmpdir(), "dl-")); }
+
+/**
+ * The argv the distil worker must be launched with.
+ *
+ * `process.execPath`, NOT a bare "bun": this worker is dispatched from a hook —
+ * a non-login shell on Unix, no shell at all on Windows — so the command it
+ * leaves behind has to name an interpreter that exists. The assertion below
+ * used to read "bun", which is why that shape looked deliberate. It was the
+ * THIRD test in this repo whose title claimed the child was "detached" while
+ * pinning the defect next to it, and the only one a gate caught rather than a
+ * human; `tests/cli/daemon-detached.test.ts` now fails on the whole class.
+ */
+function expectedDistilArgv(home: string, state: string): string[] {
+  return [
+    process.execPath,
+    "/x/siltpoke-distil.js",
+    "--home",
+    home,
+    "--state",
+    state,
+    "--cwd",
+    "/cwd",
+  ];
+}
 
 describe("maybeLaunchDistilWorker", () => {
   it("pending empty -> does not spawn", async () => {
@@ -37,7 +61,7 @@ describe("maybeLaunchDistilWorker", () => {
       workerPath: "/x/siltpoke-distil.js",
     });
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toEqual(["bun", "/x/siltpoke-distil.js", "--home", home, "--state", state, "--cwd", "/cwd"]);
+    expect(calls[0]).toEqual(expectedDistilArgv(home, state));
     expect(r.launched).toBe(true);
     rmSync(home, { recursive: true }); rmSync(state, { recursive: true });
   });

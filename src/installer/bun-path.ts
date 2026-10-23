@@ -81,7 +81,7 @@ interface ResolveBunDeps {
  * Resolve bun the same way hooks/lib/resolve-bun.sh does: PATH first, then the
  * recorded pointer, then bun's default install location.
  *
- * This mirror exists so /siltpoke-doctor can answer "would the hook find bun?"
+ * This mirror exists so /siltpoke:siltpoke-doctor can answer "would the hook find bun?"
  * with the real answer rather than its own PATH — the doctor process is usually
  * started from an interactive shell, which is precisely the environment where
  * the bug is invisible.

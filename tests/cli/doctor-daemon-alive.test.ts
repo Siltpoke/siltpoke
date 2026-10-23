@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * `/siltpoke-doctor`'s daemon-alive row.
+ * `/siltpoke:siltpoke-doctor`'s daemon-alive row.
  *
  * Split out of `doctor-daemon-check.test.ts` when the identity cases below
  * pushed that file past the repo's 400-LOC soft cap.
@@ -17,9 +17,9 @@ import { describe, expect, test } from "bun:test";
 import { checkDaemonAlive } from "../../src/cli/doctor-daemon-check";
 
 describe("doctor daemon-alive — /api/ping probe", () => {
-  const OFF_DETAIL = "daemon: off (opt-in — open /siltpoke-dashboard to enable)";
+  const OFF_DETAIL = "daemon: off (opt-in — open /siltpoke:siltpoke-dashboard to enable)";
   const ENABLED_UNREACHABLE_DETAIL =
-    "daemon.enabled is true but /api/ping is unreachable — try /siltpoke-restart-daemon";
+    "daemon.enabled is true but /api/ping is unreachable — try /siltpoke:siltpoke-restart-daemon";
   const PORT_TAKEN_DETAIL =
     "something is answering on the daemon's port but it is not siltpoked — free the port, or set SILTPOKE_DAEMON_PORT to another one";
 

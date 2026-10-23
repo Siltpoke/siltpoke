@@ -35,27 +35,26 @@ import {
   deriveCacheState,
 } from "../../explain/cache-lifecycle";
 import {
+  EXPLAIN_DEFAULT_HARD_CAP_USD,
   runExplain,
   type BrainProvider,
   type ExplainOutcome,
   type SourceProvider,
 } from "../../explain/explain";
 import { isPreSpawnError, makeArchBrainProvider, makeDefaultBrainProvider, makeDefaultSourceProvider } from "../../explain/providers";
-import { ARCH_DEFAULT_MODEL, archCostFromUsage, archGenerateMayTruncate, estimateArchGenerate, runArchGenerate } from "../../explain/arch-generate";
+import { ARCH_DEFAULT_HARD_CAP_USD, ARCH_DEFAULT_MODEL, type ArchGenerateOutcome, archCostFromUsage, archGenerateMayTruncate, estimateArchGenerate, runArchGenerate } from "../../explain/arch-generate";
 import { parseUsageFromTail } from "../../explain/usage-tail";
 import { computeFileFunctions, computeRepoFingerprint, readArchModel } from "../../explain/arch-cache";
 import { cacheKey, readExplanation } from "../../explain/store";
 import type { ExplainResult } from "../../explain/types";
-import { parseArchitectureSection } from "../../repo-graph/architecture-parser";
 import { parseFirstDocComment } from "../../repo-graph/doc-comment-parser";
 import {
   type ArchitectureProjection,
   bucketIdOfPath,
   projectArchitecture,
 } from "../../repo-graph/project-architecture";
-import { resolveRepoGraphLocation } from "../../repo-graph/proj-hash";
 import { repoDisplayName } from "../../repo-graph/repo-label";
-import { resolveRequestProject } from "../project-context";
+import { filesOutsideGenerated, summarizeUndrawn } from "../../repo-graph/undrawn-files";
 import {
   enumerateRepos,
   isValidProjHash,
@@ -67,6 +66,8 @@ import {
 import { validateIndexPath } from "../../repo-graph/index-guard";
 import { readIndexStalenessAt } from "../../repo-graph/index-health";
 import { stalenessVerdict } from "../../repo-graph/staleness-verdict";
+import { loadOverlay, resolveActiveRepo, type ActiveRepo } from "./repo-graph-active";
+import { mountRepoGraphTrustRoute } from "./repo-graph-trust";
 import { loadIndexConfig, resolveAllowRoots } from "../../config/index-config";
 import { loadRepoGraphConfig } from "../../config/repo-graph-config";
 import { siltpokeRoot } from "../../installer/paths";
@@ -84,6 +85,7 @@ import {
   readFingerprints,
   readGraph,
   readMeta,
+  readOtherFiles,
   readQueryIndex,
 } from "../../repo-graph/store";
 import type { RepoGraph, RepoGraphMeta, SiltpokeGraphNode } from "../../repo-graph/types";
@@ -332,54 +334,11 @@ export interface RepoGraphRouteDeps {
 const DEFAULT_LIMIT = 8;
 const MAX_LIMIT = 50;
 
-interface ActiveRepo {
-  storage_dir: string;
-  project_root: string;
-}
-
-/**
- * Resolve the active repo: `?repo=<proj_hash>` if present and known, else the
- * daemon's shared per-request resolver, else the daemon's cwd. Returns null
- * when an explicit `?repo=` isn't indexed.
- */
-async function resolveActiveRepo(
-  repo: string | undefined,
-  deps: RepoGraphRouteDeps,
-): Promise<ActiveRepo | null> {
-  if (repo) {
-    const loc = await resolveRepoByHash(repo, { home: deps.home });
-    if (!loc || !loc.project_root) return null;
-    return { storage_dir: loc.storage_dir, project_root: loc.project_root };
-  }
-  // No explicit repo: prefer the daemon's shared per-request resolver (fixes
-  // the launchd frozen-cwd bug — deps.cwd is "/" in production, so
-  // computeProjHash(cwd) never matches a real repo); fall back to the raw cwd
-  // resolution when the resolver has no pinned/recent project (keeps direct-
-  // cwd callers — the repo-graph test suite seeds a fixture AT deps.cwd and
-  // expects it resolved without a `?repo=` — working unchanged).
-  // Validate the resolver's guess against repo-graph's OWN registry via
-  // resolveRepoByHash directly (this route has no pre-loaded `repos` list to
-  // check against, unlike the SSR mount's `resolveDefaultProjHash` — same
-  // registry, different mechanism; keep both in sync if either changes).
-  const proj = await resolveRequestProject(deps.home ?? siltpokeRoot(), undefined);
-  if (proj.proj_hash) {
-    const loc = await resolveRepoByHash(proj.proj_hash, { home: deps.home });
-    if (loc?.project_root) return { storage_dir: loc.storage_dir, project_root: loc.project_root };
-  }
-  const loc = resolveRepoGraphLocation(deps.cwd, { home: deps.home });
-  return { storage_dir: loc.storage_dir, project_root: loc.project_root };
-}
-
-/** Read + parse the repo's CLAUDE.md §Architecture overlay (null if absent). */
-async function loadOverlay(projectRoot: string) {
-  const claudeMd = join(projectRoot, "CLAUDE.md");
-  if (!existsSync(claudeMd)) return null;
-  try {
-    return parseArchitectureSection(await readFile(claudeMd, "utf8"));
-  } catch {
-    return null;
-  }
-}
+// `ActiveRepo` / `resolveActiveRepo` / `loadOverlay` moved to
+// `./repo-graph-active` (2026-09-26, Task 6 fix round 1) — the trust route
+// needed them as plain values, and this file importing FROM the trust route
+// (to mount it) while the trust route imported them back FROM here was a
+// cycle (`audit:cycles`). Every call site below is unchanged by name.
 
 // (deleted 2026-06-10) subdirIdOfPath — the third private path→bucket
 // derivation ("segment after the root"); returned FILENAMES on top-level-file
@@ -806,27 +765,23 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
           // Thread the registry's startedTs so durationMs is computed from
           // the single source of truth (not a second Date.now() inside generate).
           taskStartedTs: task.startedTs,
+          projectRoot: active.project_root,
         });
         // Honest cost: record the real spend whenever the Brain call actually
         // ran. Every outcome EXCEPT pre_check_failed carries a costUsd (the Brain
-        // was billed) — cost_cap_exceeded / malformed / integrity_failed all
-        // spent money even though their result was rejected. null is reserved for
+        // was billed) — malformed / integrity_failed spent money even though
+        // their result was rejected. null is reserved for
         // runs that emitted no usage at all (cancelled/killed / pre-check).
-        const finalCost = "costUsd" in outcome ? outcome.costUsd : null;
-        // B-diag: persist errorMsg for paid-but-rejected outcomes so a $1.45
-        // malformed run is diagnosable from the task record (not just the cost).
-        // malformed carries output_tokens for parse-failure triage; prepend it.
-        // The variable message is capped (the full output stays in the retained
-        // .out result file) so tasks.json can never absorb an unbounded string.
-        const cap = (s: string) => (s.length > 500 ? `${s.slice(0, 500)}…` : s);
-        const finishErrorMsg: string | undefined =
-          outcome.kind === "malformed"
-            ? `malformed: ${cap(outcome.message)} [output_tokens:${outcome.usage.output_tokens}]`
-            : outcome.kind === "integrity_failed"
-              ? `integrity_failed: ${cap(outcome.message)}`
-              : outcome.kind === "cost_cap_exceeded"
-                ? `cost_cap_exceeded: hard_cap=$${outcome.hardCapUsd} actual=$${outcome.costUsd}`
-                : undefined;
+        // A `generated` cache hit re-serves the saved model's cost; this run
+        // spent 0 (defect [75]) — same rule as the ledger exclusion below.
+        const finalCost =
+          outcome.kind === "generated" && outcome.fromCache
+            ? 0
+            : "costUsd" in outcome
+              ? outcome.costUsd
+              : null;
+        // B-diag: persist errorMsg for paid-but-rejected outcomes (see archFinishErrorMsg).
+        const finishErrorMsg = archFinishErrorMsg(outcome);
         taskRegistry.finish(task.id, { costUsd: finalCost, errorMsg: finishErrorMsg });
         // Record the run in the cost ledger so a paid generate is visible
         // to external token accounting. Record on ANY outcome that spent money THIS run; EXCLUDE
@@ -836,8 +791,7 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
             ? outcome.fromCache
               ? null
               : outcome.usage
-            : outcome.kind === "cost_cap_exceeded" ||
-                outcome.kind === "malformed" ||
+            : outcome.kind === "malformed" ||
                 outcome.kind === "integrity_failed"
               ? outcome.usage
               : null;
@@ -966,7 +920,13 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
     if (!cached) return c.json({ success: false, error: "no_generated_model" }, 404);
     // Ship the per-member-file function counts with the
     // model so a post-generate in-place render badges correctly (no reload).
-    const fileFunctions = computeFileFunctions(await readGraph(active.storage_dir), cached.model.nodes);
+    const graph = await readGraph(active.storage_dir);
+    const fileFunctions = computeFileFunctions(graph, cached.model.nodes);
+    // The files this fresh model left out of its boxes — the in-place render
+    // updates the header line from it, same as the page load does.
+    const projection = projectArchitecture(graph, await loadOverlay(active.project_root), meta);
+    const indexedFiles = graph.nodes.filter((n) => n.type === "file").map((n) => n.path);
+    const undrawn = summarizeUndrawn(filesOutsideGenerated(cached.model, projection.subdirs, indexedFiles));
     return c.json({
       success: true,
       data: {
@@ -974,7 +934,11 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
         groundedPct: cached.meta.groundedPct,
         stale: cached.stale,
         costUsd: cached.meta.costUsd,
+        // The cap the run is judged against, so the page can say "over the
+        // $2.00 limit" beside a kept over-cap model (defect [38]).
+        hardCapUsd: ARCH_DEFAULT_HARD_CAP_USD,
         fileFunctions,
+        undrawn,
         // Expose generatedTs + durationMs so the island's modal can show
         // age · duration · grounded% without a second round-trip.
         generatedTs: cached.meta.generatedTs,
@@ -1001,34 +965,40 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
 
     const graph = await readGraph(active.storage_dir);
     const overlay = await loadOverlay(active.project_root);
-    const projection = projectArchitecture(graph, overlay, meta);
-    const subId = subdir.replace(/\/+$/, "").split("/").filter(Boolean).pop() ?? subdir;
-    const subdirMeta = projection.subdirs.find((s) => s.id === subId);
+    // Same projection the page drew (other files included) so a docs/ or
+    // tests/ box id resolves here too.
+    const others = (await readOtherFiles(active.storage_dir))?.files ?? null;
+    const projection = projectArchitecture(graph, overlay, meta, others);
+    // An other-file box whose short name was taken has its path as id
+    // ("tests/daemon") — an exact id match wins over reading `subdir` as a path.
+    const exactIdMeta = projection.subdirs.find((s) => s.id === subdir);
+    const subId = exactIdMeta ? subdir : (subdir.replace(/\/+$/, "").split("/").filter(Boolean).pop() ?? subdir);
+    const subdirMeta = exactIdMeta ?? projection.subdirs.find((s) => s.id === subId);
+    const byId = exactIdMeta !== undefined || !subdir.includes("/");
 
     // The island is id-keyed, so `subdir` may arrive as a bare bucket id
     // ("explain", no slash) rather than a full path prefix ("src/explain/").
-    // Id resolution goes through the PROJECTION'S OWN bucket (its path prefix
-    // IS the bucket definition — works for top-level `scripts/` repos exactly
-    // like `src/<subdir>/` repos); path callers keep the prefix match.
-    const idPrefix = subdirMeta?.path
-      ? subdirMeta.path.endsWith("/")
-        ? subdirMeta.path
-        : `${subdirMeta.path}/`
-      : null;
-    const fileNodes = subdir.includes("/")
+    // Id resolution asks the keyspace itself (`bucketIdOfPath`) which bucket
+    // each file belongs to — so the root bucket (path "") and a bucket with
+    // deeper buckets under it list only their own files, not every file their
+    // prefix covers. Path callers keep the prefix match.
+    const fileNodes = !byId
       ? graph.nodes.filter(
           (n) =>
             n.type === "file" &&
             n.path.startsWith(subdir.endsWith("/") ? subdir : `${subdir}/`),
         )
       : graph.nodes.filter(
-          (n) => n.type === "file" && idPrefix !== null && n.path.startsWith(idPrefix),
+          (n) =>
+            n.type === "file" &&
+            subdirMeta !== undefined &&
+            bucketIdOfPath(projection.subdirs, n.path) === subdirMeta.id,
         );
     const fingerprints = await readFingerprints(active.storage_dir);
     const symbolCountByPath = symbolCounts(graph);
     const functionCountByPath = functionCounts(graph);
 
-    const files = await Promise.all(
+    const files: Array<{ name: string; path: string; loc: number; symbols: number; functions: number; desc: string; explainState: "valid" | "stale" | "none"; other?: true }> = await Promise.all(
       fileNodes.map(async (n) => {
         const absPath = join(active.project_root, n.path);
         let desc = "";
@@ -1054,6 +1024,14 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
         };
       }),
     );
+    // Non-code files in this box (derived view only — the projection adds
+    // their boxes only without an overlay). Listed, never read or explained.
+    if (overlay === null && others && subdirMeta !== undefined && byId) {
+      for (const p of others) {
+        if (bucketIdOfPath(projection.subdirs, p) !== subdirMeta.id) continue;
+        files.push({ name: basenameOf(p), path: p, loc: 0, symbols: 0, functions: 0, desc: "", explainState: "none", other: true });
+      }
+    }
 
     const filePathSet = new Set(fileNodes.map((n) => n.path));
     const fileBasenameByPath = new Map(fileNodes.map((n) => [n.path, basenameOf(n.path)]));
@@ -1140,7 +1118,7 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
       if (!m || m[1] !== file) continue;
       const caller = m[2]!;
       if (!symbolNames.has(caller) || !symbolNames.has(e.target)) continue;
-      const key = `${caller} ${e.target}`;
+      const key = `${caller}\u0000${e.target}`;
       if (seenCall.has(key)) continue;
       seenCall.add(key);
       callEdges.push({ source: caller, target: e.target });
@@ -1253,10 +1231,8 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
     if (cacheStateToContract(cs.state) === "valid") {
       const cached = await readExplanation(active.project_root, cacheKey(resolvedId));
       if (cached) {
-        return c.json(
-          { success: true, data: { state: "cached", ...purposeOf(cached.markdown, graph, resolvedId) }, error: null },
-          200,
-        );
+        const p = purposeOf(cached.markdown, graph, resolvedId, cached.meta.brain_usage.total_cost_usd, EXPLAIN_DEFAULT_HARD_CAP_USD);
+        return c.json({ success: true, data: { state: "cached", ...p }, error: null }, 200);
       }
     }
     return c.json({ success: true, data: { state: "none" }, error: null });
@@ -1307,6 +1283,7 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
           sourceProvider: deps.explainSourceProvider ?? makeDefaultSourceProvider(active.project_root),
           brainProvider: deps.explainBrainProvider ?? makeDefaultBrainProvider(),
           ledgerBasePath: home ?? siltpokeRoot(),
+          home: home ?? siltpokeRoot(),
         },
       );
     } catch (e) {
@@ -1318,10 +1295,8 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
     if (outcome.kind !== "explained") {
       return c.json({ success: false, error: explainOutcomeError(outcome) }, 422);
     }
-    return c.json(
-      { success: true, data: { ...purposeOf(outcome.result.markdown, graph, resolvedId), cached: !fresh }, error: null },
-      200,
-    );
+    const p = purposeOf(outcome.result.markdown, graph, resolvedId, outcome.usage.total_cost_usd, outcome.hardCapUsd);
+    return c.json({ success: true, data: { ...p, cached: !fresh }, error: null }, 200);
   });
 
   // ── GET /api/repo-graph/search ──────────────────────────────────────────
@@ -1472,19 +1447,21 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
             signal: controller.signal,
             onSpawn: (proc) => taskRegistry.attachProc(task.id, proc),
             ledgerBasePath: home ?? siltpokeRoot(),
+            home: home ?? siltpokeRoot(),
             ledgerSessionId: task.id,
           },
         );
-        // Honest cost. `explained` (Brain ran) and `cost_cap_exceeded` both
-        // spent → record the real number. The ledger event fires ONLY on a run
+        // Honest cost. `explained` (Brain ran) spent → record the real number. The ledger event fires ONLY on a run
         // that spent money THIS call: a `result.fromCache` explained re-served a
         // prior result for $0 (the linchpin — never fabricate fresh spend).
+        // A cache hit's `usage` is the SAVED answer's original cost (kept for
+        // display as such) — this run spent 0, so the task records 0 (defect [75]).
         const finalCost =
           outcome.kind === "explained"
-            ? outcome.usage.total_cost_usd ?? null
-            : outcome.kind === "cost_cap_exceeded"
-              ? outcome.costUsd
-              : null;
+            ? outcome.result.fromCache
+              ? 0
+              : outcome.usage.total_cost_usd ?? null
+            : null;
         taskRegistry.finish(task.id, { costUsd: finalCost });
         // Ledger row is now written inside runExplain (cost-honesty batch A,
         // gated on ledgerBasePath above, session_id = task.id) — single shared
@@ -1559,9 +1536,26 @@ export function mountRepoGraphRoutes(app: Hono, deps: RepoGraphRouteDeps): void 
     const result = await cascadeStaleSubdir(subdir, active.project_root, fingerprints);
     return c.json({ success: true, data: { subdir, ...result }, error: null });
   });
+  mountRepoGraphTrustRoute(app, deps);
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * B-diag: the errorMsg persisted for paid-but-rejected generate outcomes so a
+ * $1.45 malformed run is diagnosable from the task record (not just the cost).
+ * malformed carries output_tokens for parse-failure triage; prepend it. The
+ * variable message is capped (the full output stays in the retained .out result
+ * file) so tasks.json can never absorb an unbounded string.
+ */
+function archFinishErrorMsg(outcome: ArchGenerateOutcome): string | undefined {
+  const cap = (s: string) => (s.length > 500 ? `${s.slice(0, 500)}…` : s);
+  if (outcome.kind === "malformed") {
+    return `malformed: ${cap(outcome.message)} [output_tokens:${outcome.usage.output_tokens}]`;
+  }
+  if (outcome.kind === "integrity_failed") return `integrity_failed: ${cap(outcome.message)}`;
+  return undefined;
+}
 
 /** Map a file path → count of its symbol nodes (non-"file" nodes share path). */
 function symbolCounts(graph: RepoGraph): Map<string, number> {
@@ -1653,8 +1647,6 @@ function explainOutcomeError(outcome: ExplainOutcome): string {
       return "Target is ambiguous — qualify it (path or kind:name).";
     case "pre_check_failed":
       return outcome.message;
-    case "cost_cap_exceeded":
-      return `Explain aborted: cost cap exceeded ($${outcome.costUsd.toFixed(3)}).`;
     default:
       return "Explain failed.";
   }
@@ -1697,17 +1689,28 @@ function purposeOf(
   markdown: string,
   graph: RepoGraph,
   nodeId: string,
-): { text: string; cite: string } {
+  costUsd: number | null | undefined,
+  hardCapUsd: number,
+): { text: string; cite: string; costUsd: number | null; hardCapUsd: number } {
   const node = graph.nodes.find((n) => n.id === nodeId);
   const cite = node
     ? `${node.path}:${node.lineRange[0]}`
     : (parseCitations(markdown)[0]?.ref ?? "");
-  return { text: firstParagraph(markdown), cite };
+  // costUsd + hardCapUsd let the card flag a kept over-cap purpose (defect [38]);
+  // a missing cost stays null, never $0.
+  return { text: firstParagraph(markdown), cite, costUsd: costUsd ?? null, hardCapUsd };
 }
 
-/** First non-heading, non-empty paragraph of the explanation markdown. */
+/** First non-heading, non-empty paragraph of the explanation markdown.
+ *
+ * Text before the first `# ` heading is skipped: the Brain sometimes opens
+ * with a preamble ("Based on the code I've reviewed … Let me compile it:")
+ * before the explanation proper, and that preamble is not the purpose.
+ * Seen live 2026-09-30 on an over-cap result that [38] now keeps. */
 export function firstParagraph(md: string): string {
-  const blocks = md.split(/\n{2,}/);
+  const h1 = md.search(/^# /m);
+  const body = h1 > 0 ? md.slice(h1) : md;
+  const blocks = body.split(/\n{2,}/);
   for (const raw of blocks) {
     const block = raw.trim();
     if (!block || block.startsWith("#") || block.startsWith("💡")) continue;
@@ -1764,6 +1767,11 @@ function buildExplanation(
     grounded: result.meta.evidence_score,
     fresh,
     lead: firstParagraph(md),
+    // What this explanation cost and the cap it is judged against, so the
+    // modal can flag a kept over-cap result (defect [38]). costUsd is null
+    // when the SDK reported no cost — never shown as $0.
+    costUsd: result.meta.brain_usage.total_cost_usd ?? null,
+    hardCapUsd: EXPLAIN_DEFAULT_HARD_CAP_USD,
     dependsOn,
     usedBy,
     citations: parseCitations(md),

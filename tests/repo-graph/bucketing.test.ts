@@ -21,6 +21,7 @@ import {
   containerForPath,
   DEFAULT_DEPTH_CAP,
   deriveContainers,
+  ROOT_CONTAINER_PATH,
 } from "../../src/repo-graph/bucketing";
 
 const FIX = join(import.meta.dir, "fixtures", "bucketing");
@@ -256,6 +257,86 @@ describe("containerForPath — deepest-prefix file→container mapping", () => {
         expect(containers).toContain(c);
         expect(p.startsWith(c)).toBe(true);
       }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// No file is dropped: every input path lands in some derived container. A file
+// sitting directly in a directory that also has sub-directories (`main.py` at
+// the repo root, `src/index.ts` beside `src/a/`) used to map to null and vanish
+// from Code Map — the diagram then drew fewer files than the index counted.
+// ---------------------------------------------------------------------------
+
+describe("deriveContainers — every file lands in a container", () => {
+  test("a file at the repo root gets the root container", () => {
+    const { containers } = deriveContainers(["main.py", "utils/a.py", "utils/b.py"]);
+    expect(containers).toContain(ROOT_CONTAINER_PATH);
+    expect(containerForPath("main.py", containers)).toBe(ROOT_CONTAINER_PATH);
+    expect(containerForPath("utils/a.py", containers)).toBe("utils/");
+  });
+
+  test("a repo of only root files gets one root container (not an empty diagram)", () => {
+    expect(deriveContainers(["hello.ts"]).containers).toEqual([ROOT_CONTAINER_PATH]);
+  });
+
+  test("a file beside sibling directories gets its own directory's container", () => {
+    const paths = ["src/index.ts", "src/a/x.ts", "src/b/y.ts"];
+    const { containers } = deriveContainers(paths);
+    expect(containers).toEqual(["src/", "src/a/", "src/b/"]);
+    expect(containerForPath("src/index.ts", containers)).toBe("src/");
+    // the deeper containers still win for their own files
+    expect(containerForPath("src/a/x.ts", containers)).toBe("src/a/");
+  });
+
+  test("a loose file inside a compressed single-child chain keeps its own level", () => {
+    const { containers } = deriveContainers(["a/y.ts", "a/b/x.ts"]);
+    expect(containerForPath("a/y.ts", containers)).toBe("a/");
+    expect(containerForPath("a/b/x.ts", containers)).toBe("a/b/");
+  });
+
+  test("a root file and a loose src/ file each get their own directory's container, in either input order", () => {
+    // Review of 19d66ecb: the loop matched against the list it was growing, so
+    // once "" was pushed every later loose file fell into the root bucket —
+    // which bucket src/index.ts got depended on graph node order.
+    const a = ["main.py", "src/index.ts", "src/a/x.ts", "src/b/y.ts"];
+    const b = ["src/index.ts", "main.py", "src/a/x.ts", "src/b/y.ts"];
+    for (const paths of [a, b]) {
+      const { containers } = deriveContainers(paths);
+      expect(containers).toEqual([ROOT_CONTAINER_PATH, "src/", "src/a/", "src/b/"]);
+      expect(containerForPath("src/index.ts", containers)).toBe("src/");
+      expect(containerForPath("main.py", containers)).toBe(ROOT_CONTAINER_PATH);
+    }
+  });
+
+  test("a loose file inside a catch-all-expanded subtree gets its own directory's container", () => {
+    // a/big/ dwarfs a/small/ (>8x) and has deeper dirs → expanded as a catch-all.
+    const paths = [
+      ...Array.from({ length: 10 }, (_, i) => `a/big/x/f${i}.ts`),
+      ...Array.from({ length: 10 }, (_, i) => `a/big/y/g${i}.ts`),
+      "a/small/s.ts",
+      "a/big/loose.ts",
+      "a/idx.ts",
+    ];
+    for (const order of [paths, [...paths].reverse()]) {
+      const { containers } = deriveContainers(order);
+      expect(containers).toContain("a/big/x/");
+      expect(containerForPath("a/big/loose.ts", containers)).toBe("a/big/");
+      expect(containerForPath("a/idx.ts", containers)).toBe("a/");
+      expect(containerForPath("a/big/x/f0.ts", containers)).toBe("a/big/x/");
+    }
+  });
+
+  test("no root container when nothing sits at the root", () => {
+    expect(deriveContainers(["utils/a.py", "lib/b.py"]).containers).not.toContain(ROOT_CONTAINER_PATH);
+  });
+
+  test("every path of every fixture resolves to a container (never null)", () => {
+    for (const repo of Object.keys(SNAPSHOTS)) {
+      const paths = loadPaths(repo);
+      const { containers } = deriveContainers(paths);
+      const dropped = paths.filter((p) => containerForPath(p, containers) === null);
+      expect({ repo, dropped }).toEqual({ repo, dropped: [] });
     }
   });
 });

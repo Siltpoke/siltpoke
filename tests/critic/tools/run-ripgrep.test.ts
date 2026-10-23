@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, afterEach, describe } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnWithTimeout } from "../../../src/critic/spawn";
@@ -58,12 +58,44 @@ describe("runRipgrep", () => {
     expect(result.parsed).toEqual([]);
   });
 
-  test.if(rgReachable)("timeout: timeoutMs=1 → status timeout", async () => {
+  // Deterministic: the "rg" is a stub that records its pid then sleeps 5s, so
+  // a 1s timeout always fires (a freshly written script can take a few hundred
+  // ms to start on macOS, hence not shorter). A real rg with timeoutMs=1 can
+  // finish inside 1ms on a fast runner and report "ok" — that raced the clock.
+  // Does not need a real rg binary.
+  test("timeout: stub rg that sleeps → status timeout, process killed, returns early", async () => {
+    const pidFile = join(tmp, "stub.pid");
+    const stub = join(tmp, "slow-rg.sh");
+    writeFileSync(stub, `#!/bin/sh\necho $$ > "${pidFile}"\nexec sleep 5\n`, { mode: 0o755 });
     writeFileSync(join(tmp, "file.ts"), "// TODO: something\n");
 
-    const result = await runRipgrep({ cwd: tmp, timeoutMs: 1, rgBin: RG_BIN });
+    const t0 = Date.now();
+    const result = await runRipgrep({ cwd: tmp, timeoutMs: 1000, rgBin: stub });
+    const elapsed = Date.now() - t0;
+
     expect(result.tool).toBe("ripgrep");
     expect(result.status).toBe("timeout");
+    // Returned long before the stub's 5s sleep would have ended.
+    expect(elapsed).toBeLessThan(3000);
+
+    // The stub really started, and was killed (pid no longer alive).
+    for (let i = 0; i < 40 && !existsSync(pidFile); i++) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    // A missing pid file means the stub never ran — say so instead of a bare ENOENT.
+    expect(existsSync(pidFile)).toBe(true);
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    expect(pid).toBeGreaterThan(0);
+    let alive = true;
+    for (let i = 0; i < 20 && alive; i++) {
+      try {
+        process.kill(pid, 0);
+        await new Promise((r) => setTimeout(r, 50));
+      } catch {
+        alive = false;
+      }
+    }
+    expect(alive).toBe(false);
   });
 
   // Does not require a real rg binary — always runs.
@@ -150,5 +182,35 @@ describe("runRipgrep", () => {
     expect(typeof m.line).toBe("number");
     expect(typeof m.text).toBe("string");
     expect(typeof m.pattern).toBe("string");
+  });
+});
+
+describe("runRipgrep — files containing a NUL byte", () => {
+  // A file with a literal NUL byte is treated as binary by ripgrep. Walking a DIRECTORY, it is
+  // skipped silently (no match, no error). `text: true` passes `--text` and searches it anyway.
+  function writeNulFile(): void {
+    writeFileSync(
+      join(tmp, "nul.ts"),
+      Buffer.concat([
+        Buffer.from("const k = `${a}"),
+        Buffer.from([0]),
+        Buffer.from("${b}`;\nnulOnlyCall(k); // TODO: reachable only with --text\n"),
+      ]),
+    );
+  }
+
+  test.if(rgReachable)("text:true returns a match from a NUL-containing file under a searched directory", async () => {
+    writeNulFile();
+    const result = await runRipgrep({ cwd: tmp, rgBin: RG_BIN, patterns: ["nulOnlyCall"], text: true });
+    expect(result.status).toBe("ok");
+    expect(result.parsed.map((m) => m.file)).toEqual([expect.stringContaining("nul.ts")]);
+    expect(result.parsed[0]!.line).toBe(2);
+  });
+
+  test.if(rgReachable)("KNOWN GAP: without text, a NUL-containing file is skipped as binary (ok, zero matches)", async () => {
+    writeNulFile();
+    const result = await runRipgrep({ cwd: tmp, rgBin: RG_BIN, patterns: ["nulOnlyCall"] });
+    expect(result.status).toBe("ok");
+    expect(result.parsed).toEqual([]);
   });
 });

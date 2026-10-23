@@ -7,8 +7,8 @@
  *     $1.4809 – $1.5706; prior formula gave $0.82 ≈ −45%).
  *   - The Generate button's estimate (served by
  *     GET /api/repo-graph/arch/estimate) shows the new, higher honest figure,
- *     response shape unchanged (estUsd flows through), and the REAL-cost
- *     hard-cap gate mechanism is unaffected.
+ *     response shape unchanged (estUsd flows through). A run over the
+ *     REAL-cost hard cap is kept and its spend ledgered (defect [38]).
  *
  * REGISTER: outside-observable behavior ONLY — every assertion drives the
  * daemon HTTP routes (same boundary as tests/daemon/); no implementation
@@ -338,7 +338,7 @@ describe("estimate surfaces the honest figure; shape + cap mechanism unchanged",
     expect(est.estOutputTokens).toBe(EXPECTED_OUTPUT_TOKENS);
   });
 
-  test("REAL-cost hard-cap gate unaffected: identical valid run caches a model at $0.40 but is refused at $2.50 (> $2 hard cap) — and the over-cap burn is still computed", async () => {
+  test("REAL-cost hard cap: an identical valid run at $2.50 (> $2 hard cap) is KEPT like the $0.40 one, and its burn is ledgered once (defect [38])", async () => {
     const small = smallGraphNodes();
 
     // Control arm: same model markdown, real cost UNDER the cap → cached.
@@ -350,20 +350,19 @@ describe("estimate surfaces the honest figure; shape + cap mechanism unchanged",
     expect(latestTask(okHome)?.costUsd).toBe(0.4);
     expect(archModelCached(okHome)).toBe(true); // proves this markdown IS cacheable
 
-    // Gate arm: SAME markdown, real cost $2.50 > the $2 default hard cap →
-    // the run terminates with the real cost recorded but NO model is cached
-    // (the cap aborts pre-doc) — mechanism identical to before the estimate
-    // recalibration. Anti-vacuous: the control arm above proves the absence
-    // here is attributable ONLY to the cap.
+    // Over-cap arm: SAME markdown, real cost $2.50 > the $2 default hard cap.
+    // Defect [38]: the cost is only known after billing, so the cap cannot
+    // stop the spend — the paid model is kept (it used to be discarded) and
+    // the real cost is still recorded.
     const capHome = seedHome(small.nodes, small.edges).home;
     const capApp = mount(capHome, brainCosting(2.5));
     expect((await postGenerate(capApp)).status).toBe(202);
     await pollTerminal(capHome);
     expect(latestTask(capHome)?.status).toBe("done");
     expect(latestTask(capHome)?.costUsd).toBe(2.5);
-    expect(archModelCached(capHome)).toBe(false);
+    expect(archModelCached(capHome)).toBe(true);
 
-    // Honest-metrics corollary: the refused-but-billed run still hit the
+    // Honest-metrics corollary: the over-cap run hit the
     // usage ledger with its REAL cost (poll: the append runs detached).
     const start = Date.now();
     let events = readLedger(capHome);

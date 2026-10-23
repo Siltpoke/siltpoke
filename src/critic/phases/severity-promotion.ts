@@ -58,18 +58,9 @@ export function autoPromoteSeverity(
   // Nudge mood from happy to concerned so the bubble doesn't mislead.
   if (critique.mood === "happy") critique.mood = "concerned";
 
-  // Override happy bubble text. Brain emitted "干净！" while rubric triggers
-  // existed → bubble misleads the eye. Replace with a neutral nudge so the
-  // chip and the badge agree.
-  const happyBubblePatterns = /干净|nice|clean|great|good|nothing to say|all good|all green|✓|👍|👌/i;
-  if (critique.bubble_short && happyBubblePatterns.test(critique.bubble_short)) {
-    const count = (v2.rubricTriggers ?? []).filter((t) => t.severity !== "low").length;
-    if (count > 0) {
-      critique.bubble_short = `rubric: ${count} concern${count === 1 ? "" : "s"}`;
-    } else if (diffSummary?.risks && diffSummary.risks.length > 0) {
-      critique.bubble_short = `${diffSummary.risks.length} risk${diffSummary.risks.length === 1 ? "" : "s"} flagged`;
-    } else {
-      critique.bubble_short = "see critique";
-    }
-  }
+  // [90] bubble_short is deliberately NOT touched. It used to be replaced by
+  // hardcoded English ("N risks flagged" / "rubric: N concerns") whenever it
+  // matched a "happy" word, ignoring the user's language and substring-matching
+  // words like "cleanup". The raised severity (chip colour, badge) and the
+  // mood nudge above are what tell the user something was flagged.
 }

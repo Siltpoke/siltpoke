@@ -10,8 +10,10 @@
 // cut: three local types plus three pure functions, with no dependency on
 // anything else in configure.ts.
 //
-// Behaviour is unchanged, byte for byte. `removeLegacyStopHook` is re-exported
-// from configure.ts so existing importers and tests do not move.
+// The split itself changed no behaviour. `removeLegacyStopHook` is re-exported
+// from configure.ts so existing importers and tests do not move. Since then the
+// matcher was narrowed (2026-10-03): a `/hooks/stop` route alone no longer
+// counts as ours — see `isDaemonStopUrl` and shape (2) below.
 
 interface HookEntry {
   type?: string;
@@ -34,7 +36,7 @@ export interface Settings {
  * The shapes are enumerated by the code that writes them —
  * installer/settings-mutator.ts (registerStopHookPair / buildStopCurlCommand):
  *
- *   1. `type: "http"` + a url ending in `/hooks/stop`  (oldest fast-path)
+ *   1. `type: "http"` + the daemon's loopback `/hooks/stop` url  (oldest fast-path)
  *   2. a `curl … -H "X-Siltpoke-Secret: …" … /hooks/stop` command  (current fast-path)
  *   3. a command running `…/src/hooks/on-stop.ts`  (the Brain-call entry)
  *
@@ -48,21 +50,32 @@ export interface Settings {
  * — destroying user config with only the timestamped backup to fall back on.
  * An anchor has to be something ONLY our installer could have written.
  */
+function isDaemonStopUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return (u.hostname === "127.0.0.1" || u.hostname === "localhost") && u.pathname === "/hooks/stop";
+  } catch {
+    return false;
+  }
+}
+
 function isLegacySiltpokeStopEntry(h: HookEntry): boolean {
   const command = h.command ?? "";
   const url = h.url ?? "";
 
-  // (1) the stale type:"http" entry — no `command` string at all.
-  if (h.type === "http" && url.includes("/hooks/stop")) return true;
+  // (1) the stale type:"http" entry — no `command` string at all. The route
+  //     name alone is not an anchor: any server can have a `/hooks/stop`. Ours
+  //     only ever pointed at the daemon on loopback.
+  if (h.type === "http" && isDaemonStopUrl(url)) return true;
 
   // (2) the curl fast-path. Its unforgeable tell is our auth header (which the
-  //     http entry also carried, in `headers`); the route is the corroborator.
+  //     http entry also carried, in `headers`). Every curl command our installer
+  //     wrote carries it, so a curl without it is someone else's.
   const secretInCommand = command.toLowerCase().includes("x-siltpoke-secret");
   const secretInHeaders = Object.keys(h.headers ?? {}).some(
     (k) => k.toLowerCase() === "x-siltpoke-secret",
   );
   if (secretInCommand || secretInHeaders) return true;
-  if (command.startsWith("curl ") && command.includes("/hooks/stop")) return true;
 
   // (3) the Brain-call entry. `hooks/on-stop.ts` is OUR file name — this anchor
   //     is location-independent, so a fork cloned to any directory still matches.

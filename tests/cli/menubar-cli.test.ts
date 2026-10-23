@@ -99,7 +99,7 @@ test("install: delegates to runMenubarSetupFn and reports success", async () => 
 });
 
 test("install: threads nonInteractive + rendererPath through to setup", async () => {
-  // The /siltpoke-menubar slash command has no TTY and (under a plugin
+  // The /siltpoke:siltpoke-menubar slash command has no TTY and (under a plugin
   // install) must point the shim at the bundled card — both must reach setup.
   const calls: Array<Record<string, unknown>> = [];
   const code = await runMenubarCli(["install"], {
@@ -117,6 +117,22 @@ test("install: threads nonInteractive + rendererPath through to setup", async ()
   expect(code).toBe(0);
   expect(calls[0]?.nonInteractive).toBe(true);
   expect(calls[0]?.rendererPath).toBe("/plugin/dist/siltpoke-card.js");
+  // [61]: the receipt goes under the same home as the shim and login item
+  expect((calls[0]?.env as NodeJS.ProcessEnv | undefined)?.HOME).toBe("/Users/t");
+});
+
+test("install: no home given → no env either (setup falls back to process.env, like the shim)", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  await runMenubarCli(["install"], {
+    platform: "darwin",
+    io: fakeIO(),
+    write: () => {},
+    runMenubarSetupFn: async (deps) => {
+      calls.push(deps as unknown as Record<string, unknown>);
+      return { installed: true, wroteShim: true, reason: "ok" };
+    },
+  });
+  expect(calls[0]?.env).toBeUndefined();
 });
 
 test("install: reports the reason when declined", async () => {
@@ -430,4 +446,142 @@ test("remove: not on macOS → one-line notice, no SwiftBar probing", async () =
   expect(code).toBe(0);
   expect(out.join("")).toContain("macOS-only");
   expect(calls.length).toBe(0);
+});
+
+// ---------------------------------------------------------------------------
+// [87] `remove` also takes back Siltpoke's own start-at-login item
+// (`io.siltpoke.swiftbar`). Before, only a full uninstall did, so a person who
+// "removed the menu-bar pet" still had SwiftBar opening at every login.
+// Temp home + recording exec: never the real LaunchAgents or launchctl.
+// ---------------------------------------------------------------------------
+import { existsSync as fsExists, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+function tempHomeWithLoginItem(withPlist: boolean): { home: string; plist: string } {
+  const home = mkdtempSync(join(tmpdir(), "menubar-87-"));
+  const dir = join(home, "Library", "LaunchAgents");
+  mkdirSync(dir, { recursive: true });
+  const plist = join(dir, "io.siltpoke.swiftbar.plist");
+  if (withPlist) writeFileSync(plist, "<plist/>");
+  return { home, plist };
+}
+
+test("[87] remove: shim + login item present → both removed, SwiftBar itself untouched", async () => {
+  const { home, plist } = tempHomeWithLoginItem(true);
+  try {
+    const out: string[] = [];
+    const removed: string[] = [];
+    const { exec, calls } = execStub({});
+    const code = await runMenubarCli(["remove"], {
+      home,
+      platform: "darwin",
+      existsSync: (p) => p.endsWith("siltpoke.1m.sh") || fsExists(p),
+      exec,
+      write: (s) => out.push(s),
+      rm: (p) => removed.push(p),
+    });
+    expect(code).toBe(0);
+    expect(removed.some((p) => p.endsWith("siltpoke.1m.sh"))).toBe(true);
+    expect(fsExists(plist)).toBe(false);
+    expect(calls.some((c) => c.startsWith("launchctl bootout") && c.endsWith("/io.siltpoke.swiftbar"))).toBe(true);
+    // Only Siltpoke's own item: never quit SwiftBar or touch its prefs.
+    expect(calls.some((c) => c.startsWith("killall") || c.startsWith("defaults write"))).toBe(false);
+    expect(out.join("")).toContain("start-at-login");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("[87] remove: shim already gone but login item present → login item still removed", async () => {
+  const { home, plist } = tempHomeWithLoginItem(true);
+  try {
+    const out: string[] = [];
+    const code = await runMenubarCli(["remove"], {
+      home,
+      platform: "darwin",
+      existsSync: (p) => !p.endsWith("siltpoke.1m.sh") && fsExists(p),
+      exec: execStub({}).exec,
+      write: (s) => out.push(s),
+      rm: () => {},
+    });
+    expect(code).toBe(0);
+    expect(fsExists(plist)).toBe(false);
+    expect(out.join("")).toContain("start-at-login");
+    expect(out.join("")).toContain("no menu-bar script was left to remove");
+    expect(out.join("")).not.toContain("not installed");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("[87] neither shim nor login item exists → says not installed, no launchctl call", async () => {
+  const { home } = tempHomeWithLoginItem(false);
+  try {
+    const out: string[] = [];
+    const { exec, calls } = execStub({});
+    const code = await runMenubarCli(["remove"], {
+      home,
+      platform: "darwin",
+      existsSync: (p) => !p.endsWith("siltpoke.1m.sh") && fsExists(p),
+      exec,
+      write: (s) => out.push(s),
+      rm: () => {},
+    });
+    expect(code).toBe(0);
+    expect(out.join("")).toContain("not installed");
+    expect(out.join("")).not.toContain("start-at-login");
+    expect(calls.some((c) => c.startsWith("launchctl"))).toBe(false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("[87] positive control: login item absent → remove succeeds and claims no login item removal", async () => {
+  const { home } = tempHomeWithLoginItem(false);
+  try {
+    const out: string[] = [];
+    const { exec, calls } = execStub({});
+    const code = await runMenubarCli(["remove"], {
+      home,
+      platform: "darwin",
+      existsSync: (p) => p.endsWith("siltpoke.1m.sh") || fsExists(p),
+      exec,
+      write: (s) => out.push(s),
+      rm: () => {},
+    });
+    expect(code).toBe(0);
+    expect(out.join("")).toContain("removed");
+    expect(out.join("")).not.toContain("start-at-login");
+    expect(calls.some((c) => c.startsWith("launchctl"))).toBe(false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("[87] [71] guard: under another home, the login item is not touched either", async () => {
+  const { home, plist } = tempHomeWithLoginItem(true);
+  try {
+    const out: string[] = [];
+    const calls: string[] = [];
+    const code = await runMenubarCli(["remove"], {
+      home,
+      platform: "darwin",
+      existsSync: (p) => fsExists(p),
+      // `id -P` (field 9 = account home) names a different home than HOME.
+      exec: (c, a) => {
+        calls.push([c, ...a].join(" "));
+        return c === "/usr/bin/id"
+          ? { status: 0, stdout: "me:*:501:20::0:0:Me:/Users/someone-else:/bin/zsh\n" }
+          : { status: 0, stdout: "" };
+      },
+      write: (s) => out.push(s),
+      rm: () => {},
+    });
+    expect(code).toBe(0);
+    expect(fsExists(plist)).toBe(true);
+    expect(calls.some((c) => c.startsWith("launchctl"))).toBe(false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

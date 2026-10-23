@@ -31,6 +31,13 @@ export const DEFAULT_GAP_THRESHOLD = 8;
 /** M1-locked hard recursion cap, measured in path segments. */
 export const DEFAULT_DEPTH_CAP = 16;
 
+/**
+ * The container for files sitting directly at the repo root. The empty prefix
+ * is a real prefix of every path, so `containerForPath`'s longest-prefix rule
+ * gives it exactly the files no deeper container claims.
+ */
+export const ROOT_CONTAINER_PATH = "";
+
 export interface DeriveContainersOptions {
   /** Catch-all trigger: largest-child / second-largest-child file-count ratio. */
   gapThreshold?: number;
@@ -47,9 +54,12 @@ export interface DeriveContainersResult {
 
 /**
  * Map a file path to the DEEPEST container that prefixes it, or null when no
- * container contains it (a loose file at a namespace level — honestly has no
- * container, never force-bucketed). Containers carry a trailing slash, so the
- * prefix test is segment-safe (`src/web/` never swallows `src/website/x.ts`).
+ * container in the given list contains it. `deriveContainers` guarantees every
+ * one of its own input paths resolves; null still happens for other lists (an
+ * authored overlay, a path outside the derived set). Containers carry a
+ * trailing slash, so the prefix test is segment-safe (`src/web/` never
+ * swallows `src/website/x.ts`); ROOT_CONTAINER_PATH ("") prefixes everything
+ * and so only claims what nothing deeper does.
  */
 export function containerForPath(
   filePath: string,
@@ -142,6 +152,23 @@ export function deriveContainers(
     (a, b) => b[1] - a[1],
   );
   for (const [dir] of rootKids) expand(`${dir}/`, 1);
+
+  // A file sitting directly in a directory that also has sub-directories
+  // (`main.py` at the root, `src/index.ts` beside `src/a/`) is claimed by no
+  // container above. Give it its own directory's container — the root's is
+  // ROOT_CONTAINER_PATH — so no indexed file is left out of the diagram.
+  // "Loose" is judged against the expansion's containers only — matching
+  // against the growing list would let an added "" swallow every later loose
+  // file, making the result depend on input order.
+  const expanded = [...containers];
+  const known = new Set(containers);
+  for (const p of filePaths) {
+    if (containerForPath(p, expanded) !== null) continue;
+    const dir = p.slice(0, p.lastIndexOf("/") + 1);
+    if (known.has(dir)) continue;
+    known.add(dir);
+    containers.push(dir);
+  }
 
   containers.sort();
   return { containers, depthCapHits };

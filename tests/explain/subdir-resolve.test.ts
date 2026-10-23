@@ -118,7 +118,8 @@ describe("makeResolveSubdir / membersToSubdirIds — shape coverage + structural
 describe("memberToSubdirId — readout keyspace ≡ structural projection keyspace (post-migration)", () => {
   const f = (path: string): RepoGraph["nodes"][number] => ({ id: `file:${path}:`, type: "file", name: path.split("/").pop()!, path, lineRange: [1, 1] });
   const meta = { schemaVersion: 1, last_indexed_ts: "t", project_root: "/tmp/demo-repo", proj_hash: "deadbeef" } as unknown as RepoGraphMeta;
-  // src/state.ts is a LOOSE file directly under the namespace dir (no container).
+  // src/state.ts is a LOOSE file directly under the namespace dir — the derived
+  // projection gives it the `src` bucket.
   const graph: RepoGraph = { schemaVersion: 1, nodes: [f("src/brain/brain.ts"), f("src/critic/run.ts"), f("src/state.ts")], edges: [] };
 
   it("members under a real derived container resolve INTO the projection keyspace", () => {
@@ -132,18 +133,20 @@ describe("memberToSubdirId — readout keyspace ≡ structural projection keyspa
     }
   });
 
-  it("post-migration: a loose top-level file resolves to honest-null (NO depth-2 skew — readout keyspace ≡ structural keyspace)", () => {
+  it("a loose file resolves to its own directory's structural bucket (NO depth-2 skew — readout keyspace ≡ structural keyspace)", () => {
     const projection = projectArchitecture(graph, null, meta);
     const subdirs = projection.subdirs.map((s) => ({ id: s.id, path: s.path }));
     const realIds = new Set(projection.subdirs.map((s) => s.id));
 
-    // structural projection DROPS the loose file — no container claims it.
+    // No file-as-bucket: the old depth-2 code returned "state.ts".
     expect(realIds.has("state.ts")).toBe(false);
 
-    // POST-MIGRATION: the structural resolver returns null (no skew).
-    // This is the core behavior change. The old depth-2 code returned "state.ts".
+    // The structural projection gives the loose file its directory's bucket
+    // (it used to drop it — no container claimed it, so Code Map never drew
+    // it). The readout resolves to that same bucket.
     const id = memberToSubdirId("src/state.ts", subdirs);
-    expect(id).toBeNull();
+    expect(id).toBe("src");
+    expect(realIds.has(id!)).toBe(true);
   });
 
   it("post-migration: the old skew is gone — a member whose depth-2 id ≠ structural id now resolves to structural id", () => {

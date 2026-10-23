@@ -72,8 +72,8 @@ test("2. sidebar has no disabled placeholder entries (all nav links interactive)
     await expect(anchor).toHaveCount(0, { timeout: 5_000 });
   }
 
-  // settings was unmounted 2026-08-06 — its nav link must be gone with it.
-  await expect(page.locator('[data-sidebar] a[href="/settings"]')).toHaveCount(0, {
+  // settings is mounted again (2026-10-09, defect [49]) — its nav link is back with it.
+  await expect(page.locator('[data-sidebar] a[href="/settings"]')).toHaveCount(1, {
     timeout: 5_000,
   });
 

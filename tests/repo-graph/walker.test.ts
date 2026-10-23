@@ -126,3 +126,75 @@ describe("walker", () => {
     expect(skipped.some((s) => s.reason === "file_cap")).toBe(false);
   });
 });
+
+describe("walker — other files (drawn as plain files, never parsed)", () => {
+  // agent-runtime shape (2026-10-15): Code Map showed none of README.md,
+  // requirements.txt, docs/ or tests/. They are listed so Code Map can draw
+  // them; the code graph (`files`) is unchanged.
+  test("lists non-code files, and every file under docs/ and tests/, apart from the code files", async () => {
+    seed("main.py");
+    seed("README.md");
+    seed("requirements.txt");
+    seed(".gitignore");
+    seed("docs/plan.md");
+    seed("tests/test_loop.py");
+    seed("utils/config.py");
+    seed("utils/NOTES.md");
+    const { files, others } = await walkProject(projectRoot);
+    expect(files.map((f) => f.relPath).sort()).toEqual(["main.py", "utils/config.py"]);
+    expect([...others].sort()).toEqual([
+      ".gitignore",
+      "README.md",
+      "docs/plan.md",
+      "requirements.txt",
+      "tests/test_loop.py",
+      "utils/NOTES.md",
+    ]);
+  });
+
+  test("still never lists files under skipped build/vendor/dot directories", async () => {
+    seed("node_modules/x/readme.md");
+    seed("dist/out.js");
+    seed(".git/HEAD");
+    seed(".venv/lib/site.py");
+    seed("public/static/index.js");
+    seed(".DS_Store");
+    const { others } = await walkProject(projectRoot);
+    expect(others).toEqual([]);
+  });
+
+  test("the other-files list is capped and says so", async () => {
+    for (let i = 0; i < 5; i++) seed(`docs/n${i}.md`);
+    const { others, othersTruncated } = await walkProject(projectRoot, { maxOthers: 3 });
+    expect(others).toHaveLength(3);
+    expect(othersTruncated).toBe(true);
+  });
+
+  test("a file the filter rejects never takes a slot under the cap", async () => {
+    // Review: the cap ran before the .gitignore filter, so an ignored tree
+    // (target/, venv/) could fill all 5000 slots and leave no real file.
+    for (let i = 0; i < 5; i++) seed(`build_out/x${i}.bin`);
+    seed("docs/keep.md");
+    const { others, othersTruncated } = await walkProject(projectRoot, {
+      maxOthers: 1,
+      keepOther: (p) => !p.startsWith("build_out/"),
+    });
+    expect(others).toEqual(["docs/keep.md"]);
+    expect(othersTruncated).toBe(false);
+  });
+
+  test("listOthers: false skips the other-file walk entirely (the staleness check needs code only)", async () => {
+    seed("README.md");
+    seed("docs/plan.md");
+    const { others } = await walkProject(projectRoot, { listOthers: false });
+    expect(others).toEqual([]);
+  });
+
+  test("the skip counters do not change (other files are an extra list, not a new count)", async () => {
+    seed("README.md");
+    seed("docs/plan.md");
+    const { skipped } = await walkProject(projectRoot);
+    // README.md was already counted as not_a_source_file; docs/ was never walked.
+    expect(skipped).toEqual([{ reason: "not_a_source_file", relPath: "README.md" }]);
+  });
+});

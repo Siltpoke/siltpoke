@@ -6,8 +6,8 @@
  *
  * WHY — audit defect `[16]`. Under an agy HOME, doctor printed two red rows
  * about `~/.claude/settings.json` and Claude Code's Stop-hook registration and
- * told the reader to run `/siltpoke-setup`. agy has none of those: it is wired
- * through `~/.gemini/config/hooks.json`, and `/siltpoke-setup` is a Claude Code
+ * told the reader to run `/siltpoke:siltpoke-setup`. agy has none of those: it is wired
+ * through `~/.gemini/config/hooks.json`, and `/siltpoke:siltpoke-setup` is a Claude Code
  * slash command. `skills/siltpoke/SKILL.md` lists `doctor` as available, so agy
  * users really do reach those rows.
  *
@@ -62,7 +62,7 @@ function agyHome(): {
     // Pinned ABSENT for the same reason, and it is load-bearing: the autostart
     // row only prints its setup advice when the boot artifact is missing, so
     // on a machine that HAS one (any dev box that ran setup) this fixture
-    // never reached the branch. That is how a `/siltpoke-setup` hint shipped
+    // never reached the branch. That is how a `/siltpoke:siltpoke-setup` hint shipped
     // to agy users and was caught by a clean Linux CI runner rather than here
     // (2026-09-22).
     autostartPath: join(root, "no-autostart", "siltpoke.plist"),
@@ -82,7 +82,7 @@ describe("host detection", () => {
 
   test("nothing detected falls back to claude-code, NOT to a skip", () => {
     // The conservative default matters: "Claude Code user who has not run
-    // setup yet" must keep its red row and its /siltpoke-setup advice —
+    // setup yet" must keep its red row and its /siltpoke:siltpoke-setup advice —
     // that row is what defect [2] fixed.
     expect(detectDoctorHost({
       claudeHome: join(root, "nope"),
@@ -95,7 +95,7 @@ describe("host detection", () => {
 
 describe("advice names a command the host actually has", () => {
   test("each host gets its own wording", () => {
-    expect(setupAdviceFor("claude-code")).toContain("/siltpoke-setup");
+    expect(setupAdviceFor("claude-code")).toContain("/siltpoke:siltpoke-setup");
     expect(setupAdviceFor("codex")).toContain("/skills");
     expect(setupAdviceFor("antigravity")).toContain("set up Siltpoke");
     // the phrase is imperative and carries no trailing purpose — call sites add theirs
@@ -123,7 +123,7 @@ describe("defect [16]: doctor under an agy HOME", () => {
   test("the rendered checklist hands an agy user no /siltpoke- command at all", () => {
     // The whole rendered surface, not just the two rows — the invariant is
     // about what the user reads, and the agy rows' own advice used to say
-    // "agy wiring isn't part of /siltpoke-setup yet", which is both a
+    // "agy wiring isn't part of /siltpoke:siltpoke-setup yet", which is both a
     // /siltpoke- string and, since defect [9] shipped, no longer true.
     const opts = agyHome();
     const rendered = formatChecklist(runAllChecks(opts));
@@ -135,6 +135,6 @@ describe("defect [16]: doctor under an agy HOME", () => {
     mkdirSync(opts.claudeHome, { recursive: true });
     const settings = runAllChecks(opts).find((r) => r.name.includes("settings.json valid"));
     expect(settings?.pass).toBe(false);
-    expect(settings?.detail).toContain("/siltpoke-setup");
+    expect(settings?.detail).toContain("/siltpoke:siltpoke-setup");
   });
 });

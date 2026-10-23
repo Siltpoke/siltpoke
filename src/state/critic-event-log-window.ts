@@ -12,8 +12,7 @@
  * accounting can never diverge from what renders.
  */
 
-import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { type FileHandle, open } from "node:fs/promises";
 import { join } from "node:path";
 import { parseCall } from "./critic-event-log-parse";
 import type { CriticCall, SpeechKind, StatusFilter } from "./critic-event-log-types";
@@ -30,10 +29,13 @@ export function parseLine(line: string): CriticCall | null {
 /**
  * Display-eligibility rule shared by the row-assembly step and the turn
  * window: fired rows without a bubble (empty/missing/suppressed — all
- * parsed to bubble_short === null) are not activity and never render.
+ * parsed to bubble_short === null) are not activity and never render —
+ * unless the row carries an injection alert: a low-confidence review that
+ * was blanked from the bubble must still show its warning on the dashboard.
  * Skipped rows pass through (the status filter decides their visibility).
  */
 export function isDisplayEligible(c: CriticCall): boolean {
+  if (c.injection_alert) return true; // truthy: a hand-built call may omit the field
   return !(c.status === "fired" && c.bubble_short === null);
 }
 
@@ -115,26 +117,134 @@ interface DatedCall {
 }
 
 /**
- * Linear scan: parse every line, keep display-eligible rows with parseable
- * timestamps inside the range, collect the project list (derived BEFORE
- * status/kind/q/project so the picker stays stable while those filters
- * narrow the rows), then apply the shared row predicate. Returned rows are
- * sorted chronologically (stable — ties keep file order), removing any
- * reliance on strict append order.
+ * Parsed rows of one brain-calls.jsonl, kept between requests. The log is
+ * append-only, so a later read parses only the bytes added since; the live
+ * log is 52 MB / 54k lines and a full parse per /timeline request cost
+ * ~0.25 s and ~380 MB of garbage (measured 2026-10-16).
+ *
+ * `offset` is the byte length consumed, always just past a newline, so a
+ * half-written last line is re-read once it is finished. The file is parsed
+ * afresh when its inode changes, it got shorter, or the first or last 4 KB
+ * of the consumed part no longer match (a rewrite in place). A rewrite that
+ * keeps both ends and changes only the middle is not noticed; the stop hook
+ * only ever appends, so that is accepted. A last line without a newline is
+ * parsed on every read but not kept, as the old full read did.
+ *
+ * A log nobody has read for IDLE_EVICT_MS is dropped, so an idle dashboard
+ * does not hold the parsed log (a few hundred MB for the live one); the next
+ * read parses it again.
+ */
+interface ParsedLog {
+  dev: number;
+  ino: number;
+  offset: number;
+  check: Buffer;
+  rows: DatedCall[];
+}
+
+const CHECK_BYTES = 4096;
+const IDLE_EVICT_MS = 10 * 60_000;
+const parsedLogs = new Map<string, ParsedLog>();
+const inFlight = new Map<string, Promise<DatedCall[]>>();
+const evictTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleEvict(path: string): void {
+  clearTimeout(evictTimers.get(path));
+  const timer = setTimeout(() => {
+    evictTimers.delete(path);
+    parsedLogs.delete(path);
+  }, IDLE_EVICT_MS);
+  timer.unref?.();
+  evictTimers.set(path, timer);
+}
+
+function parseDated(line: string): DatedCall | null {
+  if (line.length === 0) return null;
+  const c = parseLine(line);
+  if (!c) return null;
+  const t = Date.parse(c.timestamp);
+  return Number.isNaN(t) ? null : { c, t };
+}
+
+/** First and last CHECK_BYTES of [0, end). */
+async function readEnds(fh: FileHandle, end: number): Promise<Buffer> {
+  const headLen = Math.min(end, CHECK_BYTES);
+  const tailStart = Math.max(headLen, end - CHECK_BYTES);
+  const buf = Buffer.alloc(headLen + (end - tailStart));
+  if (headLen > 0) await fh.read(buf, 0, headLen, 0);
+  if (end > tailStart) await fh.read(buf, headLen, end - tailStart, tailStart);
+  return buf;
+}
+
+async function refreshParsedLog(path: string): Promise<DatedCall[]> {
+  let fh: FileHandle;
+  try {
+    fh = await open(path, "r");
+  } catch {
+    parsedLogs.delete(path);
+    return [];
+  }
+  try {
+    const st = await fh.stat();
+    let log = parsedLogs.get(path);
+    const stale =
+      !log ||
+      log.dev !== st.dev ||
+      log.ino !== st.ino ||
+      st.size < log.offset ||
+      !(await readEnds(fh, log.offset)).equals(log.check);
+    if (stale || !log) {
+      log = { dev: st.dev, ino: st.ino, offset: 0, check: Buffer.alloc(0), rows: [] };
+      parsedLogs.set(path, log);
+    }
+    let unterminated: DatedCall | null = null;
+    if (st.size > log.offset) {
+      const buf = Buffer.alloc(st.size - log.offset);
+      await fh.read(buf, 0, buf.length, log.offset);
+      const lastNewline = buf.lastIndexOf(0x0a);
+      if (lastNewline >= 0) {
+        for (const line of buf.subarray(0, lastNewline).toString("utf8").split("\n")) {
+          const row = parseDated(line);
+          if (row) log.rows.push(row);
+        }
+        log.offset += lastNewline + 1;
+        log.check = await readEnds(fh, log.offset);
+      }
+      unterminated = parseDated(buf.subarray(lastNewline + 1).toString("utf8"));
+    }
+    return unterminated ? [...log.rows, unterminated] : log.rows;
+  } finally {
+    await fh.close();
+  }
+}
+
+/** One refresh per log at a time; concurrent requests share it. */
+function parsedRows(path: string): Promise<DatedCall[]> {
+  const running = inFlight.get(path);
+  if (running) return running;
+  const p = refreshParsedLog(path).finally(() => {
+    inFlight.delete(path);
+    scheduleEvict(path);
+  });
+  inFlight.set(path, p);
+  return p;
+}
+
+/**
+ * Keep display-eligible rows inside the range, collect the project list
+ * (derived BEFORE status/kind/q/project so the picker stays stable while
+ * those filters narrow the rows), then apply the shared row predicate.
+ * Returned rows are sorted chronologically (stable — ties keep file order),
+ * removing any reliance on strict append order.
  */
 function collectPassingRows(
-  raw: string,
+  rows: DatedCall[],
   cutoffMs: number | null,
   filters: RowFilterOpts,
   projectsSet: Set<string>,
 ): DatedCall[] {
   const passing: DatedCall[] = [];
-  for (const line of raw.split("\n")) {
-    if (line.length === 0) continue;
-    const c = parseLine(line);
-    if (!c) continue;
-    const t = Date.parse(c.timestamp);
-    if (Number.isNaN(t)) continue;
+  for (const { c, t } of rows) {
     if (cutoffMs !== null && t < cutoffMs) continue;
     if (!isDisplayEligible(c)) continue;
     projectsSet.add(c.project);
@@ -196,10 +306,7 @@ export async function readBrainCallsPage(
   opts: BrainCallsPageOpts,
 ): Promise<BrainCallsPage> {
   const path = join(basePath, "brain-calls.jsonl");
-  if (!existsSync(path)) {
-    return { calls: [], hasOlder: false, hasNewer: false, total: 0, projects: [] };
-  }
-  const raw = await readFile(path, "utf8");
+  const rows = await parsedRows(path);
   const filters: RowFilterOpts = {
     status: opts.status,
     kind: opts.kind,
@@ -211,7 +318,7 @@ export async function readBrainCallsPage(
 
   const projectsSet = new Set<string>();
   const eligible = collectPassingRows(
-    raw,
+    rows,
     opts.rangeCutoff?.getTime() ?? null,
     filters,
     projectsSet,
@@ -224,7 +331,9 @@ export async function readBrainCallsPage(
 
   const { start, end } = pageSliceBounds(passing, opts);
   return {
-    calls: passing.slice(start, end).map((e) => e.c),
+    // Copies: callers attach v2 / diff_text / user_action to page rows, and
+    // the kept rows must not carry those into the next request.
+    calls: passing.slice(start, end).map((e) => ({ ...e.c })),
     hasOlder: start > 0,
     hasNewer: end < passing.length,
     total: passing.length,

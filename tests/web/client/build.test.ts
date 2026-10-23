@@ -21,14 +21,17 @@ import { join } from "node:path";
 import { buildClient, DEFAULT_OUTDIR } from "../../../scripts/build-client";
 
 const SHIPPED_BUNDLE = join(DEFAULT_OUTDIR, "index.js");
+const SHIPPED_STANDALONE = join(DEFAULT_OUTDIR, "export-standalone.js");
 
 let outdir: string;
 /** Byte snapshot of the tracked bundle, taken BEFORE any build in this file runs. */
 let shippedBefore: Buffer | null = null;
+let standaloneBefore: Buffer | null = null;
 
 beforeAll(() => {
   outdir = mkdtempSync(join(tmpdir(), "siltpoke-client-build-"));
   if (existsSync(SHIPPED_BUNDLE)) shippedBefore = readFileSync(SHIPPED_BUNDLE);
+  if (existsSync(SHIPPED_STANDALONE)) standaloneBefore = readFileSync(SHIPPED_STANDALONE);
 });
 
 afterAll(() => {
@@ -95,5 +98,28 @@ describe("buildClient()", () => {
     const shippedAfter = readFileSync(SHIPPED_BUNDLE);
     expect(shippedAfter.length).toBe(shippedBefore!.length);
     expect(shippedAfter.equals(shippedBefore!)).toBe(true);
+  });
+});
+
+// ─── Standalone export bundle ────────────────────────────────────────────────
+// Declared after the block above for the same reason its last test is last.
+describe("buildClient() — standalone export script", () => {
+  it("also emits the standalone export script: one self-contained classic script, no chunk imports", async () => {
+    const result = await buildClient({ minify: false, outdir });
+    const path = result.outputs.find((p) => p.endsWith("export-standalone.js"));
+    expect(path).toBeDefined();
+    const js = await Bun.file(path!).text();
+    expect(js.length).toBeGreaterThan(1000);
+    expect(js).not.toMatch(/^\s*(import|export)\b/m);
+    expect(js).not.toContain("import(");
+    expect(() => new Function(js)).not.toThrow();
+    // Not factored into a shared chunk with the dashboard bundle.
+    expect(result.outputs.filter((p) => /chunk/.test(p) && js.includes(p))).toEqual([]);
+  });
+
+  it("leaves the tracked public/static/export-standalone.js byte-identical", () => {
+    expect(standaloneBefore).not.toBeNull();
+    expect(standaloneBefore!.length).toBeGreaterThan(0);
+    expect(readFileSync(SHIPPED_STANDALONE).equals(standaloneBefore!)).toBe(true);
   });
 });

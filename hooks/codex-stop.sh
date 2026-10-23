@@ -4,7 +4,10 @@
 # Anything missing ⇒ exit 0 in silence. Never leak an error into the Codex session.
 set -u
 HOME="${HOME:-}"
-SILTPOKE_DIR="${HOME}/.siltpoke"
+# Honour SILTPOKE_HOME exactly like siltpokeRoot() in src/installer/paths.ts
+# (empty counts as unset, hence `:-`). A hard-coded $HOME/.siltpoke made an
+# isolated run (and every hook fired inside one) write the REAL home (defect [73]).
+SILTPOKE_DIR="${SILTPOKE_HOME:-${HOME}/.siltpoke}"
 NUDGE_MARKER="${SILTPOKE_DIR}/.codex-stop-nudged"
 
 # Once-ever install nudge (defect [8]): codex has no `/siltpoke-*` slash
@@ -50,6 +53,11 @@ PAYLOAD="$(cat 2>/dev/null)"
 
 # An internal codex-reviewer spawn carries SILTPOKE_INTERNAL=1 — must not re-fire.
 [ "${SILTPOKE_INTERNAL:-}" = "1" ] && exit 0
+# Defect [49]: record that this turn ran in codex, for the dashboard daemon
+# (hooks/lib/record-host.sh). Before the gates below: it needs neither setup
+# nor bun. ${0%/*} and -r for the reasons given at the resolve-bun.sh source.
+SILTPOKE_RECORD_LIB="${0%/*}/lib/record-host.sh"
+[ -r "$SILTPOKE_RECORD_LIB" ] && . "$SILTPOKE_RECORD_LIB" && siltpoke_record_host codex
 [ -f "${SILTPOKE_DIR}/config.json" ] || { nudge_once; exit 0; }
 # Defect [20]/[21]: PATH alone loses bun in a non-login shell. No nudge on the
 # unresolved path — setup already ran (config.json exists) and cannot fix PATH.

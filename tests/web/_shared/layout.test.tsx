@@ -23,6 +23,22 @@ function render(node: unknown): string {
 }
 
 describe("Layout <head>", () => {
+  test("loads its fonts from Siltpoke itself, and nothing from another site", () => {
+    // Fonts used to come from fonts.googleapis.com: every page load waited on
+    // Google (an e2e test went from ~0.45 s to 6–7 s when Google was slow)
+    // and told Google the dashboard was open.
+    const html = render(Layout({ children: "x" }));
+    expect(html).toContain('<link rel="stylesheet" href="/static/fonts/dashboard.css"/>');
+    expect(html).not.toContain("googleapis");
+    expect(html).not.toContain("gstatic");
+    // No <link> in <head> (stylesheet, preconnect, font) points at another
+    // site. (<script src> is out of scope here: htmx still comes from unpkg.)
+    const head = html.slice(0, html.indexOf("<body"));
+    const links = head.match(/<link [^>]*>/g) ?? [];
+    expect(links.length).toBeGreaterThan(2); // positive control: icons + sheets
+    expect(links.filter((l) => /href="(https?:)?\/\//.test(l))).toEqual([]);
+  });
+
   test("advertises BOTH schemes so a forced theme drives native controls", () => {
     const html = render(Layout({ children: "x" }));
     expect(html).toContain('name="color-scheme"');

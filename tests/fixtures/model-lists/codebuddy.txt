@@ -1,0 +1,9 @@
+  --model <model>                                  Model for the current session. Please provide the model ID. Currently supported: (default-model, fast-model, balanced-model, primary-model, deep-model, hy4-preview, hy3, deepseek-v4.1-flash, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4, gemini-3.5-flash, glm-5.3-flash, glm-5.3, glm-5.2, kimi-k3, kimi-k2.6, kimi-k2.8-preview)
+  --text-to-image-model <model>                    Model for text-to-image generation
+  --image-to-image-model <model>                   Model for image-to-image editing
+  --fallback-model <model>                         Enable automatic fallback to specified model when default model is overloaded (only works with --print)
+  --add-dir <directories...>                       Additional directories to allow tool access to
+  --ide                                            Automatically connect to IDE on startup if exactly one valid IDE is available (default: false)
+  -v, --version                                    Output the version number (default: false)
+  --strict-mcp-config                              Only use MCP servers from --mcp-config, ignoring all other MCP configurations (default: false)
+  --session-id <uuid>                              Use a specific session ID for the conversation (supports letters, numbers, hyphens, underscores, and colons, but must start with a letter or number)

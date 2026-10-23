@@ -1,7 +1,10 @@
-import { test, expect, describe } from "bun:test";
-import { CANONICAL_NAV } from "../../../src/web/routes/nav";
-import type { NavEntry, NavSection } from "../../../src/web/routes/nav";
+import { describe, expect, test } from "bun:test";
 import { ICON_NAMES } from "../../../src/web/atoms/Icon";
+import type { NavEntry, NavSection } from "../../../src/web/routes/nav";
+import {
+  availableNavSections,
+  CANONICAL_NAV,
+} from "../../../src/web/routes/nav";
 
 describe("CANONICAL_NAV (sectioned)", () => {
   test("exports exactly 2 sections", () => {
@@ -21,9 +24,9 @@ describe("CANONICAL_NAV (sectioned)", () => {
   // This one is a genuine count test by design (a change detector for
   // accidental additions/removals to CANONICAL_NAV), not a stand-in for a
   // named assertion — kept as a count per the file's own convention.
-  test("total flat entry count is 4 (Knowledge added 2026-08-06; Progress added 2026-08-14; Decisions removed 2026-08-17 with its route; Quests + Settings removed 2026-08-06 with their unmounts)", () => {
+  test("total flat entry count is 5", () => {
     const allEntries = CANONICAL_NAV.flatMap((s) => s.entries);
-    expect(allEntries).toHaveLength(4);
+    expect(allEntries).toHaveLength(5);
   });
 
   test("PET section contains home only", () => {
@@ -31,12 +34,13 @@ describe("CANONICAL_NAV (sectioned)", () => {
     expect(pet?.entries.map((e) => e.id)).toEqual(["home"]);
   });
 
-  test("WORK section contains timeline / memory / repo-graph in order", () => {
+  test("WORK section contains timeline / memory / repo-graph / settings in order", () => {
     const work = CANONICAL_NAV.find((s) => s.id === "work");
     expect(work?.entries.map((e) => e.id)).toEqual([
       "timeline",
       "memory",
       "repo-graph",
+      "settings",
     ]);
   });
 
@@ -96,9 +100,8 @@ describe("CANONICAL_NAV (sectioned)", () => {
     expect(allEntries.find((e) => e.id === "chat")).toBeUndefined();
   });
 
-  // "settings" was re-added in Slice C (the review-brain selector), then hidden again
-  // 2026-08-06 with its route's unmount. It is covered by the entry-count and
-  // unmounted-route guards above rather than by this removed-set list, which predates it.
+  // "settings" was re-added in Slice C (the review-brain selector), hidden 2026-08-06 with
+  // its route's unmount, and brought back 2026-10-09 with the route (defect [49]).
   test("removed surfaces stay removed (help/inventory/friends/commands)", () => {
     const ids = CANONICAL_NAV.flatMap((s) => s.entries).map((e) => e.id as string);
     for (const gone of ["help", "inventory", "friends", "commands"]) {
@@ -160,6 +163,14 @@ describe("CANONICAL_NAV (sectioned)", () => {
     // the user finds, not a page.
     const hrefs = CANONICAL_NAV.flatMap((s) => s.entries).map((e) => e.href);
     expect(hrefs).not.toContain("/derived-view");
-    expect(hrefs).not.toContain("/settings");
+    // This list only knows the routes someone remembered to add. The check that asks
+    // a RUNNING daemon for every nav href is tests/daemon/nav-routes-mounted.test.ts.
+  });
+});
+
+describe("availableNavSections", () => {
+  test("every entry is there, in order", () => {
+    const ids = availableNavSections().flatMap((s) => s.entries.map((e) => e.id));
+    expect(ids).toEqual(["home", "timeline", "memory", "repo-graph", "settings"]);
   });
 });

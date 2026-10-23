@@ -76,7 +76,14 @@ export async function runEslint(opts: {
   const { cwd, changedFiles, timeoutMs = DEFAULT_TIMEOUT_MS, _env } = opts;
 
   if (changedFiles.length === 0) {
-    return { tool: "eslint", status: "not_applicable", parsed: [], raw: "" };
+    return {
+      tool: "eslint",
+      status: "not_applicable",
+      parsed: [],
+      raw: "",
+      reason: "no JS/TS file changed",
+      notRelevant: true,
+    };
   }
 
   // Defensive: skip any path whose last segment starts with "-" to prevent
@@ -93,7 +100,13 @@ export async function runEslint(opts: {
   });
 
   if (safeFiles.length === 0) {
-    return { tool: "eslint", status: "not_applicable", parsed: [], raw: "" };
+    return {
+      tool: "eslint",
+      status: "not_applicable",
+      parsed: [],
+      raw: "",
+      reason: "every changed path was skipped as unsafe",
+    };
   }
 
   const argv = ["bunx", "eslint", "--format", "json", ...safeFiles];

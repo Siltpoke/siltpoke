@@ -6,17 +6,20 @@ import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { drainProcess, stopProcess } from "../brain/drain-process";
 import { siltpokeRoot } from "../installer/paths";
 import { readRestartOutcome } from "../cli/restart-outcome";
+import { readBrainHealthAsync } from "../state/brain-health";
+import { latchedSinceMs } from "../state/brain-signal";
 import { resolveArt } from "../state/pose";
 import { pickAuraGlyph, readProgression } from "../state/progression";
-import { isStale, readState } from "../state/state";
+import { isStale, readState, type FaceAlert } from "../state/state";
 import { composeOutput } from "./composer";
 import { renderMenubar } from "./menubar";
 import { collectPendingReviews } from "./menubar-aggregate";
 import { DEFAULT_SPECIES, getSpecies } from "./species";
 import { formatTasklistSegment, parseTasklist, readTasklist } from "./tasklist";
-import { truncateToVisualWidth, visualWidth } from "./width";
+import { buildBubbleBlock, colorize, severityToColor } from "./bubble";
 
 export interface WrapperOptions {
   basePath: string;
@@ -37,7 +40,19 @@ export interface WrapperOptions {
    * inner.txt already takes).
    */
   agent?: string;
+  /** The clock the bubble's date is judged against. Tests only; defaults to now. */
+  nowMs?: number;
+  /** Limit on the user's own statusline command. Tests only; defaults to INNER_TIMEOUT_MS. */
+  innerTimeoutMs?: number;
 }
+
+/**
+ * The user's statusline command gets this long. Measured 2026-10-18: claude-hud
+ * takes 0.14–0.33 s, so 2 s is six times the slowest run.
+ */
+const INNER_TIMEOUT_MS = 2_000;
+/** After the limit: SIGKILL grace, and how long a child may hold stdout once bash exits. */
+const INNER_GRACE_MS = 500;
 
 async function logError(basePath: string, message: string): Promise<void> {
   try {
@@ -102,161 +117,6 @@ export async function readConfig(basePath: string): Promise<WrapperConfig> {
   } catch {
     return fallback;
   }
-}
-
-// Aligned with /history SpeechKindBadge + classifySpeechKind:
-//   high          → critical (red)
-//   medium / med  → warning  (yellow)
-//   low / info    → comment  (gray)   — `low` is Brain's default for benign
-//                                       critiques. Painting it cyan in the
-//                                       terminal bubble contradicts the
-//                                       dashboard's comment badge.
-const SEVERITY_TO_COLOR: Record<string, string> = {
-  high: "red",
-  medium: "yellow",
-  med: "yellow",
-  low: "gray",
-  info: "gray",
-};
-
-function severityToColor(severity: string, fallback: string): string {
-  return SEVERITY_TO_COLOR[severity] ?? fallback;
-}
-
-const ANSI_COLOR_CODES: Record<string, string> = {
-  cyan: "36",
-  green: "32",
-  yellow: "33",
-  magenta: "35",
-  red: "31",
-  blue: "34",
-  white: "37",
-  gray: "90",
-  pink: "38;5;213",
-  hotpink: "38;5;205",
-  coral: "38;5;210",
-  mint: "38;5;121",
-};
-
-function colorize(text: string, colorName: string): string {
-  const code = ANSI_COLOR_CODES[colorName] ?? ANSI_COLOR_CODES.cyan!;
-  return `\x1b[${code}m${text}\x1b[0m`;
-}
-
-function _renderBubbleLine(bubble: string, colorName: string): string {
-  return colorize(`"${bubble}"`, colorName);
-}
-
-function tokenize(text: string): string[] {
-  // Split on whitespace OR just after CJK fullwidth punctuation.
-  // Excludes ASCII . , ! ? on purpose so file paths (queries.py),
-  // version strings, and numbers stay intact.
-  return text.split(/(?:\s+|(?<=[，。！？]))/).filter((t) => t !== "");
-}
-
-function wrapBubble(text: string, maxWidth: number, maxLines: number): string[] {
-  if (maxWidth <= 0 || visualWidth(text) <= maxWidth) return [text];
-
-  const words = tokenize(text);
-  const lines: string[] = [];
-  let cur = "";
-  const endsWithCjkPunct = (s: string): boolean => /[，。！？]$/.test(s);
-  for (const w of words) {
-    const sep = !cur || endsWithCjkPunct(cur) ? "" : " ";
-    const tryNext = `${cur}${sep}${w}`;
-    if (visualWidth(tryNext) <= maxWidth) {
-      cur = tryNext;
-    } else {
-      if (cur) lines.push(cur);
-      cur = w;
-    }
-  }
-  if (cur) lines.push(cur);
-
-  // Words can themselves exceed maxWidth (long CJK token, URL, etc.).
-  // Split any oversized line by visual width.
-  const flat: string[] = [];
-  for (const line of lines) {
-    if (visualWidth(line) <= maxWidth) {
-      flat.push(line);
-      continue;
-    }
-    let rest = line;
-    while (visualWidth(rest) > maxWidth) {
-      const chunk = truncateToVisualWidth(rest, maxWidth);
-      flat.push(chunk);
-      rest = rest.slice(chunk.length);
-    }
-    if (rest) flat.push(rest);
-  }
-
-  if (flat.length > maxLines) {
-    const kept = flat.slice(0, maxLines);
-    const idx = maxLines - 1;
-    const last = kept[idx]!;
-    const trimmed = truncateToVisualWidth(last, Math.max(0, maxWidth - 3));
-    kept[idx] = `${trimmed}...`;
-    return kept;
-  }
-  return flat;
-}
-
-/**
- * `[10:44 AM]: ` from an epoch-ms stamp, or "" when there is nothing to stamp.
- *
- * The trailing colon makes the line read as speech — `[10:44 AM]: "…"` is
- * someone saying something at a time, which is what a pet bubble is. Without
- * it the stamp sits next to the quote like a label on a log row.
- *
- * 12-hour with the meridiem, not 24-hour: this line is matched against the
- * reader's own memory of the session, and that memory is "before lunch", not
- * "before 12:00". A bare `[01:15]` is also genuinely ambiguous on a machine
- * that has been awake across both — the hour is the half of the stamp that
- * does the work, so it must not be the half that can be read two ways.
- *
- * Hours are NOT zero-padded (`9:05 AM`, not `09:05 AM`) — that is the
- * conventional 12-hour form, and the leading zero reads as a 24-hour clock,
- * which is the exact confusion the meridiem is here to remove. Minutes stay
- * padded, because `9:5` is not a time.
- */
-export function bubbleTimeStamp(atMs: number | undefined): string {
-  if (atMs === undefined || !Number.isFinite(atMs) || atMs <= 0) return "";
-  const d = new Date(atMs);
-  const h24 = d.getHours();
-  const meridiem = h24 < 12 ? "AM" : "PM";
-  // Midnight and noon are the two the modulo gets wrong: 0 % 12 and 12 % 12
-  // are both 0, and "0:15 AM" is not a time anyone writes.
-  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `[${h12}:${mm} ${meridiem}]: `;
-}
-
-/**
- * The bubble carries WHEN it was said.
- *
- * Without it the pet's line looks the same at one minute old and at
- * twenty-nine — the bubble only clears at 30 minutes (`DEFAULT_STALE_MS`) —
- * so a review of earlier work reads as a review of the turn you just
- * finished, and a reader assumes it is about the turn they just made.
- *
- * A clock time, not an age: it costs the same width every render (no reflow
- * as "2m" becomes "12m"), and it is what a reader matches against their own
- * memory of the session. Everything else about a review — which files, what
- * evidence, which branch — stays in the dashboard timeline; this line is the
- * one fact that has to travel with the sentence.
- */
-function buildBubbleBlock(
-  bubble: string,
-  colorName: string,
-  faceWidth: number,
-  termWidth: number,
-  atMs?: number,
-): string {
-  const quoted = `${bubbleTimeStamp(atMs)}"${bubble}"`;
-  const effective = termWidth > 0 ? termWidth : 160;
-  const available = Math.max(20, effective - faceWidth - 2);
-  const wrapped = wrapBubble(quoted, available, 3);
-  return wrapped.map((l) => colorize(l, colorName)).join("\n");
 }
 
 function detectTermWidth(): number {
@@ -379,6 +239,57 @@ function applyAura(faceBlock: string, glyph: string | undefined): string {
   return [top, ...middle, bottom].join("\n");
 }
 
+/**
+ * Run the user's own statusline command (inner.txt).
+ *
+ * It had no time limit: one that hung held the whole statusline. Past the
+ * limit it is stopped (SIGTERM, then SIGKILL) and the caller renders the face
+ * alone; a child of it still holding stdout after it exits is cut the same way.
+ */
+async function runInner(
+  innerCommand: string,
+  options: WrapperOptions,
+): Promise<{ stdout: string; exitCode: number; timedOut: boolean; limitMs: number }> {
+  const useReplay = typeof options.innerStdin === "string";
+  const proc = Bun.spawn(["bash", "-c", innerCommand], {
+    stdin: useReplay ? "pipe" : "inherit",
+    stderr: "inherit",
+    stdout: "pipe",
+  });
+  if (useReplay && proc.stdin) {
+    proc.stdin.write(options.innerStdin!);
+    proc.stdin.end();
+  }
+  const limitMs = options.innerTimeoutMs ?? INNER_TIMEOUT_MS;
+  let timedOut = false;
+  // A command that already exited is not over the limit, even while a child of
+  // it still holds stdout through the drain grace.
+  let exited = false;
+  proc.exited.then(
+    () => {
+      exited = true;
+    },
+    () => {
+      exited = true;
+    },
+  );
+  const timer = setTimeout(() => {
+    if (exited) return;
+    timedOut = true;
+    try {
+      stopProcess(proc, INNER_GRACE_MS);
+    } catch {
+      // already gone
+    }
+  }, limitMs);
+  try {
+    const { stdout, exitCode } = await drainProcess({ stdout: proc.stdout, exited: proc.exited }, INNER_GRACE_MS);
+    return { stdout, exitCode, timedOut, limitMs };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function runWrapper(options: WrapperOptions): Promise<string> {
   const innerPath = join(options.basePath, "inner.txt");
 
@@ -405,20 +316,13 @@ export async function runWrapper(options: WrapperOptions): Promise<string> {
     }
 
     try {
-      const useReplay = typeof options.innerStdin === "string";
-      const proc = Bun.spawn(["bash", "-c", innerCommand], {
-        stdin: useReplay ? "pipe" : "inherit",
-        stderr: "inherit",
-        stdout: "pipe",
-      });
-      if (useReplay && proc.stdin) {
-        proc.stdin.write(options.innerStdin!);
-        proc.stdin.end();
+      const inner = await runInner(innerCommand, options);
+      if (inner.timedOut) {
+        await logError(options.basePath, `Inner command took over ${inner.limitMs} ms; stopped`);
+        return spliceFace(options, "");
       }
-
-      stdout = await new Response(proc.stdout).text();
-      const exitCode = await proc.exited;
-
+      stdout = inner.stdout;
+      const exitCode = inner.exitCode;
       if (exitCode !== 0) {
         await logError(
           options.basePath,
@@ -433,6 +337,46 @@ export async function runWrapper(options: WrapperOptions): Promise<string> {
   }
 
   return spliceFace(options, stdout);
+}
+
+interface Said {
+  text: string | undefined;
+  color: string;
+  /** When it was said; undefined for the config default, which nobody said. */
+  atMs: number | undefined;
+}
+
+/**
+ * What the bubble says. A latched reviewer comes first: it stops every later
+ * review until someone clears it, and nothing else on the statusline says so
+ * (audit [48]). Then a fresh review, then the config default.
+ *
+ * Only the latch — a breaker on a timer reopens by itself within the hour.
+ */
+function pickBubble(
+  cfg: WrapperConfig,
+  fresh: { bubble_short?: string; severity: string; last_updated_ms?: number } | null,
+  stoppedAtMs: number | null,
+  agent: string | undefined,
+  alert?: FaceAlert,
+): Said {
+  if (stoppedAtMs !== null) {
+    // A non-Claude host has no slash commands (same invariant as the setup
+    // nudges, tests/plugin/host-aware-nudge.test.ts).
+    const how = agent ? "ask your agent to wake Siltpoke" : "run /siltpoke:siltpoke-wake";
+    return { text: `I stopped reviewing — ${how}`, color: "red", atMs: stoppedAtMs };
+  }
+  // A prompt-injection alert stays until a clean review in that project clears
+  // it, so it is read whether or not the state is stale, and it outranks a fresh review.
+  if (alert !== undefined) return { text: alert.text, color: "red", atMs: alert.at };
+  if (fresh !== null) {
+    return {
+      text: fresh.bubble_short,
+      color: severityToColor(fresh.severity, cfg.bubbleColor),
+      atMs: fresh.last_updated_ms,
+    };
+  }
+  return { text: cfg.bubble, color: cfg.bubbleColor, atMs: undefined };
 }
 
 // Compose Siltpoke's face beside the inner statusline output. `stdout` is the
@@ -454,10 +398,8 @@ async function spliceFace(
     const stateFresh = state !== null && !isStale(state);
 
     const mood = stateFresh ? state?.mood : "happy";
-    const bubbleText = stateFresh ? state?.bubble_short : cfg.bubble;
-    const bubbleColor = stateFresh
-      ? severityToColor(state?.severity, cfg.bubbleColor)
-      : cfg.bubbleColor;
+    const stoppedAtMs = latchedSinceMs(await readBrainHealthAsync(options.basePath));
+    const said = pickBubble(cfg, stateFresh ? state : null, stoppedAtMs, options.agent, state?.alert);
     const termWidth =
       options.termWidth ??
       (cfg.terminalWidth > 0 ? cfg.terminalWidth : detectTermWidth());
@@ -474,17 +416,13 @@ async function spliceFace(
     const appendSeg = (s: string): string =>
       tasklistSeg ? `${s.replace(/\n+$/, "")}\n${tasklistSeg}` : s;
 
-    if (cfg.minimalMode) {
-      if (!bubbleText) return appendSeg(stdout);
-      const bubbleBlock = buildBubbleBlock(
-        bubbleText,
-        bubbleColor,
-        0,
-        termWidth,
-        stateFresh ? state?.last_updated_ms : undefined,
-      );
-      return appendSeg(`${stdout.replace(/\n+$/, "")}\n\n${bubbleBlock}`);
-    }
+    // The inner column with the bubble under it, or untouched when nothing is said.
+    const withBubble = (faceWidth: number): string =>
+      said.text
+        ? `${stdout.replace(/\n+$/, "")}\n\n${buildBubbleBlock(said.text, said.color, faceWidth, termWidth, said.atMs, options.nowMs)}`
+        : stdout;
+
+    if (cfg.minimalMode) return appendSeg(withBubble(0));
 
     const progression = await readProgression(options.basePath);
     const pose = stateFresh ? state?.pose : undefined;
@@ -503,10 +441,7 @@ async function spliceFace(
     );
     const auraGlyph = pickAuraGlyph(progression.level ?? 1);
     const face = applyAura(rawFace, auraGlyph);
-    const faceWidth = widestLine(face);
-    const inner = bubbleText
-      ? `${stdout.replace(/\n+$/, "")}\n\n${buildBubbleBlock(bubbleText, bubbleColor, faceWidth, termWidth, stateFresh ? state?.last_updated_ms : undefined)}`
-      : stdout;
+    const inner = withBubble(widestLine(face));
     return composeOutput({ face, inner: appendSeg(inner), termWidth });
   } catch (err) {
     await logError(options.basePath, `Face splice failed, falling through: ${err}`);

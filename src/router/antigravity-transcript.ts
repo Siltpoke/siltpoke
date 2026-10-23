@@ -24,9 +24,15 @@
  *                       <ADDITIONAL_METADATA>/<USER_SETTINGS_CHANGE> blocks
  *                       that are agy bookkeeping, never surfaced)
  * - PLANNER_RESPONSE -> assistant text turn (from `content`, when present)
- *                       AND/OR one tool_use per `write_to_file` tool_call
- *                       (`args.TargetFile` -> Write; mirrors
- *                       patchApplyToToolUses in codex-transcript.ts).
+ *                       AND/OR one tool_use per edit tool_call
+ *                       (`write_to_file` -> Write; `replace_file_content` /
+ *                       `multi_replace_file_content` -> Edit; path from
+ *                       `args.TargetFile`; mirrors patchApplyToToolUses in
+ *                       codex-transcript.ts). The Antigravity desktop app
+ *                       (2.0.6, captured 2026-09-30) records edits this way —
+ *                       structured `replace_file_content`, no CODE_ACTION —
+ *                       and without it every desktop turn read as
+ *                       "no_code_changes".
  *                       `thinking` is internal agy reasoning, never surfaced.
  * - CODE_ACTION     -> assistant tool_use per edited file, WHEN the prose
  *                       `content` carries the agy 1.1.1 "...changes were made
@@ -47,10 +53,13 @@
  *                       Set union would dedupe them.
  * - everything else -> dropped. RUN_COMMAND / VIEW_FILE / LIST_DIRECTORY /
  *                       CHECKPOINT / CONVERSATION_HISTORY carry no
- *                       code-review-relevant content today.
+ *                       code-review-relevant content today. GENERIC (desktop
+ *                       2.0.6) is a tool-result step; it repeats an edit as
+ *                       prose that the PLANNER_RESPONSE tool_call already
+ *                       carries, so it is dropped, not parsed.
  *
- * Deliberately NOT handled yet: (1) non-write_to_file structured tool_calls
- * (e.g. `run_command`); (2) the CODE_ACTION "Created file <url> with requested
+ * Deliberately NOT handled yet: (1) non-edit structured tool_calls
+ * (e.g. `run_command`, `view_file`); (2) the CODE_ACTION "Created file <url> with requested
  * content" new-file phrasing — only the `replace_file_content` edit phrasing
  * has a captured, verified 1.1.1 shape. Follow-ups once a real transcript
  * exhibits them.
@@ -66,6 +75,7 @@ const AGY_STEP_TYPES = new Set([
   "VIEW_FILE",
   "LIST_DIRECTORY",
   "CHECKPOINT",
+  "GENERIC",
 ]);
 
 interface AgyToolCall {
@@ -108,14 +118,31 @@ interface ToolUsePart {
   input: { file_path: string };
 }
 
-function writeToFileToolUses(toolCalls: AgyToolCall[] | undefined): ToolUsePart[] {
+/**
+ * Structured edit tool_calls → tool_use name. All three carry the edited path
+ * in `args.TargetFile`. `replace_file_content` is verified against a real
+ * Antigravity desktop 2.0.6 transcript (tests/fixtures/agy/transcript-desktop-
+ * replace-file-content.jsonl); `multi_replace_file_content` ships in the same
+ * binaries but has not been seen in a captured transcript yet.
+ */
+const EDIT_TOOL_NAMES: Readonly<Record<string, string>> = {
+  write_to_file: "Write",
+  replace_file_content: "Edit",
+  multi_replace_file_content: "Edit",
+};
+
+function editToolUses(toolCalls: AgyToolCall[] | undefined): ToolUsePart[] {
   if (!Array.isArray(toolCalls)) return [];
   const parts: ToolUsePart[] = [];
   for (const call of toolCalls) {
-    if (call?.name !== "write_to_file") continue;
+    const name =
+      typeof call?.name === "string" && Object.hasOwn(EDIT_TOOL_NAMES, call.name)
+        ? EDIT_TOOL_NAMES[call.name]
+        : undefined;
+    if (!name) continue;
     const targetFile = call.args?.TargetFile;
     if (typeof targetFile !== "string" || targetFile.length === 0) continue;
-    parts.push({ type: "tool_use", name: "Write", input: { file_path: targetFile } });
+    parts.push({ type: "tool_use", name, input: { file_path: targetFile } });
   }
   return parts;
 }
@@ -156,7 +183,7 @@ function plannerResponseToAssistant(
   if (typeof step.content === "string" && step.content.trim().length > 0) {
     parts.push({ type: "text", text: step.content });
   }
-  parts.push(...writeToFileToolUses(step.tool_calls));
+  parts.push(...editToolUses(step.tool_calls));
   if (parts.length === 0) return [];
   return [{ type: "assistant", message: { role: "assistant", content: parts }, timestamp }];
 }

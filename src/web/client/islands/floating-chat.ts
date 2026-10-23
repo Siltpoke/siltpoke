@@ -32,14 +32,20 @@
  * the panel into a large centered modal (fixed fullscreen overlay) or back to
  * the default bottom-right corner panel. Escape / backdrop click restore it.
  */
+
 import {
   CHAT_ERROR_FALLBACK_COPY,
   CHAT_STOPPED_MARKER,
   chatErrorCopy,
   makeFailedEntry,
   parseErrorEvent,
+  wholeReplyNote,
 } from "../lib/chat-error-copy";
+import { type CodeAccess, codeAccessChip, codeAccessQuery } from "../lib/chat-code-access";
+import { type CodeMapViewPayload, readCodeMapView, viewChip, viewedMatchesAnchor, viewField } from "../lib/code-map-view";
 import { parseSseChunk } from "../lib/sse-parse";
+import { groupHistory, type HistoryGroup } from "./floating-chat-history";
+import { answerMeta, makeRunsWindow, type RunsWindow, runEventMessageId } from "./floating-chat-runs";
 
 // ── Recall chip ──────────────────────────────────
 //
@@ -255,20 +261,32 @@ export interface ViewedNode {
 
 interface ChatMsg {
   role: "user" | "assistant";
+  /** Stored message id (links an answer to its Runs record) and when it was sent / arrived. */
+  id?: string;
+  at?: string;
   /** For failed/cancelled entries this is the FIXED display copy, never "". */
   text: string;
   /** absent = normal turn; "failed" → error card; "cancelled" → quiet marker */
   status?: "failed" | "cancelled";
   /** classified reason (absent on route-catch failures — copy falls back) */
   error_reason?: string;
+  /** `choose_provider` (live only): the agents found, rendered as buttons. */
+  found?: string[];
+  /** Shown under the buttons when saving the pick failed. */
+  pickNote?: string;
 }
 
 /** Wire shape of GET /api/chat/sessions/:id/messages rows. */
 interface ServerChatMsg {
   role: "user" | "assistant";
+  id?: string;
+  ts?: string;
   text: string;
   status?: string;
   error_reason?: string;
+  /** Agent names as stored — checked against the five by the copy builder. */
+  error_provider?: unknown;
+  error_found?: unknown;
   error_message?: string;
 }
 
@@ -281,10 +299,14 @@ interface ServerChatMsg {
  * none is invented). User rows are never remapped.
  */
 function toDisplayMsg(m: ServerChatMsg): ChatMsg {
+  return { ...displayEntry(m), ...(m.id ? { id: m.id } : {}), ...(m.ts ? { at: m.ts } : {}) };
+}
+
+function displayEntry(m: ServerChatMsg): ChatMsg {
   if (m.status === "failed") {
     return {
       role: m.role,
-      text: chatErrorCopy(m.error_reason),
+      text: chatErrorCopy(m.error_reason, { provider: m.error_provider, found: m.error_found }),
       status: "failed",
       ...(m.error_reason ? { error_reason: m.error_reason } : {}),
     };
@@ -439,7 +461,7 @@ interface AlpineRefs {
   scrollBody?: { scrollTop: number; scrollHeight: number };
 }
 
-export interface FloatingChatData {
+export interface FloatingChatData extends RunsWindow {
   open: boolean;
   historyOpen: boolean;
   /**
@@ -541,6 +563,10 @@ export interface FloatingChatData {
    * node-select; the bridge fires `siltpoke:viewed-changed` → syncViewed()
    * updates this → Alpine re-renders. */
   viewed: ViewedNode | null;
+  /** What the Code Map says is open (repository + selected component), for an
+   * UNPINNED conversation: a component box is not a node and cannot be pinned. */
+  view: CodeMapViewPayload | null;
+  getView: () => CodeMapViewPayload | null;
   _seq: number;
   /**
    * Daemon secret, read in init() from the panel root's `data-secret`
@@ -559,9 +585,9 @@ export interface FloatingChatData {
    *  copy so the tab strip (which renders `conversations` directly) keeps its
    *  own order. Convs without a createdAt sort last (stable otherwise). */
   sortedConversations(): Conversation[];
-  /** Format a conversation's createdAt ISO string for the history row (short
-   *  local date + time). "" when absent so the row simply omits it. */
-  fmtCreated(iso: string | null | undefined): string;
+  /** The history pane's rows: `sortedConversations()` grouped Today /
+   *  Yesterday / This week / Earlier (see `floating-chat-history.ts`). */
+  historyGroups(): HistoryGroup[];
   canAddContext(): boolean;
   /** Node-vs-page COPY selector only; the "+" button is never gated
    * on this (see canAddContext). */
@@ -667,6 +693,12 @@ export interface FloatingChatData {
    * scroll apply). After it lands, the conversation has a message → chips hide.
    */
   sendStarter(prompt: string): Promise<void>;
+  /**
+   * Pick chat's agent from a `choose_provider` card: saves `brain.roles.chat`,
+   * then removes the card and the message before it and sends that message
+   * again. A failed save leaves the card and points at the Settings page.
+   */
+  pickAgent(family: string, entryIndex: number): Promise<void>;
   /** Dispatched when the user makes a desync CTA choice. */
   resolveDesync(choice: "reanchor" | "new"): Promise<void>;
   /** Internal helpers extracted from resolveDesync to reduce complexity. */
@@ -679,7 +711,7 @@ export interface FloatingChatData {
    */
   resolveStale(choice: "freeze" | "continue"): Promise<void>;
   loadSessions(): Promise<void>;
-  openConversation(id: string): Promise<void>;
+  openConversation(id: string, opts?: { restore?: boolean }): Promise<void>;
   deleteConversation(id: string): Promise<void>;
 
   // ── recall ────────────────────────────────────
@@ -720,7 +752,12 @@ export interface FloatingChatData {
   /** Last-fetched `/api/chat/context-preview` result, mapped from the
    *  snake_case wire shape (`page_label`/`facts_count`) to camelCase. `null`
    *  before the first successful fetch. */
-  contextPreview: { pageLabel: string; factsCount: number } | null;
+  contextPreview: { pageLabel: string; factsCount: number; key?: string; codeAccess?: CodeAccess } | null;
+  /** The context-preview question last asked. A data field, not a WeakMap keyed
+   *  by `this`: Alpine hands each template evaluation a NEW merged proxy, so a
+   *  `this`-keyed map never matched and every render asked again — a request
+   *  loop that starved the chat e2e suite (a CI run). */
+  _previewAsked: string;
   /** Fetch `/api/chat/context-preview?page=<pageProvider()>` and store the
    *  mapped result. Fail-open: a non-ok response or a network error leaves
    *  `contextPreview` unchanged (the chip bar just doesn't update this cycle). */
@@ -731,7 +768,12 @@ export interface FloatingChatData {
    *  the same value on every page — user-facts recall injects into every chat
    *  message regardless of the page being viewed, so this is not scoped by
    *  `node`/`page`. */
-  contextChips(): { node: string | null; page: string; facts: number };
+  contextChips(): { node: string | null; page: string; facts: number; code: { label: string; title: string } | null };
+}
+
+function previewKey(self: FloatingChatData): string {
+  const page = `page=${encodeURIComponent(self.pageProvider())}`;
+  return page + codeAccessQuery(self.active(), self.view, self.onGraph());
 }
 
 /** The bridge event repo-graph fires after writing window.__siltpokeViewedNode. */
@@ -779,41 +821,6 @@ function onRepoGraph(): boolean {
   return !!document.querySelector(".rg-host");
 }
 
-/**
- * Extract the node_id from a ViewedNode for desync comparison.
- * For node_id targets (trace view), that's direct.
- * For descriptor targets, the id isn't available client-side — we use a
- * canonical key of `${path}:${name}` to compare. This is safe because
- * the anchor is also stored as a descriptor-based server anchorNodeId only
- * if the client sent a descriptor (the server's node_id comes back via the
- * session anchor metadata). For desync detection we only need to know if the
- * user is looking at the SAME thing — a mismatch on either form → CTA.
- *
- * The real comparison is: if the viewed node's server node_id == conversation
- * anchorNodeId, they match. We can only know the server node_id when the
- * PATCH or create returned it (stored in anchorNodeId). So the FE comparison
- * is: anchorNodeId != null && viewedMatchesAnchor.
- *
- * For a locally-created conv that hasn't received a server reply yet
- * (anchorNodeId = null), we can't compare — treat as in-sync (no CTA).
- */
-function viewedMatchesAnchor(viewed: ViewedNode, anchorNodeId: string): boolean {
-  const t = viewed.target;
-  if ("node_id" in t) {
-    return t.node_id === anchorNodeId;
-  }
-  // Descriptor form — compare the path:name string to anchorNodeId.
-  // The server stores `type:path:name` as the canonical node_id. We need
-  // both the path AND the name to match exactly:
-  //   - endsWith(`:${t.name}`) checks the name segment (colon-delimited, so
-  //     "Fn" won't match "myFn" via suffix — `:myFn` ≠ `:Fn`).
-  //   - includes(`:${t.path}:`) anchors the path between colons to prevent a
-  //     prefix match: `src/foo` matching `src/fooBar.ts` is a false positive.
-  //     With `:src/foo.ts:` the match is exact for the path
-  //     segment (type:PATH:name — colon on both sides of path).
-  return anchorNodeId.endsWith(`:${t.name}`) && anchorNodeId.includes(`:${t.path}:`);
-}
-
 /** Build the ChatAnchorRef from a ViewedNode for the PATCH re-anchor call. */
 function anchorRefFrom(v: ViewedNode): { proj_hash: string } & (
   | { node_id: string }
@@ -845,9 +852,12 @@ export function makeFloatingChatData(
      *  reading `location.pathname` (falls back to `"/"` when `location` is
      *  undefined, e.g. non-browser test environments). */
     pageProvider?: () => string;
+    /** Injectable for tests; defaults to reading the Code Map's bridge global. */
+    getView?: () => CodeMapViewPayload | null;
   } = {},
 ): FloatingChatData {
   return {
+    ...makeRunsWindow(fetchFn),
     open: false,
     historyOpen: false,
     maximized: false,
@@ -881,7 +891,7 @@ export function makeFloatingChatData(
       const conv = (this as FloatingChatData).active();
       return conv?.terminalCta ?? null;
     },
-    viewed: null,
+    viewed: null, view: null, getView: deps.getView ?? readCodeMapView, // the two bridges' mirrors
     _seq: 0,
     secret: "",
     getViewed: deps.getViewed ?? readViewed,
@@ -889,10 +899,11 @@ export function makeFloatingChatData(
     // ── context transparency bar ─────────────────────────────────
     pageProvider: deps.pageProvider ?? (() => (typeof location !== "undefined" ? location.pathname : "/")),
     contextPreview: null,
+    _previewAsked: "",
 
     /** Pull the current bridge value into the reactive mirror. */
     syncViewed() {
-      this.viewed = this.getViewed();
+      [this.viewed, this.view] = [this.getViewed(), this.onGraph() ? this.getView() : null];
     },
 
     /** Alpine lifecycle — seed the mirror + subscribe to the bridge event so
@@ -914,15 +925,11 @@ export function makeFloatingChatData(
       }
       if (typeof window !== "undefined") {
         window.addEventListener(VIEWED_CHANGED_EVENT, () => this.syncViewed());
-        // Collapse the panel to the 💬 launcher when the user navigates to
-        // another page. hx-preserve keeps the conversation alive across the
-        // boost morph (one click on 💬 brings it back); we only tidy the panel
-        // away. Bind to several nav signals so it fires regardless of htmx
-        // version / nav style: a boosted request (sidebar links — collapses on
-        // click, before the swap), browser back/forward (popstate), and the
-        // history-push event (fallback). Gated on `boosted` so a non-nav htmx
-        // request never collapses the panel. Once-bound (init runs once) on
-        // body/window which survive the morph → no listener-drop pitfall.
+        // Collapse the panel to the 💬 launcher on navigation (hx-preserve keeps
+        // the conversation; one click brings it back). Several nav signals so it
+        // fires whatever the htmx version: a boosted request (before the swap),
+        // popstate, and history-push. Gated on `boosted` so a non-nav request
+        // never collapses it. Once-bound on body/window, which survive the morph.
         document.body.addEventListener("htmx:beforeRequest", (e: Event) => {
           const detail = (e as CustomEvent).detail as { boosted?: boolean } | undefined;
           if (detail?.boosted) this._collapsePanel();
@@ -1033,14 +1040,8 @@ export function makeFloatingChatData(
       });
     },
 
-    fmtCreated(iso) {
-      if (!iso) return "";
-      const d = new Date(iso);
-      if (Number.isNaN(d.getTime())) return "";
-      // Short, locale-aware: "Jun 23, 20:38" style — date + 24h time, no seconds.
-      const date = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-      const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-      return `${date} · ${time}`;
+    historyGroups() {
+      return groupHistory(this.sortedConversations());
     },
 
     /** A chat can always be started, from any page: the current
@@ -1209,19 +1210,22 @@ export function makeFloatingChatData(
             messages: [],
             count: s.message_count,
           }));
-          if (this.conversations.length > 0) await this.openConversation(this.conversations[0].id);
+          if (this.conversations.length > 0) {
+            await this.openConversation(this.conversations[0].id, { restore: true });
+          }
         }
       } catch (err) {
         this.error = err instanceof Error ? err.message : String(err);
       }
     },
 
-    async openConversation(id: string) {
+    async openConversation(id: string, opts: { restore?: boolean } = {}) {
       const conv = this.conversations.find((c) => c.id === id);
       if (!conv) return;
       // Clear any sticky history-load error so a transient failure banner doesn't
       // shadow a now-working conversation view.
       this.error = null;
+      const activeAtStart = this.activeId;
       if (conv.messages.length === 0 && (conv.count ?? 0) > 0 && conv.serverSessionId) {
         try {
           const res = await fetchFn(`/api/chat/sessions/${conv.serverSessionId}/messages`);
@@ -1241,9 +1245,17 @@ export function makeFloatingChatData(
           /* keep empty; non-fatal */
         }
       }
+      // The page-load restore runs in the background and can finish after the
+      // user has acted. If they started or picked another conversation while it
+      // was fetching, theirs stays on screen: the restored one keeps the
+      // messages it just loaded and nothing else changes.
+      if (opts.restore && this.activeId !== activeAtStart) return;
       this.activeId = id;
-      this.historyOpen = false;
-      (this as FloatingChatData).recallOpen = false;
+      // Same reason: closing a list the user opened meanwhile snaps it shut
+      // under the pointer. Only a conversation the user picked closes the
+      // related-chats list. The history pane stays open on any pick: it sits
+      // beside the chat, like Runs, and closes from its own button.
+      if (!opts.restore) (this as FloatingChatData).recallOpen = false;
       // Auto-scroll: when opening/switching a conversation, land at the latest
       // message (deferred so the rehydrated messages have rendered first).
       this._deferScroll();
@@ -1265,7 +1277,20 @@ export function makeFloatingChatData(
       const conv = this.conversations.find((c) => c.id === id);
       if (conv?.serverSessionId) {
         try {
-          await fetchFn(`/api/chat/sessions/${conv.serverSessionId}`, { method: "DELETE" });
+          const res = await fetchFn(`/api/chat/sessions/${conv.serverSessionId}`, {
+            method: "DELETE",
+            headers: { "X-Siltpoke-Secret": this.secret },
+          });
+          // Refused (a stale page's secret after a daemon restart, say): the chat
+          // is still on the server and would come back on reload, so keep it here
+          // and say so rather than hide it (review of the secret gate).
+          if (!res.ok) {
+            this.error =
+              res.status === 401
+                ? "Could not delete this chat: this page is out of date. Reload it and try again."
+                : `Could not delete this chat (HTTP ${res.status}).`;
+            return;
+          }
         } catch {
           /* still drop locally */
         }
@@ -1418,14 +1443,13 @@ export function makeFloatingChatData(
     async refreshContextPreview(): Promise<void> {
       const self = this as FloatingChatData;
       try {
-        const page = self.pageProvider();
-        const res = await fetchFn(`/api/chat/context-preview?page=${encodeURIComponent(page)}`);
+        const key = previewKey(self);
+        self._previewAsked = key;
+        const res = await fetchFn(`/api/chat/context-preview?${key}`);
         if (!res.ok) return; // fail-open — keep the last-known preview
-        const data = (await res.json()) as { page_label?: string; facts_count?: number };
-        self.contextPreview = {
-          pageLabel: data.page_label ?? "",
-          factsCount: data.facts_count ?? 0,
-        };
+        const data = (await res.json()) as { page_label?: string; facts_count?: number; code_access?: CodeAccess };
+        if (self._previewAsked !== key) return; // a newer question was asked
+        self.contextPreview = { pageLabel: data.page_label ?? "", factsCount: data.facts_count ?? 0, key, codeAccess: data.code_access };
       } catch {
         // fail-open — a network error just leaves the chip bar stale for
         // this cycle; the next open/send retries.
@@ -1435,10 +1459,17 @@ export function makeFloatingChatData(
     contextChips() {
       const self = this as FloatingChatData;
       const conv = self.active();
+      // A switched conversation or project asks again; until the answer lands
+      // the code chip is hidden rather than showing the old one.
+      const key = previewKey(self);
+      if (self.open && self._previewAsked !== key) void self.refreshContextPreview();
+      const fresh = self.contextPreview?.key === key ? self.contextPreview.codeAccess : undefined;
       return {
         node: conv?.pin ?? null,
-        page: self.contextPreview?.pageLabel ?? "",
+        page: viewChip(self.contextPreview?.pageLabel ?? "", self.onGraph() ? self.view : null),
         facts: self.contextPreview?.factsCount ?? 0,
+        // No conversation yet = no next message to describe.
+        code: conv ? codeAccessChip(fresh, self.onGraph() || !!conv.pin) : null,
       };
     },
 
@@ -1492,7 +1523,7 @@ export function makeFloatingChatData(
       // a conversation mid-stream never misroutes the reply or shows its dots.
       const convId = conv.id;
 
-      this._appendMsg(convId, { role: "user", text });
+      this._appendMsg(convId, { role: "user", text, at: new Date().toISOString() });
       this.draft = "";
       this.error = null;
       this.streaming = true;
@@ -1522,7 +1553,7 @@ export function makeFloatingChatData(
       // Every request carries the current page so the backend's
       // context-transparency preview (and future page-scoped recall) stays
       // aligned with what the user is looking at when they send.
-      const body: Record<string, unknown> = { message: text, page: this.pageProvider() };
+      const body: Record<string, unknown> = { message: text, page: this.pageProvider(), ...viewField(!!(conv.anchor || conv.critiqueAnchor), this.view, this.onGraph()) };
       if (conv.serverSessionId) body.session_id = conv.serverSessionId;
       // critique_anchor and anchor are siblings on the wire — mutually
       // exclusive BY CONSTRUCTION (an `if`/`else if` chain, not independent
@@ -1538,9 +1569,10 @@ export function makeFloatingChatData(
       if (anchorDecision !== undefined) body.anchor_decision = anchorDecision;
 
       let buffer = "";
+      let runMsgId: string | undefined; // the stored answer id, from the `run` event
       // Set when the server sends a classified `error` event; the failure
       // renders as an in-transcript card in the ORIGINATING conversation.
-      let streamFailure: { reason?: string } | null = null;
+      let streamFailure: ReturnType<typeof parseErrorEvent> | null = null;
       try {
         const res = await fetchFn("/api/chat", {
           method: "POST",
@@ -1672,6 +1704,14 @@ export function makeFloatingChatData(
               } catch {
                 /* partial JSON — not an error */
               }
+            } else if (ev.name === "message_start") {
+              // An agent other than claude answers in one piece: say so beside
+              // the dots, or a long silent wait looks stuck (defect [49], AC8).
+              const note = wholeReplyNote(ev.data);
+              if (note) {
+                this.phase = "whole_reply";
+                this.phaseDetail = note;
+              }
             } else if (ev.name === "phase") {
               // Server-reported stage, each one carried by a real `claude -p`
               // event (see chat-stream.ts's StreamEvent doc). Rendered as text
@@ -1685,6 +1725,8 @@ export function makeFloatingChatData(
               } catch {
                 /* partial JSON — leave the previous phase showing */
               }
+            } else if (ev.name === "run") {
+              runMsgId = runEventMessageId(ev.data);
             } else if (ev.name === "error") {
               // The raw server error string is never rendered — only the
               // classified reason maps (via fixed copy) to what the user sees.
@@ -1695,12 +1737,12 @@ export function makeFloatingChatData(
         if (streamFailure) {
           // Failed turn → id-routed in-transcript error card. Any partial
           // buffer is dropped (mirrors the server persisting content "").
-          this._appendMsg(convId, makeFailedEntry(streamFailure.reason));
+          this._appendMsg(convId, { ...makeFailedEntry(streamFailure.reason, streamFailure), ...answerMeta(runMsgId) });
           if (this.activeId === convId) this._deferScroll();
         } else if (buffer.length > 0) {
           // Id-routed append — the reply lands in the ORIGINATING conv even if
           // the user switched conversations while the stream was in flight.
-          this._appendMsg(convId, { role: "assistant", text: buffer });
+          this._appendMsg(convId, { role: "assistant", text: buffer, ...answerMeta(runMsgId) });
           // Auto-scroll only when the originating conv is still the active one
           // (don't yank a different conv the user navigated to).
           if (this.activeId === convId) this._deferScroll();
@@ -1715,7 +1757,7 @@ export function makeFloatingChatData(
           // Defense: the server always classifies an empty stream as
           // empty_exit, but if the stream ends silently anyway, render the
           // same card — a sent message must never just vanish.
-          this._appendMsg(convId, makeFailedEntry("empty_exit"));
+          this._appendMsg(convId, { ...makeFailedEntry("empty_exit"), ...answerMeta(runMsgId) });
           if (this.activeId === convId) this._deferScroll();
         }
       } catch (err) {
@@ -1740,7 +1782,11 @@ export function makeFloatingChatData(
               role: "assistant",
               text: CHAT_STOPPED_MARKER,
               status: "cancelled",
+              ...answerMeta(undefined),
             });
+            // The stopped call's record is written after the CLI is killed:
+            // look again shortly, or the open Runs pane misses it.
+            setTimeout(() => void this.syncRuns(), 1500);
             if (this.activeId === convId) this._deferScroll();
           }
         } else {
@@ -1757,6 +1803,8 @@ export function makeFloatingChatData(
         this.streamingConvId = null;
         this.abortController = null;
       }
+      // A new answer has a new record: the open Runs pane appends it.
+      void this.syncRuns();
       // Refresh the transparency-bar preview after a send that
       // actually exchanged a message (success or network error). Deliberately
       // OUTSIDE the try/finally: the blocked-signal branches above (`return`
@@ -1975,6 +2023,9 @@ export function makeFloatingChatData(
         case "thinking":
           // The detail is the CLI's own running token estimate.
           return this.phaseDetail ? `thinking · ${this.phaseDetail} tokens` : "thinking";
+        case "whole_reply":
+          // The sentence was built from the server's start event (wholeReplyNote).
+          return this.phaseDetail ?? "";
         default:
           return "";
       }
@@ -2071,6 +2122,62 @@ export function makeFloatingChatData(
     async sendStarter(prompt: string) {
       this.draft = prompt;
       await this.send();
+    },
+
+    async pickAgent(family: string, entryIndex: number) {
+      const conv = this.active();
+      if (!conv || this.streaming) return;
+      const entry = conv.messages[entryIndex];
+      if (entry?.status !== "failed" || !entry.found?.includes(family)) return;
+      const convId = conv.id;
+      let saved = false;
+      try {
+        const res = await fetchFn("/api/brain/roles/chat", {
+          method: "POST",
+          headers: { "content-type": "application/json", "X-Siltpoke-Secret": this.secret },
+          body: JSON.stringify({ family }),
+        });
+        saved = res.ok;
+      } catch {
+        saved = false;
+      }
+      const live = this.conversations.find((c) => c.id === convId);
+      if (!live) return;
+      const note = (pickNote: string) =>
+        this._patchConv(convId, { messages: live.messages.map((m) => (m === entry ? { ...m, pickNote } : m)) });
+      if (!saved) {
+        note("could not save — set it on the Settings page");
+        return;
+      }
+      const at = live.messages.indexOf(entry);
+      if (at < 0) return;
+      const prev = live.messages[at - 1];
+      const resend = prev?.role === "user" && !prev.status ? prev.text : null;
+      // Everything that would stop send() is checked BEFORE the question leaves
+      // the panel: the user may have switched conversation or sent something
+      // else while the save was in flight.
+      const canResend =
+        resend !== null &&
+        this.activeId === convId &&
+        !this.streaming &&
+        this.staleCta === null &&
+        this.blockedCta === null &&
+        this.terminalCta == null;
+      if (!canResend) {
+        note("saved — send your message again");
+        return;
+      }
+      // send() appends the user bubble again, so the failed attempt (card and
+      // the message before it) leaves the panel first. The server's history
+      // keeps both: that is the record of what happened.
+      this._patchConv(convId, { messages: live.messages.filter((_, i) => i < at - 1 || i > at) });
+      // send() reads and clears the draft before its first await; whatever the
+      // user had typed meanwhile is put back right after.
+      const typed = this.draft;
+      this.draft = resend;
+      const sending = this.send();
+      this.draft = typed;
+      await sending;
     },
   };
 }

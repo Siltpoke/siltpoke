@@ -8,7 +8,7 @@ import { brainView, formatBrainShow, runBrainCli, runBrainSet, setReviewByBuilde
 import { loadBrainConfigSync } from "../../src/brain/brain-config";
 
 /**
- * Slice C / Task 7 — the `/siltpoke-brain` model-select surface.
+ * Slice C / Task 7 — the `/siltpoke:siltpoke-brain` model-select surface.
  *
  * The command reads + writes the SAME `brain.roles.review` config the daemon
  * settings screen (T8) writes: one source of truth. It is args-driven (no TTY),
@@ -98,15 +98,8 @@ describe("runBrainSet — writes brain.roles.review, preserves everything else",
   // The dashboard's half was client-side only (role-row.ts drops the field), so
   // POST /api/brain/roles/:role — which calls straight into here — was the way
   // past every guard. The check belongs here, where all four entry points land.
-  test("rejects a model for codex — its spawn argv never carries one", () => {
-    const res = runBrainSet(home, "review", "codex", "gpt-5.5");
-    expect(res.ok).toBe(false);
-    expect(res.message).toMatch(/model|codex|config/i);
-    expect(existsSync(join(home, "config.json"))).toBe(false);
-  });
-
   test("accepts a model for every family whose argv carries one", () => {
-    for (const family of ["claude", "agy", "qoder", "codebuddy"] as const) {
+    for (const family of ["claude", "agy", "qoder", "codebuddy", "codex"] as const) {
       rmSync(join(home, "config.json"), { force: true });
       const res = runBrainSet(home, "review", family, "some-model");
       expect(res.ok).toBe(true);
@@ -253,11 +246,10 @@ describe("setReviewByBuilder — per-builder review overrides (Brain select v2 T
     });
   });
 
-  test("rejects a model on codex — its spawn argv has no -m, writes nothing", () => {
-    const res = setReviewByBuilder(home, "agy", "codex", "gpt-5");
-    expect(res.ok).toBe(false);
-    expect(res.message).toMatch(/model|codex|config/i);
-    expect(existsSync(join(home, "config.json"))).toBe(false);
+  test("accepts a model on codex — its argv carries -m", () => {
+    const res = setReviewByBuilder(home, "agy", "codex", "gpt-5.6-luna");
+    expect(res.ok).toBe(true);
+    expect((readConfig().brain as any).review_by_builder.agy).toEqual({ provider: "codex", model: "gpt-5.6-luna" });
   });
 
   test("second builder entry merges, does not clobber the first", () => {
@@ -288,10 +280,10 @@ describe("runBrainCli set-builder verb (Brain select v2 T2)", () => {
     });
   });
 
-  test('"set-builder agy codex <model>" rejected — codex never receives one', () => {
-    const res = runBrainCli(["set-builder", "agy", "codex", "gpt-5"], home);
-    expect(res.ok).toBe(false);
-    expect(existsSync(join(home, "config.json"))).toBe(false);
+  test('"set-builder agy codex <model>" accepted — the codex argv carries -m', () => {
+    const res = runBrainCli(["set-builder", "agy", "codex", "gpt-5.6-luna"], home);
+    expect(res.ok).toBe(true);
+    expect((readConfig().brain as any).review_by_builder.agy).toEqual({ provider: "codex", model: "gpt-5.6-luna" });
   });
 
   test("set-builder missing args → usage error", () => {
@@ -400,5 +392,57 @@ describe("runBrainCli set-builder verb (Brain select v2 T2)", () => {
       expect(out).toMatch(/picked-model/);
       expect(out).not.toMatch(/CLI default/);
     }
+  });
+});
+
+// Windows Run 4 (install audit §110 W7): `set review codex` with no codex on the
+// machine answered only "review brain set to codex"; the next review failed.
+describe("set says when the chosen agent is not installed", () => {
+  const none = { which: () => null, fileExists: () => false };
+  const codexHere = { which: (b: string) => (b === "codex" ? "/usr/local/bin/codex" : null), fileExists: () => false };
+
+  test("not installed -> saved, and a ⚠ line naming the command", () => {
+    const res = runBrainCli(["set", "review", "codex"], home, none);
+    expect(res.ok).toBe(true);
+    expect(res.message).toContain("review brain set to codex");
+    expect(res.message).toContain("⚠ codex is not installed");
+    expect(res.message).toContain("`codex`");
+    expect(readFileSync(join(home, "config.json"), "utf8")).toContain('"codex"');
+  });
+
+  test("qoder's command is qodercli", () => {
+    expect(runBrainCli(["set", "review", "qoder"], home, none).message).toContain("`qodercli`");
+  });
+
+  test("off PATH but recorded by a hook (last-host) -> installed, no warning", () => {
+    writeFileSync(join(home, "last-host"), "codex\n/opt/elsewhere/codex\n");
+    const recorded = { which: () => null, fileExists: (p: string) => p === "/opt/elsewhere/codex" };
+    expect(runBrainCli(["set", "review", "codex"], home, recorded).message).not.toContain("⚠");
+  });
+
+  test("a model argument does not change the warning", () => {
+    expect(runBrainCli(["set", "review", "claude", "claude-opus-4-8"], home, none).message).toContain("⚠ claude is not installed");
+  });
+
+  test("installed -> no warning", () => {
+    expect(runBrainCli(["set", "review", "codex"], home, codexHere).message).not.toContain("⚠");
+  });
+
+  test("set-builder warns about the reviewer, not the builder", () => {
+    const res = runBrainCli(["set-builder", "codex", "agy"], home, codexHere);
+    expect(res.message).toContain("⚠ agy is not installed");
+    expect(runBrainCli(["set-builder", "agy", "codex"], home, codexHere).message).not.toContain("⚠");
+  });
+
+  test("a rejected set gets no warning, and nothing is written", () => {
+    const res = runBrainCli(["set", "review", "gpt5"], home, none);
+    expect(res.ok).toBe(false);
+    expect(res.message).not.toContain("⚠");
+  });
+
+  test("a rejected set with a real family (bad role) stays rejected", () => {
+    const res = runBrainCli(["set", "nonsense", "codex"], home, none);
+    expect(res.ok).toBe(false);
+    expect(res.message).not.toContain("⚠");
   });
 });

@@ -24,20 +24,36 @@
 import type { C4Model, C4Node } from "./repo-graph-c4-model";
 // Pure keyspace fn (shared with the server — ONE-source discipline);
 // safe in the client bundle, no fs/server imports behind it.
-import { bucketIdOfPath } from "../../../repo-graph/project-architecture";
+import { bucketIdOfPath, subdirsWithPath } from "../../../repo-graph/project-architecture";
 import type { SiltpokeNodeType } from "../../../repo-graph/types";
 import {
   deriveC4FromProjection,
   type DerivableProjection,
 } from "./repo-graph-c4-derive";
 import { archDocToC4Model, edgeTierKey, type TierMap } from "./repo-graph-c4-adapter";
+import { updateGroundedChip } from "./repo-graph-grounded-chip";
+import { updateUndrawn } from "./repo-graph-undrawn";
+import { fetchIndexVerdict, freshnessOf, indexStaleLine, panelIndexNote, type IndexFreshness } from "./repo-graph-index-freshness";
+import type { UndrawnSummary } from "../../../repo-graph/undrawn-files";
+import { c4EdgeDashed, loadLatestTrust, restyleGeneratedEdges, type TrustState } from "./repo-graph-trust-edges";
 import { badgeLabel, breakdownRows } from "../../../repo-graph/container-stats-labels";
 import { sumContainerStats, type ContainerStats } from "../../../repo-graph/container-stats";
 import { HONEST_NOTES } from "../../../repo-graph/honest-notes";
 import { shortestUniqueLabels } from "./repo-graph-file-labels";
+import {
+  type CodeMapSelectionPayload,
+  componentSelection,
+  folderSelection,
+  publishCodeMapView,
+  viewedRepoName,
+} from "../lib/code-map-view";
+import { explBtnHtml, purposeHtml, type ExplState, type PurposeGen } from "../lib/explain-controls";
+import { overCapHtml, withOverCapNote, type OverCapFields } from "../lib/over-cap-note";
 import { funcNodeId, treeSubdirs, treeFiles, treeFunctions } from "./repo-graph-trace-tree";
 import type { ArchModelDoc } from "../../../explain/arch-model-schema";
 import { confirmModal } from "./confirm-modal";
+import { mountExport } from "./repo-graph-export";
+import { labelAuthoredSeg } from "./repo-graph-src-chip";
 import { openAnchorPopover } from "./anchor-popover";
 import {
   confidenceTierWord,
@@ -76,6 +92,8 @@ interface ProjectionSubdir {
   /** Bucket path ("scripts/", "src/explain/") — SSR ProjectionSubdir carries
    * it; display routes derive from it (B-fix), never from "src/" + id. */
   path?: string;
+  /** Non-code files drawn in the box (docs, tests, config). */
+  otherFiles?: number;
 }
 
 interface ProjectionEdge {
@@ -106,6 +124,8 @@ interface Subdir {
   /** Bucket path from the projection ("scripts/", "src/explain/") — display
    * routes derive from THIS, never from a hardcoded "src/" + id guess. */
   path?: string;
+  /** Non-code files drawn in the box (docs, tests, config). */
+  otherFiles?: number;
 }
 
 /** Aggregated import edge (data.js `EDGES` shape: s→t, weight w). */
@@ -148,6 +168,8 @@ interface FileRec {
   /** Cached explanation up to date (drives the ✦ badge). */
   expl: boolean;
   explainState: "valid" | "stale" | "none";
+  /** A non-code file (docs, tests, config): listed, never parsed or explained. */
+  other?: boolean;
 }
 
 /** Symbol record (mapped from /symbols contract). */
@@ -370,21 +392,13 @@ interface GraphState {
     entrypoints: Entrypoint[];
     expanded: Set<string>; // spine ids whose "+N more" off-path overflow is open
     offFor: string | null; // spine id whose off-path callees are currently revealed
-    gen: Record<string, GenState>; // per-node grounded-purpose lifecycle
+    gen: Record<string, PurposeGen>; // per-node grounded-purpose lifecycle
     coverage: Coverage | null; // repo-level go/no-go gate
     // Trace-root tree picker: which subdir / file rows are expanded. Lazy —
     // expanding a subdir fetches /files, a file fetches /symbols (once, cached).
     treeSubs: Set<string>; // expanded subdir ids
     treeFiles: Set<string>; // expanded file keys ("<subId>/<path>")
   };
-}
-
-/** A trace node's grounded-purpose generation state. */
-interface GenState {
-  state: "idle" | "loading" | "done" | "error";
-  text?: string;
-  cite?: string;
-  error?: string;
 }
 
 // ─── HTML escape (port of app.js esc) ───────────────────────────────────────
@@ -544,22 +558,31 @@ export interface ArchAffordanceDecision {
   label: string;
   tier: "default" | "accent" | "ghost";
   hint: string | null; // muted text beside the label (fresh cache only)
-  clickMode: "direct" | "modal";
+  clickMode: "direct" | "modal" | "reindex";
 }
 
 /** Affordance table row for the given state:
+ * - index behind the code    → re-index first, ↻ Re-index — code changed, accent, no hint
  * - no cache (any view)      → direct fire, ⚡ Generate, default, no hint
  * - cache + stale (any view) → modal, ↻ Re-generate — code changed, accent, no hint
- * - cache + fresh (any view) → modal, ↻ Re-generate, ghost, "Diagram is current"
+ * - cache + fresh (any view) → modal, ↻ Re-generate, ghost, "Diagram is current" —
+ *   only when the index itself is fresh; "index freshness unknown" when the
+ *   check failed, nothing while it is pending.
  */
 export function archAffordanceState(
   _archSource: "authored" | "generated" | "subset",
   hasGenerated: boolean,
   generatedStale: boolean,
+  index: IndexFreshness = "fresh",
 ): ArchAffordanceDecision {
   // Source dimension deliberately collapsed — affordance is
   // identical across authored / generated / subset. If a future branch needs
   // per-source behavior, drop the underscore prefix and add exhaustive handling.
+  // Generating from an index that predates the code draws the old code and
+  // spends money on it — re-index first.
+  if (index === "behind") {
+    return { visible: true, label: "↻ Re-index — code changed", tier: "accent", hint: null, clickMode: "reindex" };
+  }
   if (!hasGenerated) {
     return {
       visible: true,
@@ -583,7 +606,7 @@ export function archAffordanceState(
     visible: true,
     label: "↻ Re-generate",
     tier: "ghost",
-    hint: "Diagram is current",
+    hint: index === "fresh" ? "Diagram is current" : index === "unknown" ? "index freshness unknown" : null,
     clickMode: "modal",
   };
 }
@@ -614,6 +637,7 @@ function bootRepoGraph(root: HTMLElement): void {
      * predating this field — the modal omits the segment rather than showing "undefined". */
     durationMs?: number;
     costUsd?: number;
+    hardCapUsd?: number; // a model over this cap is kept + flagged beside the button (defect [38])
     /** Grounding counts. Absent on legacy caches — callers
      * MUST NOT default to 0; omit the formula line gracefully. */
     citedClaims?: number;
@@ -621,11 +645,19 @@ function bootRepoGraph(root: HTMLElement): void {
     topologyBlindClaims?: number;
   };
   let generatedPayload: GeneratedPayload | null = null;
+  // AC32 — Generated view's edge-trust fetch state (see refreshTrustState).
+  let trustState: TrustState = { status: "loading" };
   // The authored model, SSR-loaded from the TARGET
   // repo's `.siltpoke/arch-c4.json` (already Zod-validated server-side) and
   // threaded through the payload — detection is "payload present", never a
   // repo-name check.
   let authoredPayload: C4Model | null = null;
+  // Indexed files each view leaves out (header "N files not in this diagram").
+  let undrawn: { structural: UndrawnSummary; generated: UndrawnSummary | null } | null = null;
+  // Is the index still the code on disk? Fetched after boot; until it answers
+  // the page claims nothing ("pending"). repoRoot = the path a re-index POSTs.
+  let indexFreshness: IndexFreshness = "pending";
+  let repoRoot: string | null = null;
   try {
     const raw = root.dataset.initial;
     if (raw) {
@@ -635,11 +667,14 @@ function bootRepoGraph(root: HTMLElement): void {
         repos?: Array<{ proj_hash: string; project_root: string | null }>;
         generatedModel?: GeneratedPayload | null;
         authoredModel?: C4Model | null;
+        undrawn?: typeof undrawn;
       };
       proj = parsed.projection;
       repoHash = parsed.currentProjHash ?? "";
+      repoRoot = parsed.repos?.find((r) => r.proj_hash === repoHash)?.project_root ?? null;
       generatedPayload = parsed.generatedModel ?? null;
       authoredPayload = parsed.authoredModel ?? null;
+      undrawn = parsed.undrawn ?? null;
     }
   } catch (e) {
     console.warn("[repoGraph] failed to parse data-initial", e);
@@ -830,6 +865,7 @@ function bootRepoGraph(root: HTMLElement): void {
     inbound: s.inbound,
     outbound: s.outbound,
     path: s.path,
+    otherFiles: s.otherFiles ?? 0,
   }));
   const EDGES: Edge[] = (proj.edges ?? []).map((e) => ({ s: e.source, t: e.target, w: e.weight }));
 
@@ -851,7 +887,12 @@ function bootRepoGraph(root: HTMLElement): void {
   // B-fix 2026-06-10: display route for a bucket = its REAL projection path.
   // The old hardcoded `src/${id}/` lied on any repo whose buckets don't live
   // under src/ (plc's top-level scripts/ rendered as "src/scripts/").
-  const subdirRoute = (subId: string): string => (subId ? (subById.get(subId)?.path ?? `${subId}/`) : "");
+  // The repo-root bucket's path is "" — show its id rather than a blank title.
+  const subdirRoute = (subId: string): string => {
+    if (!subId) return "";
+    const path = subById.get(subId)?.path;
+    return path === "" ? subId : (path ?? `${subId}/`);
+  };
 
   // subdir-level import aggregates (sync, from EDGES) — drive the file scene's
   // importer/import columns + the side panel bars.
@@ -870,6 +911,20 @@ function bootRepoGraph(root: HTMLElement): void {
   // filled by ensureFiles / ensureSymbols before any render that needs them.
   const withRepo = (url: string): string =>
     repoHash ? `${url}${url.includes("?") ? "&" : "?"}repo=${encodeURIComponent(repoHash)}` : url;
+
+  // AC32 — (re)fetch the trust map on every generated-model load (boot,
+  // toggle-in, fresh-generate); never blocks first paint — a follow-up
+  // render() applies the real dashes once the fetch resolves.
+  function refreshTrustState(): void {
+    trustState = { status: "loading" };
+    void loadLatestTrust(withRepo("/api/repo-graph/arch/trust?source=generated")).then((s) => {
+      if (!s) return; // a newer load superseded this response
+      trustState = s;
+      if (archSource !== "generated" || S.level !== "arch") return; // view moved on
+      restyleGeneratedEdges(c4EdgeEls, (a, b) => archTiers?.edges[edgeTierKey(a, b)] === "inferred", trustState);
+      updateArchAffordance();
+    });
+  }
 
   const filesCache = new Map<string, FileRec[]>();
   const symbolsCache = new Map<string, SymRec[]>();
@@ -894,7 +949,7 @@ function bootRepoGraph(root: HTMLElement): void {
       }
       const body = (await res.json()) as {
         data: {
-          files: Array<{ name: string; path: string; loc: number; symbols: number; functions?: number; desc: string; explainState: "valid" | "stale" | "none" }>;
+          files: Array<{ name: string; path: string; loc: number; symbols: number; functions?: number; desc: string; explainState: "valid" | "stale" | "none"; other?: boolean }>;
           intraEdges?: Array<{ source: string; target: string }>;
         };
       };
@@ -908,6 +963,7 @@ function bootRepoGraph(root: HTMLElement): void {
         desc: f.desc ?? "",
         expl: f.explainState === "valid",
         explainState: f.explainState,
+        other: f.other === true,
       }));
       // Source files first, tests last (stable) — the API lists tests ahead of
       // sources, which made the Files list read test-first.
@@ -921,8 +977,10 @@ function bootRepoGraph(root: HTMLElement): void {
   async function ensureSymbols(subId: string, filePath: string): Promise<void> {
     const key = `${subId}/${filePath}`;
     if (symbolsCache.has(key)) return;
-    const path = filesFor(subId).find((f) => f.path === filePath)?.path;
-    if (!path) {
+    const rec = filesFor(subId).find((f) => f.path === filePath);
+    const path = rec?.path;
+    // A non-code file has no symbols in the graph — do not ask.
+    if (!path || rec?.other) {
       symbolsCache.set(key, []);
       return;
     }
@@ -1485,14 +1543,32 @@ function bootRepoGraph(root: HTMLElement): void {
   }
   // The LOUD honest-degrade line.
   const archNoEvi = root.querySelector<HTMLElement>("#rg-arch-noevi");
+  const undrawnEl = root.querySelector<HTMLElement>("#rg-undrawn");
+  // Ask whether the index still matches the code; say so in the header and
+  // re-render the button (it re-indexes first when the index is behind).
+  const indexStaleEl = root.querySelector<HTMLButtonElement>("#rg-index-stale");
+  if (indexStaleEl && repoRoot) indexStaleEl.onclick = () => void submitIndex(repoRoot!, genCost);
+  if (repoHash && proj.subdirs.length > 0) {
+    void fetchIndexVerdict(repoHash).then((v) => {
+      indexFreshness = freshnessOf(v);
+      const line = indexStaleLine(v, repoRoot !== null);
+      if (indexStaleEl) {
+        indexStaleEl.hidden = line === null;
+        indexStaleEl.textContent = line ?? "";
+      }
+      updateArchAffordance();
+    });
+  }
   // Source chip — only meaningful on a repo with an authored model.
   const srcChip = root.querySelector<HTMLElement>("#rg-src-chip");
   const segAuthored = root.querySelector<HTMLButtonElement>("#rg-src-authored");
   const segGenerated = root.querySelector<HTMLButtonElement>("#rg-src-generated");
   const segStale = root.querySelector<HTMLElement>("#rg-src-stale");
+  const exportUi = mountExport(root, { getSource: () => archSource, getModel: () => (archSource === "codemap" ? null : C4), withRepo });
 
   let estFetched = false;
   let archEstUsd: number | null = null; // last successful estimate value (for modal copy)
+  let noCacheEstText = ""; // the first Generate's "≈$X · uses Claude" line, kept across re-renders
   let generating = false;
   // In-flight cancel guard — prevents double-firing POST /arch/cancel while a
   // cancel request is already in-flight. Reset to false when `generating` clears.
@@ -1519,20 +1595,11 @@ function bootRepoGraph(root: HTMLElement): void {
    */
   function updateSrcChip(inArchC4: boolean): void {
     if (!srcChip) return;
+    exportUi.refresh(inArchC4); // outside the chip's own gate: Export shows in every C4 view
     const hasGenerated = generatedPayload !== null;
     srcChip.hidden = !(inArchC4 && (hasAuthored || (canSubset && hasGenerated)));
     if (srcChip.hidden) return;
-    if (segAuthored) {
-      // Label + tooltip are constant after boot (hasAuthored never changes for a
-      // mounted repo) — write only on change so render()-frequency calls stay no-op.
-      const label = hasAuthored ? "Authored" : "Auto";
-      if (segAuthored.textContent !== label) {
-        segAuthored.textContent = label;
-        segAuthored.title = hasAuthored
-          ? "Hand-authored architecture (.siltpoke/arch-c4.json)"
-          : "Derived from project structure — deterministic, no AI";
-      }
-    }
+    labelAuthoredSeg(segAuthored, hasAuthored);
     segAuthored?.classList.toggle(
       "active",
       archSource === (hasAuthored ? "authored" : "subset"),
@@ -1554,6 +1621,8 @@ function bootRepoGraph(root: HTMLElement): void {
   function updateArchAffordance(forceHide = false): void {
     if (!genBtn || !archChip) return;
     const inArchC4 = !forceHide && S.level === "arch" && ARCH_MODE === "c4";
+    // Authored boxes come from a hand-written file, not the index — no line there.
+    updateUndrawn(undrawnEl, !inArchC4 ? null : archSource === "generated" ? undrawn?.generated : archSource === "subset" ? undrawn?.structural : null);
     updateSrcChip(inArchC4); // Chip visibility/active state tracks the same gating
     if (!inArchC4 || generating) {
       if (!generating) {
@@ -1565,39 +1634,15 @@ function bootRepoGraph(root: HTMLElement): void {
       return;
     }
 
-    // ── Grounded chip: visible whenever viewing the generated model ────────────
-    const showGroundedChip = archSource === "generated";
-    archChip.hidden = !showGroundedChip;
-    if (showGroundedChip) {
-      // Count conts the model drew WITHOUT file evidence — surfaced, not
-      // silent (claude-code's truncated model honestly reads 19 here).
-      if (archNoEvi) {
-        const k = Object.values(C4.N).filter((n) => n.kind === "cont" && !n.memberFiles?.length).length;
-        if (k > 0) {
-          archNoEvi.textContent = `${k} containers carry no file evidence`;
-          archNoEvi.hidden = false;
-        } else {
-          archNoEvi.hidden = true;
-        }
-      }
-      if (archChipPct) archChipPct.textContent = `${archTiers?.groundedPct ?? 0}%`;
-      // Count topology-blind bands from the tier map (derived, no new
-      // payload field). Surfaced as a NEUTRAL "· K layer-not-confirmable" — these
-      // are honest abstentions (cores the import gradient can't place), NOT
-      // grounding failures, so they sit apart from the grounded %.
-      const blind = archChipBlind;
-      if (blind) {
-        const k = Object.values(archTiers?.bands ?? {}).filter((t) => t === "topology-blind").length;
-        if (k > 0) {
-          blind.textContent = `· ${k} layer-not-confirmable`;
-          blind.hidden = false;
-        } else {
-          blind.hidden = true;
-        }
-      }
-    } else {
-      if (archNoEvi) archNoEvi.hidden = true;
-    }
+    // ── Grounded chip + its notice line (AC32 trust note) — extracted to
+    // repo-graph-grounded-chip.ts (see that file's header for why).
+    updateGroundedChip(
+      { archChip, archNoEvi, archChipPct, archChipBlind },
+      archSource === "generated",
+      C4,
+      archTiers,
+      trustState,
+    );
 
     // ── Affordance: pure function decides visibility, label, tier ───────────
     // inArchC4 guarantees ARCH_MODE="c4" and archSource is never "codemap" here.
@@ -1609,6 +1654,7 @@ function bootRepoGraph(root: HTMLElement): void {
       archSource,
       hasGenerated,
       generatedStale,
+      indexFreshness,
     );
 
     genBtn.hidden = !dec.visible;
@@ -1642,10 +1688,13 @@ function bootRepoGraph(root: HTMLElement): void {
         // regardless of whether archEstUsd is available; the first-Generate
         // path (no-cache) is the ONLY pre-burn ≈$ surface on the button
         // (fetchArchEstimate writes "≈$X · uses Claude" there — byte-identical).
-        genCost.textContent = dec.hint;
+        // A kept over-cap model says so here, on every render (defect [38]).
+        genCost.textContent = withOverCapNote(dec.hint, generatedPayload);
       } else {
-        // Stale or no-cache: clear any previously written hint text.
-        genCost.textContent = "";
+        // Stale or no-cache: clear any previously written hint text — except the
+        // first Generate's pre-burn cost, which a later re-render (the index
+        // check answering after the estimate) must not erase.
+        genCost.textContent = dec.clickMode === "direct" ? noCacheEstText : "";
       }
     }
     if (!estFetched) void fetchArchEstimate();
@@ -1677,6 +1726,7 @@ function bootRepoGraph(root: HTMLElement): void {
       C4 = withStats(adapted.model);
       c4Bounds = adapted.model.__bounds;
       archTiers = adapted.tiers;
+      refreshTrustState(); // AC32 — new model load, re-fetch the trust map
     }
     const url = new URL(location.href);
     if (src === "generated") url.searchParams.set("arch-source", "generated");
@@ -1728,7 +1778,11 @@ function bootRepoGraph(root: HTMLElement): void {
           // Advisory truncation heads-up, appended to the pre-burn cost
           // line. Advisory only — the button still fires (never blocks).
           const warn = body.data.mayTruncate ? ` · ${ARCH_TRUNCATION_WARNING}` : "";
-          genCost.textContent = `≈$${body.data.estUsd.toFixed(2)} · uses Claude${warn}`;
+          noCacheEstText = `≈$${body.data.estUsd.toFixed(2)} · uses Claude${warn}`;
+          // Write only while the button is still the direct first Generate.
+          if (archAffordanceState(archSource === "codemap" ? "subset" : archSource, false, false, indexFreshness).clickMode === "direct") {
+            genCost.textContent = noCacheEstText;
+          }
         }
       }
     } catch {
@@ -1829,12 +1883,15 @@ function bootRepoGraph(root: HTMLElement): void {
           generatedTs?: string;
           durationMs?: number;
           costUsd?: number;
+          hardCapUsd?: number;
           /** Grounding counts — optional; absent on legacy caches. */
           citedClaims?: number;
           totalClaims?: number;
           topologyBlindClaims?: number;
+          undrawn?: UndrawnSummary;
         };
       };
+      if (undrawn) undrawn.generated = body.data.undrawn ?? null;
       const adapted = archDocToC4Model(body.data.model, body.data.groundedPct);
       // The fresh result IS the new cached-generated state — chip ·stale
       // clears, the toggled-to view reuses this adapt, badges attach like boot.
@@ -1846,6 +1903,7 @@ function bootRepoGraph(root: HTMLElement): void {
         generatedTs: body.data.generatedTs,
         durationMs: body.data.durationMs,
         costUsd: body.data.costUsd,
+        hardCapUsd: body.data.hardCapUsd,
         citedClaims: body.data.citedClaims,
         totalClaims: body.data.totalClaims,
         topologyBlindClaims: body.data.topologyBlindClaims,
@@ -1860,6 +1918,7 @@ function bootRepoGraph(root: HTMLElement): void {
       C4 = withStats(adapted.model);
       c4Bounds = adapted.model.__bounds;
       archTiers = adapted.tiers;
+      refreshTrustState(); // AC32 — fresh generate = a new model load
       // Deliberately NO ?arch-source= write here: the in-place switch is session
       // UX; a bare-URL reload returns to the authored DEFAULT (a standing rule).
       render(true); // seamless upgrade — re-draw the generated C4 in place
@@ -2059,6 +2118,14 @@ function bootRepoGraph(root: HTMLElement): void {
     // avoid a TOCTOU: if generatedPayload arrived between the last render and this
     // click, we must still gate through the modal.
     const hasGeneratedNow = generatedPayload !== null;
+    if (indexFreshness === "behind") {
+      // The index predates the code — re-read it first (page reloads when done).
+      // Never fall through to a paid generate on the old index, even when this
+      // page cannot re-index itself (repo entry without a path).
+      if (repoRoot) void submitIndex(repoRoot, genCost);
+      else if (genCost) genCost.textContent = "re-index from the repo picker — this repo's path is unknown";
+      return;
+    }
     if (!hasGeneratedNow) {
       // No cache → direct fire.
       void runArchGenerate();
@@ -2087,8 +2154,9 @@ function bootRepoGraph(root: HTMLElement): void {
           // Re-fetch to freshen a possibly-aged boot estimate before showing money
           // in the modal; this is a cheap deterministic endpoint with no Brain call.
           // Re-generate cost dedup — ≈$ is shown in the modal body below,
-          // not on the button cost span. Button span keeps "Diagram is current".
-          if (genCost) genCost.textContent = "Diagram is current";
+          // not on the button cost span. Button span keeps its hint — which is
+          // "Diagram is current" only when the index is fresh too.
+          if (genCost) genCost.textContent = archAffordanceState(archSource === "codemap" ? "subset" : archSource, true, generatedStale, indexFreshness).hint ?? "";
         }
       } catch (e) {
         console.warn("[repoGraph] estimate fetch failed — modal shows unavailable", e);
@@ -2156,7 +2224,7 @@ function bootRepoGraph(root: HTMLElement): void {
       const io = `<div class="nio"><span>↓ ${sum(inbound(n.data.id))} in</span><span>↑ ${sum(outbound(n.data.id))} out</span></div>`;
       d.className = "node kind-subdir";
       d.innerHTML =
-        `<div class="ntop">${accDot}<span class="nname">${esc(subdirRoute(n.data.id))}</span><span class="nbadge" title="${n.data.files} files">${n.data.files}</span></div>` +
+        `<div class="ntop">${accDot}<span class="nname">${esc(subdirRoute(n.data.id))}</span><span class="nbadge" title="${n.data.files} files${n.data.otherFiles ? ` + ${n.data.otherFiles} other` : ""}">${n.data.files + (n.data.otherFiles ?? 0)}</span></div>` +
         `<div class="npurpose" title="${esc(n.data.purpose)}">${esc(n.data.purpose)}</div>${io}`;
     } else if (n.kind === "neighbor") {
       d.className = "node kind-subdir compact";
@@ -2173,7 +2241,9 @@ function bootRepoGraph(root: HTMLElement): void {
       d.innerHTML =
         `<div class="ntop"><span class="nname" title="${esc(n.data.file.path)}">${esc(n.data.label)}</span>${explBadge}</div>` +
         `<div class="npurpose" title="${esc(fdesc)}">${esc(fdesc)}</div>` +
-        `<div class="ksub">${n.data.file.loc} loc · ${fsyms.length || n.data.file.symbols} symbols</div>`;
+        (n.data.file.other
+          ? `<div class="ksub">not code · listed only</div>`
+          : `<div class="ksub">${n.data.file.loc} loc · ${fsyms.length || n.data.file.symbols} symbols</div>`);
     } else if (n.kind === "symbol") {
       d.className = "node kind-symbol";
       d.style.height = r.h + "px";
@@ -2311,9 +2381,7 @@ function bootRepoGraph(root: HTMLElement): void {
   async function drillToMembers(n: C4Node): Promise<void> {
     const memberFiles = n.memberFiles ?? [];
     if (memberFiles.length === 0) return;
-    const withPath = (proj.subdirs ?? []).filter(
-      (sd): sd is typeof sd & { path: string } => typeof sd.path === "string" && sd.path.length > 0,
-    );
+    const withPath = subdirsWithPath(proj.subdirs ?? []);
     let buckets = [...new Set(
       memberFiles
         .map((f) => bucketIdOfPath(withPath, f))
@@ -2416,8 +2484,13 @@ function bootRepoGraph(root: HTMLElement): void {
   function publishViewed(
     target: { name: string; path: string; node_type?: string } | null,
     label: string,
+    selection: CodeMapSelectionPayload | null = null,
   ): void {
     if (typeof window === "undefined") return;
+    // What cannot be pinned (a component box, a folder) goes to the chat as the
+    // page's view instead; every other panel clears it (defect [44]).
+    // proj_hash: chat's claude runs in this project and may read it (src/chat/repo-access.ts).
+    publishCodeMapView({ repo: viewedRepoName(proj), selection, ...(repoHash ? { proj_hash: repoHash } : {}) });
     (window as unknown as { __siltpokeViewedNode?: unknown }).__siltpokeViewedNode = target
       ? { target, projHash: repoHash, label }
       : null;
@@ -2466,10 +2539,7 @@ function bootRepoGraph(root: HTMLElement): void {
 
     // Descriptor form: {name, path, node_type?}
     const { name, path: filePath, node_type } = target;
-    const subdirList = (proj.subdirs ?? []).filter(
-      (sd): sd is typeof sd & { path: string } => typeof sd.path === "string" && sd.path.length > 0,
-    );
-    const subId = bucketIdOfPath(subdirList, filePath);
+    const subId = bucketIdOfPath(subdirsWithPath(proj.subdirs ?? []), filePath);
 
     if (node_type === "file" || (!node_type && filePath)) {
       // File node — all async work BEFORE any state mutation to avoid the
@@ -2540,7 +2610,9 @@ function bootRepoGraph(root: HTMLElement): void {
     // changes; the event triggers syncViewed() which updates `this.viewed` and
     // forces a re-render. This ensures the ↩ button appears after hx-boost nav
     // to the /repo-graph page without requiring the user to interact first.
-    window.dispatchEvent(new CustomEvent("siltpoke:viewed-changed"));
+    // publishViewed fires it, and also names the repository for the chat and
+    // drops any selection a previous visit left in the global (defect [44]).
+    publishViewed(null, "");
   }
 
   function section(title: string, count: number | "", inner: string, hint?: string): string {
@@ -2565,7 +2637,6 @@ function bootRepoGraph(root: HTMLElement): void {
   // label + data-act + the modal's freshly-generated/from-cache tag. Explain
   // applies to FILE and SYMBOL scopes only — never a subdir (the backend
   // explains a node, not a directory).
-  type ExplState = "none" | "valid" | "stale";
   interface ExplScope {
     kind: "file" | "symbol";
     state: ExplState;
@@ -2582,25 +2653,6 @@ function bootRepoGraph(root: HTMLElement): void {
     symKind?: string;
   }
 
-  // Footer HTML for the file/symbol panel. The click handler branches on
-  // `data-act` ("open"|"gen") — NOT the label text.
-  function explBtn(scope: ExplScope): string {
-    let label: string;
-    let note: string;
-    if (scope.state === "valid") {
-      label = "Open explanation";
-      note = '<span class="ok">✓ cached</span> · up to date with the code';
-    } else if (scope.state === "stale") {
-      label = "Re-generate explanation";
-      note = '<span class="warn">↻ code changed</span> · cached copy was cleared';
-    } else {
-      label = "Generate explanation";
-      note = '<span class="muted">not generated yet · the button runs it</span>';
-    }
-    const act = scope.state === "valid" ? "open" : "gen";
-    return `<a class="btn primary" id="rg-expl-btn" data-act="${act}">${label} <span class="arrow">→</span></a><div class="p-note">${note}</div>`;
-  }
-
   // Bind the explain button — #rg-expl-btn is recreated on every panel/foot
   // render, so the handler MUST be rebound each time. Decision
   // open-vs-generate reads data-act.
@@ -2611,11 +2663,16 @@ function bootRepoGraph(root: HTMLElement): void {
       if (btn.dataset.act === "open") void openExplain(scope, false);
       else void generateExplain(scope, btn);
     };
+    // Only drawn beside a cached answer: a forced, paid regenerate ([42]).
+    // A native <button>: Enter and Space already click it.
+    const regen = root.querySelector<HTMLElement>("#rg-expl-regen");
+    if (!regen) return;
+    regen.onclick = () => void generateExplain(scope, regen, true);
   }
 
   function renderFoot(scope: ExplScope): void {
     if (!pFoot) return;
-    pFoot.innerHTML = explBtn(scope);
+    pFoot.innerHTML = explBtnHtml(scope.state, indexFreshness);
     bindExplBtn(scope);
     attachSymTraceBtn(scope);
     // Symbol state isn't carried in /files — read it, then re-render the foot.
@@ -2660,7 +2717,7 @@ function bootRepoGraph(root: HTMLElement): void {
       const body = (await res.json()) as { data: { state: ExplState } };
       scope.state = body.data.state;
       if (pFoot) {
-        pFoot.innerHTML = explBtn(scope);
+        pFoot.innerHTML = explBtnHtml(scope.state, indexFreshness);
         bindExplBtn(scope);
         attachSymTraceBtn(scope);
       }
@@ -2671,13 +2728,14 @@ function bootRepoGraph(root: HTMLElement): void {
 
   // none/stale → generate. Spinner shows until the POST resolves; try/finally
   // GUARANTEES the button leaves the spinner even on error (no dead spin).
-  async function generateExplain(scope: ExplScope, btn: HTMLElement): Promise<void> {
+  async function generateExplain(scope: ExplScope, btn: HTMLElement, force = false): Promise<void> {
+    if (btn.classList.contains("gening")) return; // already running — the keyboard path has no pointer-events guard
     btn.classList.add("gening");
     btn.innerHTML = '<span class="spin"></span> Analyzing subgraph…';
     btn.style.pointerEvents = "none";
     let ok = false;
     try {
-      ok = await openExplain(scope, true);
+      ok = await openExplain(scope, true, force);
     } finally {
       if (ok) {
         // Cache now warm: flip the foot to ✓ cached + invalidate the file cache
@@ -2685,17 +2743,18 @@ function bootRepoGraph(root: HTMLElement): void {
         scope.state = "valid";
         filesCache.delete(scope.subId);
         if (pFoot) {
-          pFoot.innerHTML = explBtn(scope);
+          pFoot.innerHTML = explBtnHtml(scope.state, indexFreshness);
           bindExplBtn(scope);
           attachSymTraceBtn(scope);
         }
-        if (S.level === "file" && S.subId === scope.subId) {
-          await ensureFiles(scope.subId);
-          render(false);
-        }
+        // Reload on every level, not just the file level: the symbol level
+        // reads this list too, and leaving it empty until the user happens to
+        // go back up is what made a just-generated function look ungenerated.
+        await ensureFiles(scope.subId);
+        if (S.level === "file" && S.subId === scope.subId) render(false);
       } else if (pFoot) {
         // Failed: restore the button out of the spinner — never leave it dead.
-        pFoot.innerHTML = explBtn(scope);
+        pFoot.innerHTML = explBtnHtml(scope.state, indexFreshness);
         bindExplBtn(scope);
         attachSymTraceBtn(scope);
       }
@@ -2710,7 +2769,7 @@ function bootRepoGraph(root: HTMLElement): void {
       .join("");
   }
 
-  interface ExplanationData {
+  interface ExplanationData extends OverCapFields {
     target: string;
     title: string;
     grounded: number;
@@ -2739,7 +2798,7 @@ function bootRepoGraph(root: HTMLElement): void {
     exModal.innerHTML =
       `<div class="ex-head"><div class="ex-route"><span>Explain</span><span class="rt">${esc(d.target)}</span><button class="xx" id="rg-ex-close">×</button></div>` +
       `<div class="ex-title">${esc(d.title)}</div>` +
-      `<span class="ex-guard"><span class="gck"></span>evidence-guard · ${Math.round((d.grounded ?? 0) * 100)}% grounded · ${fresh ? "freshly generated" : "from cache"}</span></div>` +
+      `<span class="ex-guard"><span class="gck"></span>evidence-guard · ${Math.round((d.grounded ?? 0) * 100)}% grounded · ${fresh ? "freshly generated" : "from cache"}</span>${overCapHtml(d, "span", "ex-guard", esc)}</div>` +
       `<div class="ex-body"><p class="ex-lead">${esc(d.lead)}</p>` +
       `<div class="ex-sec"><h5>Depends on (outbound imports)</h5><div class="ex-chips">${chips(depends, "out")}</div></div>` +
       `<div class="ex-sec"><h5>Used by (inbound imports)</h5><div class="ex-chips">${chips(used, "in")}</div></div>` +
@@ -2766,7 +2825,7 @@ function bootRepoGraph(root: HTMLElement): void {
 
   // POST the explain run + render the modal. fresh = client action verdict.
   // Returns true on success (cache now warm).
-  async function openExplain(scope: ExplScope, fresh: boolean): Promise<boolean> {
+  async function openExplain(scope: ExplScope, fresh: boolean, force = false): Promise<boolean> {
     if (!exOverlay || !exModal) return false;
     exOverlay.classList.add("open");
     exModal.innerHTML = modalShell(
@@ -2793,7 +2852,7 @@ function bootRepoGraph(root: HTMLElement): void {
       const res = await fetch("/api/repo-graph/explain", {
         method: "POST",
         headers: { "content-type": "application/json", "X-Siltpoke-Secret": indexSecret },
-        body: JSON.stringify({ target: scope.target, repo: repoHash, force: scope.state === "stale" }),
+        body: JSON.stringify({ target: scope.target, repo: repoHash, force: force || scope.state === "stale" }),
       });
       if (res.status === 409) return note("Another task is running — try again in a moment.");
       const body = (await res.json()) as { taskId?: string; error?: string };
@@ -2881,9 +2940,9 @@ function bootRepoGraph(root: HTMLElement): void {
     pBody.innerHTML =
       section(
         "Files",
-        sub.files,
+        sub.files + (sub.otherFiles ?? 0), // the list below includes other (non-code) files
         `<div class="filelist">${files
-          .map((f) => `<div class="filerow" data-file="${esc(f.path)}"><span class="fdot ${f.expl ? "" : "off"}"></span><span class="fn">${esc(f.name)}</span><span class="fl">${f.loc} loc</span></div>`)
+          .map((f) => `<div class="filerow" data-file="${esc(f.path)}"><span class="fdot ${f.expl ? "" : "off"}"></span><span class="fn">${esc(f.name)}</span><span class="fl">${f.other ? "not code" : `${f.loc} loc`}</span></div>`)
           .join("")}</div>`,
       ) +
       impSection("Imports", out, "out", "What " + esc(subdirRoute(sub.id)) + " depends on. The number = how many <b>import statements</b> point at each — higher means a tighter dependency.") +
@@ -2901,7 +2960,8 @@ function bootRepoGraph(root: HTMLElement): void {
       if (mbtn) mbtn.onclick = () => void openModuleOverview(sub);
     }
     panelEl.classList.add("open");
-    publishViewed(null, ""); // a subdir is not an anchorable node (only function/file are)
+    // a subdir is not an anchorable node (only function/file are) — the chat gets it as the page's view
+    publishViewed(null, "", folderSelection(subdirRoute(sub.id), sub.purpose, out.map((x) => x.id), inb.map((x) => x.id), files.map((f) => f.path)));
     wirePanelRows(sub.id);
   }
 
@@ -2913,7 +2973,7 @@ function bootRepoGraph(root: HTMLElement): void {
     pHead.innerHTML =
       `<div class="p-eyebrow"><span class="gd" style="background:${g.accent}"></span>${esc(subdirRoute(subId))}<button class="p-close" id="rg-pclose">×</button></div>` +
       `<div class="p-title">${esc(file.name)}</div><div class="p-purpose">${esc(fdesc)}</div>` +
-      `<div class="p-meta">${file.loc} lines · ${syms.length} symbols</div>`;
+      `<div class="p-meta">${file.other ? "not code · listed only" : `${file.loc} lines · ${syms.length} symbols`}</div>${file.other ? "" : panelIndexNote(indexFreshness)}`;
     if (syms.length === 0) {
       // No exported symbols (commonly a pure test file): no symbol level to drill
       // into. Explain the empty state in the sidebar instead of an empty section.
@@ -2921,7 +2981,9 @@ function bootRepoGraph(root: HTMLElement): void {
       pBody.innerHTML = section(
         "Symbols",
         0,
-        `<div class="p-empty">no exported symbols · ${file.loc} lines${isTest ? ' · <span class="symk">test file</span>' : ""}</div>`,
+        file.other
+          ? `<div class="p-empty">not in the code graph (docs, tests or config) · listed so you can see it; never parsed or explained</div>`
+          : `<div class="p-empty">no exported symbols · ${file.loc} lines${isTest ? ' · <span class="symk">test file</span>' : ""}</div>`,
       );
     } else {
       pBody.innerHTML = section(
@@ -2939,14 +3001,17 @@ function bootRepoGraph(root: HTMLElement): void {
         "Click a symbol to open it at symbol level.",
       );
     }
-    renderFoot({
-      kind: "file",
-      state: file.explainState,
-      target: file.path,
-      getTarget: `file:${file.path}:`,
-      title: file.name,
-      subId,
-    });
+    // A non-code file is not in the graph — an Explain run has nothing to read.
+    if (file.other) pFoot.innerHTML = "";
+    else
+      renderFoot({
+        kind: "file",
+        state: file.explainState,
+        target: file.path,
+        getTarget: `file:${file.path}:`,
+        title: file.name,
+        subId,
+      });
     panelEl.classList.add("open");
     publishViewed({ name: file.name, path: file.path, node_type: "file" }, file.name);
     pBody.querySelectorAll<HTMLElement>(".symrow[data-sym]").forEach((row) => {
@@ -2960,11 +3025,14 @@ function bootRepoGraph(root: HTMLElement): void {
     const g = groupOf(S.subId ?? "");
     pHead.innerHTML =
       `<div class="p-eyebrow"><span class="gd" style="background:${g.accent}"></span>${esc(subdirRoute(S.subId ?? ""))}${esc((S.file ?? "").split("/").pop() ?? "")}<button class="p-close" id="rg-pclose">×</button></div>` +
-      `<div class="p-title">${esc(sym.name)}</div><div class="p-purpose">${esc(sym.desc || sym.kind)}</div><div class="p-meta">${esc(sym.kind)}</div>`;
+      `<div class="p-title">${esc(sym.name)}</div><div class="p-purpose">${esc(sym.desc || sym.kind)}</div><div class="p-meta">${esc(sym.kind)}</div>${panelIndexNote(indexFreshness)}`;
     pBody.innerHTML =
       section("Signature", "", `<div class="p-sig">${esc(sym.sig || "—")}</div>`) +
       section("Location", "", `<div class="p-sig">${esc(subdirRoute(S.subId ?? ""))}${esc((S.file ?? "").split("/").pop() ?? "")}<b style="color:var(--ink)">:${sym.line}</b></div>`);
-    const symPath = filesFor(S.subId ?? "").find((f) => f.path === S.file)?.path ?? "";
+    // S.file IS the file's path. Looking it up again in the subdir's file list
+    // (which a generate clears) returned "" and asked the cache about no node
+    // at all: "not generated yet" for an explanation on disk (defect [43]).
+    const symPath = S.file ?? "";
     renderFoot({
       kind: "symbol",
       state: "none",
@@ -2977,15 +3045,10 @@ function bootRepoGraph(root: HTMLElement): void {
     // "⟜ Trace from here" is attached by renderFoot → attachSymTraceBtn
     // so it survives the async refreshSymbolState foot repaint.
     panelEl.classList.add("open");
-    // Use S.file (the file path drilled into) directly — the `symPath` filesFor
-    // lookup above can miss when FileRec.path isn't the full repo-relative path,
-    // which would silently leave the chat unanchored on a real symbol select.
-    // S.file is set canonically by drillToSymbol.
-    const anchorPath = S.file ?? "";
     // Include node_type so focusNodeFromChat routes to the
     // symbol branch (not the file-fallback). sym.kind matches graph node types
     // (e.g. "function", "class") — the same values the descriptor branch checks.
-    if (anchorPath) publishViewed({ name: sym.name, path: anchorPath, node_type: sym.kind }, sym.name);
+    if (symPath) publishViewed({ name: sym.name, path: symPath, node_type: sym.kind }, sym.name);
     else publishViewed(null, "");
     wireClose();
   }
@@ -3041,32 +3104,6 @@ function bootRepoGraph(root: HTMLElement): void {
     // would make the graph jump around. Frame is set once on trace enter.
   }
 
-  // Purpose field — progressive disclosure: JSDoc (free) → empty + ✨ button →
-  // loading → grounded sentence + cite → Brain-unavailable error + retry.
-  function phPurpose(t: TraceNodeData): string {
-    const g = S.trace.gen[t.id];
-    if (t.purpose.src === "jsdoc") {
-      return `<div class="ph-val">${esc(t.purpose.text ?? "")}</div><div class="ph-hint">Source: code comment (JSDoc) · free</div>`;
-    }
-    if (g?.state === "done" && g.text) {
-      return `<div class="ph-val gen"><span class="ph-spark">✨</span> ${esc(g.text)}<div class="ph-cite">grounded · <a>${esc(g.cite ?? "")}</a> · cached</div></div>`;
-    }
-    if (g?.state === "loading") {
-      return `<div class="ph-val loading"><span class="ph-spin"></span> siltpoke is reading this function…</div><div class="ph-hint">Read the source → produce one grounded sentence → cache it. Counts once.</div>`;
-    }
-    if (g?.state === "error") {
-      return `<div class="ph-err"><b>⚠ Brain unavailable</b><div class="ph-er">${esc(g.error ?? "unknown error")}</div><button class="ph-genbtn" data-gen="${esc(t.id)}">↻ Retry</button></div>`;
-    }
-    const isU = t.purpose.src === "unresolvable";
-    const empty = isU
-      ? "There IS a next step, but static analysis can't tell who — so it won't guess for you"
-      : "no comment — null";
-    const hint = isU
-      ? "Dynamic call — static analysis can't link it. Click to let siltpoke read the actual code and give you one sourced sentence with a file:line citation."
-      : "Click → siltpoke reads this function, produces one grounded sentence, and caches it. Shows the reason if the Brain is unavailable.";
-    return `<div class="ph-val empty">${empty}<button class="ph-genbtn" data-gen="${esc(t.id)}">✨ Let siltpoke look</button></div><div class="ph-hint">${hint}</div>`;
-  }
-
   function openTracePanel(nodeId: string): void {
     if (!panelEl || !pHead || !pBody || !pFoot) return;
     const t = S.trace.data?.nodes.find((n) => n.id === nodeId);
@@ -3097,7 +3134,7 @@ function bootRepoGraph(root: HTMLElement): void {
         ? ""
         : `<div class="ph-f"><div class="ph-lbl">Input · takes</div><div class="ph-val mono">${esc(t.io.input || "—")}</div></div>` +
           `<div class="ph-f"><div class="ph-lbl">Output · returns</div><div class="ph-val mono">${esc(t.io.output || "—")}</div></div>`) +
-      `<div class="ph-f"><div class="ph-lbl">Purpose · what it does</div>${phPurpose(t)}</div>` +
+      `<div class="ph-f"><div class="ph-lbl">Purpose · what it does</div>${purposeHtml(t, S.trace.gen[t.id], esc)}</div>` +
       // 🔗 shared dropped as a per-node chip (it was true for every node on a
       // shared-infra path → decoration); stated once on the container header.
       (t.warn ? `<div class="ph-warn">⚠ Path may continue — an unresolved next step the static pass couldn't link.</div>` : "");
@@ -3106,7 +3143,7 @@ function bootRepoGraph(root: HTMLElement): void {
     panelEl.classList.add("open");
     wireClose();
     pBody.querySelectorAll<HTMLElement>("[data-gen]").forEach((b) => {
-      b.onclick = () => void phGenerate(b.dataset.gen ?? "");
+      b.onclick = () => void phGenerate(b.dataset.gen ?? "", b.dataset.force === "1");
     });
     pHead.querySelectorAll<HTMLElement>("[data-step]").forEach((b) => {
       b.onclick = (e) => {
@@ -3120,14 +3157,15 @@ function bootRepoGraph(root: HTMLElement): void {
   // On card open, read cache state once per node — a warm purpose loads instantly
   // without re-generating (idempotent; the `idle` sentinel blocks re-querying).
   async function ensurePurposeCache(t: TraceNodeData): Promise<void> {
-    if (t.purpose.src === "jsdoc" || S.trace.gen[t.id]) return;
+    if (S.trace.gen[t.id]) return;
     S.trace.gen[t.id] = { state: "idle" };
     try {
       const res = await fetch(withRepo(`/api/repo-graph/trace/purpose?node=${encodeURIComponent(t.id)}`));
       if (!res.ok) return;
-      const body = (await res.json()) as { data: { state: string; text?: string; cite?: string } };
+      const body = (await res.json()) as { data: { state: string; text?: string; cite?: string } & OverCapFields };
       if (body.data.state === "cached" && body.data.text) {
-        S.trace.gen[t.id] = { state: "done", text: body.data.text, cite: body.data.cite };
+        const { text, cite, costUsd, hardCapUsd } = body.data;
+        S.trace.gen[t.id] = { state: "done", text, cite, costUsd, hardCapUsd };
         if (S.selected === t.id) openTracePanel(t.id);
       }
     } catch {
@@ -3137,25 +3175,29 @@ function bootRepoGraph(root: HTMLElement): void {
 
   // ✨ generate: POST the grounded run; loading → done (text + cite) or error
   // (real Brain reason + retry). runExplain writes no cache on failure.
-  async function phGenerate(nodeId: string): Promise<void> {
+  async function phGenerate(nodeId: string, force = false): Promise<void> {
     if (!S.trace.data?.nodes.some((n) => n.id === nodeId)) return;
+    // A failed regenerate must not cost the answer already on the card.
+    const kept = S.trace.gen[nodeId]?.state === "done" ? S.trace.gen[nodeId] : undefined;
+    const failed = (error: string): PurposeGen => (kept ? { ...kept, error } : { state: "error", error });
     S.trace.gen[nodeId] = { state: "loading" };
     openTracePanel(nodeId);
     try {
       const res = await fetch("/api/repo-graph/trace/purpose", {
         method: "POST",
         headers: { "content-type": "application/json", "X-Siltpoke-Secret": indexSecret },
-        body: JSON.stringify({ node: nodeId, repo: repoHash }),
+        body: JSON.stringify({ node: nodeId, repo: repoHash, force }),
       });
       if (res.ok) {
-        const body = (await res.json()) as { data: { text: string; cite: string } };
-        S.trace.gen[nodeId] = { state: "done", text: body.data.text, cite: body.data.cite };
+        const body = (await res.json()) as { data: { text: string; cite: string } & OverCapFields };
+        const { text, cite, costUsd, hardCapUsd } = body.data;
+        S.trace.gen[nodeId] = { state: "done", text, cite, costUsd, hardCapUsd };
       } else {
         const err = (await res.json().catch(() => ({}))) as { error?: string };
-        S.trace.gen[nodeId] = { state: "error", error: err.error ?? "Brain unavailable" };
+        S.trace.gen[nodeId] = failed(err.error ?? "Brain unavailable");
       }
     } catch {
-      S.trace.gen[nodeId] = { state: "error", error: "Explain request failed — is the daemon reachable?" };
+      S.trace.gen[nodeId] = failed("Explain request failed — is the daemon reachable?");
     }
     if (S.selected === nodeId) openTracePanel(nodeId);
   }
@@ -3335,11 +3377,12 @@ function bootRepoGraph(root: HTMLElement): void {
       path.setAttribute("marker-end", "url(#c4-arr)");
       // Anti-slop: an inferred verb (couldn't be corroborated via a snippet
       // token — already degraded to "uses") draws dashed, never solid.
-      const edgeInferred = archTiers?.edges[edgeTierKey(s, t)] === "inferred";
-      if (edgeInferred) path.setAttribute("stroke-dasharray", "4 3");
+      // AC32: Generated dash follows the trust map; Authored/Subset keep the legacy rule.
+      const dashed = c4EdgeDashed(archSource, archTiers, trustState, s, t);
+      if (dashed) path.setAttribute("stroke-dasharray", "4 3");
       svg.appendChild(path);
       const lab = document.createElement("div");
-      lab.className = edgeInferred ? "c4-elab inferred" : "c4-elab";
+      lab.className = dashed ? "c4-elab inferred" : "c4-elab"; // label italic follows the SAME decision as the path (AC32)
       lab.style.left = cx + "px";
       lab.style.top = cy + "px";
       lab.textContent = label;
@@ -3563,7 +3606,8 @@ function bootRepoGraph(root: HTMLElement): void {
             `</div>`
           : `<div class="p-note"><span class="muted">actor</span></div>`;
     panelEl.classList.add("open");
-    publishViewed(null, ""); // a container/actor is not an anchorable node
+    // a container/actor is not an anchorable node — the chat gets it as the page's view
+    publishViewed(null, "", componentSelection(n, out.map((r) => C4.N[r.other]?.title ?? r.other), inb.map((r) => C4.N[r.other]?.title ?? r.other)));
     const c = root.querySelector<HTMLElement>("#rg-pclose");
     if (c) c.onclick = () => c4Deselect();
   }
@@ -5595,6 +5639,8 @@ function bootRepoGraph(root: HTMLElement): void {
   // ── boot ────────────────────────────────────────────────────────────────
   phSyncBar();
   render(true);
+  // AC32 model load; cast — TS can't see useGenerated()'s closure assignment.
+  if ((archSource as ArchSource) === "generated") refreshTrustState();
   window.addEventListener("resize", () => {
     if (SCENE) applyView();
   });

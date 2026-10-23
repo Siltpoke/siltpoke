@@ -39,6 +39,9 @@ import {
 import { parseKind, parseRange, parseSort, parseStatus } from "./critic";
 import { buildBrainCosts, buildTraceTotals, loadFullSpans, openIndexDb } from "./trace-cost";
 
+/** Turns per /timeline page (was 20, then 10; 12 fills the rail in a typical window, the maintainer 2026-10-16). */
+const TIMELINE_PAGE_ROWS = 12;
+
 export interface TimelineRouteDeps {
   homeBase?: string;
   /**
@@ -138,7 +141,7 @@ export function mountTimelineRoutes(app: Hono, deps: TimelineRouteDeps = {}): vo
       // Turn-counted windows: `limit` counts rows that RENDER under the
       // active filters (incl. family) — gate-skip floods never consume slots.
       windowMode: "turns",
-      limit: 20,
+      limit: TIMELINE_PAGE_ROWS,
       homeDir: homedir(),
     });
     // Verbatim forward of the active filter/pager params so each lazy
@@ -177,13 +180,13 @@ export function mountTimelineRoutes(app: Hono, deps: TimelineRouteDeps = {}): vo
   // so it is morphed in via `alpine-morph` — NOT x-html — so both htmx and
   // Alpine re-process the swapped nodes. Same filters the page used are
   // forwarded so the requested turn resolves in the same window; a generous
-  // limit (not the page's 20-turn cap) guarantees the row is reachable.
+  // limit (not the page's 12-turn cap) guarantees the row is reachable.
   app.get("/api/timeline/dossier", async (c) => {
     const key = c.req.query("key");
     if (!key) return c.text("missing key", 400);
     // Resolve the turn under the SAME filters + pager cursor the page used,
-    // but over a DELIBERATELY WIDER window than the page's 20-turn view.
-    // The page renders the newest 20 turns; without a `before`/`after` cursor
+    // but over a DELIBERATELY WIDER window than the page's 12-turn view.
+    // The page renders the newest 12 turns; without a `before`/`after` cursor
     // that window is recomputed live per request, so a critique firing between
     // page render and a later row-click could evict an already-rendered row
     // from an equal-width window → a 404 on a row the user can plainly see.

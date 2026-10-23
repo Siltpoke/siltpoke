@@ -244,7 +244,7 @@ that mutates `~/.claude/settings.json`). `"daemon": false` keeps the daemon
 **opt-in** (the default): core review runs in the Stop hook and never needs the
 daemon — it only powers the optional web surfaces (dashboard / chat / index).
 Leave it `false`; the user turns it on whenever they want them by opening
-`/siltpoke-dashboard`, which starts the daemon on demand. Do NOT set it `true`
+`/siltpoke:siltpoke-dashboard`, which starts the daemon on demand. Do NOT set it `true`
 here (that would install a launchd/systemd autostart unit nobody asked for and
 bring back the reboot `ECONNREFUSED`).
 
@@ -265,7 +265,7 @@ user's absolute home path where `~` is written below.)
 ```
 siltpoke: created "Mossbite" (slime) — ~/.siltpoke/config.json
 siltpoke: statusline installed — your pet shows up in Claude Code
-siltpoke: background daemon off (opt-in — open /siltpoke-dashboard to start it)
+siltpoke: background daemon off (opt-in — open /siltpoke:siltpoke-dashboard to start it)
 ```
 
 The second and third lines vary:
@@ -281,7 +281,7 @@ The second and third lines vary:
   daemon `false`.
 
 If the kernel printed nothing at all, something is wrong with the install —
-treat it as a failure and run `/siltpoke-doctor`, do not assume success.
+treat it as a failure and run `/siltpoke:siltpoke-doctor`, do not assume success.
 
 ## 7. If it fails
 
@@ -290,7 +290,7 @@ dump the raw trace:
 
 - **`command not found: bun`** — Bun is not installed or not on PATH. Tell the
   user to install it (`curl -fsSL https://bun.sh/install | bash`) and re-run
-  `/siltpoke-setup`. Nothing was written.
+  `/siltpoke:siltpoke-setup`. Nothing was written.
 - **`unknown species "<x>" — valid species: …`** — you passed a species
   outside the list in §1. No config was written. Fix it (ask the user again if
   they truly typed something else), rewrite the answers file, and re-run.
@@ -305,10 +305,10 @@ dump the raw trace:
   NOT fatal: the pet IS created, only the statusline was skipped because the
   user's `~/.claude/settings.json` could not be parsed (it was left
   untouched). Tell them to fix the JSON in that file and re-run
-  `/siltpoke-setup` to get the face in the statusline.
+  `/siltpoke:siltpoke-setup` to get the face in the statusline.
 - **`warning: daemon autostart …`** — NOT fatal: the pet and statusline are
   installed; only the background dashboard's autostart unit failed. They can
-  still run `/siltpoke-dashboard` manually.
+  still run `/siltpoke:siltpoke-dashboard` manually.
 - **any other error mentioning a write / `EACCES` / `EPERM` / `ENOSPC`** — the
   write failed. Report the path verbatim and suggest checking permissions on
   `~/.siltpoke/` and `~/.claude/` (and disk space).
@@ -374,16 +374,16 @@ This is the per-builder rule: code written in Claude Code is reviewed by
 `<family>`, and code written in any other host still follows its own default.
 Do not use `brain set review` here — that pins one reviewer for every host.
 Report the one line it prints. Then tell them: they can undo or change it any
-time with `/siltpoke-brain`, and if reviews go quiet after this, the likely
+time with `/siltpoke:siltpoke-brain`, and if reviews go quiet after this, the likely
 cause is that CLI's login — run that CLI once on its own to check.
-`/siltpoke-doctor` shows which reviewer is configured and that its command is
+`/siltpoke:siltpoke-doctor` shows which reviewer is configured and that its command is
 on PATH; it does NOT check the login.
 
 ## 9. Offer the menu-bar pet (macOS only)
 
 Once the kernel run in §5 succeeded, offer ONE optional extra: the pet in the
 macOS menu bar (a separate surface from the statusline and the dashboard, via
-the free SwiftBar app). This is additive — the same thing `/siltpoke-menubar`
+the free SwiftBar app). This is additive — the same thing `/siltpoke:siltpoke-menubar`
 does standalone — so keep it a light one-liner, not a second setup flow.
 
 **macOS only.** Only raise this on a Mac. If you're not certain of the
@@ -407,7 +407,7 @@ the one line it prints; don't dump raw output:
 - `SwiftBar isn't installed …` (reason `no-swiftbar`) — the menu-bar pet needs
   the free SwiftBar app. Give them the link it printed
   (https://github.com/swiftbar/SwiftBar) and tell them to re-run
-  `/siltpoke-menubar install` once SwiftBar is in place. Everything else from
+  `/siltpoke:siltpoke-menubar install` once SwiftBar is in place. Everything else from
   setup is already done — this is the only piece left.
 - `the menu-bar pet is macOS-only.` — shouldn't appear if you guarded on
   `uname` above; if it does, just skip it.
@@ -420,12 +420,12 @@ the statusline and dashboard.
 Tell the user, in their chosen language:
 
 - **Restart Claude Code** — the pet's face then appears in the statusline.
-- Next time you can go faster: `/siltpoke-setup` offers an **express** option
+- Next time you can go faster: `/siltpoke:siltpoke-setup` offers an **express** option
   (a default pet in one step) alongside the full custom flow.
-- Dashboard: `/siltpoke-dashboard` (opens http://127.0.0.1:9876).
-- Menu bar (macOS): `/siltpoke-menubar` — add / check / remove the menu-bar pet
+- Dashboard: `/siltpoke:siltpoke-dashboard` (opens http://127.0.0.1:9876).
+- Menu bar (macOS): `/siltpoke:siltpoke-menubar` — add / check / remove the menu-bar pet
   anytime. Only mention this on a Mac; skip it otherwise.
-- Trouble: `/siltpoke-doctor`.
+- Trouble: `/siltpoke:siltpoke-doctor`.
 - **Reviews run on your existing `claude` CLI by default — nothing extra is
   installed.** Say this plainly; do not bury it. Siltpoke's reviewer is a
   `claude -p` subprocess reading over your shoulder, so the Brain model you
@@ -434,5 +434,5 @@ Tell the user, in their chosen language:
   downloads several GB — only bring it up if the user asks. If §8 switched
   the reviewer to another family, say that instead of "your existing `claude`".
   If §8 found another CLI on the express path, add one line: "you also have
-  `<family>` installed — `/siltpoke-brain set-builder claude <family>` makes it
+  `<family>` installed — `/siltpoke:siltpoke-brain set-builder claude <family>` makes it
   review Claude's code."

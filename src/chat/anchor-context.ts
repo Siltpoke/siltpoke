@@ -31,13 +31,25 @@ import type { SourceProvider } from "../explain/explain";
 const DEFAULT_DEPTH: 1 | 2 = 1;
 
 /**
+ * How much of the pinned node's own source the chat sends. The model is told
+ * to answer from the provided context only, so the snippet has to BE the node:
+ * its own lines, up to this many bytes. A 600-byte file head (explain's cut)
+ * left a pinned file showing its imports and a pinned function showing
+ * another part of the file. Sized with the bundle budget below so the
+ * neighbor lists still fit beside a full-size target; the total matches what
+ * the review-pinned chat already sends (critique-context, 24 KB).
+ */
+const TARGET_SOURCE_MAX_BYTES = 16 * 1024;
+const ANCHOR_BUDGET_BYTES = 24 * 1024;
+
+/**
  * Chat-flavored system prompt for the anchored "what is this node?" turn.
  * Distinct from explain's EXPLAIN_SYSTEM_PROMPT — conversational, and it pins
  * the OUT-of-scope boundary (no caller-impact) into the model instruction.
  */
 export const CHAT_ANCHOR_SYSTEM_PROMPT = `You are siltpoke, a coding companion. The user is looking at one specific code node (a function or file) in their repository graph and is asking about it in a chat.
 
-Answer their question about THIS node using ONLY the provided context (the node's source, signature, and its immediate neighbors). Be concise and plain-language. Cite \`file:line\` for any concrete claim. If the provided context does not contain the answer, say so plainly — never fabricate.
+Answer their question about THIS node from the provided context (the node's source, signature, and its immediate neighbors), and from the project's files if you are told further down that you can read them. Be concise and plain-language. Cite \`file:line\` for any concrete claim. The node's source lines are prefixed \`N| \`, where N is the real line number in the file (not part of the code) — quote N, never count lines yourself. If the provided context does not contain the answer, say so plainly — never fabricate.
 
 Do NOT answer "who calls this" or "what breaks if I change it" (change/caller-impact is out of scope for now); if asked, say that's not yet supported.`;
 
@@ -187,7 +199,14 @@ export async function assembleAnchorContext(input: {
     if (content !== null) sources.set(path, content);
   }
 
-  const prompt = assemblePrompt({ targetId: nodeId, subgraph, symbolTable, sources });
+  const prompt = assemblePrompt({
+    targetId: nodeId,
+    subgraph,
+    symbolTable,
+    sources,
+    budgetBytes: ANCHOR_BUDGET_BYTES,
+    targetLineSlice: { maxBytes: TARGET_SOURCE_MAX_BYTES },
+  });
   const fingerprint = fingerprints.files[targetNode.path]?.content_sha256 ?? null;
 
   return {

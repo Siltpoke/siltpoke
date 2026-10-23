@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 import type { Hono } from "hono";
+import type { ChatProviderResolution } from "../../brain/chat-provider";
 import { type AnchorTarget, cheapNodeExists, type ResolveAnchorResult } from "../../chat/anchor-context";
 import { deleteAnchorContext, readAnchorContext, writeAnchorContext } from "../../chat/anchor-store";
 import { composeBaseSystemPrompt } from "../../chat/compose-base-context";
@@ -16,6 +17,10 @@ import {
   readSession,
 } from "../../chat/jsonl-store";
 import { type PageContext, parsePageId, previewContext } from "../../chat/page-context";
+import { composeChatPrompt } from "../../chat/prompt-blocks";
+import { type ChatRunStore, localRunStore } from "../../chat/run-store";
+import { parseCodeMapView } from "../../chat/page-view";
+import { answersWithClaude, chatProjectRoot, noCodeAccessFor, previewCodeAccess, repoAccessBlock } from "../../chat/repo-access";
 import { RECALL_SURFACE_ENABLED, recallRelatedChats } from "../../chat/recall";
 import { type RecapDeps, recapSession } from "../../chat/recap";
 import { type ChatMessage, chatMessageSchema } from "../../chat/schema";
@@ -50,14 +55,14 @@ import {
 } from "./chat-capture-runner";
 import {
   buildTranscript,
+  type ChatProviderName,
   formatSseEvent,
   type StreamChatOptions,
   type StreamErrorReason,
   type StreamEvent,
   type StreamUsage,
-  streamChat,
-  DEFAULT_CHAT_MODEL,
 } from "./chat-stream";
+import { type CliVersionLookup, openRecordedChatTurn } from "./chat-recorded-turn";
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -79,6 +84,17 @@ export interface ChatRouteDeps {
   streamFactory?: (
     opts: StreamChatOptions,
   ) => AsyncGenerator<StreamEvent, void, void>;
+  /**
+   * Which coding agent this message goes to (defect [49]) — asked once per
+   * send. Bound in server.ts to `resolveChatProvider(homeBase)`. Absent →
+   * claude, as before [49], so a test that injects `streamFactory` does not
+   * depend on what the machine running it has installed.
+   */
+  resolveChatProvider?: () => ChatProviderResolution;
+  /** Where chat call records go (spec 2026-10-13 §10.2). Default: local files. */
+  runStore?: ChatRunStore;
+  /** Bound in server.ts; absent → no `--version` asked, `cli_version` null. */
+  cliVersionLookup?: CliVersionLookup;
   /**
    * Resolve a viewed repo-graph node into Brain-ready anchor context.
    * Injected (the daemon binds it to `resolveAnchorContext` + the project's
@@ -360,7 +376,16 @@ interface StreamReduction {
   sawUsage: boolean;
   sawStop: boolean;
   /** Non-null = the turn failed; `message` is already capped at 300 chars. */
-  failure: { reason?: StreamErrorReason; message: string } | null;
+  failure: StreamFailure | null;
+}
+
+/** `provider` / `found` name agents only — they are what the client builds its
+ * sentence from, so they travel to the wire and into the stored row. */
+interface StreamFailure {
+  reason?: StreamErrorReason;
+  message: string;
+  provider?: ChatProviderName;
+  found?: ChatProviderName[];
 }
 
 interface ReduceStreamDeps {
@@ -390,7 +415,7 @@ async function reduceStreamEvents(
   let usage: StreamUsage = { input_tokens: 0, output_tokens: 0 };
   let sawUsage = false;
   let sawStop = false;
-  let failure: { reason?: StreamErrorReason; message: string } | null = null;
+  let failure: StreamFailure | null = null;
 
   // Wire delivery is best-effort: once the client disconnects, every enqueue
   // throws ("Controller is already closed"). An emit failure is a WIRE
@@ -432,7 +457,11 @@ async function reduceStreamEvents(
         sawStop = true;
       }
       if (ev.type === "error") {
-        failure = { reason: ev.reason, message: ev.error.slice(0, 300) };
+        const who = {
+          ...(ev.provider ? { provider: ev.provider } : {}),
+          ...(ev.found ? { found: ev.found } : {}),
+        };
+        failure = { reason: ev.reason, message: ev.error.slice(0, 300), ...who };
         if (ev.usage) {
           usage = ev.usage;
           sawUsage = true;
@@ -442,7 +471,7 @@ async function reduceStreamEvents(
         if (ev.stderr_tail) deps.logStderr(ev.reason, ev.stderr_tail);
         // Re-emit sanitized: reason + short message, no stderr blob
         // (formatSseEvent also strips server-only fields — defense in depth).
-        safeEmit({ type: "error", error: ev.error, reason: ev.reason });
+        safeEmit({ type: "error", error: ev.error, reason: ev.reason, ...who });
         continue;
       }
       safeEmit(ev);
@@ -493,6 +522,7 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
   // Lazy per-chat recap — real recapSession (ledgered Haiku) in
   // production, injectable stub in tests. Mirrors the `extractFacts` seam.
   const recapFn = deps.recapSession ?? recapSession;
+  const runStore = deps.runStore ?? localRunStore(deps.homeBase);
 
   app.post("/api/chat", async (c) => {
     // Secret-gated — this is a paid Brain call + memory/facts write; without
@@ -941,14 +971,11 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     // anchorCtx is already read above (pre-flight gate); may have been refreshed
     // by the "continue" branch.
     //
-    // Page-context chat: when there is NO resolved node anchor and the client
-    // sent a valid `page`, ground the reply in the PAGE the user is on instead.
-    // Precedence: node > page > none, extracted into composeBaseSystemPrompt
-    // (src/chat/compose-base-context.ts) — see that module for the fail-open
-    // try/catch (page assembly is additive context only, never blocks the reply).
+    // No resolved node anchor → ground the reply in the PAGE, or on the Code Map
+    // in the selected component (`body.view`); see compose-base-context.ts.
     const baseSystemPrompt = await composeBaseSystemPrompt({
       anchorCtx,
-      pageId,
+      pageId, view: parseCodeMapView((body as { view?: unknown }).view), // one line: this function is at its length pin
       homeBase: deps.homeBase,
       readMemory: deps.readMemory,
       assemblePage: deps.assemblePageContext,
@@ -1033,17 +1060,21 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     // truthful ack from the same request that saved ("" when no capture fired).
     const captureMarker = buildCaptureMarker(cap.signal, cap.text);
 
-    // Compose: anchor base + user-facts + capture-honesty framing + capture marker
-    // joined by a blank line; the (dormant) recall block carries its own leading
-    // separator. All empty → "" || undefined = undefined (nothing injected —
-    // back-compat for capture-disabled mounts).
-    const systemPrompt =
-      ([baseSystemPrompt, factsBlock, episodeBlock, captureHonesty, captureMarker]
-        .filter(Boolean)
-        .join("\n\n") + recallBlock) ||
-      undefined;
+    // Joined in prompt-blocks.ts (byte-identical to the old inline join); the
+    // named blocks are kept for the chat call record.
+    // Claude reads the user's project from its root (src/chat/repo-access.ts).
+    const resolution = deps.resolveChatProvider?.();
+    const viewHash = parseCodeMapView((body as { view?: unknown }).view)?.projHash;
+    const cwd = answersWithClaude(resolution)
+      ? await chatProjectRoot(memScope, viewHash, deps.resolveProjectRootByHash)
+      : undefined;
+    const prompt = composeChatPrompt({
+      page: baseSystemPrompt, repoAccess: cwd ? repoAccessBlock(cwd) : "", userFacts: factsBlock, episodes: episodeBlock,
+      noCodeAccess: noCodeAccessFor(cwd, anchorCtx !== null, pageId),
+      captureHonesty, captureMarker, recall: recallBlock, transcript,
+    });
+    const systemPrompt = prompt.systemPrompt;
 
-    const streamFactory = deps.streamFactory ?? streamChat;
     // One abort controller per request, two triggers, ONE
     // cancel path: (a) the SSE body's cancel() callback — fired when the
     // client aborts the fetch or the socket dies (Bun cancels the response
@@ -1055,7 +1086,24 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     const onReqAbort = () => turnAbort.abort();
     if (reqSignal.aborted) turnAbort.abort();
     else reqSignal.addEventListener("abort", onReqAbort, { once: true });
-    const replyModel = body.model ?? DEFAULT_CHAT_MODEL;
+    // Decided per message, uncached: a change on /settings applies to the
+    // next one. The generator is lazy — nothing is launched until it is read.
+    const { turn, rec } = openRecordedChatTurn(
+      {
+        homeBase: deps.homeBase,
+        resolution,
+        bodyModel: body.model,
+        transcript,
+        systemPrompt,
+        signal: turnAbort.signal,
+        cwd,
+        streamFactory: deps.streamFactory,
+      },
+      {
+        store: runStore, sessionId, blocks: prompt.blocks, omitted: prompt.omitted,
+        cliVersionLookup: deps.cliVersionLookup, logError: (m) => console.error(m),
+      },
+    );
 
     const sseStream = new ReadableStream<Uint8Array>({
       async start(controller) {
@@ -1063,18 +1111,18 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
         const emit = (ev: StreamEvent): void => {
           controller.enqueue(enc.encode(formatSseEvent(ev)));
         };
+        // The route's own start event is the one the client sees (the
+        // generator's is absorbed by the reducer), so who answers and whether
+        // the reply arrives whole are said HERE.
         emit({
           type: "message_start",
           message_id: "",
-          model: replyModel,
+          model: turn.model,
+          ...(turn.provider ? { provider: turn.provider } : {}),
+          ...(turn.wholeReply ? { whole_reply: true } : {}),
         });
 
-        const stream = streamFactory({
-          transcript,
-          model: body.model,
-          systemPrompt,
-          signal: turnAbort.signal,
-        });
+        const stream = turn.stream;
         // Index-staleness — a distinct SSE event (not a `StreamEvent`
         // variant: that type is scoped to the `claude -p` wire translation
         // in chat-stream.ts, orthogonal to this route's own repo-graph
@@ -1089,14 +1137,14 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
 
         const red = await reduceStreamEvents(
           stream,
-          { assistantId: newId("m"), assistantModel: body.model ?? DEFAULT_CHAT_MODEL },
+          { assistantId: newId("m"), assistantModel: turn.model },
           {
             emit,
             // launchd redirects the daemon's stderr to
             // ~/.siltpoke/logs/daemon.err, so console.error IS the daemon log.
             logStderr: (reason, tail) => {
               console.error(
-                `[chat-stream] session=${sessionId} reason=${reason ?? "unclassified"} claude -p stderr (capped):\n${tail}`,
+                `[chat-stream] session=${sessionId} reason=${reason ?? "unclassified"} ${turn.provider ?? "claude"} output (capped):\n${tail}`,
               );
             },
           },
@@ -1143,7 +1191,8 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
           role: "assistant",
           content: cancelled || failure === null ? red.assistantText : "",
           ts: now().toISOString(),
-          model: red.assistantModel,
+          // "" = an agent whose CLI picked its own model: stored as unknown.
+          model: red.assistantModel || null,
           // Cancelled/failed turns with no usage store tokens:null (honest);
           // success keeps today's shape, and pre-kill usage rides the row.
           tokens:
@@ -1156,9 +1205,20 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
               ? {
                   status: "failed",
                   ...(failure.reason ? { error_reason: failure.reason } : {}),
+                  ...(failure.provider ? { error_provider: failure.provider } : {}),
+                  ...(failure.found ? { error_found: failure.found } : {}),
                   error_message: failure.message,
                 }
               : {}),
+        });
+        // The call record goes first: the agent has run, so a failure in the
+        // writes below must not leave the call unrecorded.
+        const run = await rec.finish({
+          messageId: assistantMsg.id,
+          outcome: cancelled ? "cancelled" : failure !== null ? "failed" : "ok",
+          failureReason: failure?.reason ?? null,
+          failureMessage: failure?.message ?? null,
+          usage: red.sawUsage ? red.usage : null,
         });
         await appendMessage(deps.homeBase, sessionId, assistantMsg);
         insertMessage(deps.index, assistantMsg);
@@ -1171,6 +1231,14 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
           isNewSession ? placeholderSummary(userMessage.content) : "",
         );
 
+        // Tell the client which record is this answer's.
+        try {
+          const data = { run_id: run.runId, message_id: assistantMsg.id, recorded: run.recorded };
+          controller.enqueue(enc.encode(`event: run\ndata: ${JSON.stringify(data)}\n\n`));
+        } catch {
+          // client gone — the record is on disk regardless
+        }
+
         // Honest ledger (cost-honesty batch A): a chat turn is a real paid
         // Brain call (no cache). Chat usage carries only token counts, so the
         // cost is derived from the model via computeCost. Gated on usage
@@ -1181,7 +1249,8 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
           await ledger(deps.homeBase, {
             kind: "chat",
             session_id: sessionId,
-            model: red.assistantModel,
+            // Absent for the quota-billed agents — no dollar figure is derived.
+            ...(turn.ledgerModel !== undefined ? { model: red.assistantModel } : {}),
             usage: {
               input_tokens: red.usage.input_tokens,
               output_tokens: red.usage.output_tokens,
@@ -1236,7 +1305,11 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
   app.get("/api/chat/context-preview", async (c) => {
     const pageId = parsePageId(c.req.query("page") ?? "") || "/";
     const preview = await previewContext(pageId, { homeBase: deps.homeBase, readMemory: deps.readMemory });
-    return c.json({ page_label: preview.pageLabel, facts_count: preview.factsCount });
+    const codeAccess = await previewCodeAccess({
+      resolution: deps.resolveChatProvider?.(), session: c.req.query("session"), anchorHash: c.req.query("anchor_hash"),
+      viewHash: c.req.query("view_hash"), listSessions: () => listChatSessions(deps.homeBase), resolve: deps.resolveProjectRootByHash,
+    });
+    return c.json({ page_label: preview.pageLabel, facts_count: preview.factsCount, code_access: codeAccess });
   });
 
   /**
@@ -1357,22 +1430,44 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
     const messages = msgs
       .filter((m) => m.role === "user" || m.role === "assistant")
       .map((m) => ({
+        // id links an answer to its Runs record; ts is the bubble's timestamp.
+        id: m.id,
+        ts: m.ts,
         role: m.role,
         text: m.content,
         ...(m.status !== undefined ? { status: m.status } : {}),
         ...(m.error_reason !== undefined ? { error_reason: m.error_reason } : {}),
+        ...(m.error_provider !== undefined ? { error_provider: m.error_provider } : {}),
+        ...(m.error_found !== undefined ? { error_found: m.error_found } : {}),
         ...(m.error_message !== undefined ? { error_message: m.error_message } : {}),
       }));
     return c.json({ messages });
   });
 
+  // Secret required: it deletes a conversation, its call records and its pin,
+  // and reading those records already needed the secret (review of #1036).
   app.delete("/api/chat/sessions/:id", async (c) => {
+    if (!isAuthorized(deps.secret ?? "", c.req.header("X-Siltpoke-Secret"))) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
     const id = c.req.param("id");
     if (!SESSION_ID_RE.test(id)) return c.json({ error: "invalid_session_id" }, 400);
     await deleteChatSession(deps.homeBase, id);
     await deleteSessionFile(deps.homeBase, id);
     await deleteAnchorContext(deps.homeBase, id);
+    await runStore.delete(id);
     return c.json({ ok: true });
+  });
+
+  // The chat call records of one conversation, oldest first (spec 2026-10-13
+  // §10). Secret required: a record holds the whole prompt and the agent's output.
+  app.get("/api/chat/sessions/:id/runs", async (c) => {
+    if (!isAuthorized(deps.secret ?? "", c.req.header("X-Siltpoke-Secret"))) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
+    const id = c.req.param("id");
+    if (!SESSION_ID_RE.test(id)) return c.json({ error: "invalid_session_id" }, 400);
+    return c.json({ runs: await runStore.read(id) });
   });
 
   /**

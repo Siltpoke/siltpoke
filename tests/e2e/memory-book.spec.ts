@@ -39,6 +39,25 @@ async function waitHydrated(page: import("@playwright/test").Page) {
   );
 }
 
+/**
+ * Turn the timeline to the page holding `id` (10 rows a page — keep in sync
+ * with TIMELINE_PAGE in src/web/client/islands/memory-book.ts).
+ * The seed plants more memories than one page holds, so a seeded fact can sit
+ * on page 2.
+ */
+async function turnToRow(page: import("@playwright/test").Page, id: string): Promise<void> {
+  await page.evaluate((id) => {
+    const el = document.querySelector('[x-data="memoryBook"]') as HTMLElement & {
+      _x_dataStack?: Array<{ page: number; filteredMemories: () => Array<{ id: string }> }>;
+    };
+    const data = el._x_dataStack?.[0];
+    if (!data) throw new Error("memoryBook data missing");
+    const index = data.filteredMemories().findIndex((m) => m.id === id);
+    if (index < 0) throw new Error(`no memory ${id} in the filtered list`);
+    data.page = Math.floor(index / 10);
+  }, id);
+}
+
 test("memory book: timeline renders and island hydrates", async ({ page }) => {
   await page.goto("/memory");
   await page.waitForLoadState("networkidle");
@@ -90,8 +109,196 @@ test("memory book: memories array in Alpine state matches rendered row count", a
     return el?._x_dataStack?.[0]?.memories?.length ?? 0;
   });
 
+  // The timeline shows at most 10 rows per page (TIMELINE_PAGE).
   const domRowCount = await page.locator(".memory-row").count();
-  expect(alpineCount).toBe(domRowCount);
+  expect(domRowCount).toBe(Math.min(alpineCount, 10));
+});
+
+/** Replace the seeded memories with n synthetic ones, newest = mem-(n-1). */
+async function plantMemories(page: import("@playwright/test").Page, n: number, episodicFrom = n): Promise<void> {
+  await page.evaluate(
+    ({ n, episodicFrom }) => {
+      const el = document.querySelector('[x-data="memoryBook"]') as HTMLElement & {
+        _x_dataStack?: Array<{ memories: unknown[] }>;
+      };
+      const data = el._x_dataStack?.[0];
+      if (!data) throw new Error("memoryBook data missing");
+      data.memories = Array.from({ length: n }, (_, i) => ({
+        id: `mem-${i}`,
+        ts: new Date(Date.UTC(2026, 9, 1, 0, 0) + i * 60_000).toISOString(),
+        type: i < episodicFrom ? "semantic" : "episodic",
+        text: `synthetic memory ${i}`,
+        why: null,
+        status: "active",
+      }));
+    },
+    { n, episodicFrom },
+  );
+}
+
+test("memory book: timeline pages of 10 — next, previous, and filters go back to page 1", async ({
+  page,
+}) => {
+  await page.goto("/memory");
+  await page.waitForLoadState("networkidle");
+  await waitHydrated(page);
+  // 35 memories, 28 semantic + 7 episodic: 4 pages in all, 3 pages of semantic.
+  await plantMemories(page, 35, 28);
+
+  const rows = page.locator(".memory-timeline .memory-row");
+  const prev = page.locator(".memory-pager-prev");
+  const next = page.locator(".memory-pager-next");
+  const label = page.locator(".memory-pager-label");
+
+  await expect(rows).toHaveCount(10);
+  await expect(rows.first()).toHaveAttribute("data-event-id", "mem-34");
+  await expect(label).toHaveText("Page 1 of 4 · 35 memories");
+  await expect(prev).toBeDisabled();
+  await expect(next).toBeEnabled();
+
+  await next.click();
+  await expect(label).toHaveText("Page 2 of 4 · 35 memories");
+  await expect(rows).toHaveCount(10);
+  await expect(rows.first()).toHaveAttribute("data-event-id", "mem-24");
+
+  await next.click();
+  await next.click();
+  await expect(label).toHaveText("Page 4 of 4 · 35 memories");
+  await expect(rows).toHaveCount(5);
+  await expect(next).toBeDisabled();
+
+  await prev.click();
+  await expect(label).toHaveText("Page 3 of 4 · 35 memories");
+
+  // A type filter goes back to page 1 — and the chip count still covers all 28.
+  const semanticChip = page.locator(".memory-filter-chip").filter({ hasText: "Semantic" });
+  await expect(semanticChip).toContainText("28");
+  await semanticChip.click();
+  await expect(label).toHaveText("Page 1 of 3 · 28 memories");
+  await expect(rows.first()).toHaveAttribute("data-event-id", "mem-27");
+
+  // The sort and the status chips go back to page 1 too.
+  await next.click();
+  await expect(label).toHaveText("Page 2 of 3 · 28 memories");
+  await page.locator(".memory-sort-toggle").click();
+  await expect(label).toHaveText("Page 1 of 3 · 28 memories");
+  await expect(rows.first()).toHaveAttribute("data-event-id", "mem-0");
+
+  await next.click();
+  await expect(label).toHaveText("Page 2 of 3 · 28 memories");
+  await page.locator(".memory-status-chip").filter({ hasText: "Active" }).click();
+  await expect(label).toHaveText("Page 1 of 3 · 28 memories");
+});
+
+test("memory book: turning the page brings the top of the timeline back into view", async ({ page }) => {
+  // Short window, so the pager and the first row cannot both be on screen.
+  await page.setViewportSize({ width: 1100, height: 420 });
+  await page.goto("/memory");
+  await page.waitForLoadState("networkidle");
+  await waitHydrated(page);
+  await plantMemories(page, 40);
+
+  const rows = page.locator(".memory-timeline .memory-row");
+  const next = page.locator(".memory-pager-next");
+  await next.scrollIntoViewIfNeeded();
+  await expect(rows.first()).not.toBeInViewport();
+
+  await next.click();
+  await expect(page.locator(".memory-pager-label")).toHaveText("Page 2 of 4 · 40 memories");
+  await expect(rows.first()).toHaveAttribute("data-event-id", "mem-29");
+  await expect(rows.first()).toBeInViewport();
+});
+
+test("memory book: the pager sits at the right, its Next button flush with the cards", async ({ page }) => {
+  await page.goto("/memory");
+  await page.waitForLoadState("networkidle");
+  await waitHydrated(page);
+  await plantMemories(page, 40);
+  // The pager is x-show'd; measure only once Alpine has shown it.
+  await expect(page.locator(".memory-pager-next")).toBeVisible();
+
+  const next = await page.locator(".memory-pager-next").boundingBox();
+  const prev = await page.locator(".memory-pager-prev").boundingBox();
+  const card = await page.locator(".memory-timeline .memory-row").last().boundingBox();
+  if (!next || !prev || !card) throw new Error("pager or card not laid out");
+  expect(Math.abs(next.x + next.width - (card.x + card.width))).toBeLessThanOrEqual(2);
+  // Previous stays on the left of the label, Next on the right.
+  expect(prev.x).toBeLessThan(next.x);
+});
+
+test("memory book: mixed time-zone timestamps keep one group a day, above the pager", async ({ page }) => {
+  await page.goto("/memory");
+  await page.waitForLoadState("networkidle");
+  await waitHydrated(page);
+  // Live data mixes "Z" and "-07:00" spellings (2026-10-16). Sorted as text,
+  // b (20:00-07:00 = 03:00Z on Oct 2) fell below c (23:00Z on Oct 1), so Oct 2
+  // came out as two groups with one key and Alpine drew them below the pager.
+  await page.evaluate(() => {
+    const el = document.querySelector('[x-data="memoryBook"]') as HTMLElement & {
+      _x_dataStack?: Array<{ memories: unknown[] }>;
+    };
+    const data = el._x_dataStack?.[0];
+    if (!data) throw new Error("memoryBook data missing");
+    const row = (id: string, ts: string) => ({ id, ts, type: "semantic", text: `memory ${id}`, why: null, status: "active" });
+    data.memories = [
+      row("a", "2026-10-02T01:00:00.000Z"),
+      row("b", "2026-10-01T20:00:00-07:00"),
+      row("c", "2026-10-01T23:00:00Z"),
+      ...Array.from({ length: 9 }, (_, i) => row(`f${i + 1}`, `2026-10-01T0${i + 1}:00:00Z`)),
+    ];
+  });
+  await expect(page.locator(".memory-pager-label")).toHaveText("Page 1 of 2 · 12 memories");
+
+  const seen = await page.evaluate(() => {
+    const timeline = Array.from(document.querySelectorAll(".memory-timeline")).find(
+      (e) => (e as HTMLElement).offsetParent,
+    ) as HTMLElement;
+    const pagerTop = timeline.querySelector(".memory-pager")!.getBoundingClientRect().top;
+    const rows = Array.from(timeline.querySelectorAll(".memory-row"))
+      .map((r) => ({ id: r.getAttribute("data-event-id"), top: r.getBoundingClientRect().top }))
+      .sort((x, y) => x.top - y.top);
+    return { pagerTop, rows };
+  });
+  expect(seen.rows.length).toBe(10);
+  for (const row of seen.rows) expect(row.top).toBeLessThan(seen.pagerTop);
+  // Newest first, top to bottom, by the moment.
+  expect(seen.rows.map((r) => r.id)).toEqual(["b", "a", "c", "f9", "f8", "f7", "f6", "f5", "f4", "f3"]);
+});
+
+test("memory book: the pager is hidden when everything fits on one page", async ({ page }) => {
+  await page.goto("/memory");
+  await page.waitForLoadState("networkidle");
+  await waitHydrated(page);
+  await plantMemories(page, 10);
+
+  await expect(page.locator(".memory-timeline .memory-row")).toHaveCount(10);
+  await expect(page.locator(".memory-pager")).toBeHidden();
+});
+
+test("memory book: jumping to a memory on another page turns to it and highlights it", async ({
+  page,
+}) => {
+  await page.goto("/memory");
+  await page.waitForLoadState("networkidle");
+  await waitHydrated(page);
+  await plantMemories(page, 60);
+
+  const target = page.locator('.memory-row[data-event-id="mem-5"]');
+  await expect(page.locator(".memory-timeline .memory-row")).toHaveCount(10);
+  await expect(target).toHaveCount(0);
+
+  await page.evaluate(() => {
+    const el = document.querySelector('[x-data="memoryBook"]') as HTMLElement & {
+      _x_dataStack?: Array<{ jumpToFact: (id: string) => void }>;
+    };
+    el._x_dataStack?.[0]?.jumpToFact("mem-5");
+  });
+
+  // mem-5 is newest-first index 54 → page 6 of 6.
+  await expect(page.locator(".memory-pager-label")).toHaveText("Page 6 of 6 · 60 memories");
+  await expect(target).toHaveCount(1);
+  await expect(target).toHaveClass(/memory-row-highlight/, { timeout: 2_000 });
+  await expect(target).toBeInViewport();
 });
 
 test("memory book: view toggle shows 4 type cards", async ({ page }) => {
@@ -851,6 +1058,7 @@ test("memory book: stored-events path — SSR-carried events shown newest-first,
   expect(storedEventsCount).toBeGreaterThan(0);
 
   // Locate the row for fact-e2e-actionlog.
+  await turnToRow(page, "fact-e2e-actionlog");
   const row = page.locator('.memory-row[data-event-id="fact-e2e-actionlog"]');
   await expect(row).toBeAttached();
 
@@ -895,6 +1103,7 @@ test("memory book: ★重申 badge renders visibly for a fact with recall_count 
   // The seed plants fact-e2e-reaffirm (recall_count 1) — its row MUST show a
   // visible "★ 重申 ×1" badge. The reaffirm DATE moved off this header badge
   // (smoke 2026-06-26) into the expanded action-log row; the badge is count-only.
+  await turnToRow(page, "fact-e2e-reaffirm");
   const row = page.locator('.memory-row[data-event-id="fact-e2e-reaffirm"]');
   await expect(row).toBeAttached();
 
@@ -920,6 +1129,7 @@ test("memory book: action-log footer shows collapsed summary and expands/collaps
   await waitHydrated(page);
 
   // Locate the row for fact-e2e-reaffirm (active, logRows synthesized → 1 approved row).
+  await turnToRow(page, "fact-e2e-reaffirm");
   const row = page.locator('.memory-row[data-event-id="fact-e2e-reaffirm"]');
   await expect(row).toBeAttached();
 
@@ -1067,8 +1277,10 @@ test("memory book: status filter chips filter by 生效/退休", async ({ page }
     { timeout: 5_000 },
   );
 
-  // Both the retired and an active fact are now visible.
+  // Both the retired and an active fact are back (each on its own page).
+  await turnToRow(page, "fact-e2e-superseded");
   await expect(retiredRow).toBeVisible({ timeout: 3_000 });
+  await turnToRow(page, "fact-e2e-retire-001");
   await expect(activeRow).toBeVisible({ timeout: 3_000 });
 
   // ── Click 生效 → only active rows visible ────────────────────────────────
@@ -1085,6 +1297,7 @@ test("memory book: status filter chips filter by 生效/退休", async ({ page }
 
   // The retired fact is now hidden; the active fact remains visible.
   await expect(retiredRow).not.toBeVisible();
+  await turnToRow(page, "fact-e2e-retire-001");
   await expect(activeRow).toBeVisible({ timeout: 3_000 });
 });
 
@@ -1125,6 +1338,7 @@ test("memory book: supersede link shows partner text and jumpToFact highlights t
   // ── Superseding card: expand log → see ⇄ 替代了「<partner text>」 ─────────────
   // The supersede link now lives INSIDE the expanded log (not the card body).
 
+  await turnToRow(page, supersedingId);
   const supersedingRow = page.locator(`.memory-row[data-event-id="${supersedingId}"]`);
   await expect(supersedingRow).toBeAttached();
 

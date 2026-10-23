@@ -28,7 +28,9 @@ const SILTPOKE_COMMAND_DIR = join(ROOT, ".claude-plugin", "commands");
  * purpose (`/plugin marketplace add …` is how CodeBuddy and Qoder install), and
  * nothing here can verify them — they live in someone else's product.
  */
-const HOST_BUILTINS = new Set(["/plugin", "/plugins", "/reload-plugins", "/config", "/resume"]);
+// `/hooks`: Codex's own "view and manage lifecycle hooks" (codex-rs/tui/src/slash_command.rs,
+// rust-v0.162.1); codex.md sends the user there to trust Siltpoke's hooks.
+const HOST_BUILTINS = new Set(["/plugin", "/plugins", "/reload-plugins", "/config", "/resume", "/hooks"]);
 
 /**
  * project-life-cycle's published commands, as `commands/` holds them in the
@@ -111,14 +113,14 @@ describe("install prompts — every command they name exists", () => {
     const union = new Set(
       promptFiles.flatMap((f) => commandsNamedIn(readFileSync(join(PROMPT_DIR, f), "utf8"))),
     );
-    expect([...union].filter((c) => c.startsWith("/siltpoke-")).length).toBeGreaterThanOrEqual(5);
+    expect([...union].filter((c) => c.startsWith("/siltpoke:siltpoke-")).length).toBeGreaterThanOrEqual(5);
   });
 
   test("the extractor rejects paths and URLs, and keeps real commands", () => {
     const sample =
       "Run `~/.bun/bin/bun` and open `https://github.com/Siltpoke/siltpoke`,\n" +
-      "then type `/siltpoke-doctor` and `/project-lifecycle:ship`, any `/siltpoke-…` works.";
-    expect(commandsNamedIn(sample)).toEqual(["/project-lifecycle:ship", "/siltpoke-doctor"]);
+      "then type `/siltpoke:siltpoke-doctor` and `/project-lifecycle:ship`, any `/siltpoke-…` works.";
+    expect(commandsNamedIn(sample)).toEqual(["/project-lifecycle:ship", "/siltpoke:siltpoke-doctor"]);
   });
 
   for (const file of promptFiles) {
@@ -128,7 +130,14 @@ describe("install prompts — every command they name exists", () => {
 
       for (const token of named) {
         if (HOST_BUILTINS.has(token)) continue;
-        const bare = token.slice(1).replace(/^project-lifecycle:/, "");
+        // Claude Code (2.1.300 on Windows, 2.1.301 on macOS) answers "Unknown
+        // command" to a bare `/siltpoke-x` from a plugin install: the plugin's
+        // commands exist only as `/siltpoke:siltpoke-x` (install audit §110 W6).
+        if (/^\/siltpoke-/.test(token)) {
+          unknown.push(`${token} (write /siltpoke:${token.slice(1)} — the bare name is "Unknown command")`);
+          continue;
+        }
+        const bare = token.slice(1).replace(/^(project-lifecycle|siltpoke):/, "");
         if (bare.startsWith("siltpoke-")) {
           if (!shippedSiltpokeCommands.has(bare)) unknown.push(`${token} (no .claude-plugin/commands/${bare}.md)`);
           continue;

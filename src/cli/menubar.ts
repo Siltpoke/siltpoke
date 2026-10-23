@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * `/siltpoke-menubar <install|status|remove>` CLI (track #7 T7).
+ * `/siltpoke:siltpoke-menubar <install|status|remove>` CLI (track #7 T7).
  *
  * Thin wrapper around the consent-driven `runMenubarSetup` (track #6):
  *   - `install` — runs the same SwiftBar setup flow the wizard offers
@@ -9,7 +9,7 @@
  *   - `status`  — reports whether the SwiftBar plugin shim exists.
  *   - `remove`  — deletes the shim if present. Running `remove` explicitly
  *     IS the consent (same one-shot-command convention as
- *     `/siltpoke-mute` / `/siltpoke-unmute` — no extra y/n prompt).
+ *     `/siltpoke:siltpoke-mute` / `/siltpoke:siltpoke-unmute` — no extra y/n prompt).
  *
  * Usage:
  *   bun src/cli/menubar.ts install
@@ -17,6 +17,7 @@
  *   bun src/cli/menubar.ts remove
  */
 import { existsSync as realExistsSync, unlinkSync } from "node:fs";
+import { notThisAccount, otherAccountHome } from "../installer/account-home";
 import {
   probeExec,
   resolveObeyedShimPath,
@@ -28,6 +29,7 @@ import {
   type MenubarSetupResult,
   type ProbeExec,
 } from "../installer/menubar-setup";
+import { uninstallSwiftbarAutostart } from "../installer/swiftbar-autostart";
 import { realWizardIO, type WizardIO } from "../installer/wizard";
 
 export interface MenubarCliDeps {
@@ -40,7 +42,7 @@ export interface MenubarCliDeps {
   io?: WizardIO;
   exec?: MenubarSetupDeps["exec"];
   writeFile?: MenubarSetupDeps["writeFile"];
-  /** Non-interactive install (no askYesNo) — set by the `/siltpoke-menubar` slash command (no TTY). */
+  /** Non-interactive install (no askYesNo) — set by the `/siltpoke:siltpoke-menubar` slash command (no TTY). */
   nonInteractive?: boolean;
   /** Renderer path the SwiftBar shim invokes — plugin installs pass the bundled `dist/siltpoke-card.js`. */
   rendererPath?: string;
@@ -88,6 +90,8 @@ async function handleInstall(deps: MenubarCliDeps, write: (s: string) => void): 
     existsSync: deps.existsSync,
     nonInteractive: deps.nonInteractive,
     rendererPath: deps.rendererPath,
+    // The receipt follows the same home as the shim and the login item ([61]).
+    env: deps.home === undefined ? undefined : { ...process.env, HOME: deps.home },
   });
   if (result.reason === "not-darwin") {
     write("siltpoke-menubar: the menu-bar pet is macOS-only.\n");
@@ -122,6 +126,13 @@ function handleStatus(deps: MenubarCliDeps, write: (s: string) => void): number 
   const existsSync = deps.existsSync ?? realExistsSync;
   const exec = deps.exec ?? probeExec;
   const home = deps.home ?? process.env.HOME ?? "";
+  // [71]: `defaults` and `pgrep` answer for the account, so under another home
+  // the answer would be about someone else's menu bar.
+  const account = otherAccountHome(home, exec);
+  if (account !== null) {
+    write(`menu-bar pet: cannot tell — ${notThisAccount(home, account)}\n`);
+    return 0;
+  }
 
   // Resolved ONCE: each call shells out to `defaults read`, and this function
   // needs the answer in up to three places.
@@ -179,18 +190,39 @@ function handleRemove(deps: MenubarCliDeps, write: (s: string) => void): number 
   const exec = deps.exec ?? probeExec;
   const home = deps.home ?? process.env.HOME ?? "";
   const rm = deps.rm ?? ((p: string) => unlinkSync(p));
+  // [71]: the folder to delete from comes from `defaults` — the ACCOUNT's
+  // SwiftBar. Under another home that is the real menu-bar script.
+  const account = otherAccountHome(home, exec);
+  if (account !== null) {
+    write(`menu-bar pet: nothing was removed — ${notThisAccount(home, account)}\n`);
+    return 0;
+  }
 
   // Remove whichever copy is actually on disk — the one SwiftBar obeys first,
   // and otherwise a copy stranded in the default folder. Deleting the obeyed
   // path unconditionally would report success having removed nothing.
   const obeyed = obeyedShimPath(deps);
   const path = existsSync(obeyed) ? obeyed : strandedShimPath(obeyed, home, existsSync);
-  if (!path) {
+  if (path) rm(path);
+
+  // [87]: Siltpoke's own start-at-login item (`io.siltpoke.swiftbar`) goes too —
+  // the same function a full uninstall calls, not a copy of its logic. Only that
+  // one item: SwiftBar itself and any other plugin in its folder stay. Runs even
+  // when the shim is already gone, since the item outlives it. The install
+  // receipt is left as a full uninstall leaves it (it never edits the entry; the
+  // undo for a launch agent is already a no-op once the plist is gone).
+  const loginItem = uninstallSwiftbarAutostart({ home, exec, existsSync, probe: exec }).removed;
+
+  if (!path && !loginItem) {
     write("menu-bar pet: not installed (nothing to remove)\n");
     return 0;
   }
-  rm(path);
-  write("✓ menu-bar pet removed.\n");
+  write(path ? "✓ menu-bar pet removed.\n" : "menu-bar pet: no menu-bar script was left to remove.\n");
+  if (loginItem) {
+    write(
+      "✓ SwiftBar's start-at-login item (io.siltpoke.swiftbar) removed. SwiftBar itself and any other plugins are untouched.\n",
+    );
+  }
   return 0;
 }
 

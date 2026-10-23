@@ -67,6 +67,7 @@ describe("installSwiftbarAutostart", () => {
       existsSync: () => true,
       plistPath,
       uid: 501,
+      env: { HOME: dir }, // receipt goes to the sandbox, never the real ~/.siltpoke
     });
     expect(r).toEqual({ installed: true, reason: "ok" });
     expect(existsSync(plistPath)).toBe(true);

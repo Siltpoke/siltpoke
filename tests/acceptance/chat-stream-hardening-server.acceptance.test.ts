@@ -383,8 +383,9 @@ describe("historical non-ok / empty turns never reach the model", () => {
     const { messages } = (await res.json()) as {
       messages: Record<string, unknown>[];
     };
-    // plain rows keep the old lean shape
-    expect(messages[0]).toEqual({ role: "user", text: "q" });
+    // plain rows carry no status fields — only id + ts (the Runs window's
+    // link and the bubble timestamp) beside role + text
+    expect(messages[0]).toEqual({ id: expect.any(String), ts: "2026-07-01T00:00:00Z", role: "user", text: "q" });
     // failed rows expose the fields the error card needs
     expect(messages[1]).toMatchObject({
       role: "assistant",

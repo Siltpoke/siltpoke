@@ -5,7 +5,9 @@
 
 import { type BrainCallResult, BrainError, type BrainUsage, type CallBrainOptions } from "../../brain/brain";
 import { assembleSystemPromptWithFunnel, type MemoryFunnel, type PromptSectionBytes } from "../../brain/prompt-assembly";
+import { reviewUserContent } from "../../brain/output-language";
 import { buildToolOutputSection } from "../../brain/prompt-tools";
+import type { ToolCallsField } from "../../brain/tool-calls";
 import type { DiffCoverage } from "../../brain/hunk-selection";
 import type { BrainProviderMeta } from "../../brain/provider";
 import type { BrainOutput } from "../../brain/schema";
@@ -16,12 +18,15 @@ import type { CritiqueInput } from "../../state/critique";
 import { buildCallerImpactSection, type CallerImpactDeps } from "../caller-impact/inject";
 import type { ImportersDeps } from "../disk-awareness/importers";
 import { buildReverseDepsSection } from "../disk-awareness/reverse-deps";
+import type { InjectionAlert } from "../injection-alert";
+import { reviewAlert, scanReviewInputs } from "../review-alert";
+import { isNotesFamily, readProjectNotes } from "../project-notes";
 import { type EvidenceLabel, guardCritique } from "../evidence-guard";
 import type { DiffSummary } from "../tools/run-diff-summary";
 import { heuristicDiffSummary } from "../tools/run-diff-summary";
 import type { runTools } from "../tools/run-tools";
 import type { BrainContext, CriticSource, TimingTrace, V2ResultFields } from "../types";
-import { buildDiffSummarySection, buildRubricEvidenceSection, rubricEvidenceCitationTokens, writeV2Archive } from "./archive";
+import { buildDiffSummaryInstruction, buildDiffSummarySection, buildRubricEvidenceInstruction, buildRubricEvidenceSection, rubricEvidenceCitationTokens, writeV2Archive } from "./archive";
 import { autoPromoteSeverity } from "./severity-promotion";
 
 export interface NormalPhaseArgs {
@@ -75,13 +80,15 @@ export interface NormalPhaseResult {
    *  never "assembled empty". */
   promptBytes: PromptSectionBytes;
   outcome:
-    | { kind: "hard_suppress"; reason: string; skipCode?: "quota_cap" | "agy_prompt_too_large" }
+    | { kind: "hard_suppress"; reason: string; skipCode?: "quota_cap" | "agy_prompt_too_large"; /** No reply came back (spawn failure / timeout / rejected reply), so the Stop hook must NOT consume the review unit — nothing was looked at. Never set alongside `skipCode`, which is a policy skip that DOES consume. Defect `[27]`, audit §38.1 / §38.6. */ brainFailed?: true }
     | {
         kind: "ok";
         critique: BrainOutput;
         usage: BrainUsage;
         critiqueId: string | undefined;
         servedModel?: string;
+        toolCalls: ToolCallsField;
+        injectionAlert?: InjectionAlert;
         /**
          * How much of this review's evidence survived the check. There is no
          * longer a `guard_rejected` outcome to sit beside `ok`: the evidence
@@ -119,9 +126,7 @@ export async function runNormalPhase(args: NormalPhaseArgs): Promise<NormalPhase
   // The section and its citation tokens come from ONE trigger list so the guard
   // corpus can never certify a line the Brain was not shown.
   const rubricTriggers = v2.pipelineRan && v2.rubricTriggers ? v2.rubricTriggers : [];
-  const rubricSection = rubricTriggers.length > 0
-    ? buildRubricEvidenceSection(rubricTriggers)
-    : "";
+  const rubricSection = rubricTriggers.length > 0 ? buildRubricEvidenceSection(rubricTriggers) : "";
   const rubricCitationTokens = rubricSection === ""
     ? []
     : rubricEvidenceCitationTokens(rubricTriggers);
@@ -143,9 +148,10 @@ export async function runNormalPhase(args: NormalPhaseArgs): Promise<NormalPhase
   if (diffSummary === undefined && diffBody.trim().length > 0) {
     diffSummary = heuristicDiffSummary(diffBody);
   }
-  const summarySection = diffSummary !== undefined
-    ? buildDiffSummarySection(diffSummary)
-    : "";
+  const summarySection = diffSummary !== undefined ? buildDiffSummarySection(diffSummary) : "";
+  // siltpoke's own words about the rubric list and the pre-pass risks: said after the fence, not in it (R19/R20).
+  const summaryInstruction = [buildRubricEvidenceInstruction(rubricTriggers), diffSummary !== undefined ? buildDiffSummaryInstruction(diffSummary) : ""]
+    .filter((s) => s.length > 0).join("\n");
 
   const toolOutputCombined = [section, rubricSection, summarySection]
     .filter((s) => s.length > 0)
@@ -192,6 +198,7 @@ export async function runNormalPhase(args: NormalPhaseArgs): Promise<NormalPhase
   }
   const guardCorpus = guardCorpusParts.join("\n");
 
+  const projectNotes = isNotesFamily(providerMeta.name) ? readProjectNotes(brainContext.cwd, providerMeta.name) : undefined;
   const { prompt: systemPrompt, funnel: memoryFunnel, sizes: promptBytes } = assembleSystemPromptWithFunnel({
     personalitySystemPrompt: brainContext.personalitySystemPrompt,
     memory: brainContext.memory,
@@ -200,9 +207,12 @@ export async function runNormalPhase(args: NormalPhaseArgs): Promise<NormalPhase
     maxRules: brainContext.maxRules,
     recentInjectionCount: brainContext.recentInjectionCount,
     toolOutputSection: toolOutputCombined,
+    toolOutputInstruction: summaryInstruction,
     callerImpactSection: callerImpactResult.section,
     reverseDepsSection: reverseDepsResult.section,
     antiExamplesBlock: brainContext.antiExamplesBlock,
+    // The instruction files claude / codex no longer load, as fenced data instead.
+    projectNotesSection: projectNotes,
   });
 
   let brainResult: BrainCallResult;
@@ -217,7 +227,7 @@ export async function runNormalPhase(args: NormalPhaseArgs): Promise<NormalPhase
     tracer.setInput(brainFindSpan, {
       messages: [
         { role: "system", content: "[redacted — siltpoke critic system prompt]" },
-        { role: "user", content: "Produce one Siltpoke JSON per the system prompt." },
+        { role: "user", content: reviewUserContent(brainContext.outputLanguage) },
       ],
       system_prompt_bytes: systemPrompt.length,
     });
@@ -227,10 +237,9 @@ export async function runNormalPhase(args: NormalPhaseArgs): Promise<NormalPhase
     const criticStart = Date.now();
     brainResult = await callBrainFn({
       systemPrompt,
-      contextBundle: "Produce one Siltpoke JSON per the system prompt.",
-      // Reviewed-repo cwd (track #7 T3 deferred item) — the daemon's own
-      // process.cwd() is frozen at launch and isn't the repo being reviewed;
-      // the codex adapter's `-C` needs the real one. Claude ignores it.
+      contextBundle: reviewUserContent(brainContext.outputLanguage), // language rule last ([74])
+      // Reviewed-repo cwd (track #7 T3 deferred item) — the daemon's own process.cwd() is frozen
+      // at launch and isn't the repo being reviewed; the codex adapter's `-C` needs it. Claude ignores it.
       cwd: brainContext.cwd,
       // Resolved review model (reviewer_model plumbing, single-brain #10 critic
       // half). Un-drops the model onto the review call: agy/qoder/codebuddy push
@@ -238,6 +247,8 @@ export async function runNormalPhase(args: NormalPhaseArgs): Promise<NormalPhase
       // arms the agy cross-family honesty warn (brain-guarded.ts) when the model
       // is Claude-family. undefined -> provider's own default (unchanged).
       model: reviewModel,
+      readOnly: true, // the diff is repo text: claude may read, never run (qoder/codebuddy have no tools; codex, agy run sandboxed)
+      projectSettingsOff: true, // project hooks ran 12/12, its CLAUDE.md obeyed 7/12 (2026-10-20)
           // Kill timer from `<home>/config.json`'s `brain.timeout_ms`. `undefined`
       // is meaningful: resolveBrainTimeoutMs only consults
       // SILTPOKE_BRAIN_TIMEOUT_MS when no explicit value arrives, so forcing a
@@ -297,12 +308,22 @@ export async function runNormalPhase(args: NormalPhaseArgs): Promise<NormalPhase
         : err instanceof BrainError && err.code === "agy_prompt_too_large"
           ? ("agy_prompt_too_large" as const)
           : undefined;
-    return { diffSummary, diffSummaryError, memoryFunnel, promptBytes, outcome: { kind: "hard_suppress", reason, skipCode } };
+    return { diffSummary, diffSummaryError, memoryFunnel, promptBytes, outcome: { kind: "hard_suppress", reason, skipCode, brainFailed: skipCode === undefined ? true : undefined } };
   }
 
   const critique = brainResult.output;
   const usage = brainResult.usage;
   const servedModel = brainResult.servedModel;
+  const toolCalls: ToolCallsField = brainResult.toolCalls ?? "not_recorded";
+  // What the model was given: the system prompt (diff, tool output, notes) plus the user message.
+  const injectionAlert = await reviewAlert({
+    items: critique.injection_suspected,
+    readText: `${systemPrompt}\n${reviewUserContent(brainContext.outputLanguage)}`,
+    toolCalls,
+    cwd: brainContext.cwd,
+    provider: providerMeta.name,
+    scan: scanReviewInputs(toolResults["git-diff"], projectNotes),
+  });
 
   // Post-process: hard severity promotion when Brain emits info-only but
   // rubric triggers or diff-summary risks exist. Soft prompt suggestions
@@ -489,6 +510,8 @@ export async function runNormalPhase(args: NormalPhaseArgs): Promise<NormalPhase
       usage,
       critiqueId,
       servedModel,
+      toolCalls,
+      injectionAlert,
       evidenceLabel: verdict.label,
       diffCoverage,
       unverifiedCount: verdict.unverified.length,

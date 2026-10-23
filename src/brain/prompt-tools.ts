@@ -22,6 +22,7 @@ import {
   formatCoverageNotice,
   selectHunksForBudget,
 } from "./hunk-selection";
+import { unwrappedLocationLines, withUnwrappedLocations } from "./unwrapped-locations";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -80,6 +81,52 @@ const RIPGREP_BUDGET = 50;
 const RIPGREP_TEXT_MAX = 120;
 
 // ---------------------------------------------------------------------------
+// Byte caps — the prompt must fit in one argv string
+// ---------------------------------------------------------------------------
+
+/*
+ * Every cap above counts lines or items, and a count is not a size. Off
+ * Windows the whole critic prompt is ONE argv string (`systemPromptArgs`):
+ * macOS refuses an argv over 1 MiB, Linux any single argument over 128 KiB,
+ * both with `E2BIG`. Measured 2026-10-15 over 2,234 recorded reviews
+ * (`~/.siltpoke/brain-calls.jsonl`): every review whose tool output passed
+ * ~900 KB failed that way, because a minified bundle in the diff
+ * (`public/static/index.js`, longest line 184,428 chars) carried a megabyte in
+ * a handful of lines. Everything else in the prompt peaked at ~21 KB, so tool
+ * output must stay near 100 KB for Linux. Ordinary diffs sit far below the
+ * budget — 20 hunks of 30 eighty-char lines is ~48 KB.
+ */
+
+/** Longer lines are cut to this many characters. No reviewer reads past it. */
+const LINE_MAX = 500;
+/** Rendered diff bytes. Hunks past it are cut like hunks past the count budget. */
+const GIT_DIFF_BYTE_BUDGET = 60_000;
+
+/**
+ * Cut one line to LINE_MAX. The marker goes only into what the reviewer is
+ * shown: it is siltpoke's prose, and the citation corpus must hold only what a
+ * tool said (see `ToolOutputSection.citationSection`).
+ */
+function cutLine(line: string, mark: boolean): string {
+  if (line.length <= LINE_MAX) return line;
+  // Do not split a surrogate pair — a lone half is not valid text.
+  const code = line.charCodeAt(LINE_MAX - 1);
+  const end = code >= 0xd800 && code <= 0xdbff ? LINE_MAX - 1 : LINE_MAX;
+  const head = line.slice(0, end);
+  return mark ? `${head} … [line cut: ${line.length} chars]` : head;
+}
+
+function cutLines(text: string, mark: boolean): string {
+  if (text.length <= LINE_MAX) return text;
+  return text
+    .split("\n")
+    .map((line) => cutLine(line, mark))
+    .join("\n");
+}
+
+const byteLength = (s: string): number => Buffer.byteLength(s, "utf8");
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -91,16 +138,39 @@ const NON_OK_STATUSES = new Set([
   "output_too_large",
 ]);
 
+const SKIP_DEFAULTS: Record<string, string> = {
+  not_applicable: "not applicable here",
+  not_installed: "not installed or could not be started",
+  timeout: "timed out before finishing",
+  error: "crashed or failed to run",
+  output_too_large: "output too large to use",
+};
+
+/** Why a tool produced no result: its own `reason` when set, else a per-status default. */
+export function describeSkip(result: ToolResult): string {
+  const own = "reason" in result ? result.reason : undefined;
+  return own ?? SKIP_DEFAULTS[result.status] ?? result.status;
+}
+
 function isNonOk(result: ToolResult): boolean {
   return NON_OK_STATUSES.has(result.status);
 }
 
-function formatTscBlock(parsed: TscDiagnostic[]): string {
+/** The tool had nothing of its kind to look at — not a check that went missing. */
+function isNotRelevant(result: ToolResult): boolean {
+  return result.status === "not_applicable" && "notRelevant" in result && result.notRelevant === true;
+}
+
+/** A check that should have run and did not. */
+function isMissing(result: ToolResult): boolean {
+  return isNonOk(result) && !isNotRelevant(result);
+}
+
+function formatTscBlock(parsed: TscDiagnostic[], mark: boolean): string {
   const capped = parsed.slice(0, TSC_BUDGET);
   const remaining = parsed.length - capped.length;
-  const lines = capped.map(
-    (d) =>
-      `- \`${d.file}:${d.line}:${d.col}\` — ${d.code} ${d.severity}: ${d.message}`,
+  const lines = capped.map((d) =>
+    cutLines(`- \`${d.file}:${d.line}:${d.col}\` — ${d.code} ${d.severity}: ${d.message}`, mark),
   );
   if (remaining > 0) {
     lines.push(`- ... (${remaining} more, errors-first)`);
@@ -108,12 +178,11 @@ function formatTscBlock(parsed: TscDiagnostic[]): string {
   return lines.join("\n");
 }
 
-function formatEslintBlock(parsed: EslintFinding[]): string {
+function formatEslintBlock(parsed: EslintFinding[], mark: boolean): string {
   const capped = parsed.slice(0, ESLINT_BUDGET);
   const remaining = parsed.length - capped.length;
-  const lines = capped.map(
-    (d) =>
-      `- \`${d.file}:${d.line}:${d.col}\` — ${d.ruleId} ${d.severity}: ${d.message}`,
+  const lines = capped.map((d) =>
+    cutLines(`- \`${d.file}:${d.line}:${d.col}\` — ${d.ruleId} ${d.severity}: ${d.message}`, mark),
   );
   if (remaining > 0) {
     lines.push(`- ... (${remaining} more)`);
@@ -162,7 +231,9 @@ function scopeDiffRawToFiles(raw: string, shown: ReadonlySet<string>): string {
   // than silently emptied: dropping a corpus we failed to parse would turn
   // legitimate citations into unverified ones.
   if (!sawHeader) return raw;
-  return out.join("\n");
+  // Cut long lines here too, without the marker: the reviewer saw only the
+  // first LINE_MAX characters, so the rest of the line must not be citable.
+  return out.map((line) => cutLine(line, false)).join("\n");
 }
 
 function formatGitDiffBlock(
@@ -183,7 +254,27 @@ function formatGitDiffBlock(
   budgetCutFiles: Set<string>;
   coverage: DiffCoverage | null;
 } {
-  const { kept: capped, omitted } = selectHunksForBudget(parsed, { linterFiles });
+  const { kept: ranked, omitted: pastCount } = selectHunksForBudget(parsed, { linterFiles });
+
+  // Then the byte budget, in rank order: once a hunk does not fit, it and every
+  // lower-ranked hunk are cut, so what survives is still the top of the ranking.
+  const capped: GitDiffHunk[] = [];
+  const pastBytes: GitDiffHunk[] = [];
+  let used = 0;
+  for (const hunk of ranked) {
+    const size =
+      byteLength(hunk.file) +
+      byteLength(cutLines(hunk.header, true)) +
+      byteLength(cutLines(hunk.body, true)) +
+      32; // `#### `, the fences, the newlines
+    if (pastBytes.length > 0 || used + size > GIT_DIFF_BYTE_BUDGET) {
+      pastBytes.push(hunk);
+    } else {
+      used += size;
+      capped.push(hunk);
+    }
+  }
+  const omitted = [...pastBytes, ...pastCount];
 
   // Group hunks by file for rendering
   const byFile = new Map<string, GitDiffHunk[]>();
@@ -196,19 +287,24 @@ function formatGitDiffBlock(
     }
   }
 
+  // Rendered twice: with the line-cut marker for the reviewer, without it for
+  // the citation corpus.
   const parts: string[] = [];
+  const citableParts: string[] = [];
   for (const [file, hunks] of byFile.entries()) {
     parts.push(`#### ${file}`);
+    citableParts.push(`#### ${file}`);
     for (const hunk of hunks) {
-      parts.push("```diff", hunk.header, hunk.body, "```");
+      parts.push("```diff", cutLines(hunk.header, true), cutLines(hunk.body, true), "```");
+      citableParts.push("```diff", cutLines(hunk.header, false), cutLines(hunk.body, false), "```");
     }
   }
 
-  const citable = parts.join("\n");
+  const citable = citableParts.join("\n");
   let coverage: DiffCoverage | null = null;
   if (omitted.length > 0) {
-    parts.push(...formatCoverageNotice(capped.length, omitted));
-    coverage = describeCoverage(capped.length, omitted);
+    parts.push(...formatCoverageNotice(capped.length, omitted, parsed));
+    coverage = describeCoverage(capped.length, omitted, parsed);
   }
 
   // ENTIRELY cut, not merely thinned: a file with one surviving hunk still has
@@ -265,6 +361,29 @@ const TOOL_SHORT_NAMES: Record<ToolName, string> = {
   ripgrep: "ripgrep",
 };
 
+/**
+ * Push a findings list: rendered with line-cut markers for the reviewer, and
+ * recorded without them for the citation corpus when the two differ.
+ */
+function pushList(
+  bodyParts: string[],
+  citableOverrides: Array<{ index: number; text: string }>,
+  name: ToolName,
+  count: number,
+  render: (mark: boolean) => string,
+  unwrapped: string[],
+): void {
+  if (count === 0) {
+    bodyParts.push(`### ${TOOL_SHORT_NAMES[name]} — clean (no findings)`);
+    return;
+  }
+  const shown = render(true);
+  bodyParts.push(TOOL_SECTION_HEADERS[name], "", shown);
+  const citable = render(false);
+  if (citable !== shown) citableOverrides.push({ index: bodyParts.length - 1, text: citable });
+  unwrapped.push(...unwrappedLocationLines(citable));
+}
+
 // ---------------------------------------------------------------------------
 // buildToolOutputSection
 // ---------------------------------------------------------------------------
@@ -304,14 +423,26 @@ export function buildToolOutputSection(
 
   // Collect ran-tool names and skipped names for header
   const ranNames = okResults.map((e) => e.name).join(", ");
-  const skippedParts = skippedEntries.map((e) => `${e.name} (${e.status})`).join(", ");
+  const skippedParts = skippedEntries
+    .filter((e) => isMissing(results[e.name]!))
+    .map((e) => `${e.name} (${describeSkip(results[e.name]!)})`)
+    .join(", ");
+  const notRelevantParts = skippedEntries
+    .filter((e) => isNotRelevant(results[e.name]!))
+    .map((e) => `${e.name} (${describeSkip(results[e.name]!)})`)
+    .join(", ");
 
   const headerLines: string[] = ["## Tool output", ""];
   if (ranNames) {
     headerLines.push(`**Tools ran:** ${ranNames}`);
   }
   if (skippedParts) {
-    headerLines.push(`**Tools skipped:** ${skippedParts}`);
+    headerLines.push(
+      `**Tools skipped (NOT RUN — no result, which is not the same as clean):** ${skippedParts}`,
+    );
+  }
+  if (notRelevantParts) {
+    headerLines.push(`**Not relevant to this change:** ${notRelevantParts}`);
   }
   headerLines.push("");
 
@@ -344,6 +475,8 @@ export function buildToolOutputSection(
   // parts so `citationSection` can be rebuilt from the same pieces, rather than
   // recovered by string-surgery on the finished section.
   const citableOverrides: Array<{ index: number; text: string }> = [];
+  // Defect [52]: the list blocks' location lines without siltpoke's backticks.
+  const unwrapped: string[] = [];
   // Files whose hunks actually reached the prompt — null while no git-diff
   // block was rendered, which leaves the raw corpus untouched.
   let shownDiffFiles: Set<string> | null = null;
@@ -356,22 +489,10 @@ export function buildToolOutputSection(
   for (const { name, result } of okResults) {
     if (name === "tsc") {
       const r = result as Extract<ToolResult, { tool: "tsc" }>;
-      if (r.parsed.length === 0) {
-        bodyParts.push(`### ${TOOL_SHORT_NAMES[name]} — clean (no findings)`);
-      } else {
-        bodyParts.push(TOOL_SECTION_HEADERS[name]);
-        bodyParts.push("");
-        bodyParts.push(formatTscBlock(r.parsed));
-      }
+      pushList(bodyParts, citableOverrides, name, r.parsed.length, (mark) => formatTscBlock(r.parsed, mark), unwrapped);
     } else if (name === "eslint") {
       const r = result as Extract<ToolResult, { tool: "eslint" }>;
-      if (r.parsed.length === 0) {
-        bodyParts.push(`### ${TOOL_SHORT_NAMES[name]} — clean (no findings)`);
-      } else {
-        bodyParts.push(TOOL_SECTION_HEADERS[name]);
-        bodyParts.push("");
-        bodyParts.push(formatEslintBlock(r.parsed));
-      }
+      pushList(bodyParts, citableOverrides, name, r.parsed.length, (mark) => formatEslintBlock(r.parsed, mark), unwrapped);
     } else if (name === "git-diff") {
       const r = result as Extract<ToolResult, { tool: "git-diff" }>;
       if (r.parsed.length === 0) {
@@ -400,13 +521,7 @@ export function buildToolOutputSection(
       }
     } else if (name === "ripgrep") {
       const r = result as Extract<ToolResult, { tool: "ripgrep" }>;
-      if (r.parsed.length === 0) {
-        bodyParts.push(`### ${TOOL_SHORT_NAMES[name]} — clean (no findings)`);
-      } else {
-        bodyParts.push(TOOL_SECTION_HEADERS[name]);
-        bodyParts.push("");
-        bodyParts.push(formatRipgrepBlock(r.parsed));
-      }
+      pushList(bodyParts, citableOverrides, name, r.parsed.length, () => formatRipgrepBlock(r.parsed), unwrapped);
     }
     bodyParts.push("");
   }
@@ -417,7 +532,10 @@ export function buildToolOutputSection(
   for (const o of citableOverrides) {
     citableParts[o.index] = o.text;
   }
-  const citationSection = [...headerLines, ...citableParts].join("\n").trimEnd();
+  const citationSection = withUnwrappedLocations(
+    [...headerLines, ...citableParts].join("\n").trimEnd(),
+    unwrapped,
+  );
 
   // Build evidence corpus: concatenate RAW stdout from every tool (non-empty raws only),
   // verbatim — no normalization.
@@ -453,6 +571,37 @@ export interface PassiveBubbleOpts {
   files: number;
   hunks: number;
   intent?: { classification: string; confidence: number };
+  /**
+   * What the checkers actually did. When given, the prompt may claim "clean"
+   * only for the checkers that ran; every other one is named as NOT RUN with
+   * its reason. Absent = the legacy wording that assumes all three ran.
+   */
+  checks?: Record<"tsc" | "eslint" | "ripgrep", ToolResult>;
+}
+
+const CHECK_NAMES = ["tsc", "eslint", "ripgrep"] as const;
+
+/** Passive-bubble prompt for when a checker did NOT run: names it, and never says "clean" for it. */
+function buildNotRunPassivePrompt(
+  fileCount: number,
+  hunkCount: number,
+  intent: { classification: string; confidence: number } | undefined,
+  checks: NonNullable<PassiveBubbleOpts["checks"]>,
+): string {
+  const notRun = CHECK_NAMES.filter((n) => isMissing(checks[n]));
+  const ran = CHECK_NAMES.filter((n) => !isNonOk(checks[n]));
+  const notRunList = notRun.map((n) => `${n} (${describeSkip(checks[n])})`).join(", ");
+  const verbPast = intent?.classification === "refactor" ? "completed a refactor" : "made a change";
+  return (
+    `The user just ${verbPast}. ` +
+    `${fileCount} ${fileCount === 1 ? "file" : "files"} changed, ${hunkCount} ${hunkCount === 1 ? "hunk" : "hunks"} across the diff. ` +
+    (ran.length > 0 ? `Ran and found nothing: ${ran.join(", ")}. ` : `No checker produced a result. `) +
+    `NOT RUN: ${notRunList}. A tool that did not run is not a clean result — ` +
+    `do not say or imply the code is clean, correct or type-safe. ` +
+    `Emit a brief, neutral bubble (mood "watching", not "happy") saying the change was seen but not fully checked; do not claim high confidence — ` +
+    `no critique_for_claude needed (set it to empty string "" in your JSON output). ` +
+    `evidence array should be empty [] in this mode.`
+  );
 }
 
 /**
@@ -476,6 +625,7 @@ export function buildPassiveBubblePrompt(
   let fileCount: number;
   let hunkCount: number;
   let intent: { classification: string; confidence: number } | undefined;
+  let checks: PassiveBubbleOpts["checks"];
 
   if ("tool" in diffOrOpts) {
     // Legacy call path: ToolResult shape
@@ -488,6 +638,11 @@ export function buildPassiveBubblePrompt(
     fileCount = diffOrOpts.files;
     hunkCount = diffOrOpts.hunks;
     intent = diffOrOpts.intent;
+    checks = diffOrOpts.checks;
+  }
+
+  if (checks && CHECK_NAMES.some((n) => isMissing(checks[n]))) {
+    return buildNotRunPassivePrompt(fileCount, hunkCount, intent, checks);
   }
 
   const isRefactor = intent?.classification === "refactor";

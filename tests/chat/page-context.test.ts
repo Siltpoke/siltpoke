@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { readSettingsPageText } from "../../src/chat/settings-page-context";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { assemblePageContext, previewContext, normalizePageId, pageLabelFor } from "../../src/chat/page-context";
 import { emptyMemory } from "../../src/memory/memory";
 
@@ -18,6 +22,10 @@ describe("normalizePageId", () => {
 });
 
 describe("pageLabelFor", () => {
+  // the page was renamed Code Map in #214; the chat's chip still said "Repo Graph".
+  test("the Code Map page is called Code Map", () => {
+    expect(pageLabelFor("/repo-graph")).toBe("Code Map");
+  });
   test("known pages get friendly labels", () => {
     expect(pageLabelFor("/memory")).toBe("Memory Book");
   });
@@ -30,9 +38,53 @@ describe("assemblePageContext", () => {
     expect(ctx?.contextBundle).toContain("likes cats");
   });
   test("unknown page → label-only, empty bundle, no crash", async () => {
-    const ctx = await assemblePageContext("/settings", deps);
+    const ctx = await assemblePageContext("/knowledge", deps);
     expect(ctx?.contextBundle).toBe("");
-    expect(ctx?.systemPrompt).toContain("Settings");
+    expect(ctx?.systemPrompt).toContain("Knowledge");
+  });
+  // chat on Settings said "I need more context" — it was
+  // told only the page's name. The bundle is now what the page shows.
+  test("/settings bundle is the page as text", async () => {
+    const ctx = await assemblePageContext("/settings", { homeBase: "/tmp", readSettingsPage: async () => "Chat: qoder" });
+    expect(ctx?.pageLabel).toBe("Settings");
+    expect(ctx?.contextBundle).toBe("Chat: qoder");
+    expect(ctx?.systemPrompt).toContain("the Settings page, which shows which agent and model each of Siltpoke's own roles uses");
+  });
+  test("/settings read failure degrades to label-only", async () => {
+    const ctx = await assemblePageContext("/settings", { homeBase: "/tmp", readSettingsPage: async () => { throw new Error("io"); } });
+    expect(ctx?.contextBundle).toBe("");
+    expect(ctx?.pageLabel).toBe("Settings");
+  });
+  test("/settings with an empty page text: label only", async () => {
+    const ctx = await assemblePageContext("/settings", { homeBase: "/tmp", readSettingsPage: async () => "" });
+    expect(ctx?.contextBundle).toBe("");
+    expect(ctx?.pageLabel).toBe("Settings");
+  });
+  // Review 5, [4]: codex's model reaches chat through the real reader.
+  test("the real reader names codex's configured model and never the daemon secret", async () => {
+    const home = mkdtempSync(join(tmpdir(), "siltpoke-page-settings-codex-"));
+    try {
+      writeFileSync(join(home, "config.json"), JSON.stringify({ brain: { roles: { review: { provider: "codex" } } } }));
+      writeFileSync(join(home, "daemon.secret"), "SECRET-MUST-NOT-LEAK");
+      mkdirSync(join(home, "u", ".codex"), { recursive: true });
+      writeFileSync(join(home, "u", ".codex", "config.toml"), 'model = "gpt-test-only-9"\n');
+      const text = await readSettingsPageText(home, new Date(), join(home, "u"));
+      expect(text).toContain("Critic (reviews your code after each turn): codex, gpt-test-only-9, from codex's config");
+      expect(text).not.toContain("SECRET-MUST-NOT-LEAK");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+  // The delivery half: with no seam, the real reader runs against a real home.
+  test("/settings with no seam reads the real page text from the home", async () => {
+    const home = mkdtempSync(join(tmpdir(), "siltpoke-page-settings-"));
+    try {
+      const ctx = await assemblePageContext("/settings", { homeBase: home });
+      expect(ctx?.contextBundle).toContain("Chat (answers you in the dashboard chat)");
+      expect(ctx?.contextBundle).toContain("used today");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
   test("read failure on /memory degrades to label-only", async () => {
     const ctx = await assemblePageContext("/memory", { homeBase: "/tmp", readMemory: async () => { throw new Error("io"); } });

@@ -4,6 +4,7 @@ import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
+import { dayBefore, dayKey } from "./usage";
 
 export interface PetDay {
   day: string;
@@ -128,12 +129,12 @@ function updateStreak(
   today: string,
 ): { streak_days_persistent: number; streak_last_day: string } {
   const last = prog.streak_last_day;
-  if (last === today) {
+  // `last > today`: a key written as the UTC date before the pet's days became
+  // local (an evening action stored tomorrow's date). Same day, not a break.
+  if (last === today || (last !== null && last !== undefined && last > today)) {
     return { streak_days_persistent: prog.streak_days_persistent, streak_last_day: today };
   }
-  const yesterdayDate = new Date(`${today}T00:00:00Z`);
-  yesterdayDate.setUTCDate(yesterdayDate.getUTCDate() - 1);
-  const yesterdayStr = yesterdayDate.toISOString().slice(0, 10);
+  const yesterdayStr = dayBefore(today);
   if (last === yesterdayStr) {
     return { streak_days_persistent: prog.streak_days_persistent + 1, streak_last_day: today };
   }
@@ -343,7 +344,7 @@ export interface XpPanelData {
  * cannot drift between call sites. Day key must match what recordAction writes.
  */
 export function xpPanelData(prog: Progression, now: Date): XpPanelData {
-  const xpToday = actionXpToday(prog, now.toISOString().slice(0, 10));
+  const xpToday = actionXpToday(prog, dayKey(now));
   return {
     level: prog.level,
     nextLevel: prog.level + 1,

@@ -67,6 +67,9 @@ import {
 } from "./report-panels";
 import { STYLE } from "./report-style";
 import { runStats, type StatsResult } from "./stats";
+import { loadBudgetConfig } from "../state/budget-config";
+import { dayKey } from "../state/usage";
+import { localDayOf } from "../utils/local-day";
 
 
 
@@ -188,13 +191,14 @@ export async function buildReport(opts: ReportOptions = {}): Promise<ReportResul
   // The original card/stats are global; we overlay project values when in
   // project mode so the Today panel matches the rest of the page.
   if (inProject) {
-    const todayKey = now.toISOString().slice(0, 10);
+    // The user's own day, with the budget's resetAt — the boundary of the
+    // card's global Today numbers this overlays (C2).
+    const reset = (await loadBudgetConfig(homeBase)).resetAtMinutes;
+    const todayKey = dayKey(now, reset);
     const projectCallsToday = brainCalls.filter(
-      (r) => !r.skipped && r.timestamp?.startsWith(todayKey),
+      (r) => !r.skipped && r.timestamp !== undefined && localDayOf(r.timestamp, reset) === todayKey,
     ).length;
-    const projectUsageToday = usageEvents.filter((u) =>
-      u.ts?.startsWith(todayKey),
-    );
+    const projectUsageToday = usageEvents.filter((u) => u.ts !== undefined && localDayOf(u.ts, reset) === todayKey);
     const projectCostToday = projectUsageToday.reduce(
       (s, u) => s + (u.total_cost_usd ?? 0),
       0,

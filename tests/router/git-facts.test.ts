@@ -218,6 +218,56 @@ describe("collectReviewUnitFacts — end to end against real git operations", ()
     expect(d.revisionRange).toBeUndefined();
   });
 
+  test("[60] an anchor on a branch HEAD has left recovers instead of diffing across branches", async () => {
+    const { cwd, stateBase } = newRepo();
+    // Review a commit on branch `one`, then switch to a fresh branch cut from
+    // main and commit there. The anchor commit still exists, so it is not
+    // "vanished" — but it is not an ancestor of HEAD, and `<anchor>..HEAD`
+    // would show `one`'s work as deleted in this turn.
+    sh(cwd, ["checkout", "-q", "-b", "one"]);
+    writeFileSync(join(cwd, "only-on-one.txt"), "fix\n");
+    sh(cwd, ["add", "-A"]);
+    sh(cwd, ["commit", "-q", "-m", "on one"]);
+    anchorHere(cwd, stateBase);
+    sh(cwd, ["checkout", "-q", "main"]);
+    sh(cwd, ["checkout", "-q", "-b", "two"]);
+    writeFileSync(join(cwd, "a.txt"), "edited on two\n");
+    sh(cwd, ["commit", "-qam", "on two"]);
+
+    const facts = await collectReviewUnitFacts({ cwd, stateBase, unit: "commit" });
+    expect(facts.storedHeadVanished).toBe(false);
+    expect(facts.storedHeadNotAncestor).toBe(true);
+    const d = decideReviewUnit(facts);
+    expect(d.fire).toBe(true);
+    expect(d.reason).toBe("anchor_unusable");
+    expect(d.revisionRange).toBeUndefined();
+    expect(d.advanceAnchorTo?.head).toBe(head(cwd));
+  });
+
+  test("[60] an anchor on a branch with no shared history also recovers", async () => {
+    // `git merge-base` exits 1 here; read as "undecided" it kept the old
+    // cross-branch range.
+    const { cwd, stateBase } = newRepo();
+    anchorHere(cwd, stateBase);
+    sh(cwd, ["checkout", "-q", "--orphan", "fresh"]);
+    writeFileSync(join(cwd, "a.txt"), "unrelated\n");
+    sh(cwd, ["add", "-A"]);
+    sh(cwd, ["commit", "-q", "-m", "root of fresh"]);
+    const facts = await collectReviewUnitFacts({ cwd, stateBase, unit: "commit" });
+    expect(facts.storedHeadNotAncestor).toBe(true);
+    expect(decideReviewUnit(facts).reason).toBe("anchor_unusable");
+  });
+
+  test("[60] positive control — an ordinary new commit's anchor IS an ancestor", async () => {
+    const { cwd, stateBase } = newRepo();
+    anchorHere(cwd, stateBase);
+    writeFileSync(join(cwd, "a.txt"), "two\n");
+    sh(cwd, ["commit", "-qam", "second"]);
+    const facts = await collectReviewUnitFacts({ cwd, stateBase, unit: "commit" });
+    expect(facts.storedHeadNotAncestor).toBe(false);
+    expect(decideReviewUnit(facts).reason).toBe("new_commit");
+  });
+
   test("a corrupt anchor file is treated as no anchor, not as a crash", async () => {
     const { cwd, stateBase } = newRepo();
     writeFileSync(join(stateBase, "review-anchor.json"), "{not json");

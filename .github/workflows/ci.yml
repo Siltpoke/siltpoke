@@ -70,6 +70,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Read-only GITHUB_TOKEN. Nothing here writes to the repo; upload-artifact uses
+# its own runtime token. (CodeQL actions/missing-workflow-permissions.)
+permissions:
+  contents: read
+
 jobs:
   ci:
     name: lint + typecheck + test

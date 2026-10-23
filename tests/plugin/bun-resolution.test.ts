@@ -143,10 +143,10 @@ describe("stop.sh bun resolution", () => {
     expect(r.exitCode).toBe(0);
     expect(bundleRan()).toBe(false);
     // The session stays clean — that rule is not being traded away here; the
-    // noisy surfaces are /siltpoke-doctor and the statusline.
+    // noisy surfaces are /siltpoke:siltpoke-doctor and the statusline.
     //
     // But the advice that DID print was wrong: config.json exists, so setup has
     // already run, and re-running it cannot put bun on a non-login shell's PATH.
-    expect(stderrOf(r)).not.toContain("/siltpoke-setup");
+    expect(stderrOf(r)).not.toContain("/siltpoke:siltpoke-setup");
   });
 });

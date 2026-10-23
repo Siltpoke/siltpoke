@@ -14,6 +14,7 @@
  */
 import type { CoreMemory } from "../memory/memory";
 import { assemblePageContext, type PageContext } from "./page-context";
+import { type CodeMapView, codeMapViewContext } from "./page-view";
 
 export interface ComposeBaseContextInput {
   /**
@@ -24,6 +25,12 @@ export interface ComposeBaseContextInput {
   anchorCtx: { systemPrompt: string; contextBundle: string } | null;
   /** Validated page id (empty string = no page — see `parsePageId`). */
   pageId: string;
+  /**
+   * What the Code Map page says is open (repository + selected component),
+   * already validated by `parseCodeMapView`. Used only for an unpinned chat
+   * on `/repo-graph`; a pinned chat and every other page ignore it.
+   */
+  view?: CodeMapView | null;
   homeBase: string;
   readMemory?: (homeBase: string) => Promise<CoreMemory | null>;
   /**
@@ -37,19 +44,26 @@ export interface ComposeBaseContextInput {
 }
 
 /**
- * Precedence: node > page > none. Node context wins whenever `anchorCtx` is
- * present (a pinned conversation always discusses the node, not the page).
+ * Precedence: node > Code Map view > page > none. Node context wins whenever
+ * `anchorCtx` is present (a pinned conversation always discusses the node, not
+ * the page). On the Code Map, a view beats the bare page label: the label
+ * alone made "what does this do?" get an answer about the page (defect [44]).
  * Page assembly is wrapped in try/catch — it is additive context only and
  * must never block the reply.
  */
 export async function composeBaseSystemPrompt(input: ComposeBaseContextInput): Promise<string> {
-  const { anchorCtx, pageId, homeBase, readMemory, assemblePage } = input;
+  const { anchorCtx, pageId, homeBase, readMemory, assemblePage, view } = input;
 
   if (anchorCtx) {
     return `${anchorCtx.systemPrompt}\n\n--- Context for the node being discussed ---\n${anchorCtx.contextBundle}`;
   }
 
   if (!pageId) return "";
+
+  if (view && pageId === "/repo-graph") {
+    const ctx = codeMapViewContext(view);
+    return `${ctx.systemPrompt}\n\n--- What the user has open on the Code Map ---\n${ctx.contextBundle}`;
+  }
 
   const assemble = assemblePage ?? assemblePageContext;
   try {

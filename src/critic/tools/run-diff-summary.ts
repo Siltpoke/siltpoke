@@ -159,6 +159,10 @@ export async function runDiffSummary(
     contextBundle: trimmed,
     model: opts.model,
     timeoutMs: resolveBrainTimeoutMs(opts.timeoutMs),
+    // The diff is repo text: claude may read, never run. Not no tools — that
+    // miscounted files 10 of 28 times on replayed summaries; read-only, on the
+    // 3 prompts where it did, 0 of 18.
+    readOnly: true,
   };
 
   const raw = await callFn(callOpts);

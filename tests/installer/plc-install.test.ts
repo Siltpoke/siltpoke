@@ -1,5 +1,11 @@
 import { describe, test, expect } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { installPlc, type PlcExec } from "../../src/installer/plc-install";
+
+// installPlc records into the install receipt ([61] P1.3): sandbox home, never the real one.
+const receiptEnv = { HOME: mkdtempSync(join(tmpdir(), "siltpoke-plc-install-")) };
 
 function fakeIO() {
   const out: string[] = [];
@@ -9,6 +15,8 @@ function spyExec(results: Array<{ status: number; stdout?: string; stderr?: stri
   const calls: Array<{ cmd: string; args: string[]; env?: NodeJS.ProcessEnv }> = [];
   let i = 0;
   const exec: PlcExec = (cmd, args, env) => {
+    // The ownership probe (`claude plugin list`) is not one of the install calls these tests count.
+    if (args[0] === "plugin" && args[1] === "list") return { status: 0, stdout: "", stderr: "" };
     calls.push({ cmd, args, env });
     const r = results[i++] ?? { status: 0 };
     return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
@@ -28,7 +36,7 @@ describe("installPlc", () => {
   test("happy path: marketplace add then plugin install, suppression env set (AC15/AC17)", () => {
     const { io } = fakeIO();
     const { calls, exec } = spyExec([{ status: 0 }, { status: 0 }]);
-    const r = installPlc({ exec, io, claudePresent: true });
+    const r = installPlc({ exec, io, claudePresent: true, receiptEnv });
     expect(r).toMatchObject({ added: true, installed: true, reason: "ok" });
     expect(calls[0].args.join(" ")).toContain("marketplace add Siltpoke/project-life-cycle");
     expect(calls[1].args.join(" ")).toContain("install project-lifecycle@project-life-cycle");
@@ -45,14 +53,14 @@ describe("installPlc", () => {
       { status: 1, stderr: "marketplace already added" },
       { status: 1, stderr: "plugin already installed" },
     ]);
-    const r = installPlc({ exec, io, claudePresent: true });
+    const r = installPlc({ exec, io, claudePresent: true, receiptEnv });
     expect(r).toMatchObject({ installed: true, reason: "already" });
   });
 
   test("claudeBin: invokes the resolved absolute claude path, not the bare name", () => {
     const { io } = fakeIO();
     const { calls, exec } = spyExec([{ status: 0 }, { status: 0 }]);
-    installPlc({ exec, io, claudePresent: true, claudeBin: "/Users/x/.local/bin/claude" });
+    installPlc({ exec, io, claudePresent: true, claudeBin: "/Users/x/.local/bin/claude", receiptEnv });
     expect(calls[0].cmd).toBe("/Users/x/.local/bin/claude");
     expect(calls[1].cmd).toBe("/Users/x/.local/bin/claude");
   });
@@ -60,7 +68,7 @@ describe("installPlc", () => {
   test("claudeBin: defaults to bare 'claude' when no claudeBin given (back-compat)", () => {
     const { io } = fakeIO();
     const { calls, exec } = spyExec([{ status: 0 }, { status: 0 }]);
-    installPlc({ exec, io, claudePresent: true });
+    installPlc({ exec, io, claudePresent: true, receiptEnv });
     expect(calls[0].cmd).toBe("claude");
     expect(calls[1].cmd).toBe("claude");
   });

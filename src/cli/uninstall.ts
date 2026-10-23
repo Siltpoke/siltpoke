@@ -1,18 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
-import {
-  unlink,
-  readdir,
-  readFile,
-  rm,
-  writeFile,
-  rename,
-  mkdir,
-} from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { unlink, readdir, rm } from "node:fs/promises";
+import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomBytes } from "node:crypto";
 import {
   resolveClaudeHome,
   siltpokeRoot,
@@ -23,11 +14,15 @@ import {
   uninstallAutostartForPlatform,
   type AutostartUninstallResult,
 } from "../installer/autostart";
-import { findLatestBackup, restoreFromBackup } from "../installer/backup";
+import { findLatestBackup } from "../installer/backup";
+import { unregisterStopHookPair } from "../installer/settings-mutator";
+import { unregisterSessionStartHook } from "../installer/register-session-start";
 import {
-  restoreStatusLine,
-  unregisterStopHook,
-} from "../installer/settings-mutator";
+  isOurStatusLine,
+  readSettingsObject,
+  undoStatusLine,
+  writeSettingsInPlace,
+} from "../installer/statusline-restore";
 import {
   askYesNo,
   realWizardIO,
@@ -49,8 +44,10 @@ export interface UninstallResult {
     | "uninstalled"
     | "no_settings"
     | "internal_subprocess";
-  backup_restored: string | null;
-  inner_fallback_used: boolean;
+  /** What was taken out of settings.json, in order. Empty when nothing was ours or the file could not be read. */
+  settings_changed: SettingsChange[];
+  /** The setup-time backup, left on disk and never copied back (defect [62]). */
+  backup_kept: string | null;
   symlinks_removed: number;
   autostart_removed: boolean;
   siltpoke_home_purged: boolean;
@@ -61,20 +58,67 @@ function detectRepoRoot(): string {
   return resolve(here, "..", "..");
 }
 
-async function atomicWriteJson(path: string, data: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp.${process.pid}.${Date.now()}.${randomBytes(4).toString("hex")}`;
-  await writeFile(tmp, JSON.stringify(data, null, 2), "utf8");
-  await rename(tmp, path);
+export type SettingsChange =
+  | "statusLine restored"
+  | "statusLine removed"
+  | "Stop hook removed"
+  | "SessionStart hook removed";
+
+interface SourceCommands {
+  wrapperCommand: string;
+  hookCommand: string;
+  sessionStartCommand: string;
 }
 
-async function readJsonOrEmpty(path: string): Promise<Record<string, unknown>> {
-  if (!existsSync(path)) return {};
-  try {
-    return JSON.parse(await readFile(path, "utf8"));
-  } catch {
-    return {};
+/**
+ * Remove exactly the three things a source install writes into settings.json —
+ * the status line, the Stop hook pair, the SessionStart hook — and leave every
+ * other key as it is now. A file that is not valid JSON is not touched.
+ */
+function undoSettingsKeys(
+  settingsPath: string,
+  env: NodeJS.ProcessEnv,
+  io: WizardIO,
+  cmds: SourceCommands,
+): SettingsChange[] {
+  const before = readSettingsObject(settingsPath);
+  if (before === null) {
+    io.write(`  ! ${settingsPath} is not valid JSON — left exactly as it was; remove siltpoke's statusLine and hooks by hand\n`);
+    return [];
   }
+
+  const changes: SettingsChange[] = [];
+  const isOurs = (c: unknown) => isOurStatusLine(c) || c === cmds.wrapperCommand;
+  const status = undoStatusLine(before, env, isOurs);
+  if (status.outcome === "restored") changes.push("statusLine restored");
+  if (status.outcome === "removed") changes.push("statusLine removed");
+
+  // The pair matcher also takes out the curl fast-path entry and any old
+  // type:"http" entry; the secret is not needed to recognise them.
+  const withoutStop = unregisterStopHookPair(status.next, {
+    httpUrl: "",
+    command: cmds.hookCommand,
+    secret: "",
+  });
+  if (JSON.stringify(withoutStop) !== JSON.stringify(status.next)) changes.push("Stop hook removed");
+
+  const after = unregisterSessionStartHook(withoutStop, cmds.sessionStartCommand);
+  if (JSON.stringify(after) !== JSON.stringify(withoutStop)) changes.push("SessionStart hook removed");
+
+  if (changes.length > 0) writeSettingsInPlace(settingsPath, after);
+  if (status.outcome === "not-ours") {
+    io.write(`  statusLine is not siltpoke's — left as it is\n`);
+  }
+  for (const c of changes) io.write(`  settings.json: ${c}\n`);
+  return changes;
+}
+
+function closingLine(changed: SettingsChange[]): string {
+  if (changed.some((c) => c === "statusLine restored" || c === "statusLine removed")) {
+    return `  done. Restart Claude Code so the status line change takes effect.\n`;
+  }
+  if (changed.length > 0) return `  done. Restart Claude Code so the removed hooks stop running.\n`;
+  return `  done. Nothing in Claude Code needed changing, so no restart is needed.\n`;
 }
 
 export async function runUninstall(
@@ -85,8 +129,8 @@ export async function runUninstall(
   if (env.SILTPOKE_INTERNAL === "1") {
     return {
       status: "internal_subprocess",
-      backup_restored: null,
-      inner_fallback_used: false,
+      settings_changed: [],
+      backup_kept: null,
       symlinks_removed: 0,
       autostart_removed: false,
       siltpoke_home_purged: false,
@@ -94,8 +138,10 @@ export async function runUninstall(
   }
 
   const repoRoot = opts.repoRoot ?? detectRepoRoot();
+  // Same three commands setup writes (install.ts).
   const wrapperCommand = `bun ${join(repoRoot, "src", "face", "wrapper.ts")}`;
   const hookCommand = `bun ${join(repoRoot, "src", "hooks", "on-stop.ts")}`;
+  const sessionStartCommand = `bun ${join(repoRoot, "src", "hooks", "handle-session-start.ts")}`;
 
   const claudeHome = resolveClaudeHome(env);
   const settingsPath = settingsJsonPath(env);
@@ -111,8 +157,8 @@ export async function runUninstall(
     io.write(`! No settings.json at ${settingsPath}\n`);
     return {
       status: "no_settings",
-      backup_restored: null,
-      inner_fallback_used: false,
+      settings_changed: [],
+      backup_kept: null,
       symlinks_removed: 0,
       autostart_removed: false,
       siltpoke_home_purged: false,
@@ -121,48 +167,26 @@ export async function runUninstall(
 
   io.write(`\n=== Siltpoke uninstaller ===\n`);
 
-  // 1. Try to restore settings.json from backup.
-  let backupRestored: string | null = null;
-  let innerFallbackUsed = false;
-  const backupPath = await findLatestBackup(claudeHome);
-  let backupFailed = false;
-  if (backupPath) {
-    try {
-      await restoreFromBackup(claudeHome, backupPath);
-      backupRestored = backupPath;
-      io.write(`  restored settings.json from ${backupPath}\n`);
-    } catch (err) {
-      backupFailed = true;
-      io.write(
-        `  ! backup at ${backupPath} unreadable (${err instanceof Error ? err.message : String(err)}); falling through to inner.txt\n`,
-      );
-    }
+  // 1. Take out of settings.json only what setup put in (defect [62]). The
+  //    pre-siltpoke backup is a copy of the WHOLE file from setup time, so
+  //    copying it back erased every change the user made since. It is kept on
+  //    disk and named, never restored.
+  const settingsChanged = undoSettingsKeys(settingsPath, env, io, {
+    wrapperCommand,
+    hookCommand,
+    sessionStartCommand,
+  });
+  // findLatestBackup may return the `settings.json.pre-siltpoke` pointer; name
+  // the real file. A dangling pointer means there is no backup to name.
+  const latest = await findLatestBackup(claudeHome);
+  let backupKept: string | null = null;
+  try {
+    backupKept = latest ? realpathSync(latest) : null;
+  } catch {
+    backupKept = null;
   }
-  if (!backupPath || backupFailed) {
-    // Fall back: use inner.txt as the prior statusline command, manually
-    // unregister hook, drop wrapper.
-    io.write(`  no backup found — best-effort restore via inner.txt\n`);
-    innerFallbackUsed = true;
-    const innerPath = join(home, "inner.txt");
-    let innerCommand: string | null = null;
-    if (existsSync(innerPath)) {
-      try {
-        innerCommand = (await readFile(innerPath, "utf8")).trim();
-      } catch {
-        // ignore
-      }
-    }
-    const current = await readJsonOrEmpty(settingsPath);
-    const withRestoredStatus = restoreStatusLine(current, innerCommand);
-    const next = unregisterStopHook(withRestoredStatus, hookCommand);
-    await atomicWriteJson(settingsPath, next);
-  }
-
-  // 2. Idempotent hook unregister even if backup didn't include it.
-  const afterBackup = await readJsonOrEmpty(settingsPath);
-  const cleaned = unregisterStopHook(afterBackup, hookCommand);
-  if (JSON.stringify(cleaned) !== JSON.stringify(afterBackup)) {
-    await atomicWriteJson(settingsPath, cleaned);
+  if (backupKept) {
+    io.write(`  kept your settings backup from setup time (not copied back): ${backupKept}\n`);
   }
 
   // 3. Remove slash command symlinks.
@@ -193,7 +217,8 @@ export async function runUninstall(
   //    the rest of the uninstall (AC10).
   let autostartRemoved = false;
   const uninstallAutostart =
-    opts.uninstallAutostartFn ?? (() => uninstallAutostartForPlatform());
+    opts.uninstallAutostartFn ??
+    (() => uninstallAutostartForPlatform({ home: env.HOME ?? env.USERPROFILE, env }));
   try {
     const autostartResult = await uninstallAutostart();
     if (autostartResult.status === "removed") {
@@ -222,14 +247,15 @@ export async function runUninstall(
     io.write(`  ~/.siltpoke/ preserved (use --purge or answer yes to delete)\n`);
   }
 
-  // Wrapper unwrapper output — wrapper command not used here, but logged so the
-  // user knows what command stopped firing.
-  io.write(`  done. Restart Claude Code for ${wrapperCommand.split(" ")[0]} to stop wrapping the statusline.\n`);
+  // The closing line says what this run did to Claude Code. A restart is only
+  // worth asking for when settings.json changed; Claude Code reads the status
+  // line and hooks at start-up.
+  io.write(closingLine(settingsChanged));
 
   return {
     status: "uninstalled",
-    backup_restored: backupRestored,
-    inner_fallback_used: innerFallbackUsed,
+    settings_changed: settingsChanged,
+    backup_kept: backupKept,
     symlinks_removed: symlinksRemoved,
     autostart_removed: autostartRemoved,
     siltpoke_home_purged: purged,

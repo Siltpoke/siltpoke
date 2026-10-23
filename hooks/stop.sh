@@ -2,7 +2,7 @@
 # Siltpoke Stop-hook guard.
 #
 # The plugin's hook is live the instant the plugin is enabled — which is BEFORE
-# /siltpoke-setup has run, and possibly on a machine with no bun. Anything
+# /siltpoke:siltpoke-setup has run, and possibly on a machine with no bun. Anything
 # missing ⇒ exit 0 in silence. Siltpoke must never put an error in the user's
 # Claude Code session.
 set -u
@@ -12,8 +12,14 @@ set -u
 # it would happen HERE, before PAYLOAD is drained — exactly the host-hang
 # failure mode this script exists to avoid.
 HOME="${HOME:-}"
-SILTPOKE_DIR="${HOME}/.siltpoke"
-NUDGE_MARKER="${SILTPOKE_DIR}/.nudged"
+# Honour SILTPOKE_HOME exactly like siltpokeRoot() in src/installer/paths.ts
+# (empty counts as unset, hence `:-`). A hard-coded $HOME/.siltpoke made an
+# isolated run (and every hook fired inside one) write the REAL home (defect [73]).
+SILTPOKE_DIR="${SILTPOKE_HOME:-${HOME}/.siltpoke}"
+# Not `.nudged` (defect [33]): that name was written by a nudge that reached no
+# session, so keeping it would silence exactly the users the fix is for. Same
+# name as NUDGE_MARKER in src/hooks/hook-guard-core.ts (the Windows path).
+NUDGE_MARKER="${SILTPOKE_DIR}/.setup-nudged"
 
 nudge_once() {
   [ -f "$NUDGE_MARKER" ] && return 0
@@ -31,7 +37,11 @@ nudge_once() {
   # nag, which is exactly the spam this marker exists to prevent. A silent
   # Siltpoke beats one that can't keep its own promise.
   [ -f "$NUDGE_MARKER" ] || return 0
-  printf '%s\n' "Siltpoke installed. Run /siltpoke-setup to meet your pet (express or custom)." >&2
+  # stdout, as `systemMessage` JSON — NOT stderr (defect [33]). Claude Code
+  # sends an exit-0 hook's stderr to the debug log only, so the old stderr line
+  # never reached a session while the marker above burned it for good. Byte-
+  # identical to nudgeLine() in src/hooks/hook-guard-core.ts (the Windows path).
+  printf '%s\n' '{"systemMessage":"Siltpoke installed. Run /siltpoke:siltpoke-setup to meet your pet (express or custom)."}'
 }
 
 # Read the payload up front — on EVERY path. A hook that leaves stdin unread can
@@ -41,6 +51,27 @@ nudge_once() {
 # "search cwd only") can make `cat` itself unresolvable — that must stay silent
 # too, per the governing rule that nothing here ever prints to the session.
 PAYLOAD="$(cat 2>/dev/null)"
+
+# Defect [73]: a `claude -p` / codex / agy child that siltpoke itself spawned
+# (reviewer, explain, chat, distil) loads the user's installed plugin and fires
+# THIS hook. Every spawn site sets SILTPOKE_INTERNAL=1 (src/router/router.ts
+# isSiltpokeInternal); exit before anything below can write — the plugin-root
+# pointer, the nudge marker, a telemetry row — so a review can never rewrite the
+# user's real state. Payload is already drained above.
+[ "${SILTPOKE_INTERNAL:-}" = "1" ] && exit 0
+
+# Defect [49]: record which agent this turn ran in, for the dashboard daemon
+# (hooks/lib/record-host.sh). Before every gate below on purpose — a turn in an
+# agent counts as using it whether or not setup, bun or the bundle are there.
+# Fork-specific names FIRST, plain claude LAST; none set records nothing. The
+# same value is handed to the bundle as SILTPOKE_HOST at the end of this file.
+SILTPOKE_HOST_FAMILY=""
+[ -n "${QODER_PLUGIN_ROOT:-}" ] && SILTPOKE_HOST_FAMILY="qoder"
+[ -z "$SILTPOKE_HOST_FAMILY" ] && [ -n "${CODEBUDDY_PLUGIN_ROOT:-}" ] && SILTPOKE_HOST_FAMILY="codebuddy"
+[ -z "$SILTPOKE_HOST_FAMILY" ] && [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && SILTPOKE_HOST_FAMILY="claude"
+# -r and ${0%/*} for the reasons given at the resolve-bun.sh source below.
+SILTPOKE_RECORD_LIB="${0%/*}/lib/record-host.sh"
+[ -r "$SILTPOKE_RECORD_LIB" ] && . "$SILTPOKE_RECORD_LIB" && siltpoke_record_host "$SILTPOKE_HOST_FAMILY"
 
 [ -f "${SILTPOKE_DIR}/config.json" ] || { nudge_once; exit 0; }
 
@@ -70,9 +101,9 @@ if [ -r "$SILTPOKE_RESOLVE_LIB" ]; then
 fi
 [ -n "$BUN" ] || BUN="$(command -v bun 2>/dev/null || true)"
 # NO nudge on this path. config.json exists, so setup has already run, and
-# "Run /siltpoke-setup to meet your pet" cannot put bun on a non-login shell's
+# "Run /siltpoke:siltpoke-setup to meet your pet" cannot put bun on a non-login shell's
 # PATH — it just sends the user to re-do the one step that already worked.
-# /siltpoke-doctor and the statusline are the surfaces that report this.
+# /siltpoke:siltpoke-doctor and the statusline are the surfaces that report this.
 [ -n "$BUN" ] || exit 0
 
 # Guarded with :- (not bare ${CLAUDE_PLUGIN_ROOT}) — under `set -u` an unset var
@@ -96,10 +127,7 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 # (a CC-fork could also export CLAUDE_PLUGIN_ROOT; the specific name wins), plain
 # claude LAST. None present (unresolved fork) => empty => brain-config treats it
 # as unknown => claude fallback => ZERO REGRESSION. Inherited by the reviewer child.
-SILTPOKE_HOST_FAMILY=""
-[ -n "${QODER_PLUGIN_ROOT:-}" ] && SILTPOKE_HOST_FAMILY="qoder"
-[ -z "$SILTPOKE_HOST_FAMILY" ] && [ -n "${CODEBUDDY_PLUGIN_ROOT:-}" ] && SILTPOKE_HOST_FAMILY="codebuddy"
-[ -z "$SILTPOKE_HOST_FAMILY" ] && [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && SILTPOKE_HOST_FAMILY="claude"
+# SILTPOKE_HOST_FAMILY is computed once, near the top of this file.
 
 printf '%s' "$PAYLOAD" | SILTPOKE_HOST="$SILTPOKE_HOST_FAMILY" "$BUN" "${PLUGIN_ROOT}/dist/siltpoke-stop.js"
 

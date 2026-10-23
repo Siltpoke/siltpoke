@@ -24,6 +24,7 @@ import {
   CHAT_STOPPED_MARKER,
   makeFailedEntry,
   parseErrorEvent,
+  wholeReplyNote,
 } from "../lib/chat-error-copy";
 import { parseSseChunk } from "../lib/sse-parse";
 import type { StalenessVerdict } from "../../../repo-graph/staleness-verdict";
@@ -70,6 +71,8 @@ export interface ChatStreamData {
   input: string;
   streaming: boolean;
   buffer: string;
+  /** Shown while waiting when the agent answers in one piece; "" otherwise. */
+  waitNote: string;
   error: string | null;
   sessionId: string;
   abortController: AbortController | null;
@@ -98,6 +101,7 @@ export function makeChatStreamData(
     input: "",
     streaming: false,
     buffer: "",
+    waitNote: "",
     error: null as string | null,
     sessionId: "",
     abortController: null as AbortController | null,
@@ -126,6 +130,7 @@ export function makeChatStreamData(
       this.input = "";
       this.error = null;
       this.buffer = "";
+      this.waitNote = "";
       this.streaming = true;
       this.abortController = new AbortController();
 
@@ -159,7 +164,7 @@ export function makeChatStreamData(
         let pending = "";
         // Set when the server sends a classified `error` event; the failure
         // renders as an in-transcript card (never the plain error line).
-        let failure: { reason?: string } | null = null;
+        let failure: ReturnType<typeof parseErrorEvent> | null = null;
 
         for (;;) {
           const { value, done } = await reader.read();
@@ -181,6 +186,10 @@ export function makeChatStreamData(
               } catch {
                 // Ignore malformed delta — partial JSON is not an error state.
               }
+            } else if (ev.name === "message_start") {
+              // An agent other than claude answers in one piece (defect [49],
+              // AC8) — say so, or the empty waiting bubble looks stuck.
+              this.waitNote = wholeReplyNote(ev.data);
             } else if (ev.name === "message_stop") {
               // Server signals stream complete. The accumulated delta buffer
               // is treated as canonical; full_text is intentionally not used
@@ -216,7 +225,7 @@ export function makeChatStreamData(
         if (failure) {
           // Failed turn → in-transcript error card. Any partial buffer is
           // dropped (mirrors the server persisting failed turns with content "").
-          this.messages = [...this.messages, makeFailedEntry(failure.reason)];
+          this.messages = [...this.messages, makeFailedEntry(failure.reason, failure)];
         } else if (this.buffer.length > 0) {
           this.messages = [
             ...this.messages,
@@ -250,6 +259,7 @@ export function makeChatStreamData(
       } finally {
         this.streaming = false;
         this.buffer = "";
+        this.waitNote = "";
         this.abortController = null;
       }
     },

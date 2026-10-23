@@ -11,6 +11,8 @@
  */
 import type { EvidenceLabel } from "../critic/evidence-guard";
 import { type AuditAbsenceKind, classifyAuditAbsence } from "./audit-absence";
+import { failureReasonOf } from "./critic-failure-reason";
+import { injectionAlertOf, toolCallsOf } from "./critic-injection-parse";
 import {
   classifySpeechKind,
   type CriticCall,
@@ -46,6 +48,10 @@ interface RawCall {
   m112_diff_total?: unknown;
   bubble_suppressed?: unknown;
   critique_id?: unknown;
+  /** Prompt-injection alert; absent when there is no signal. */
+  injection_alert?: unknown;
+  /** Reviewer tool calls; absent on rows written before #1090. */
+  tool_calls?: unknown;
   brain_output?: {
     bubble_short?: unknown;
     bubble_long?: unknown;
@@ -301,6 +307,8 @@ export function parseCall(rawIn: unknown): CriticCall | null {
       skip_reason: skipReason,
       audit_absence: absenceOf(raw, true),
       evidence_label: evidenceLabelOf(raw),
+      injection_alert: injectionAlertOf(raw),
+      tool_calls: toolCallsOf(raw),
       evidence_unverified: unverifiedCountOf(raw),
       diff_shown: diffCoverageOf(raw)?.shown ?? null,
       diff_total: diffCoverageOf(raw)?.total ?? null,
@@ -339,10 +347,18 @@ export function parseCall(rawIn: unknown): CriticCall | null {
   // by the assembly-layer no-bubble filter — invisible. Parse them as
   // skipped/brain_error so they render via the existing skip-row path and
   // the `status=errors` filter can select them by error_message.
+  // The HARD_SUPPRESS sibling (defect `[58]`): a suppression meaning "the
+  // review did not run because something broke" keeps its reason in
+  // `m112_reason`, not `error_message`. New rows also get `error_message` from
+  // the writer; this fallback is for rows already on disk. Only for a row with
+  // no `brain_output`: one that has a review body is a fired row whose reason
+  // the audit block explains (audit-absence), not an invisible one.
   const errorMessage =
     typeof raw.error_message === "string" && raw.error_message.length > 0
       ? raw.error_message
-      : null;
+      : raw.brain_output === undefined
+        ? failureReasonOf(raw.m112_reason)
+        : null;
   if (errorMessage !== null) {
     return {
       timestamp: ts,
@@ -353,6 +369,8 @@ export function parseCall(rawIn: unknown): CriticCall | null {
       skip_reason: "brain_error",
       audit_absence: absenceOf(raw, false),
       evidence_label: evidenceLabelOf(raw),
+      injection_alert: injectionAlertOf(raw),
+      tool_calls: toolCallsOf(raw),
       evidence_unverified: unverifiedCountOf(raw),
       diff_shown: diffCoverageOf(raw)?.shown ?? null,
       diff_total: diffCoverageOf(raw)?.total ?? null,
@@ -414,6 +432,8 @@ export function parseCall(rawIn: unknown): CriticCall | null {
     evidence: evidenceArr,
     audit_absence: absenceOf(raw, false),
     evidence_label: evidenceLabelOf(raw),
+    injection_alert: injectionAlertOf(raw),
+    tool_calls: toolCallsOf(raw),
     evidence_unverified: unverifiedCountOf(raw),
     diff_shown: diffCoverageOf(raw)?.shown ?? null,
     diff_total: diffCoverageOf(raw)?.total ?? null,

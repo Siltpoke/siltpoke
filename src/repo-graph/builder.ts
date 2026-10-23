@@ -16,9 +16,11 @@ import { parseSource } from "../critic/rubric/tier2/ast-loader";
 import { resolveProjectRoot } from "../memory/project";
 import { discoverAnchorMap } from "./anchor-discovery";
 import { computeAstSignature } from "./ast-signature";
+import { bumpGraphCounters } from "./counters";
 import { computeCoverage } from "./coverage";
 import { type ExtractedFile, extractFile } from "./extractor";
-import { computeContentSha, fingerprintMatches } from "./fingerprint";
+import { computeContentSha, EXTRACTOR_VERSION, fingerprintMatches, sameExtractor } from "./fingerprint";
+import { gitVisibleFiles, headCommit } from "./git-stamp";
 import { computeOutsideImports } from "./outside-imports";
 import { repoGraphLocationForRoot, resolveRepoGraphLocation } from "./proj-hash";
 import { seedSeenWatermark, type WriteSeenFn } from "./seen-seed";
@@ -30,6 +32,7 @@ import {
   writeFingerprints,
   writeGraph,
   writeMeta,
+  writeOtherFiles,
   writeQueryIndex,
 } from "./store";
 import {
@@ -124,18 +127,6 @@ function groupByFile(graph: RepoGraph): {
   return { nodesByFile, edgesByFile };
 }
 
-function bumpNodeCounters(counters: RepoGraphMetaCounters, nodes: SiltpokeGraphNode[]): void {
-  for (const n of nodes) {
-    counters.nodes[n.type] = (counters.nodes[n.type] ?? 0) + 1;
-  }
-}
-
-function bumpEdgeCounters(counters: RepoGraphMetaCounters, edges: SiltpokeGraphEdge[]): void {
-  for (const e of edges) {
-    counters.edges[e.type] = (counters.edges[e.type] ?? 0) + 1;
-  }
-}
-
 function buildQueryIndex(graph: RepoGraph): QueryIndex {
   // Use null-proto maps to avoid prototype pollution: a node named
   // "constructor" / "toString" / "__proto__" would otherwise collide
@@ -179,6 +170,7 @@ async function readAndFingerprintFile(
     content_sha256: computeContentSha(content),
     ast_sig: computeAstSignature(tree),
     degraded,
+    extractor: EXTRACTOR_VERSION,
   };
   const extracted = extractFile(tree, {
     relPath: file.relPath,
@@ -297,7 +289,14 @@ async function buildInner(
   const newGraph: RepoGraph = emptyGraph();
   const newFingerprints: Fingerprints = emptyFingerprints();
 
-  const walk = await walkProject(project_root);
+  // Other (non-code) files follow .gitignore: in a git repo only files git
+  // would show are listed (no __pycache__, build output, or ignored .env),
+  // filtered before the cap. If git fails inside a repo, list none — fail
+  // closed rather than name ignored files.
+  const visible = gitVisibleFiles(project_root);
+  const keepOther =
+    visible === "no-git" ? undefined : visible === "failed" ? () => false : (p: string) => visible.has(p);
+  const walk = await walkProject(project_root, { keepOther });
 
   for (const skip of walk.skipped) {
     counters.skipped[skip.reason] += 1;
@@ -340,7 +339,7 @@ async function buildInner(
       // permanently — the same silent under-extraction the counter exists to
       // end. Falling through to the parse path costs one re-parse per stale
       // file, once, and the index self-heals with no user action.
-      if (contentSha === cached.content_sha256 && cached.degraded !== undefined) {
+      if (contentSha === cached.content_sha256 && cached.degraded !== undefined && sameExtractor(cached)) {
         // Reuse cached nodes + edges. No parse.
         const reusedNodes = nodesByFile.get(file.relPath) ?? [];
         const reusedEdges = edgesByFile.get(file.relPath) ?? [];
@@ -352,8 +351,7 @@ async function buildInner(
         // persisted fingerprint or the count silently resets on every
         // incremental build — which is nearly every build.
         if (cached.degraded) counters.parse_degraded += 1;
-        bumpNodeCounters(counters, reusedNodes);
-        bumpEdgeCounters(counters, reusedEdges);
+        bumpGraphCounters(counters, reusedNodes, reusedEdges);
         continue;
       }
     }
@@ -369,8 +367,7 @@ async function buildInner(
     newFingerprints.files[file.relPath] = parsed.fingerprint;
     counters.files_walked += 1;
     if (parsed.degraded) counters.parse_degraded += 1;
-    bumpNodeCounters(counters, parsed.extracted.nodes);
-    bumpEdgeCounters(counters, parsed.extracted.edges);
+    bumpGraphCounters(counters, parsed.extracted.nodes, parsed.extracted.edges);
   }
   opts.onProgress?.(total, total); // final tick — all files processed
   // `fingerprintMatches` is currently exported but unused in builder
@@ -387,6 +384,8 @@ async function buildInner(
   await writeGraph(storage_dir, newGraph);
   await writeQueryIndex(storage_dir, queryIndex);
   await writeFingerprints(storage_dir, newFingerprints);
+  // Non-code files Code Map draws as plain files — beside graph.json, never in it.
+  await writeOtherFiles(storage_dir, { schemaVersion: 1, files: walk.others, truncated: walk.othersTruncated });
 
   // Tier-4 import anchors (alias-edge resolution): discovered at index time
   // (TS configs read from disk + Python source roots inferred structurally) and
@@ -396,6 +395,9 @@ async function buildInner(
   const imports_outside_root = computeOutsideImports(newGraph, anchorMap);
 
   const duration_ms = performance.now() - start;
+  // HEAD at index-finish time — scoped to the enclosing repo when this index
+  // root is a sub-folder (repo_root), else the index root itself.
+  const head_commit = headCommit(repo_root ?? project_root) ?? undefined;
   const meta: RepoGraphMeta = {
     schemaVersion: 1,
     project_root,
@@ -408,6 +410,7 @@ async function buildInner(
     anchorMap,
     imports_outside_root,
     ...(repo_root !== undefined ? { repo_root } : {}),
+    ...(head_commit !== undefined ? { head_commit } : {}),
   };
   await writeMeta(storage_dir, meta);
 

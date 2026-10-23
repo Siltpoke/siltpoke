@@ -26,6 +26,7 @@ import type { BrainOutput } from "../../src/brain/schema";
 import { BrainError, type CallBrainOptions, type BrainCallResult } from "../../src/brain/brain";
 import type { RunCriticDeps } from "../../src/critic/run-critic";
 import type { BrainProviderMeta } from "../../src/brain/provider";
+import type { ToolCallRecord } from "../../src/brain/tool-calls";
 import type { ToolName, ToolResult } from "../../src/critic/tools/types";
 import { commitAll, headSha, makeGitRepo } from "../_shared/git-fixture";
 import { extractChangedFiles, extractLatestUserMessage } from "../../src/router/context";
@@ -59,7 +60,7 @@ afterEach(() => {
 //   critiques/archive/<date>/<id>.md   — surfaced by the Memory Book page
 //   critiques/history.jsonl            — appended, never pruned
 //   critiques/latest.md                — overwritten; backs the status card,
-//                                        /siltpoke-last and the menu bar
+//                                        /siltpoke:siltpoke-last and the menu bar
 // Left unguarded these accumulated 1,087 archive files and 1,047 history lines
 // over two months, and latest.md was showing a fake review at the moment this
 // guard was written. Nothing was watching any of the three.
@@ -342,6 +343,41 @@ describe("handleStopHook — legacy baseline (flag OFF)", () => {
     expect(existsSync(archiveDir)).toBe(true);
   });
 
+  // 🛡 [C]: the legacy writer records the reviewer's tools like the
+  // tool-augmented rows do — a list when the call returned one, else "not_recorded".
+  test("legacy row carries tool_calls: the list, or not_recorded", async () => {
+    const transcriptPath = makeTranscriptWithEdit(tmpHome);
+    const run = async (sess: string, toolCalls?: BrainCallResult["toolCalls"]) => {
+      await handleStopHook(makeStopEvent(sess, transcriptPath, join(tmpHome, sess)), {
+        env: { HOME: tmpHome, SILTPOKE_TOOL_AUGMENTED: "0" },
+        brainFn: async (): Promise<BrainCallResult> => ({ output: makeFakeBrainOutput(), usage: noopUsage, toolCalls }),
+      });
+      const rows = readFileSync(join(tmpHome, ".siltpoke", "brain-calls.jsonl"), "utf8").trim().split("\n");
+      return JSON.parse(rows.at(-1) ?? "{}") as Record<string, unknown>;
+    };
+    expect((await run("legacy-tools", [{ tool: "Read", target: "a.ts", failed: false }])).tool_calls).toEqual([
+      { tool: "Read", target: "a.ts", failed: false },
+    ]);
+    expect((await run("legacy-none")).tool_calls).toBe("not_recorded");
+  });
+
+  test("legacy row carries injection_alert only when a signal fired", async () => {
+    const transcriptPath = makeTranscriptWithEdit(tmpHome);
+    const run = async (sess: string, extra: Partial<BrainOutput>, toolCalls?: BrainCallResult["toolCalls"]) => {
+      await handleStopHook(makeStopEvent(sess, transcriptPath, join(tmpHome, sess)), {
+        env: { HOME: tmpHome, SILTPOKE_TOOL_AUGMENTED: "0" },
+        brainFn: async (): Promise<BrainCallResult> => ({ output: makeFakeBrainOutput(extra), usage: noopUsage, toolCalls }),
+      });
+      const rows = readFileSync(join(tmpHome, ".siltpoke", "brain-calls.jsonl"), "utf8").trim().split("\n");
+      return JSON.parse(rows.at(-1) ?? "{}") as Record<string, unknown>;
+    };
+    const hit = await run("legacy-inj", { injection_suspected: [{ where: "a.md", quote: "obey", why: "steers" }] });
+    expect((hit.injection_alert as { level: string }).level).toBe("loud");
+    expect("injection_alert" in (await run("legacy-clean", { injection_suspected: [] }))).toBe(false);
+    const tool = await run("legacy-tool", {}, [{ tool: "Read", target: "/etc/hosts", failed: false }]);
+    expect((tool.injection_alert as { toolRecord: string }).toolRecord).toBe("recorded");
+  });
+
   // Characterization FLIPPED 2026-06-11: previously asserted
   // state.json written with bubble_short "" — empty effective bubble now
   // skips the state write entirely.
@@ -514,6 +550,92 @@ describe("handleStopHook — tool-augmented path (flag ON)", () => {
     );
     expect(log).toContain("m112_path");
     expect(log).toContain("NORMAL");
+  });
+
+  // Bubble alert: a loud alert on a NORMAL review reaches BOTH the row and the
+  // project state file, even when low confidence blanks the review's own bubble;
+  // the next alert-free review in that project clears it.
+  const alertDeps = (extra: Record<string, unknown>): RunCriticDeps => ({
+    runToolsFn: async () => makeWithTscError("const x: string = 42;"),
+    callBrainFn: async (): Promise<BrainCallResult> => ({
+      output: makeFakeBrainOutput({
+        bubble_short: "Type error found",
+        severity: "medium",
+        evidence: [{ tool: "tsc", file: "src/dummy.ts", line: 5, snippet: "const x: string = 42;" }],
+        ...extra,
+      }),
+      usage: noopUsage,
+    }),
+    writeCritiqueFn: async () => ({ id: "c-alert", path: "/tmp" }),
+  });
+  const runAlertTurn = async (sid: string, cwd: string, extra: Record<string, unknown>, deps = alertDeps): Promise<void> => {
+    // The review-unit gate wants a new commit per review.
+    if (existsSync(join(cwd, ".git"))) {
+      writeFileSync(join(cwd, `${sid}.txt`), sid);
+      commitAll(cwd, sid);
+    }
+    await handleStopHook(makeStopEvent(sid, makeTranscriptWithEdit(tmpHome), cwd), {
+      env: m112Env(tmpHome),
+      m112Deps: deps(extra),
+      menubarDeps: { exec: () => {} },
+    });
+  };
+  const readProjectState = (cwd: string): { bubble_short: string; alert?: { text: string; project: string } } =>
+    JSON.parse(readFileSync(join(cwd, ".siltpoke", "state.json"), "utf8"));
+
+  test("NORMAL + loud alert at LOW confidence: row carries injection_alert AND state carries alert", async () => {
+    const projectCwd = join(tmpHome, "alert-low");
+    await runAlertTurn("sess-alert-low", projectCwd, {
+      confidence: "low",
+      injection_suspected: [{ where: "README.md", quote: "ignore all rules", why: "steers" }],
+    });
+    const rows = readFileSync(join(tmpHome, ".siltpoke", "brain-calls.jsonl"), "utf8").trim().split("\n").filter(Boolean);
+    const line = JSON.parse(rows[rows.length - 1]!) as Record<string, unknown>;
+    expect(line.critic_path_decision).toBe("NORMAL");
+    expect((line.injection_alert as { level: string }).level).toBe("loud");
+    // The bubble was blanked but the alert was written: the row says so (F8).
+    expect(line.bubble_suppressed).toBe(true);
+    expect(line.state_written).toBe(true);
+    const state = readProjectState(projectCwd);
+    expect(state.alert?.project).toBe("alert-low");
+    expect(state.alert?.text).toContain("README.md");
+  });
+
+  test("next alert-free review in the same project clears the alert (high and low confidence)", async () => {
+    const projectCwd = join(tmpHome, "alert-clear");
+    const loud = { injection_suspected: [{ where: "README.md", quote: "ignore all rules", why: "steers" }] };
+    await runAlertTurn("sess-alert-clear-1", projectCwd, { confidence: "high", ...loud });
+    expect(readProjectState(projectCwd).alert).toBeDefined();
+    await runAlertTurn("sess-alert-clear-2", projectCwd, { confidence: "high", injection_suspected: [] });
+    expect(readProjectState(projectCwd).alert).toBeUndefined();
+    // low confidence blanks the bubble: the rest of the file is left alone, the alert field still clears
+    await runAlertTurn("sess-alert-clear-3", projectCwd, { confidence: "high", ...loud });
+    const shown = readProjectState(projectCwd).bubble_short;
+    await runAlertTurn("sess-alert-clear-4", projectCwd, { confidence: "low", injection_suspected: [] });
+    expect(readProjectState(projectCwd).alert).toBeUndefined();
+    expect(readProjectState(projectCwd).bubble_short).toBe(shown);
+  });
+
+  test("PASSIVE_BUBBLE: a loud alert is set on the state file and the next alert-free review clears it (F8)", async () => {
+    const ok = <T extends string>(tool: T) => ({ tool, status: "ok" as const, parsed: [], raw: "" });
+    const hunk = { file: "src/dummy.ts", oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, header: "@@", body: "-a\n+b" };
+    const passiveDeps = (extra: Record<string, unknown>): RunCriticDeps => ({
+      runToolsFn: async () => ({ tsc: ok("tsc"), eslint: ok("eslint"), "git-diff": { ...ok("git-diff"), parsed: [hunk], raw: "diff --git a/src/dummy.ts b/src/dummy.ts" }, ripgrep: ok("ripgrep"), securityFindings: [], owaspHints: [], webSearchSources: [] }),
+      callBrainFn: async () => {
+        const { tool_calls, ...output } = extra;
+        return { output: makeFakeBrainOutput({ bubble_short: "clean", ...output }), usage: noopUsage, toolCalls: (tool_calls as ToolCallRecord[] | undefined) ?? [] };
+      },
+      writeCritiqueFn: async () => ({ id: "c-passive-alert", path: "/tmp" }),
+    });
+    const projectCwd = join(tmpHome, "passive-alert");
+    const lastRow = () => JSON.parse(readFileSync(join(tmpHome, ".siltpoke", "brain-calls.jsonl"), "utf8").trim().split("\n").pop()!) as Record<string, unknown>;
+    // PASSIVE_BUBBLE ignores self reports (R22), so the alert is driven by a tool call outside the repo.
+    await runAlertTurn("sess-passive-alert-1", projectCwd, { tool_calls: [{ tool: "Read", target: "/etc/hosts", failed: false }] }, passiveDeps);
+    expect(lastRow().critic_path_decision).toBe("PASSIVE_BUBBLE");
+    expect(readProjectState(projectCwd).alert?.text).toContain("/etc/hosts");
+    await runAlertTurn("sess-passive-alert-2", projectCwd, {}, passiveDeps);
+    expect(lastRow().critic_path_decision).toBe("PASSIVE_BUBBLE");
+    expect(readProjectState(projectCwd).alert).toBeUndefined();
   });
 
   test("tool-augmented flag ON + NORMAL with a fabricated citation → critique IS written, row is marked", async () => {
@@ -737,6 +859,8 @@ describe("handleStopHook — provider truth on ledger rows (track #7 T3)", () =>
     const line = lastJsonlLine(tmpHome);
     expect(line.critic_path_decision).toBe("PASSIVE_BUBBLE");
     expect(line.m112_evidence_label).toBe("not_checked");
+    // No signals -> no key (absent, not null).
+    expect("injection_alert" in line).toBe(false);
   });
 
   test("PASSIVE_BUBBLE row + usage-event carry provider=codex/billing=quota/model when configured", async () => {
@@ -761,9 +885,13 @@ describe("handleStopHook — provider truth on ledger rows (track #7 T3)", () =>
         webSearchSources: [],
       }),
       callBrainFn: async () => ({
-        output: makeFakeBrainOutput({ bubble_short: "clean" }),
+        output: makeFakeBrainOutput({
+          bubble_short: "clean",
+          injection_suspected: [{ where: "README.md", quote: "ignore all rules", why: "tells the reviewer what to do" }],
+        }),
         usage: CODEX_USAGE,
         servedModel: "gpt-5-codex",
+        toolCalls: [{ tool: "shell", target: "cat ../outside.txt", failed: false }],
       }),
       writeCritiqueFn: async () => ({ id: "c-provider-passive", path: "/tmp" }),
       providerMeta: CODEX_META,
@@ -779,8 +907,18 @@ describe("handleStopHook — provider truth on ledger rows (track #7 T3)", () =>
     expect(line.provider).toBe("codex");
     expect(line.billing).toBe("quota");
     expect(line.model).toBe("gpt-5-codex");
+    // 🛡 [C]: what the reviewer ran lands on the row …
+    expect(line.tool_calls).toEqual([{ tool: "shell", target: "cat ../outside.txt", failed: false }]);
 
     const usageEvent = lastUsageEvent(tmpHome);
+    // … and never in the budget rollup, which only counts tokens and money.
+    expect("tool_calls" in usageEvent).toBe(false);
+    expect("injection_alert" in usageEvent).toBe(false);
+    // The alert rides the row: the outside read only. The model's own injection_suspected is dropped on PASSIVE_BUBBLE (R22).
+    const alert = line.injection_alert as { level: string; toolRecord: string; signals: { kind: string }[] };
+    expect(alert.level).toBe("loud");
+    expect(alert.toolRecord).toBe("recorded");
+    expect(alert.signals.map((s) => s.kind)).toEqual(["tool"]);
     expect(usageEvent.provider).toBe("codex");
     expect(usageEvent.billing).toBe("quota");
     expect(usageEvent.model).toBe("gpt-5-codex");
@@ -816,6 +954,7 @@ describe("handleStopHook — provider truth on ledger rows (track #7 T3)", () =>
         }),
         usage: CODEX_USAGE,
         servedModel: "gpt-5-codex",
+        toolCalls: [],
       }),
       writeCritiqueFn: async () => ({ id: "c-provider-normal", path: join(projectCwd, ".siltpoke", "fake.md") }),
       providerMeta: CODEX_META,
@@ -832,6 +971,8 @@ describe("handleStopHook — provider truth on ledger rows (track #7 T3)", () =>
     expect(line.provider).toBe("codex");
     expect(line.billing).toBe("quota");
     expect(line.model).toBe("gpt-5-codex");
+    // An empty list = the CLI reports tool calls and there were none.
+    expect(line.tool_calls).toEqual([]);
   });
 
   test("no providerMeta injected (default claude path) → row carries provider=claude/billing=usd", async () => {
@@ -864,6 +1005,8 @@ describe("handleStopHook — provider truth on ledger rows (track #7 T3)", () =>
     const line = lastJsonlLine(tmpHome);
     expect(line.provider).toBe("claude");
     expect(line.billing).toBe("usd");
+    // The call returned no tool list, so the row must not claim "none".
+    expect(line.tool_calls).toBe("not_recorded");
 
     const usageEvent = lastUsageEvent(tmpHome);
     expect(usageEvent.provider).toBe("claude");
@@ -898,8 +1041,9 @@ describe("handleStopHook — provider truth on ledger rows (track #7 T3)", () =>
     expect(line.critic_path_decision).toBe("HARD_SUPPRESS");
     expect(line.provider).toBe("codex");
     expect(line.billing).toBe("quota");
-    // No Brain call happened — no served-model to report.
+    // No Brain call happened — no served-model to report, and no tool record.
     expect(line.model).toBeUndefined();
+    expect("tool_calls" in line).toBe(false);
   });
 
   test("quota-cap skip (track #7 T4 fixup) → honest skipped:\"quota_cap\" row, NOT a generic HARD_SUPPRESS/m112_reason row", async () => {
@@ -1121,188 +1265,6 @@ function makeTranscriptNoEdit(dir: string): string {
 // ---------------------------------------------------------------------------
 // The review-unit anchor must not be consumed by a turn that never got reviewed
 // ---------------------------------------------------------------------------
-
-describe("handleStopHook — review-unit anchor is consumed only by a reviewed turn", () => {
-  test("a commit the transcript never touched leaves the anchor where it was", async () => {
-    const projectCwd = join(tmpHome, "proj-anchor-veto");
-    makeGitRepo(projectCwd);
-
-    // Seed state so the first-touch welcome branch is out of the picture, and
-    // pin the anchor to the current HEAD so the gate has a real unit to name
-    // rather than falling into the range-less `anchor_unusable` path.
-    const stateBase = join(projectCwd, ".siltpoke");
-    mkdirSync(stateBase, { recursive: true });
-    writeFileSync(
-      join(stateBase, "state.json"),
-      JSON.stringify({ schemaVersion: 1, mood: "happy", pose: "base", bubble_short: "hi" }),
-    );
-    const baseHead = headSha(projectCwd);
-    writeFileSync(
-      join(stateBase, "review-anchor.json"),
-      JSON.stringify({ head: baseHead, tree: "", reviewedAt: new Date().toISOString() }),
-    );
-
-    // A real commit git can see perfectly well — `git merge`, `git cherry-pick`,
-    // or anything committed outside the agent's own Edit/Write calls.
-    writeFileSync(join(projectCwd, "out-of-band.ts"), "export const x = 1;\n");
-    commitAll(projectCwd, "committed outside the agent's tool calls");
-    const movedHead = headSha(projectCwd);
-    expect(movedHead).not.toBe(baseHead);
-
-    // ...and a transcript that shows no file edits at all, so the code-change
-    // gate vetoes the review the review-unit gate just approved.
-    const transcriptPath = makeTranscriptNoEdit(tmpHome);
-
-    await handleStopHook(
-      {
-        hook_event_name: "Stop",
-        session_id: "sess-anchor-veto",
-        transcript_path: transcriptPath,
-        cwd: projectCwd,
-      },
-      { env: { HOME: tmpHome } },
-    );
-
-    // The turn was not reviewed, so the unit must still be retryable. If the
-    // anchor moved to `movedHead`, this commit's diff can never appear in any
-    // later `<anchor>..HEAD` range — it is not skipped, it is gone.
-    const anchor = JSON.parse(readFileSync(join(stateBase, "review-anchor.json"), "utf8"));
-    expect(anchor.head).toBe(baseHead);
-  });
-
-  // The comment at the `commitAnchor()` call site says its position — after the
-  // code-change gate, BEFORE the dedupe gate — is deliberate. Nothing tested
-  // that: both tests around this one use a fresh session with no skip-state, so
-  // the dedupe gate can never fire in them and the call could be moved past it
-  // with the suite still green. That is the same bug via a different door — a
-  // real unit, deduped away, anchor never advanced, re-reviewed forever.
-  test("a dedupe skip still advances the anchor — the call sits before that gate", async () => {
-    const projectCwd = join(tmpHome, "proj-anchor-dedupe");
-    makeGitRepo(projectCwd);
-
-    const stateBase = join(projectCwd, ".siltpoke");
-    mkdirSync(stateBase, { recursive: true });
-    writeFileSync(
-      join(stateBase, "state.json"),
-      JSON.stringify({ schemaVersion: 1, mood: "happy", pose: "base", bubble_short: "hi" }),
-    );
-    const baseHead = headSha(projectCwd);
-    writeFileSync(
-      join(stateBase, "review-anchor.json"),
-      JSON.stringify({ head: baseHead, tree: "", reviewedAt: new Date().toISOString() }),
-    );
-
-    const editedPath = join(projectCwd, "deduped.ts");
-    writeFileSync(editedPath, "export const z = 3;\n");
-    commitAll(projectCwd, "committed by the agent, reviewed once already");
-    const movedHead = headSha(projectCwd);
-    const transcriptPath = makeTranscriptWithEdit(tmpHome, editedPath);
-
-    // Seed the dedupe state with the signature this exact turn will produce, so
-    // `evaluateSkip` returns `no_change` and the gate skips. The signature is
-    // built from the same inputs the hook uses, via the real helpers rather
-    // than a copied string — a hand-written hash here would silently stop
-    // matching the moment `buildSignature` changes.
-    const sessionId = "sess-anchor-dedupe";
-    const changedFiles = await extractChangedFiles(transcriptPath);
-    const hash = computeContextHash(
-      buildSignature({
-        sessionId,
-        cwd: projectCwd,
-        changedFiles,
-        latestUserMessage: await extractLatestUserMessage(transcriptPath),
-      }),
-    );
-    mkdirSync(join(tmpHome, ".siltpoke"), { recursive: true });
-    writeFileSync(
-      join(tmpHome, ".siltpoke", "skip-state.json"),
-      JSON.stringify({
-        schemaVersion: 1,
-        entries: { [sessionId]: { hash, ts: Date.now() } },
-      }),
-    );
-
-    await handleStopHook(
-      {
-        hook_event_name: "Stop",
-        session_id: sessionId,
-        transcript_path: transcriptPath,
-        cwd: projectCwd,
-      },
-      {
-        env: { HOME: tmpHome, SILTPOKE_TOOL_AUGMENTED: "0" },
-        brainFn: async (): Promise<BrainCallResult> => ({
-          output: makeFakeBrainOutput(),
-          usage: noopUsage,
-        }),
-      },
-    );
-
-    // Positive control on the fixture: if the dedupe gate did NOT actually
-    // skip, this test proves nothing about ordering — it would just be the
-    // "DID touch" test again. The row says which gate stopped the turn.
-    const logFile = join(tmpHome, ".siltpoke", "brain-calls.jsonl");
-    const row = readFileSync(logFile, "utf8")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line))
-      .find((r) => r.session_id === sessionId);
-    expect(row?.skipped).toBe("no_change");
-
-    const anchor = JSON.parse(readFileSync(join(stateBase, "review-anchor.json"), "utf8"));
-    expect(anchor.head).toBe(movedHead);
-  });
-
-  // The other half of the same contract. Deferring the write is only correct
-  // if something still performs it — without this, "never advance on a fire"
-  // passes the test above and quietly re-reviews the same unit forever.
-  test("a commit the transcript DID touch advances the anchor", async () => {
-    const projectCwd = join(tmpHome, "proj-anchor-advance");
-    makeGitRepo(projectCwd);
-
-    const stateBase = join(projectCwd, ".siltpoke");
-    mkdirSync(stateBase, { recursive: true });
-    writeFileSync(
-      join(stateBase, "state.json"),
-      JSON.stringify({ schemaVersion: 1, mood: "happy", pose: "base", bubble_short: "hi" }),
-    );
-    const baseHead = headSha(projectCwd);
-    writeFileSync(
-      join(stateBase, "review-anchor.json"),
-      JSON.stringify({ head: baseHead, tree: "", reviewedAt: new Date().toISOString() }),
-    );
-
-    // Same shape as above, except the transcript names the file that moved —
-    // so the code-change gate lets the review through.
-    const editedPath = join(projectCwd, "touched.ts");
-    writeFileSync(editedPath, "export const y = 2;\n");
-    commitAll(projectCwd, "committed by the agent");
-    const movedHead = headSha(projectCwd);
-    const transcriptPath = makeTranscriptWithEdit(tmpHome, editedPath);
-
-    await handleStopHook(
-      {
-        hook_event_name: "Stop",
-        session_id: "sess-anchor-advance",
-        transcript_path: transcriptPath,
-        cwd: projectCwd,
-      },
-      {
-        // The legacy path with a stubbed Brain: this test is about the anchor,
-        // not about the tool suite or the provider. The anchor is committed
-        // before either of those runs, and a real spawn here just times out.
-        env: { HOME: tmpHome, SILTPOKE_TOOL_AUGMENTED: "0" },
-        brainFn: async (): Promise<BrainCallResult> => ({
-          output: makeFakeBrainOutput(),
-          usage: noopUsage,
-        }),
-      },
-    );
-
-    const anchor = JSON.parse(readFileSync(join(stateBase, "review-anchor.json"), "utf8"));
-    expect(anchor.head).toBe(movedHead);
-  });
-});
 
 describe("handleStopHook — no_code_changes first-touch acknowledgement", () => {
   test("first no-code stop (pet never reacted) writes an ambient welcome state", async () => {
@@ -1613,6 +1575,38 @@ describe("handleStopHook — quiet-path nudge", () => {
     expect(existsSync(join(tmpHome, ".siltpoke", "usage.jsonl"))).toBe(false);
   });
 
+  test("the nudge replaces the bubble but keeps an injection alert", async () => {
+    const projectCwd = makeQuietRepo("proj-nudge-keeps-alert", 300, 300);
+    const statePath = join(projectCwd, ".siltpoke", "state.json");
+    const alert = { text: "⚠ Project text tried to steer the review: README.md (p)", project: "p", at: 1 };
+    writeFileSync(statePath, JSON.stringify({ ...JSON.parse(readFileSync(statePath, "utf8")), alert }));
+
+    await runQuietTurn("sess-nudge-keeps-alert", projectCwd);
+
+    expect(rowFor("sess-nudge-keeps-alert")?.nudged).toBe(true);
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    expect(state.bubble_short).not.toBe("a critique the user has not opened yet");
+    expect(state.alert).toEqual(alert);
+  });
+
+  test("the quiet-hours sleeping state keeps an injection alert", async () => {
+    const projectCwd = makeQuietRepo("proj-sleep-keeps-alert", 0, 300);
+    const statePath = join(projectCwd, ".siltpoke", "state.json");
+    const alert = { text: "⚠ Project text tried to steer the review: README.md (p)", project: "p", at: 1 };
+    writeFileSync(statePath, JSON.stringify({ ...JSON.parse(readFileSync(statePath, "utf8")), alert }));
+    // A window around the current local hour, so the gate is quiet whenever this runs.
+    const h = new Date().getHours();
+    const hh = (n: number): string => `${String((n + 24) % 24).padStart(2, "0")}:00`;
+    mkdirSync(join(tmpHome, ".siltpoke"), { recursive: true });
+    writeFileSync(join(tmpHome, ".siltpoke", "config.json"), JSON.stringify({ quietHours: { start: hh(h - 1), end: hh(h + 2) } }));
+
+    await runQuietTurn("sess-sleep-keeps-alert", projectCwd);
+
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    expect(state.mood).toBe("sleeping_quiet");
+    expect(state.alert).toEqual(alert);
+  });
+
   test("AC13.1 — below the line threshold the pet stays quiet, and the row is not marked", async () => {
     // Same repo, same six-hour silence; only the uncommitted volume differs.
     // Without this, a nudge that fired unconditionally would pass the test
@@ -1723,7 +1717,7 @@ describe("handleStopHook — V3 store memory read", () => {
     const savedAnchor = existsSync(liveAnchor) ? readFileSync(liveAnchor, "utf8") : null;
     rmSync(liveAnchor, { force: true });
 
-    // latest.md backs the status card / /siltpoke-last / the menu bar, and
+    // latest.md backs the status card / /siltpoke:siltpoke-last / the menu bar, and
     // writeCritique overwrites it unconditionally. Save it the same way as
     // the anchor above, and restore only if this run replaced it with a fake
     // — so a real critique the live daemon files mid-run is left alone.

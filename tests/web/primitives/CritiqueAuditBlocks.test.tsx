@@ -5,8 +5,10 @@
  * Each test renders a block to HTML and asserts key strings / attributes
  * are present. No DOM or browser needed — Hono JSX produces a string.
  */
+
+import { describe, expect, test } from "bun:test";
 import { AUDIT_ABSENCE_COPY } from "../../../src/state/audit-absence";
-import { describe, test, expect } from "bun:test";
+import type { CriticCall } from "../../../src/state/critic-event-log";
 import {
   BlockA,
   BlockC,
@@ -15,108 +17,11 @@ import {
   BlockF,
 } from "../../../src/web/primitives/CritiqueAuditBlocks";
 import { ALL_RULES } from "../../../src/web/primitives/critique-audit/rules-data";
-import type { V2SidecarData } from "../../../src/state/v2-sidecar";
-import type { CriticCall } from "../../../src/state/critic-event-log";
+import { BASE_CALL, BASE_V2 } from "./audit-block-fixtures";
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
-
-const BASE_V2: V2SidecarData = {
-  schemaVersion: 2,
-  critique_id: "c-test-001",
-  ts: "2026-05-20T12:00:00.000Z",
-  severity: "high",
-  confidence: "high",
-  category: "security",
-  status: "pending",
-  reasoning: "AWS key in source. Detected by secrets scan.",
-  critique_for_claude: "Move AKIA to env var.",
-  suggested_fix: null,
-  bubble_short: "ouch secret",
-  bubble_long: null,
-  mood: "concerned",
-  pose: "base",
-  intent_classification: "bugfix",
-  intent_confidence: 0.92,
-  user_raw_query: "fix the secret",
-  agent_reply: null,
-  signal_sources: ["secrets-scan", "rubric-tier1"],
-  rubric_triggers: [
-    // Use valid ALL_RUBRIC_RULES IDs so BlockC checklist can match them
-    {
-      rule_id: "god-file",
-      tier: 1,
-      severity: "high",
-      file: "src/auth.ts",
-      line: 18,
-      snippet: "const accessKey = 'AKIAIOSFODNN7EXAMPLE'",
-      signal_source: "secrets-scan",
-    },
-    {
-      rule_id: "god-function",
-      tier: 2,
-      severity: "low",
-      file: "src/big.ts",
-      line: 1,
-      snippet: "// 1000 lines",
-      signal_source: "rubric-tier2",
-    },
-  ],
-  changed_files: ["src/auth.ts", "src/big.ts"],
-  diff_intent: "move secrets to env",
-};
-
-const BASE_CALL: CriticCall = {
-  timestamp: "2026-05-20T12:00:00.000Z",
-  session_id: "sess-test",
-  cwd: "/tmp/project",
-  project: "project",
-  status: "fired",
-  skip_reason: null,
-  critique_id: null,
-  bubble_short: "ouch secret",
-  bubble_long: null,
-  critique_for_claude: "Move AKIA to env var.",
-  severity: "high",
-  confidence: "high",
-  evidence: [],
-  audit_absence: "unrecorded" as const,
-  evidence_label: null,
-  evidence_unverified: 0,
-  diff_shown: null,
-  diff_total: null,
-  gating_decision: null,
-  turns_included: null,
-  duration_ms: 3200,
-  cost_usd: 0.0032,
-  tokens: { input: 8000, output: 200, cache_read: 4000, cache_create: 0 },
-  diff_snapshot_id: null,
-  diff_text: null,
-  diff_summary: {
-    intent: "move AWS key to env",
-    key_changes: ["removed hardcoded key"],
-    risks: [],
-    file_count: 1,
-    files_with_purpose: [{ path: "src/auth.ts", purpose: "move key" }],
-    source: "haiku",
-  },
-  summary_error: null,
-  error_message: null,
-  user_action: null,
-  speech_kind: "critical",
-  reasoning: "AWS key embedded in source.",
-  timing: { summary_ms: 1200, critic_ms: 2000, wall_ms: 3200 },
-  v2: null,
-  provider: "claude",
-  authorFamily: "claude",
-  billing: "usd",
-  model: null,
-  branch: null,
-  user_raw_query: null,
-  user_raw_query_truncated: false,
-  agent_reply: null,
-};
 
 // ---------------------------------------------------------------------------
 // Block A — WHAT I READ
@@ -137,11 +42,6 @@ describe("BlockA", () => {
     const html = String(<BlockA v2={BASE_V2} c={BASE_CALL} />);
     expect(html).toContain("src/auth.ts");
     expect(html).toContain("src/big.ts");
-  });
-
-  test("renders user raw query", () => {
-    const html = String(<BlockA v2={BASE_V2} c={BASE_CALL} />);
-    expect(html).toContain("fix the secret");
   });
 
   test("renders diff intent from v2", () => {

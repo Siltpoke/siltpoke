@@ -219,13 +219,13 @@ describe("Dashboard sectioned navSections render", () => {
         content
       </Dashboard>,
     );
-    const workLabels = ["Timeline", "Memory", "Code Map"];
+    const workLabels = ["Timeline", "Memory", "Code Map", "Settings"];
     for (const label of workLabels) {
       expect(html).toContain(label);
     }
     // "Quests" joins the removed set 2026-08-06 — the route is unmounted, so a nav link
     // to it would be a 404 the user finds rather than a page.
-    for (const gone of ["Commands", "Help", "Quests", "Settings"]) {
+    for (const gone of ["Commands", "Help", "Quests"]) {
       expect(html).not.toContain(gone);
     }
   });
@@ -267,13 +267,12 @@ describe("Dashboard sectioned navSections render", () => {
     expect(html).toContain("WORK");
     // All entry labels present (/stats removed; chat removed — floating
     // chat replaces it; History+Traces merged into Timeline)
-    const allLabels = ["Home", "Timeline", "Memory", "Code Map"];
+    const allLabels = ["Home", "Timeline", "Memory", "Code Map", "Settings"];
     for (const label of allLabels) {
       expect(html).toContain(label);
     }
     // The default path must not resurrect an unmounted route either.
     expect(html).not.toContain("Quests");
-    expect(html).not.toContain("Settings");
   });
 
   test("section labels carry x-show='!collapsed' for Alpine collapsed-sidebar hide", () => {

@@ -19,6 +19,7 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { loadQuotaDailyCapSync } from "../config/brain-quota-cap-config";
 import { aggregatePreferenceStats } from "../preference-log/stats";
 import {
   type BudgetConfig,
@@ -547,11 +548,9 @@ export async function readCriticTelemetry(
           now,
         });
 
-  // Best-effort: attach v2 sidecar data + (optionally) diff_text bodies.
-  // Diff bodies are skipped by default for list views — they balloon the SSR
-  // HTML (hundreds of KB per row). Detail / API routes that need a single
-  // call's diff should pass attachDiffText: true OR load it on demand via
-  // /api/critique/:critique_id/diff.
+  // Best-effort: attach v2 sidecar data + (optionally) diff_text bodies. Diffs
+  // are off by default for lists (hundreds of KB per row of SSR HTML); a detail
+  // route passes attachDiffText: true or loads /api/critique/:critique_id/diff.
   const wantDiffs = opts.attachDiffText ?? false;
   await Promise.all([
     wantDiffs ? attachDiffTexts(basePath, recent) : Promise.resolve(),
@@ -580,6 +579,7 @@ export async function readCriticTelemetry(
       rollup,
     },
     quietConfig,
+    reviewDailyCap: loadQuotaDailyCapSync(basePath),
     gateState,
     projects,
     activeProject,

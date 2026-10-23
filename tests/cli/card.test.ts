@@ -341,7 +341,7 @@ test("permanent class surfaces on the card at the FIRST failure", async () => {
   // The reason survives on the card specifically because there is no tooltip
   // here — see `brainUnhealthySignal`'s permanent branch.
   expect(r.card_text).toContain("Invalid API key");
-  expect(r.card_text).toContain("/siltpoke-wake");
+  expect(r.card_text).toContain("/siltpoke:siltpoke-wake");
 });
 
 test("card line clears automatically after the next success (no user ack)", async () => {

@@ -20,10 +20,19 @@
  * Each snippet is bounded by SNIPPET_MAX_BYTES (600 bytes). Total bundle is
  * bounded by TOTAL_BUDGET_BYTES_DEFAULT (16 KB). When either cap fires, the
  * `truncated` flag rises so the orchestrator can flag the explanation.
+ *
+ * The 600-byte target snippet is cut from the START OF THE FILE, whatever the
+ * target is — for a function that is usually not the function. A caller that
+ * answers from the snippet alone (the pinned chat) passes `targetLineSlice`
+ * to get the target's own lines instead; explain does not pass it, so its
+ * prompt is byte-for-byte what it was. The slice carries `N| ` line numbers
+ * (defect [77]); explain's file-head snippet stays unnumbered on purpose.
  */
 
+import { EXPLAIN_LANGUAGE_SUBJECT, languageRule, withLanguageLast } from "../brain/output-language";
 import type { Subgraph } from "../repo-graph/subgraph";
 import { viewSubgraph } from "../repo-graph/subgraph";
+import { sliceTargetLines } from "./target-slice";
 import type {
   NodeCandidate,
   SymbolTable,
@@ -33,7 +42,7 @@ export const SNIPPET_MAX_BYTES = 600;
 export const TOTAL_BUDGET_BYTES_DEFAULT = 16 * 1024;
 const TRUNCATION_MARKER = "\n// … (truncated)\n";
 
-export const EXPLAIN_SYSTEM_PROMPT = `You are Siltpoke's code explainer. Read the context below and produce a plain-English explanation of the target symbol.
+export const EXPLAIN_SYSTEM_PROMPT = `You are Siltpoke's code explainer. Read the context below and produce a plain-language explanation of the target symbol.
 
 Format requirements:
 - Start with a single \`#\` heading for the target name.
@@ -66,6 +75,34 @@ Imports:
 - node:fs/promises
 `;
 
+/**
+ * The explain system prompt with the output language named.
+ *
+ * Without this the prompt named no language and `claude -p` wrote in whatever
+ * the USER's own Claude Code settings asked for (defect [41]: four
+ * explanations in English, Chinese, Chinese and Korean). `language` is
+ * siltpoke's configured one, as a name (`expandLanguage`). The last line is
+ * there because the same settings made the model open with a remark.
+ */
+export function explainSystemPrompt(language: unknown): string {
+  return `${EXPLAIN_SYSTEM_PROMPT}
+## Output language — STRICT
+
+${languageRule(EXPLAIN_LANGUAGE_SUBJECT, language)} Keep code identifiers, file paths and [file:line] citations exactly as they are.
+
+Start your reply directly with the \`#\` heading. No preamble before it.
+`;
+}
+
+/**
+ * The user message: the context, then the same language sentence LAST — the
+ * system prompt alone lost to the user's own settings, which arrive in the
+ * user message (§69.1, defect [41]).
+ */
+export function explainUserContent(contextBundle: string, language: unknown): string {
+  return withLanguageLast(contextBundle, EXPLAIN_LANGUAGE_SUBJECT, language);
+}
+
 export interface AssemblePromptInput {
   targetId: string;
   subgraph: Subgraph;
@@ -74,10 +111,15 @@ export interface AssemblePromptInput {
   sources: Map<string, string>;
   /** Override the 16 KB default if needed (T-smoke calibration). */
   budgetBytes?: number;
+  /**
+   * Cut the target snippet to the target node's own `lineRange` (whole lines,
+   * at most `maxBytes`) instead of the file's first SNIPPET_MAX_BYTES. Omitted
+   * → the file-head cut.
+   */
+  targetLineSlice?: { maxBytes: number };
 }
 
 export interface AssemblePromptOutput {
-  systemPrompt: string;
   contextBundle: string;
   includedSources: string[];
   truncated: boolean;
@@ -106,6 +148,40 @@ interface Block {
   source?: string;
 }
 
+/**
+ * The TARGET_SOURCE block, plus the text the "Calls" scan should read. With
+ * `targetLineSlice` that is the slice, so a pinned function's callees are the
+ * ones in ITS lines, not the whole file's.
+ */
+function targetSourceBlock(
+  input: AssemblePromptInput,
+  targetSource: string,
+): { block: Block; truncated: boolean; callScanSource: string } {
+  const target = input.subgraph.target;
+  if (input.targetLineSlice) {
+    const cut = sliceTargetLines(targetSource, target.lineRange, input.targetLineSlice.maxBytes);
+    return {
+      block: {
+        label: "TARGET_SOURCE",
+        body: `### Source [${target.path}:${cut.firstLine}-${cut.lastLine}]\n\`\`\`\n${cut.body}\n\`\`\`\n`,
+        source: target.path,
+      },
+      truncated: cut.truncated,
+      callScanSource: cut.raw,
+    };
+  }
+  const { body, truncated } = truncateSnippet(targetSource, SNIPPET_MAX_BYTES);
+  return {
+    block: {
+      label: "TARGET_SOURCE",
+      body: `### Source [${target.path}]\n\`\`\`\n${body}\n\`\`\`\n`,
+      source: target.path,
+    },
+    truncated,
+    callScanSource: targetSource,
+  };
+}
+
 export function assemblePrompt(
   input: AssemblePromptInput,
 ): AssemblePromptOutput {
@@ -122,17 +198,12 @@ export function assemblePrompt(
 
   // 1. Target source snippet
   const targetSource = input.sources.get(target.path);
+  let callScanSource = targetSource;
   if (targetSource !== undefined) {
-    const { body, truncated: snTrunc } = truncateSnippet(
-      targetSource,
-      SNIPPET_MAX_BYTES,
-    );
-    if (snTrunc) truncated = true;
-    blocks.push({
-      label: "TARGET_SOURCE",
-      body: `### Source [${target.path}]\n\`\`\`\n${body}\n\`\`\`\n`,
-      source: target.path,
-    });
+    const built = targetSourceBlock(input, targetSource);
+    if (built.truncated) truncated = true;
+    callScanSource = built.callScanSource;
+    blocks.push(built.block);
   }
 
   // 2. Containing file marker
@@ -146,8 +217,8 @@ export function assemblePrompt(
   // 3 + 4. Cross-file callees + callers — graph edges first, then optional
   // source-time identifier scan to fill in callees from raw source.
   const seenSources = new Set<string>([target.path]);
-  const sourceTimeCallees = targetSource
-    ? resolveCallsFromSource(targetSource, input.symbolTable, {
+  const sourceTimeCallees = callScanSource
+    ? resolveCallsFromSource(callScanSource, input.symbolTable, {
         excludeSelfName: target.name,
         cap: 50,
       })
@@ -214,8 +285,9 @@ export function assemblePrompt(
     if (block.source) includedSources.push(block.source);
   }
 
+  // No `systemPrompt` here on purpose: explain's is `explainSystemPrompt`
+  // (it needs the language), the pinned chat has its own.
   return {
-    systemPrompt: EXPLAIN_SYSTEM_PROMPT,
     contextBundle: assembled,
     includedSources,
     truncated,

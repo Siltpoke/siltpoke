@@ -5,7 +5,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { spawnWithTimeout } from "../critic/spawn";
 
-export type WhyHost = "claude-code" | "codex" | "codebuddy" | "antigravity";
+export type WhyHost = "claude-code" | "codex" | "codebuddy" | "qoder" | "antigravity";
 export interface WhyIndexSession { session_id: string; transcript_path: string; host: WhyHost; recorded_at: string }
 export interface WhyIndex { [sha: string]: { sessions: WhyIndexSession[] } }
 export type RunGit = (argv: string[], cwd: string) => Promise<{ exitCode: number; stdout: string }>;

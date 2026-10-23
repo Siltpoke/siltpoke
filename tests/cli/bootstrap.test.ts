@@ -38,7 +38,7 @@ afterEach(() => rmSync(home, { recursive: true, force: true }));
 describe("runBootstrap", () => {
   test("--check mutates nothing", async () => {
     const runInstallFn: BootstrapOpts["runInstallFn"] = async () => { throw new Error("should not run"); };
-    const r = await runBootstrap({ exec, io, claudeHome, check: true, runInstallFn });
+    const r = await runBootstrap({ exec, io, claudeHome, env: { HOME: home }, check: true, runInstallFn });
     expect(r.status).toBe("planned");
     expect(r.plan.length).toBeGreaterThan(0);
   });
@@ -46,7 +46,7 @@ describe("runBootstrap", () => {
   test("--check with missing bun/git → plan lists install steps, mutates nothing", async () => {
     const missingExec = makeExec(new Set());
     const runInstallFn: BootstrapOpts["runInstallFn"] = async () => { throw new Error("should not run"); };
-    const r = await runBootstrap({ exec: missingExec, io, claudeHome, check: true, platform: "darwin", runInstallFn });
+    const r = await runBootstrap({ exec: missingExec, io, claudeHome, env: { HOME: home }, check: true, platform: "darwin", runInstallFn });
     expect(r.status).toBe("planned");
     expect(r.plan).toContain("install bun (curl)");
     expect(r.plan).toContain("install git (Xcode Command Line Tools)");
@@ -55,14 +55,14 @@ describe("runBootstrap", () => {
   test("unparseable settings.json → refused", async () => {
     writeFileSync(join(claudeHome, "settings.json"), "{ bad");
     const runInstallFn: BootstrapOpts["runInstallFn"] = async () => ({});
-    const r = await runBootstrap({ exec, io, claudeHome, runInstallFn });
+    const r = await runBootstrap({ exec, io, claudeHome, env: { HOME: home }, runInstallFn });
     expect(r.status).toBe("refused");
   });
 
   test("runInstall throws → rolled back, with error message captured", async () => {
     writeFileSync(join(claudeHome, "settings.json"), "{}");
     const runInstallFn: BootstrapOpts["runInstallFn"] = async () => { throw new Error("boom"); };
-    const r = await runBootstrap({ exec, io, claudeHome, yes: true, runInstallFn });
+    const r = await runBootstrap({ exec, io, claudeHome, env: { HOME: home }, yes: true, runInstallFn });
     expect(r.status).toBe("rolled-back");
     expect(r.rolledBack).toContain("restore settings.json");
     expect(r.error).toBe("boom");
@@ -76,7 +76,7 @@ describe("runBootstrap", () => {
       writeFileSync(join(claudeHome, "settings.json"), '{"marker":"MUTATED"}');
       throw new Error("boom");
     }) as any;
-    const r = await runBootstrap({ exec, io, claudeHome, yes: true, platform: "darwin", runInstallFn });
+    const r = await runBootstrap({ exec, io, claudeHome, env: { HOME: home }, yes: true, platform: "darwin", runInstallFn });
     expect(r.status).toBe("rolled-back");
     expect(r.rolledBack).toContain("restore settings.json");
     // the real proof: content is back to ORIGINAL, not MUTATED
@@ -85,7 +85,7 @@ describe("runBootstrap", () => {
 
   test("win32: --check plan uses winget wording", async () => {
     const winExec: Exec = (c, a) => ({ status: 1, stdout: "" }); // all prereqs absent on win
-    const r = await runBootstrap({ exec: winExec, io, claudeHome, check: true, platform: "win32", runInstallFn: (async () => ({})) as any });
+    const r = await runBootstrap({ exec: winExec, io, claudeHome, env: { HOME: home }, check: true, platform: "win32", runInstallFn: (async () => ({})) as any });
     expect(r.status).toBe("planned");
     expect(r.plan.join("\n")).toContain("git (winget)");
   });
@@ -93,7 +93,7 @@ describe("runBootstrap", () => {
   test("happy path → installed", async () => {
     writeFileSync(join(claudeHome, "settings.json"), "{}");
     const runInstallFn: BootstrapOpts["runInstallFn"] = async () => ({ ok: true });
-    const r = await runBootstrap({ exec, io, claudeHome, yes: true, runInstallFn, plcExecFn: noopPlcExec });
+    const r = await runBootstrap({ exec, io, claudeHome, env: { HOME: home }, yes: true, runInstallFn, plcExecFn: noopPlcExec });
     expect(r.status).toBe("installed");
   });
 
@@ -109,6 +109,7 @@ describe("runBootstrap", () => {
       exec: missingExec,
       io: throwingIo,
       claudeHome,
+      env: { HOME: home },
       yes: true,
       runInstallFn,
       plcExecFn: noopPlcExec,
@@ -131,6 +132,7 @@ describe("runBootstrap", () => {
       exec,
       io,
       claudeHome,
+      env: { HOME: home },
       yes: true,
       runInstallFn,
       plcExecFn: throwingPlcExec,
@@ -173,6 +175,7 @@ describe("runBootstrap localized surface steps", () => {
       exec: localExec,
       io: localIo,
       claudeHome,
+      env: { HOME: home },
       yes: true,
       platform: "darwin",
       arch: "arm64",
@@ -201,10 +204,11 @@ test("Branch B: editor detected, no plugin, ask-yes → opens the deep-link", as
     exec,
     io: { readLine: async () => "y", write: (s) => out.push(s) },
     claudeHome, // hermetic temp dir, not the real machine's ~/.claude
+    env: { HOME: home }, // and the install receipt stays in the same temp dir
     yes: true,               // auto-yes so the flow runs unattended
     platform: "darwin",
     detectEditorsFn: () => edNoPlugin,
-    runInstallFn: async () => ({}),
+    runInstallFn: async () => ({ wired: ["claude-code"] }),
     plcExecFn: noopPlcExec,
   });
   expect(calls.some((c) => c.args.join(" ").includes("extension/anthropic.claude-code"))).toBe(true);
@@ -218,19 +222,20 @@ test("Branch A: plugin present → editor-framed copy, NO deep-link open", async
     exec,
     io: { readLine: async () => "y", write: () => {} },
     claudeHome, // hermetic temp dir, not the real machine's ~/.claude
+    env: { HOME: home }, // and the install receipt stays in the same temp dir
     yes: true,
     platform: "darwin",
     detectEditorsFn: () => edPlugin,
-    runInstallFn: async () => ({}),
+    runInstallFn: async () => ({ wired: ["claude-code"] }),
     plcExecFn: noopPlcExec,
   });
   expect(calls.some((c) => c.args.join(" ").includes("extension/anthropic.claude-code"))).toBe(false);
 });
 
-test("Branch C: no editor detected → writes done.terminalC, NOT done.editor", async () => {
+test("Branch C: no editor detected → terminal hint, NOT the editor hint", async () => {
   const out: string[] = [];
-  const terminalCMsg = t("done.terminalC", "en");
-  const editorMsg = t("done.editor", "en");
+  const terminalCMsg = t("done.hintTerminal", "en");
+  const editorMsg = t("done.hintEditor", "en");
 
   let answerIndex = 0;
   const customIo: WizardIO = {
@@ -246,9 +251,10 @@ test("Branch C: no editor detected → writes done.terminalC, NOT done.editor", 
     exec: bootExec(),
     io: customIo,
     claudeHome, // hermetic temp dir, not the real machine's ~/.claude
+    env: { HOME: home }, // and the install receipt stays in the same temp dir
     platform: "darwin",
     detectEditorsFn: () => edBare,
-    runInstallFn: async () => ({}),
+    runInstallFn: async () => ({ wired: ["claude-code"] }),
     plcExecFn: noopPlcExec,
   });
 

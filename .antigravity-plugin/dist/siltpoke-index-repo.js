@@ -15183,10 +15183,10 @@ var init_project = __esm(() => {
 
 // src/cli/index-repo.ts
 import { realpathSync, statSync as statSync2 } from "fs";
-import { resolve as resolve2 } from "path";
+import { resolve as resolve4 } from "path";
 
 // src/repo-graph/builder.ts
-import { existsSync as existsSync5 } from "fs";
+import { existsSync as existsSync6 } from "fs";
 import { readFile as readFile3, rm } from "fs/promises";
 
 // src/critic/rubric/tier2/ast-loader.ts
@@ -18719,6 +18719,22 @@ function computeAstSignature(tree) {
   return createHash2("sha256").update(json2).digest("hex").slice(0, 8);
 }
 
+// src/repo-graph/counters.ts
+function bumpNodeCounters(counters, nodes) {
+  for (const n of nodes) {
+    counters.nodes[n.type] = (counters.nodes[n.type] ?? 0) + 1;
+  }
+}
+function bumpEdgeCounters(counters, edges) {
+  for (const e of edges) {
+    counters.edges[e.type] = (counters.edges[e.type] ?? 0) + 1;
+  }
+}
+function bumpGraphCounters(counters, nodes, edges) {
+  bumpNodeCounters(counters, nodes);
+  bumpEdgeCounters(counters, edges);
+}
+
 // src/repo-graph/call-resolver.ts
 var CALLABLE_TYPES = new Set(["function", "class"]);
 function makeNameBasedResolver(graph, queryIndex) {
@@ -18780,12 +18796,81 @@ function computeCoverage(graph, queryIndex, resolver = makeNameBasedResolver(gra
 }
 
 // src/repo-graph/doc-comment-parser.ts
+var MAX_PURPOSE_CHARS = 240;
+var NEVER_ENDS_BEFORE_DOT = /(?:^|[\s(])(?:\d+|(?:[A-Za-z]\.)+[A-Za-z]|vs|cf)$/i;
+function dotEndsSentence(text, i2) {
+  if (NEVER_ENDS_BEFORE_DOT.test(text.slice(0, i2)))
+    return false;
+  const rest = text.slice(i2 + 1).trimStart();
+  return !/^[a-z]/.test(rest);
+}
+function sentenceEnd(text, skipCode) {
+  let inCode = false;
+  for (let i2 = 0;i2 < text.length; i2++) {
+    const ch = text[i2];
+    if (skipCode && ch === "`") {
+      inCode = !inCode;
+      continue;
+    }
+    if (inCode)
+      continue;
+    if (ch === "\u3002" || ch === "\uFF01" || ch === "\uFF1F")
+      return { end: i2 + 1, unclosedCode: false };
+    if (ch !== "." && ch !== "!" && ch !== "?")
+      continue;
+    const next = text[i2 + 1];
+    if (next !== undefined && !/\s/.test(next))
+      continue;
+    if (ch === "." && !dotEndsSentence(text, i2))
+      continue;
+    return { end: i2 + 1, unclosedCode: false };
+  }
+  return { end: -1, unclosedCode: inCode };
+}
+function firstSentence(text) {
+  let found = sentenceEnd(text, true);
+  if (found.unclosedCode)
+    found = sentenceEnd(text, false);
+  return found.end < 0 ? text : text.slice(0, found.end);
+}
+function capLength(sentence) {
+  if (sentence.length <= MAX_PURPOSE_CHARS)
+    return sentence;
+  const head = sentence.slice(0, MAX_PURPOSE_CHARS);
+  const lastSpace = head.lastIndexOf(" ");
+  return `${(lastSpace > 0 ? head.slice(0, lastSpace) : head).trimEnd()}\u2026`;
+}
+var LIST_OR_FENCE = /^(?:[-*+]\s|\d+[.)]\s|```)/;
+function descriptionLines(lines, start2) {
+  const paragraph = [];
+  for (let i2 = start2;i2 < lines.length; i2++) {
+    const trimmed = lines[i2].trim();
+    if (trimmed.startsWith("*/"))
+      break;
+    const body2 = trimmed.replace(/^\*\s?/, "").replace(/\s*\*\/\s*$/, "").trim();
+    if (body2 === "") {
+      if (paragraph.length > 0)
+        break;
+      continue;
+    }
+    if (body2.startsWith("@"))
+      break;
+    if (LIST_OR_FENCE.test(body2)) {
+      if (paragraph.length === 0 && !body2.startsWith("```"))
+        paragraph.push(body2);
+      break;
+    }
+    paragraph.push(body2);
+    if (trimmed.endsWith("*/"))
+      break;
+  }
+  return paragraph;
+}
 function parseFirstDocComment(source) {
   const lines = source.split(/\r?\n/);
   let i2 = 0;
   while (i2 < lines.length) {
-    const line = lines[i2];
-    const trimmed = line.trim();
+    const trimmed = lines[i2].trim();
     if (trimmed === "" || trimmed.startsWith("//")) {
       i2 += 1;
       continue;
@@ -18798,25 +18883,16 @@ function parseFirstDocComment(source) {
   if (!firstNonBlank.startsWith("/**"))
     return "";
   const singleLineMatch = /^\/\*\*\s*(.+?)\s*\*\/\s*$/.exec(firstNonBlank);
-  if (singleLineMatch)
-    return singleLineMatch[1].trim();
-  i2 += 1;
-  while (i2 < lines.length) {
-    const raw = lines[i2];
-    const trimmed = raw.trim();
-    if (trimmed.startsWith("*/"))
-      break;
-    const body2 = trimmed.replace(/^\*\s?/, "").trim();
-    if (body2 === "") {
-      i2 += 1;
-      continue;
-    }
-    if (body2.startsWith("@")) {
-      return "";
-    }
-    return body2;
+  if (singleLineMatch) {
+    const body2 = singleLineMatch[1].trim();
+    return body2.startsWith("@") ? "" : capLength(firstSentence(body2));
   }
-  return "";
+  const opening = firstNonBlank.replace(/^\/\*\*\s?/, "").trim();
+  const paragraph = descriptionLines(lines, i2 + 1);
+  if (opening.startsWith("@"))
+    return "";
+  const joined = opening === "" ? paragraph : [opening, ...paragraph];
+  return capLength(firstSentence(joined.join(" ")));
 }
 
 // src/repo-graph/extractor.ts
@@ -19079,11 +19155,61 @@ function extractFile(tree, ctx) {
 
 // src/repo-graph/fingerprint.ts
 import { createHash as createHash3 } from "crypto";
+var EXTRACTOR_VERSION = 2;
+function sameExtractor(cached2) {
+  return cached2.extractor === EXTRACTOR_VERSION;
+}
 function computeContentSha(content) {
   return createHash3("sha256").update(content).digest("hex");
 }
 function fingerprintMatches(a, b) {
   return a.content_sha256 === b.content_sha256 && a.ast_sig === b.ast_sig;
+}
+
+// src/repo-graph/git-stamp.ts
+import { execFileSync } from "child_process";
+import { existsSync as existsSync3 } from "fs";
+import { dirname as dirname3, join as join3, resolve as resolve2 } from "path";
+function git(root, args2) {
+  try {
+    const out2 = execFileSync("git", args2, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2000 });
+    return { ok: true, out: out2.trim() };
+  } catch {
+    return { ok: false, out: "" };
+  }
+}
+var SHA_RE = /^[0-9a-f]{40}$/;
+function gitVisibleFiles(root) {
+  const inside = git(root, ["rev-parse", "--is-inside-work-tree"]);
+  if (!inside.ok || inside.out !== "true")
+    return hasDotGitAtOrAbove(root) ? "failed" : "no-git";
+  try {
+    const out2 = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1e4,
+      maxBuffer: 64 * 1024 * 1024
+    });
+    return new Set(out2.split("\x00").filter(Boolean));
+  } catch {
+    return "failed";
+  }
+}
+function hasDotGitAtOrAbove(root) {
+  let dir = resolve2(root);
+  for (;; ) {
+    if (existsSync3(join3(dir, ".git")))
+      return true;
+    const parent = dirname3(dir);
+    if (parent === dir)
+      return false;
+    dir = parent;
+  }
+}
+function headCommit(root) {
+  const r = git(root, ["rev-parse", "HEAD"]);
+  return r.ok && SHA_RE.test(r.out) ? r.out : null;
 }
 
 // src/repo-graph/outside-imports.ts
@@ -19261,10 +19387,10 @@ function computeOutsideImports(graph, anchorMap) {
 // src/repo-graph/proj-hash.ts
 init_project();
 import { createHash as createHash4 } from "crypto";
-import { join as join4 } from "path";
+import { join as join5 } from "path";
 
 // src/installer/paths.ts
-import { join as join3 } from "path";
+import { join as join4, resolve as resolve3 } from "path";
 
 class PathError extends Error {
 }
@@ -19278,9 +19404,9 @@ function homeDir(env) {
 function siltpokeRoot(env = process.env) {
   const override = env.SILTPOKE_HOME;
   if (typeof override === "string" && override.length > 0) {
-    return override;
+    return resolve3(override);
   }
-  return join3(homeDir(env), ".siltpoke");
+  return join4(homeDir(env), ".siltpoke");
 }
 
 // src/repo-graph/proj-hash.ts
@@ -19291,15 +19417,15 @@ function computeProjHash(projectRoot) {
 function repoGraphLocationForRoot(projectRoot, opts = {}) {
   const proj_hash = computeProjHash(projectRoot);
   const home = opts.home ?? siltpokeRoot();
-  return { project_root: projectRoot, proj_hash, storage_dir: join4(home, "repo-memory", proj_hash) };
+  return { project_root: projectRoot, proj_hash, storage_dir: join5(home, "repo-memory", proj_hash) };
 }
 function resolveRepoGraphLocation(cwd, opts = {}) {
   return repoGraphLocationForRoot(resolveProjectRoot(cwd).project_root, opts);
 }
 
 // src/repo-graph/seen-seed.ts
-import { existsSync as existsSync4 } from "fs";
-import { join as join6 } from "path";
+import { existsSync as existsSync5 } from "fs";
+import { join as join7 } from "path";
 
 // src/critic/spawn.ts
 async function spawnWithTimeout(opts) {
@@ -19322,13 +19448,13 @@ async function spawnWithTimeout(opts) {
     };
   }
   let timer;
-  const timeoutPromise = new Promise((resolve2) => {
+  const timeoutPromise = new Promise((resolve4) => {
     timer = setTimeout(() => {
       try {
         proc?.kill();
       } catch {}
       proc?.exited.catch(() => {});
-      resolve2({ kind: "timeout" });
+      resolve4({ kind: "timeout" });
     }, timeoutMs);
   });
   let raceResult;
@@ -19371,9 +19497,9 @@ async function spawnWithTimeout(opts) {
 
 // src/repo-graph/store.ts
 import { randomBytes as randomBytes2 } from "crypto";
-import { existsSync as existsSync3 } from "fs";
+import { existsSync as existsSync4 } from "fs";
 import { mkdir as mkdir2, readFile as readFile2, rename as rename3, writeFile as writeFile2 } from "fs/promises";
-import { join as join5 } from "path";
+import { join as join6 } from "path";
 
 // src/repo-graph/types.ts
 function emptyCounters() {
@@ -19398,6 +19524,7 @@ var GRAPH_FILE = "graph.json";
 var QUERY_INDEX_FILE = "queryIndex.json";
 var FINGERPRINTS_FILE = "fingerprints.json";
 var META_FILE = "meta.json";
+var OTHER_FILES_FILE = "other-files.json";
 var SEEN_FILE = "seen.json";
 async function atomicWriteJson(path, data) {
   const tmp = `${path}.tmp.${process.pid}.${Date.now()}.${randomBytes2(4).toString("hex")}`;
@@ -19405,7 +19532,7 @@ async function atomicWriteJson(path, data) {
   await rename3(tmp, path);
 }
 async function readJsonOr(path, fallback) {
-  if (!existsSync3(path))
+  if (!existsSync4(path))
     return fallback();
   try {
     const raw = await readFile2(path, "utf8");
@@ -19418,7 +19545,7 @@ async function ensureStorageDir(storageDir) {
   await mkdir2(storageDir, { recursive: true });
 }
 async function readGraph(storageDir) {
-  const parsed = await readJsonOr(join5(storageDir, GRAPH_FILE), emptyGraph);
+  const parsed = await readJsonOr(join6(storageDir, GRAPH_FILE), emptyGraph);
   if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
     return emptyGraph();
   }
@@ -19426,14 +19553,14 @@ async function readGraph(storageDir) {
 }
 async function writeGraph(storageDir, graph) {
   await ensureStorageDir(storageDir);
-  await atomicWriteJson(join5(storageDir, GRAPH_FILE), graph);
+  await atomicWriteJson(join6(storageDir, GRAPH_FILE), graph);
 }
 async function writeQueryIndex(storageDir, index) {
   await ensureStorageDir(storageDir);
-  await atomicWriteJson(join5(storageDir, QUERY_INDEX_FILE), index);
+  await atomicWriteJson(join6(storageDir, QUERY_INDEX_FILE), index);
 }
 async function readFingerprints(storageDir) {
-  const parsed = await readJsonOr(join5(storageDir, FINGERPRINTS_FILE), emptyFingerprints);
+  const parsed = await readJsonOr(join6(storageDir, FINGERPRINTS_FILE), emptyFingerprints);
   if (parsed.schemaVersion !== 1 || typeof parsed.files !== "object" || parsed.files === null) {
     return emptyFingerprints();
   }
@@ -19441,11 +19568,15 @@ async function readFingerprints(storageDir) {
 }
 async function writeFingerprints(storageDir, fp) {
   await ensureStorageDir(storageDir);
-  await atomicWriteJson(join5(storageDir, FINGERPRINTS_FILE), fp);
+  await atomicWriteJson(join6(storageDir, FINGERPRINTS_FILE), fp);
+}
+async function writeOtherFiles(storageDir, others) {
+  await ensureStorageDir(storageDir);
+  await atomicWriteJson(join6(storageDir, OTHER_FILES_FILE), others);
 }
 async function readMeta(storageDir) {
-  const path = join5(storageDir, META_FILE);
-  if (!existsSync3(path))
+  const path = join6(storageDir, META_FILE);
+  if (!existsSync4(path))
     return null;
   try {
     const raw = await readFile2(path, "utf8");
@@ -19459,14 +19590,14 @@ async function readMeta(storageDir) {
 }
 async function writeMeta(storageDir, meta3) {
   await ensureStorageDir(storageDir);
-  await atomicWriteJson(join5(storageDir, META_FILE), meta3);
+  await atomicWriteJson(join6(storageDir, META_FILE), meta3);
 }
 function emptySeen() {
   return { ast_sig_version: AST_SIG_VERSION, baseline_sha: null, files: {}, unknown_baseline: false };
 }
 async function writeSeen(storageDir, seen) {
   await ensureStorageDir(storageDir);
-  await atomicWriteJson(join5(storageDir, SEEN_FILE), seen);
+  await atomicWriteJson(join6(storageDir, SEEN_FILE), seen);
 }
 
 // src/repo-graph/seen-seed.ts
@@ -19488,7 +19619,7 @@ async function captureGitHeadSha(project_root) {
   }
 }
 async function seedSeenWatermark(storage_dir, project_root, hadPriorIndexBeforeBuild, writeSeenFn = writeSeen) {
-  if (existsSync4(join6(storage_dir, SEEN_FILE2)))
+  if (existsSync5(join7(storage_dir, SEEN_FILE2)))
     return;
   try {
     if (!hadPriorIndexBeforeBuild) {
@@ -19507,7 +19638,7 @@ async function seedSeenWatermark(storage_dir, project_root, hadPriorIndexBeforeB
 
 // src/repo-graph/walker.ts
 import { readdir as readdir2, stat } from "fs/promises";
-import { join as join7, relative, sep } from "path";
+import { join as join8, relative, sep } from "path";
 var SOURCE_EXT_TO_LANG = {
   ts: "ts",
   tsx: "tsx",
@@ -19535,6 +19666,8 @@ var SKIP_DIRS = new Set([
   "public",
   "tests"
 ]);
+var OTHERS_ONLY_DIRS = new Set(["docs", "tests"]);
+var MAX_OTHER_FILES = 5000;
 var SKIP_FILES = new Set([
   ".DS_Store"
 ]);
@@ -19549,10 +19682,23 @@ function extOf(name2) {
 }
 async function walkProject(projectRoot, opts = {}) {
   const maxFiles = opts.maxFiles ?? MAX_FILES;
+  const maxOthers = opts.maxOthers ?? MAX_OTHER_FILES;
+  const listOthers = opts.listOthers ?? true;
+  const keepOther = opts.keepOther;
   const files = [];
   const skipped = [];
+  const others = [];
+  let othersTruncated = false;
   let capped = false;
-  async function recurse(dir) {
+  const addOther = (relPath) => {
+    if (!listOthers || keepOther && !keepOther(relPath))
+      return;
+    if (others.length < maxOthers)
+      others.push(relPath);
+    else
+      othersTruncated = true;
+  };
+  async function recurse(dir, othersOnly) {
     if (capped)
       return;
     let entries;
@@ -19565,11 +19711,18 @@ async function walkProject(projectRoot, opts = {}) {
       if (capped)
         return;
       const name2 = entry.name;
-      const abs = join7(dir, name2);
+      const abs = join8(dir, name2);
       if (entry.isDirectory()) {
-        if (SKIP_DIRS.has(name2) || name2.startsWith("."))
+        if (name2.startsWith("."))
           continue;
-        await recurse(abs);
+        if (OTHERS_ONLY_DIRS.has(name2)) {
+          if (listOthers)
+            await recurse(abs, true);
+          continue;
+        }
+        if (SKIP_DIRS.has(name2))
+          continue;
+        await recurse(abs, othersOnly);
         continue;
       }
       if (!entry.isFile())
@@ -19579,8 +19732,13 @@ async function walkProject(projectRoot, opts = {}) {
       const ext = extOf(name2);
       const lang = SOURCE_EXT_TO_LANG[ext];
       const relPath = toRelPath(abs, projectRoot);
+      if (othersOnly) {
+        addOther(relPath);
+        continue;
+      }
       if (!lang) {
         skipped.push({ reason: "not_a_source_file", relPath });
+        addOther(relPath);
         continue;
       }
       let size = 0;
@@ -19592,6 +19750,7 @@ async function walkProject(projectRoot, opts = {}) {
       }
       if (size > MAX_FILE_BYTES) {
         skipped.push({ reason: "too_large", relPath, size });
+        addOther(relPath);
         continue;
       }
       if (files.length >= maxFiles) {
@@ -19602,8 +19761,8 @@ async function walkProject(projectRoot, opts = {}) {
       files.push({ absPath: abs, relPath, ext, lang, size });
     }
   }
-  await recurse(projectRoot);
-  return { files, skipped };
+  await recurse(projectRoot, false);
+  return { files, skipped, others, othersTruncated };
 }
 
 // src/repo-graph/builder.ts
@@ -19625,16 +19784,6 @@ function groupByFile(graph) {
     edgesByFile.set(path, arr);
   }
   return { nodesByFile, edgesByFile };
-}
-function bumpNodeCounters(counters, nodes) {
-  for (const n of nodes) {
-    counters.nodes[n.type] = (counters.nodes[n.type] ?? 0) + 1;
-  }
-}
-function bumpEdgeCounters(counters, edges) {
-  for (const e of edges) {
-    counters.edges[e.type] = (counters.edges[e.type] ?? 0) + 1;
-  }
 }
 function buildQueryIndex(graph) {
   const name_to_node_ids = Object.create(null);
@@ -19664,7 +19813,8 @@ async function readAndFingerprintFile(file2) {
   const fingerprint = {
     content_sha256: computeContentSha(content),
     ast_sig: computeAstSignature(tree),
-    degraded
+    degraded,
+    extractor: EXTRACTOR_VERSION
   };
   const extracted = extractFile(tree, {
     relPath: file2.relPath,
@@ -19693,7 +19843,7 @@ async function runIndexBuild(opts) {
   const start2 = performance.now();
   const location = opts.root !== undefined ? repoGraphLocationForRoot(opts.root, { home: opts.home }) : resolveRepoGraphLocation(opts.cwd, { home: opts.home });
   const { project_root, proj_hash, storage_dir } = location;
-  const preexisted = existsSync5(storage_dir);
+  const preexisted = existsSync6(storage_dir);
   await markBuildStart(storage_dir, project_root, proj_hash);
   try {
     const result = await buildInner(opts, location, now, start2);
@@ -19731,7 +19881,9 @@ async function buildInner(opts, location, now, start2) {
   const counters = emptyCounters();
   const newGraph = emptyGraph();
   const newFingerprints = emptyFingerprints();
-  const walk2 = await walkProject(project_root);
+  const visible = gitVisibleFiles(project_root);
+  const keepOther = visible === "no-git" ? undefined : visible === "failed" ? () => false : (p) => visible.has(p);
+  const walk2 = await walkProject(project_root, { keepOther });
   for (const skip of walk2.skipped) {
     counters.skipped[skip.reason] += 1;
   }
@@ -19752,7 +19904,7 @@ async function buildInner(opts, location, now, start2) {
         continue;
       }
       const contentSha = computeContentSha(content);
-      if (contentSha === cached2.content_sha256 && cached2.degraded !== undefined) {
+      if (contentSha === cached2.content_sha256 && cached2.degraded !== undefined && sameExtractor(cached2)) {
         const reusedNodes = nodesByFile.get(file2.relPath) ?? [];
         const reusedEdges = edgesByFile.get(file2.relPath) ?? [];
         newGraph.nodes.push(...reusedNodes);
@@ -19761,8 +19913,7 @@ async function buildInner(opts, location, now, start2) {
         counters.files_cached += 1;
         if (cached2.degraded)
           counters.parse_degraded += 1;
-        bumpNodeCounters(counters, reusedNodes);
-        bumpEdgeCounters(counters, reusedEdges);
+        bumpGraphCounters(counters, reusedNodes, reusedEdges);
         continue;
       }
     }
@@ -19777,8 +19928,7 @@ async function buildInner(opts, location, now, start2) {
     counters.files_walked += 1;
     if (parsed.degraded)
       counters.parse_degraded += 1;
-    bumpNodeCounters(counters, parsed.extracted.nodes);
-    bumpEdgeCounters(counters, parsed.extracted.edges);
+    bumpGraphCounters(counters, parsed.extracted.nodes, parsed.extracted.edges);
   }
   opts.onProgress?.(total, total);
   const queryIndex = buildQueryIndex(newGraph);
@@ -19786,10 +19936,12 @@ async function buildInner(opts, location, now, start2) {
   await writeGraph(storage_dir, newGraph);
   await writeQueryIndex(storage_dir, queryIndex);
   await writeFingerprints(storage_dir, newFingerprints);
+  await writeOtherFiles(storage_dir, { schemaVersion: 1, files: walk2.others, truncated: walk2.othersTruncated });
   const repo_root = enclosingRepoRoot(project_root);
   const anchorMap = discoverAnchorMap(project_root, newGraph, repo_root !== undefined ? { ceiling: repo_root } : {});
   const imports_outside_root = computeOutsideImports(newGraph, anchorMap);
   const duration_ms = performance.now() - start2;
+  const head_commit = headCommit(repo_root ?? project_root) ?? undefined;
   const meta3 = {
     schemaVersion: 1,
     project_root,
@@ -19801,7 +19953,8 @@ async function buildInner(opts, location, now, start2) {
     building: false,
     anchorMap,
     imports_outside_root,
-    ...repo_root !== undefined ? { repo_root } : {}
+    ...repo_root !== undefined ? { repo_root } : {},
+    ...head_commit !== undefined ? { head_commit } : {}
   };
   await writeMeta(storage_dir, meta3);
   return {
@@ -19861,7 +20014,7 @@ if (import.meta.main) {
   let resolvedRoot = null;
   if (opts.root !== null) {
     try {
-      const abs = resolve2(process.cwd(), opts.root);
+      const abs = resolve4(process.cwd(), opts.root);
       resolvedRoot = realpathSync(abs);
       if (!statSync2(resolvedRoot).isDirectory())
         throw new Error("not a directory");

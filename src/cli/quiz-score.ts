@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Jiaqi Duan
 /**
  * `quiz-score` subcommand core — turns the raw personality-quiz answers the
- * `/siltpoke-setup` conversation collects into the five dials, by calling the
+ * `/siltpoke:siltpoke-setup` conversation collects into the five dials, by calling the
  * REAL `scoreQuiz` in `src/installer/personality-seed.ts`.
  *
  * WHY THIS EXISTS: the quiz's dials must be *scored* from the answers (each

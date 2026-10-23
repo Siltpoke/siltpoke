@@ -53,6 +53,13 @@ export type FetchRoute = [match: string, handler: (url: string) => Promise<Respo
  * Each test MUST call this for a clean route table — there is no restore
  * counterpart; the previous test's mock (and its already-settled deferreds)
  * stays installed until overwritten or unregisterDom() reasserts native. */
+export const FRESH_VERDICT = {
+  level: "fresh",
+  headline: "index is current",
+  caveat: null,
+  counts: { content_changed: 0, deleted_still_indexed: 0, unindexed_files: 0, indexed: 3, wrong_ratio: 0 },
+};
+
 export function installFetchMock(routes: FetchRoute[]): void {
   globalThis.fetch = ((input: RequestInfo | URL) => {
     const url =
@@ -60,6 +67,10 @@ export function installFetchMock(routes: FetchRoute[]): void {
     for (const [match, handler] of routes) {
       if (url.includes(match)) return handler(url);
     }
+    // The island asks on boot whether the index matches the code; unless a
+    // test routes it, answer "fresh" so the pre-existing hint paths
+    // ("Diagram is current") stay what those tests assert.
+    if (url.includes("/api/repo-graph/staleness")) return Promise.resolve(jsonResponse({ success: true, data: FRESH_VERDICT }));
     return Promise.resolve(jsonResponse({ success: true, data: {} }));
   }) as typeof fetch;
 }

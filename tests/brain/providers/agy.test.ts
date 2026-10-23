@@ -1,7 +1,7 @@
 // Agy adapter (track #7 T2) — fake spawnFn only, NEVER spawns the real agy
 // binary. Spike findings (Task 1, committed 5e1b0227) that BIND this test:
 // --sandbox is non-negotiable-always, SILTPOKE_INTERNAL=1 recursion guard,
-// cwd (not -C) reaches Bun.spawn. See:
+// cwd is a fresh empty temp dir (tests: agy-cwd.test.ts). See:
 // an internal design note Task 2.
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -212,47 +212,6 @@ test("spawn env carries SILTPOKE_INTERNAL=1 (recursion guard vs agy's own Stop h
 
   const env = seenOptions.env as Record<string, string>;
   expect(env.SILTPOKE_INTERNAL).toBe("1");
-});
-
-test("spawn cwd === opts.cwd (agy has no -C flag; it uses process cwd, so Bun.spawn's cwd must carry the reviewed repo)", async () => {
-  let seenOptions: Record<string, unknown> = {};
-  const spawnFn = ((_cmd: string[], options: unknown) => {
-    seenOptions = options as Record<string, unknown>;
-    return {
-      stdout: new Response(HAPPY_JSON).body,
-      stderr: new Response("").body,
-      exited: Promise.resolve(0),
-      kill() {},
-    };
-  }) as unknown as typeof Bun.spawn;
-
-  const reviewedRepo = "/some/other/repo/not-the-daemon-cwd";
-  await makeAgyProvider().call({
-    systemPrompt: "s",
-    contextBundle: "c",
-    cwd: reviewedRepo,
-    spawnFn,
-  });
-
-  expect(seenOptions.cwd).toBe(reviewedRepo);
-  expect(seenOptions.cwd).not.toBe(process.cwd());
-});
-
-test("spawn cwd falls back to process.cwd() when opts.cwd is omitted/empty (manual/direct-call compat)", async () => {
-  let seenOptions: Record<string, unknown> = {};
-  const spawnFn = ((_cmd: string[], options: unknown) => {
-    seenOptions = options as Record<string, unknown>;
-    return {
-      stdout: new Response(HAPPY_JSON).body,
-      stderr: new Response("").body,
-      exited: Promise.resolve(0),
-      kill() {},
-    };
-  }) as unknown as typeof Bun.spawn;
-
-  await makeAgyProvider().call({ systemPrompt: "s", contextBundle: "c", cwd: "", spawnFn });
-
-  expect(seenOptions.cwd).toBe(process.cwd());
 });
 
 // ── 5. kill-timer (mirror codex.test.ts's kill-timer assertion) ─────────

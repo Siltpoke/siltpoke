@@ -46,7 +46,6 @@ export const EXIT_CODE = {
   pre_check_failed: 1,
   ambiguous: 1,
   not_found: 2,
-  cost_cap_exceeded: 3,
 } as const;
 
 export function parseArgs(argv: readonly string[]): CliOptions {
@@ -104,7 +103,11 @@ function formatExplained(o: Extract<ExplainOutcome, { kind: "explained" }>): str
       "⚠ subgraph or prompt truncated — explanation may be partial.",
     );
   }
-  if (o.softCapExceeded) {
+  if (o.hardCapExceeded) {
+    lines.push(
+      `⚠ over the hard cap — $${cost.toFixed(4)} > $${o.hardCapUsd.toFixed(4)}. The call was already billed, so the explanation is kept. Raise SILTPOKE_EXPLAIN_HARD_CAP_USD to silence this warning.`,
+    );
+  } else if (o.softCapExceeded) {
     lines.push(
       `⚠ soft cost cap hit — $${cost.toFixed(4)} > $${o.softCapUsd.toFixed(4)}. Override via SILTPOKE_EXPLAIN_SOFT_CAP_USD if expected.`,
     );
@@ -153,12 +156,6 @@ function formatPreCheck(
   return `${o.message}\n`;
 }
 
-function formatCostCap(
-  o: Extract<ExplainOutcome, { kind: "cost_cap_exceeded" }>,
-): string {
-  return `⚠ cost cap exceeded ($${o.costUsd.toFixed(3)}). Explanation not written.\nUsage: ${JSON.stringify(o.usage)}\n`;
-}
-
 export function formatHuman(outcome: ExplainOutcome): string {
   switch (outcome.kind) {
     case "explained":
@@ -169,8 +166,6 @@ export function formatHuman(outcome: ExplainOutcome): string {
       return formatNotFound(outcome);
     case "pre_check_failed":
       return formatPreCheck(outcome);
-    case "cost_cap_exceeded":
-      return formatCostCap(outcome);
   }
 }
 
@@ -192,6 +187,8 @@ export function formatJson(outcome: ExplainOutcome): string {
           depth: outcome.result.meta.depth,
           fromCache: outcome.result.fromCache,
           usage: outcome.usage,
+          hard_cap_exceeded: outcome.hardCapExceeded,
+          hard_cap_usd: outcome.hardCapUsd,
         },
         error: null,
       };
@@ -222,17 +219,6 @@ export function formatJson(outcome: ExplainOutcome): string {
         success: false,
         data: { kind: "pre_check_failed", message: outcome.message },
         error: "pre-check failed",
-      };
-      break;
-    case "cost_cap_exceeded":
-      envelope = {
-        success: false,
-        data: {
-          kind: "cost_cap_exceeded",
-          costUsd: outcome.costUsd,
-          usage: outcome.usage,
-        },
-        error: "cost cap exceeded",
       };
       break;
   }

@@ -24,11 +24,9 @@ import type { RubricSummary } from "../primitives/RubricActivityPanel";
 import type { FewShotStats } from "../primitives/FewShotPanel";
 import type { RepoMemoryStats } from "../primitives/RepoMemoryPanel";
 import type { ModelsInfo } from "../primitives/ModelsPanel";
-import {
-  readBrainHealthAsync,
-  brainUnhealthySignal,
-  type UnhealthySignal,
-} from "../../state/brain-health";
+import { readBrainHealthAsync } from "../../state/brain-health";
+import { brainUnhealthySignal, type UnhealthySignal } from "../../state/brain-signal";
+import { startOfDay } from "../../state/usage";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -555,7 +553,7 @@ export async function getHomeData(deps: HomeDeps): Promise<HomeData> {
     ? progression.pet_log[progression.pet_log.length - 1]?.day
     : null;
   const lastPokeAt = latestPetDay
-    ? relativeAgo(`${latestPetDay}T00:00:00Z`, now)
+    ? relativeAgo(startOfDay(latestPetDay).toISOString(), now)
     : "never";
 
   const meta = { snarkPercent, lastPokeAt };

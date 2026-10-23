@@ -1,9 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import {
   swapStatusLine,
-  restoreStatusLine,
   registerStopHook,
-  unregisterStopHook,
   hasStopHook,
   registerStopHookPair,
   hasStopHookPair,
@@ -30,18 +28,6 @@ test("swapStatusLine: preserves unrelated keys", () => {
   const input = { permissions: { foo: 1 }, statusLine: { command: "x" } };
   const r = swapStatusLine(input, WRAPPER);
   expect((r.next as { permissions: { foo: number } }).permissions.foo).toBe(1);
-});
-
-test("restoreStatusLine: writes back old command", () => {
-  const input = { statusLine: { command: WRAPPER } };
-  const out = restoreStatusLine(input, "old-cmd");
-  expect((out as { statusLine: { command: string } }).statusLine.command).toBe("old-cmd");
-});
-
-test("restoreStatusLine: deletes statusLine when oldCommand is null", () => {
-  const input = { statusLine: { command: WRAPPER } };
-  const out = restoreStatusLine(input, null);
-  expect((out as { statusLine?: unknown }).statusLine).toBeUndefined();
 });
 
 test("registerStopHook on empty settings: creates hooks.Stop", () => {
@@ -76,48 +62,6 @@ test("registerStopHook is idempotent: double-register leaves one entry", () => {
     0,
   );
   expect(totalHooks).toBe(1);
-});
-
-test("unregisterStopHook removes only our entry", () => {
-  const input = {
-    hooks: {
-      Stop: [
-        {
-          matcher: "",
-          hooks: [
-            { type: "command", command: HOOK },
-            { type: "command", command: "some-other-cmd" },
-          ],
-        },
-      ],
-    },
-  };
-  const out = unregisterStopHook(input, HOOK);
-  expect(hasStopHook(out, HOOK)).toBe(false);
-  const stopEntries = (out as { hooks: { Stop: { hooks: unknown[] }[] } }).hooks.Stop;
-  expect(stopEntries[0]).toBeDefined();
-  const remaining = stopEntries[0]!.hooks;
-  expect(remaining).toHaveLength(1);
-  expect((remaining[0] as { command: string }).command).toBe("some-other-cmd");
-});
-
-test("unregisterStopHook removes empty Stop array entirely", () => {
-  const input = {
-    hooks: {
-      Stop: [
-        { matcher: "", hooks: [{ type: "command", command: HOOK }] },
-      ],
-    },
-  };
-  const out = unregisterStopHook(input, HOOK) as {
-    hooks?: { Stop?: unknown };
-  };
-  expect(out.hooks?.Stop).toBeUndefined();
-});
-
-test("unregisterStopHook on settings without hooks is no-op", () => {
-  const out = unregisterStopHook({ permissions: { allow: [] } }, HOOK);
-  expect((out as { permissions: { allow: unknown[] } }).permissions.allow).toEqual([]);
 });
 
 test("hasStopHook returns false for unrelated entries", () => {

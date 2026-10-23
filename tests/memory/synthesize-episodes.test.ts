@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
   assembleEpisodePrompt,
   episodeNarrativeSchema,
+  roleSynthesizeFn,
   synthesizeEpisodes,
   type SynthesizeFn,
 } from "../../src/memory/synthesize-episodes";
@@ -428,5 +430,35 @@ describe("synthesizeEpisodes — legacy store back-compat", () => {
 
     expect(drafts).toHaveLength(1);
     expect(drafts[0]!.day_key).toBe("2026-07-01");
+  });
+});
+
+// Small item [9] of the chat mainline: episode synthesis called claude-haiku
+// directly, outside the Summarizer's agent, model and daily cap.
+describe("synthesis goes through the role brain", () => {
+  test("roleSynthesizeFn sends the narrator prompt and the cluster, no model of its own, and returns the text", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const fn = roleSynthesizeFn(async (opts) => {
+      seen.push(opts as Record<string, unknown>);
+      return { text: "RAW" };
+    });
+    expect(await fn("CLUSTER")).toBe("RAW");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.contextBundle).toBe("CLUSTER");
+    expect(String(seen[0]!.systemPrompt)).toContain("episode narrator");
+    // The role brain forces the role's own model; a model here would be ignored or fight it.
+    expect("model" in seen[0]!).toBe(false);
+  });
+
+  test("the module has no un-routed brain call left", () => {
+    const src = readFileSync(new URL("../../src/memory/synthesize-episodes.ts", import.meta.url), "utf8");
+    expect(src).not.toContain("callBrainText");
+    expect(src).not.toContain("callBrainRaw");
+    expect(src).not.toContain('import("../brain/brain")');
+  });
+
+  test("consolidate builds the synth call from the extract role", () => {
+    const src = readFileSync(new URL("../../src/memory/consolidate.ts", import.meta.url), "utf8");
+    expect(src).toContain('roleSynthesizeFn(makeRoleTextBrain(homeBase, "extract"))');
   });
 });

@@ -182,6 +182,57 @@ function mountIcon(app: Hono, route: string, file: string, type: string): void {
   });
 }
 
+// Vendored fonts (SIL OFL 1.1): the dashboard's `Dash-*` files, and the export
+// fonts fetched by the Code Map share-export (src/web/client/export/fonts.ts)
+// and embedded as base64 @font-face. Strict
+// name pattern: letters/digits/dash + `.woff2` only, so no dot, slash or `..`
+// can reach the join below. The OFL-*.txt licence texts are deliberately NOT
+// served: the page never fetches them, and they ship in the repo/tarball.
+// Filenames are not content-hashed → same 1h cache as the brand icons.
+function mountFontRoute(app: Hono): void {
+  // The dashboard's own @font-face sheet (scripts/vendor-dashboard-fonts.ts):
+  // every page links it, so no page asks Google for fonts.
+  app.get("/static/fonts/dashboard.css", (c) => {
+    const path = join(repoRoot, "public", "static", "fonts", "dashboard.css");
+    if (!existsSync(path)) return c.notFound();
+    return c.body(readFileSync(path, "utf8"), 200, {
+      "Content-Type": "text/css; charset=utf-8",
+      "Cache-Control": "public, max-age=3600",
+    });
+  });
+  app.get("/static/fonts/:filename{[A-Za-z0-9-]+\\.woff2}", (c) => {
+    const filename = c.req.param("filename");
+    if (!/^[A-Za-z0-9-]+\.woff2$/.test(filename)) return c.notFound();
+    const path = join(repoRoot, "public", "static", "fonts", filename);
+    if (!existsSync(path)) return c.notFound();
+    return c.body(readBinary(path), 200, {
+      "Content-Type": "font/woff2",
+      "Cache-Control": "public, max-age=3600",
+    });
+  });
+}
+
+// Tailwind v4 utilities (incremental adoption). Built by
+// `bun run build:tailwind` → public/static/tailwind.css (NOT lazily rebuilt
+// on request — the CLI is slower than tokens; rebuild explicitly after class
+// changes). no-store so a rebuild is picked up without a hard refresh.
+function mountTailwindRoute(app: Hono): void {
+  app.get("/static/tailwind.css", (c) => {
+    const path = tailwindCssPath();
+    if (!existsSync(path)) {
+      return c.text(
+        "/* tailwind.css missing — run `bun run build:tailwind` */",
+        503,
+        { "Content-Type": "text/css" },
+      );
+    }
+    return c.body(readFileSync(path, "utf8"), 200, {
+      "Content-Type": "text/css; charset=utf-8",
+      "Cache-Control": "no-store, must-revalidate",
+    });
+  });
+}
+
 export function mountStaticRoutes(app: Hono): void {
   app.get("/static/tokens.css", (c) => {
     buildTokensCss(); // idempotent — re-emits only on content change
@@ -197,24 +248,7 @@ export function mountStaticRoutes(app: Hono): void {
     });
   });
 
-  // Tailwind v4 utilities (incremental adoption). Built by
-  // `bun run build:tailwind` → public/static/tailwind.css (NOT lazily rebuilt
-  // on request — the CLI is slower than tokens; rebuild explicitly after class
-  // changes). no-store so a rebuild is picked up without a hard refresh.
-  app.get("/static/tailwind.css", (c) => {
-    const path = tailwindCssPath();
-    if (!existsSync(path)) {
-      return c.text(
-        "/* tailwind.css missing — run `bun run build:tailwind` */",
-        503,
-        { "Content-Type": "text/css" },
-      );
-    }
-    return c.body(readFileSync(path, "utf8"), 200, {
-      "Content-Type": "text/css; charset=utf-8",
-      "Cache-Control": "no-store, must-revalidate",
-    });
-  });
+  mountTailwindRoute(app);
 
   app.get("/static/index.js", (c) => {
     const path = clientBundlePath();
@@ -228,6 +262,22 @@ export function mountStaticRoutes(app: Hono): void {
     // No-store on the bare index.js so the browser always picks up the
     // latest bundle after a rebuild. Hashed island chunks (<name>-<hash>.js)
     // still cache aggressively below.
+    return c.body(readFileSync(path, "utf8"), 200, {
+      "Content-Type": "application/javascript; charset=utf-8",
+      "Cache-Control": "no-store, must-revalidate",
+    });
+  });
+
+  // The script the Code Map HTML export inlines into the file it saves. The chunk
+  // route below only serves `<name>-<hash>.js`, so this one needs its own line.
+  // Same posture as index.js: no-store, so a rebuild is picked up at once.
+  app.get("/static/export-standalone.js", (c) => {
+    const path = join(repoRoot, "public", "static", "export-standalone.js");
+    if (!existsSync(path)) {
+      return c.text("// export bundle missing — run `bun scripts/build-client.ts`", 503, {
+        "Content-Type": "application/javascript",
+      });
+    }
     return c.body(readFileSync(path, "utf8"), 200, {
       "Content-Type": "application/javascript; charset=utf-8",
       "Cache-Control": "no-store, must-revalidate",
@@ -256,6 +306,7 @@ export function mountStaticRoutes(app: Hono): void {
   // nothing left to tell us which scheme it is in.
   app.get("/favicon.ico", (c) => c.redirect(FAVICON_LIGHT_HREF, 302));
 
+  mountFontRoute(app);
   // Serve content-hashed island chunks.
   // A route-only island ships as a separate chunk (loaded ahead of index.js
   // via Layout.preloadIslands so it registers with globalThis.Alpine before

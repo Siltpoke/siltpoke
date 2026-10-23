@@ -21,8 +21,22 @@ import { resolveRole } from "./registry";
 async function callRole(homeBase: string, role: BrainRole, opts: CallBrainOptions) {
   const config = await loadBrainConfig(homeBase);
   const resolved = resolveRole(config, role);
-  const guarded = makeGuardedCallRaw({ homeBase, provider: resolved.provider });
-  return guarded({ ...opts, model: resolved.model });
+  // Each role counts in its own daily bucket (spec §12.3): chat (and the chat
+  // recap, which uses the chat role), extract (summaries, memory), review.
+  const guarded = makeGuardedCallRaw({ homeBase, provider: resolved.provider, usedBy: role });
+  // Read-only, always: every role-routed call (memory summarizer, facts,
+  // events, entity tags, episodes, recap, repo summary, remember) carries
+  // transcript text — tool output from other repos — and none needs a tool
+  // that writes, runs commands or fetches. A captured summarizer call was
+  // offered Bash/Write/Edit/WebFetch + the user's MCP servers (2026-10-18);
+  // replayed read-only, its output scored the same (0 tool calls either way).
+  // Not "no tools": zero tools measurably changed answers (#1072 / #1076).
+  // Project settings off, always, for the same reason: these calls run in
+  // whatever folder their process sits in — for a daemon revived by a codex or
+  // agy Stop hook, a project claude never asked the user to trust. The review
+  // is not role-routed; it sets the same flag itself (critic phases + the
+  // legacy path in handle-stop.ts, #1091).
+  return guarded({ ...opts, readOnly: true, projectSettingsOff: true, model: resolved.model });
 }
 
 /** callBrainRaw-shaped: returns { output: unknown (JSON-parsed), usage }. */

@@ -16,7 +16,7 @@ import {
   recordAction,
   type PetAction,
 } from "../state/progression";
-import { writeState } from "../state/state";
+import { writeStateKeepingAlert } from "../state/state";
 import { dayKey } from "../state/usage";
 import { siltpokeRoot } from "../installer/paths";
 
@@ -69,7 +69,7 @@ export async function runActionCli(
   const bubble =
     bubbles[Math.floor(Math.random() * bubbles.length)] ?? bubbles[0]!;
 
-  await writeState(homeBase, {
+  await writeStateKeepingAlert(homeBase, {
     schemaVersion: 1,
     mood: MOOD_BY_ACTION[action],
     pose: "base",
@@ -78,7 +78,7 @@ export async function runActionCli(
     confidence: "high",
     last_updated_ms: now.getTime(),
     last_session_id: `action:${action}`,
-  });
+  }, "keep");
 
   return {
     action,

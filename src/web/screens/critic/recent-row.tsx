@@ -8,7 +8,7 @@
  */
 import { tokens } from "../../tokens/tokens";
 import type { CriticCall, CriticTelemetry } from "../../../state/api";
-import { BlockA, BlockC, BlockD, BlockE, EvidenceMark, PartialDiffMark, redactPath } from "../../primitives/CritiqueAuditBlocks";
+import { BlockA, BlockC, BlockD, BlockE, EvidenceMark, InjectionMark, PartialDiffMark, ToolCallsLine, redactPath } from "../../primitives/CritiqueAuditBlocks";
 import { STATUS_COLOR, formatTimeAgo } from "./helpers";
 import { prettifyProject } from "./filter-bar";
 import { DiffSummaryView, DiffView } from "./diff";
@@ -233,6 +233,8 @@ export function RecentRow({ c, now, homeBasename, preferenceStats }: {
               surface that dropped the mark would show an entirely-unverified
               review as pixel-identical to a fully-grounded one. Found by an
               independent reviewer; the first draft marked /timeline only. */}
+          <InjectionMark alert={c.injection_alert} />
+          <ToolCallsLine field={c.tool_calls} />
           <EvidenceMark label={c.evidence_label} unverifiedCount={c.evidence_unverified} />
           <PartialDiffMark shown={c.diff_shown} total={c.diff_total} />
 

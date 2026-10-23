@@ -5,11 +5,22 @@
 set -u
 PAYLOAD="$(cat 2>/dev/null)"   # capture the SessionStart payload (carries session_id)
 
+# Defect [73]: a `claude -p` / codex / agy child that siltpoke itself spawned
+# (reviewer, explain, chat, distil) loads the user's installed plugin and fires
+# THIS hook. Every spawn site sets SILTPOKE_INTERNAL=1 (src/router/router.ts
+# isSiltpokeInternal); exit before anything below can write — the plugin-root
+# pointer, the nudge marker, a telemetry row — so a review can never rewrite the
+# user's real state. Payload is already drained above.
+[ "${SILTPOKE_INTERNAL:-}" = "1" ] && exit 0
+
 # Guarded with :- (not bare ${HOME}) — under `set -u` an unset HOME is a hard
 # "unbound variable" crash, the same bug class as the unguarded
 # ${CLAUDE_PLUGIN_ROOT} this script already defaults below.
 HOME="${HOME:-}"
-SILTPOKE_DIR="${HOME}/.siltpoke"
+# Honour SILTPOKE_HOME exactly like siltpokeRoot() in src/installer/paths.ts
+# (empty counts as unset, hence `:-`). A hard-coded $HOME/.siltpoke made an
+# isolated run (and every hook fired inside one) write the REAL home (defect [73]).
+SILTPOKE_DIR="${SILTPOKE_HOME:-${HOME}/.siltpoke}"
 TMP_FILE="${SILTPOKE_DIR}/plugin-root.tmp"
 FINAL_FILE="${SILTPOKE_DIR}/plugin-root"
 
@@ -29,9 +40,38 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 # redirect BEFORE the stderr redirect (left-to-right), so an unwritable
 # $SILTPOKE_DIR leaks "Permission denied" to the session before the later
 # 2>/dev/null ever takes effect.
-{ printf '%s' "$PLUGIN_ROOT" > "$TMP_FILE"; } 2>/dev/null || exit 0
-# If the rename fails after the tmp file was written, don't leave it orphaned.
-mv "$TMP_FILE" "$FINAL_FILE" 2>/dev/null || rm -f "$TMP_FILE" 2>/dev/null || true
+# Defect [91]: with several hosts installed, each host's hook names its own
+# copy, and the daemon restarts from whichever wrote last. Move the pointer only
+# to a copy whose daemon bundle is at least as new as the one it names, or when
+# that one is gone. Same rule as writePluginRootPointer (src/hooks/hook-guard-core.ts).
+SILTPOKE_KEEP_ROOT=""
+SILTPOKE_OLD_ROOT="$(cat "$FINAL_FILE" 2>/dev/null || true)"
+if [ -n "$SILTPOKE_OLD_ROOT" ] && [ "$SILTPOKE_OLD_ROOT" != "$PLUGIN_ROOT" ] \
+   && [ -f "${SILTPOKE_OLD_ROOT}/dist/siltpoke-daemon.js" ]; then
+  if [ ! -f "${PLUGIN_ROOT}/dist/siltpoke-daemon.js" ] \
+     || [ "${SILTPOKE_OLD_ROOT}/dist/siltpoke-daemon.js" -nt "${PLUGIN_ROOT}/dist/siltpoke-daemon.js" ]; then
+    SILTPOKE_KEEP_ROOT=1
+  fi
+fi
+
+if [ -z "$SILTPOKE_KEEP_ROOT" ]; then
+  { printf '%s' "$PLUGIN_ROOT" > "$TMP_FILE"; } 2>/dev/null || exit 0
+  # If the rename fails after the tmp file was written, don't leave it orphaned.
+  mv "$TMP_FILE" "$FINAL_FILE" 2>/dev/null || rm -f "$TMP_FILE" 2>/dev/null || true
+fi
+
+# Defect [49]: record which agent this session runs in, for the dashboard
+# daemon (hooks/lib/record-host.sh). Same detection and the same order as
+# hooks/stop.sh's SILTPOKE_HOST_FAMILY — fork-specific names FIRST, plain claude
+# LAST — and none set leaves it empty, which records nothing. Unconditional
+# like the pointer above: no config.json and no bun still leave it refreshed.
+SILTPOKE_HOST_FAMILY=""
+[ -n "${QODER_PLUGIN_ROOT:-}" ] && SILTPOKE_HOST_FAMILY="qoder"
+[ -z "$SILTPOKE_HOST_FAMILY" ] && [ -n "${CODEBUDDY_PLUGIN_ROOT:-}" ] && SILTPOKE_HOST_FAMILY="codebuddy"
+[ -z "$SILTPOKE_HOST_FAMILY" ] && [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && SILTPOKE_HOST_FAMILY="claude"
+# -r and ${0%/*} for the reasons given at the resolve-bun.sh source below.
+SILTPOKE_RECORD_LIB="${0%/*}/lib/record-host.sh"
+[ -r "$SILTPOKE_RECORD_LIB" ] && . "$SILTPOKE_RECORD_LIB" && siltpoke_record_host "$SILTPOKE_HOST_FAMILY"
 
 # Invoke the SessionStart bundle so the once-ever legacy-hook migration
 # sweep (removeCodexLegacyHooks / removeCcForkLegacyHooks, wired in

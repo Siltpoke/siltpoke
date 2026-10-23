@@ -114,6 +114,10 @@ describe("runInstall --agent flag (Fix 1, final-branch review)", () => {
     expect(res.status).not.toBe("internal_subprocess");
     expect(existsSync(join(qoderHome, "settings.json"))).toBe(true);
     expect(out.join("")).not.toContain("not detected on PATH");
+    // Defect [49]: a source install wired into exactly one agent records it, so
+    // dashboard chat has an answer before any hook has run.
+    const { readFileSync } = require("node:fs");
+    expect(readFileSync(join(dir, ".siltpoke", "last-host"), "utf8").split("\n")[0]).toBe("qoder");
     rmSync(dir, { recursive: true, force: true });
   });
 });

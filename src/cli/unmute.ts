@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * v1.1-I — `/siltpoke-unmute` CLI.
+ * v1.1-I — `/siltpoke:siltpoke-unmute` CLI.
  *
  * Deletes `~/.siltpoke/mute.json`, restoring normal critic gates.
  * Idempotent — running unmute on an un-muted Siltpoke is a no-op (exit

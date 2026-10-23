@@ -21,7 +21,7 @@ import {
 describe("chatErrorCopy — reason→copy map", () => {
   test("each classified reason maps to its fixed copy", () => {
     expect(chatErrorCopy("timeout")).toBe(
-      "I waited a whole minute but my brain never answered. (backend timeout — try sending that again?)",
+      "I waited but my brain never answered. (backend timeout — try sending that again?)",
     );
     expect(chatErrorCopy("spawn_failed")).toBe(
       "I couldn't reach my brain at all just now. (couldn't start claude — is it installed and logged in?)",

@@ -19,7 +19,7 @@ Translate for the user:
 - Exit 0 (output ends with `Siltpoke: http://127.0.0.1:9876/`): tell them
   the daemon was restarted and the dashboard is live at that URL.
 - Exit 1 (`siltpoked failed to start within 3s`): the fresh server did not
-  come up. Tell them, and suggest `/siltpoke-doctor` to find out which
+  come up. Tell them, and suggest `/siltpoke:siltpoke-doctor` to find out which
   piece is missing.
 
 Keep the response to one sentence. Don't show the raw output.

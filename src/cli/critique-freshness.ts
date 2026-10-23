@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * The freshness banner `/siltpoke-last` prints above a surfaced review.
+ * The freshness banner `/siltpoke:siltpoke-last` prints above a surfaced review.
  *
  * Why this exists: a reader has no way to tell WHICH change a surfaced review
  * is about, and assumes it is the one they just made. A review about someone

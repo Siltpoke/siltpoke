@@ -3,12 +3,24 @@
     "SessionStart": [
       {
         "matcher": "startup|resume",
-        "hooks": [{ "type": "command", "command": "sh ./hooks/codex-session-start.sh" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${PLUGIN_ROOT}/hooks/codex-session-start.sh\"",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${PLUGIN_ROOT}/hooks/siltpoke-hook.ps1\" codex-session-start"
+          }
+        ]
       }
     ],
     "Stop": [
       {
-        "hooks": [{ "type": "command", "command": "sh ./hooks/codex-stop.sh" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${PLUGIN_ROOT}/hooks/codex-stop.sh\"",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${PLUGIN_ROOT}/hooks/siltpoke-hook.ps1\" codex-stop"
+          }
+        ]
       }
     ]
   }

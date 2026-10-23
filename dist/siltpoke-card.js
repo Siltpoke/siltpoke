@@ -2,12 +2,87 @@
 // src/face/wrapper.ts
 import { spawnSync } from "child_process";
 import { existsSync as existsSync6 } from "fs";
-import { appendFile, mkdir as mkdir3, readFile as readFile6 } from "fs/promises";
-import { basename, dirname, join as join10 } from "path";
+import { appendFile, mkdir as mkdir3, readFile as readFile7 } from "fs/promises";
+import { basename, dirname, join as join11 } from "path";
 import { fileURLToPath } from "url";
 
+// src/brain/drain-process.ts
+var DRAIN_GRACE_MS = 2000;
+var KILL_GRACE_MS = 2000;
+function stopProcess(proc, graceMs = KILL_GRACE_MS) {
+  proc.kill();
+  if (proc.exited === undefined)
+    return;
+  let exited = false;
+  proc.exited.then(() => {
+    exited = true;
+  }, () => {
+    exited = true;
+  });
+  const timer = setTimeout(() => {
+    if (exited)
+      return;
+    try {
+      proc.kill("SIGKILL");
+    } catch {}
+  }, graceMs);
+  timer.unref?.();
+}
+function collect(source) {
+  const body = source === undefined || source === null ? null : new Response(source).body;
+  if (body === null)
+    return { done: Promise.resolve(), text: () => "", cancel: () => {} };
+  const reader = body.getReader();
+  const decoder = new TextDecoder;
+  let text = "";
+  const done = (async () => {
+    try {
+      for (;; ) {
+        const { done: end, value } = await reader.read();
+        if (end)
+          break;
+        text += decoder.decode(value, { stream: true });
+      }
+      text += decoder.decode();
+    } catch {}
+  })();
+  return {
+    done,
+    text: () => text,
+    cancel: () => {
+      reader.cancel().catch(() => {});
+    }
+  };
+}
+async function drainProcess(proc, graceMs = DRAIN_GRACE_MS) {
+  const out = collect(proc.stdout);
+  const err = collect(proc.stderr);
+  let exitCode;
+  try {
+    exitCode = await proc.exited;
+  } catch (e) {
+    out.cancel();
+    err.cancel();
+    throw e;
+  }
+  let timer;
+  const finished = await Promise.race([
+    Promise.all([out.done, err.done]).then(() => true),
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve(false), graceMs);
+    })
+  ]);
+  if (timer !== undefined)
+    clearTimeout(timer);
+  if (!finished) {
+    out.cancel();
+    err.cancel();
+  }
+  return { stdout: out.text(), stderr: err.text(), exitCode };
+}
+
 // src/installer/paths.ts
-import { join } from "path";
+import { join, resolve } from "path";
 
 class PathError extends Error {
 }
@@ -21,7 +96,7 @@ function homeDir(env) {
 function siltpokeRoot(env = process.env) {
   const override = env.SILTPOKE_HOME;
   if (typeof override === "string" && override.length > 0) {
-    return override;
+    return resolve(override);
   }
   return join(homeDir(env), ".siltpoke");
 }
@@ -46,6 +121,100 @@ function readRestartOutcome(homeBase) {
   } catch {
     return null;
   }
+}
+
+// src/state/brain-health.ts
+import { readFile } from "fs/promises";
+import { join as join3 } from "path";
+
+// src/state/usage.ts
+var KNOWN_KINDS = new Set([
+  "main",
+  "reflection",
+  "arch_generate",
+  "explain",
+  "chat",
+  "repo_summary",
+  "chat_capture"
+]);
+
+// src/state/brain-health.ts
+var FILE = "brain-health.json";
+function freshBrainHealth() {
+  return {
+    schema_version: 1,
+    last_attempt_ts: null,
+    last_success_ts: null,
+    consecutive_failures: 0,
+    last_failure: null,
+    breaker: null,
+    retry_budget: { date: "", outer_retries_used: 0 },
+    quota_calls_today: {}
+  };
+}
+function isValidDateString(value) {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
+}
+function sanitizeQuotaCallsToday(raw) {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw))
+    return {};
+  const asRecord = raw;
+  if (typeof asRecord.date === "string" && typeof asRecord.count === "number") {
+    return {};
+  }
+  const result = {};
+  for (const [providerName, entry] of Object.entries(asRecord)) {
+    if (entry !== null && typeof entry === "object" && typeof entry.date === "string" && typeof entry.count === "number" && Number.isFinite(entry.count)) {
+      result[providerName] = {
+        date: entry.date,
+        count: Math.max(0, Math.floor(entry.count))
+      };
+    }
+  }
+  return result;
+}
+function parseBrainHealth(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || parsed.schema_version !== 1 || typeof parsed.consecutive_failures !== "number") {
+      return freshBrainHealth();
+    }
+    const b = parsed.breaker;
+    if (b != null && (!isValidDateString(b.opened_at) || !isValidDateString(b.next_eligible_at))) {
+      return freshBrainHealth();
+    }
+    if (parsed.last_failure != null && !isValidDateString(parsed.last_failure.ts)) {
+      return freshBrainHealth();
+    }
+    return {
+      ...freshBrainHealth(),
+      ...parsed,
+      retry_budget: typeof parsed.retry_budget?.date === "string" && typeof parsed.retry_budget?.outer_retries_used === "number" && Number.isFinite(parsed.retry_budget.outer_retries_used) ? {
+        date: parsed.retry_budget.date,
+        outer_retries_used: Math.max(0, Math.floor(parsed.retry_budget.outer_retries_used))
+      } : { date: "", outer_retries_used: 0 },
+      quota_calls_today: sanitizeQuotaCallsToday(parsed.quota_calls_today)
+    };
+  } catch {
+    return freshBrainHealth();
+  }
+}
+async function readBrainHealthAsync(basePath) {
+  try {
+    return parseBrainHealth(await readFile(join3(basePath, FILE), "utf8"));
+  } catch {
+    return freshBrainHealth();
+  }
+}
+
+// src/state/brain-signal.ts
+var SIGNAL_AGE_OUT_MS = 24 * 60 * 60 * 1000;
+function latchedSinceMs(health) {
+  const b = health.breaker;
+  if (b === null || b.class !== "permanent")
+    return null;
+  const at = Date.parse(b.opened_at);
+  return Number.isFinite(at) ? at : null;
 }
 
 // src/state/pose.ts
@@ -106,9 +275,9 @@ function resolveArt(species, mood, pose, unlockedPoses, nowMs = Date.now()) {
 }
 
 // src/state/progression.ts
-import { readFile, writeFile, rename, mkdir } from "fs/promises";
+import { readFile as readFile2, writeFile, rename, mkdir } from "fs/promises";
 import { existsSync } from "fs";
-import { join as join3 } from "path";
+import { join as join4 } from "path";
 var DEFAULT_STATS = {
   hp: 10,
   hunger: 5,
@@ -144,7 +313,7 @@ function pickAuraGlyph(level) {
 }
 var FILENAME = "progression.json";
 function progressionPath(basePath) {
-  return join3(basePath, FILENAME);
+  return join4(basePath, FILENAME);
 }
 function isLegacyProgression(value) {
   if (typeof value !== "object" || value === null)
@@ -187,7 +356,7 @@ async function readProgression(basePath) {
   if (!existsSync(path))
     return { ...DEFAULT_PROGRESSION, stats_last_tick_at: new Date().toISOString() };
   try {
-    const raw = await readFile(path, "utf8");
+    const raw = await readFile2(path, "utf8");
     const parsed = JSON.parse(raw);
     if (!isLegacyProgression(parsed))
       return { ...DEFAULT_PROGRESSION, stats_last_tick_at: new Date().toISOString() };
@@ -205,27 +374,30 @@ async function readProgression(basePath) {
 }
 
 // src/state/state.ts
-import { writeFile as writeFile2, rename as rename2, readFile as readFile2, mkdir as mkdir2 } from "fs/promises";
+import { writeFile as writeFile2, rename as rename2, readFile as readFile3, mkdir as mkdir2 } from "fs/promises";
 import { existsSync as existsSync2 } from "fs";
-import { join as join4 } from "path";
+import { join as join5 } from "path";
 var FILENAME2 = "state.json";
 var DEFAULT_STALE_MS = 30 * 60 * 1000;
 function statePath(basePath) {
-  return join4(basePath, FILENAME2);
+  return join5(basePath, FILENAME2);
 }
 async function readState(basePath) {
   const path = statePath(basePath);
   if (!existsSync2(path))
     return null;
   try {
-    const raw = await readFile2(path, "utf8");
+    const raw = await readFile3(path, "utf8");
     const parsed = JSON.parse(raw);
     if (parsed.schemaVersion !== 1)
       return null;
     if (typeof parsed.mood !== "string" || typeof parsed.pose !== "string" || typeof parsed.bubble_short !== "string" || typeof parsed.severity !== "string" || typeof parsed.confidence !== "string" || typeof parsed.last_updated_ms !== "number" || typeof parsed.last_session_id !== "string") {
       return null;
     }
-    return parsed;
+    const a = parsed.alert;
+    const alertOk = a !== undefined && a !== null && typeof a.text === "string" && typeof a.project === "string" && typeof a.at === "number";
+    const { alert: _drop, ...rest } = parsed;
+    return alertOk ? { ...rest, alert: a } : rest;
   } catch {
     return null;
   }
@@ -408,16 +580,16 @@ function renderMenubar(input) {
 }
 
 // src/face/menubar-aggregate.ts
-import { join as join8 } from "path";
+import { join as join9 } from "path";
 
 // src/state/critic-event-log.ts
 import { existsSync as existsSync3 } from "fs";
-import { readFile as readFile3 } from "fs/promises";
-import { join as join6 } from "path";
+import { readFile as readFile4 } from "fs/promises";
+import { join as join7 } from "path";
 
 // src/preference-log/reader.ts
-import { join as join5 } from "path";
-var DEFAULT_PATH = join5(siltpokeRoot(), "preference-log.jsonl");
+import { join as join6 } from "path";
+var DEFAULT_PATH = join6(siltpokeRoot(), "preference-log.jsonl");
 
 // src/state/audit-absence.ts
 function text(v) {
@@ -451,6 +623,60 @@ function classifyAuditAbsence(input) {
     return "brain_failed_other";
   }
   return "unrecorded";
+}
+
+// src/state/critic-failure-reason.ts
+var FAILURE_REASON_PREFIXES = [
+  "Brain call failed in ",
+  "runTools threw unexpectedly"
+];
+function failureReasonOf(reason) {
+  if (typeof reason !== "string")
+    return null;
+  return FAILURE_REASON_PREFIXES.some((p) => reason.startsWith(p)) ? reason : null;
+}
+
+// src/state/critic-injection-parse.ts
+var obj = (v) => v !== null && typeof v === "object" && !Array.isArray(v) ? v : null;
+var KINDS = new Set(["self", "tool", "echo", "scan"]);
+var LEVELS = new Set(["loud", "quiet"]);
+function signalOf(v) {
+  const o = obj(v);
+  if (o === null)
+    return null;
+  if (!KINDS.has(o.kind) || !LEVELS.has(o.level))
+    return null;
+  if (typeof o.where !== "string" || typeof o.quote !== "string" || typeof o.why !== "string")
+    return null;
+  return { kind: o.kind, level: o.level, where: o.where, quote: o.quote, why: o.why };
+}
+function injectionAlertOf(raw) {
+  const o = obj(raw.injection_alert);
+  if (o === null || !LEVELS.has(o.level) || !Array.isArray(o.signals))
+    return null;
+  const signals = o.signals.map(signalOf).filter((s) => s !== null);
+  if (signals.length === 0)
+    return null;
+  return {
+    level: o.level,
+    signals,
+    toolRecord: o.toolRecord === "recorded" ? "recorded" : "not_recorded"
+  };
+}
+function recordOf(v) {
+  const o = obj(v);
+  if (o === null || typeof o.tool !== "string" || typeof o.target !== "string" || typeof o.failed !== "boolean")
+    return null;
+  return { tool: o.tool, target: o.target, failed: o.failed };
+}
+function toolCallsOf(raw) {
+  const v = raw.tool_calls;
+  if (v === "not_recorded")
+    return v;
+  if (!Array.isArray(v))
+    return null;
+  const recs = v.map(recordOf);
+  return recs.every((r) => r !== null) ? recs : null;
 }
 
 // src/state/critic-event-log-types.ts
@@ -597,6 +823,8 @@ function parseCall(rawIn) {
       skip_reason: skipReason,
       audit_absence: absenceOf(raw, true),
       evidence_label: evidenceLabelOf(raw),
+      injection_alert: injectionAlertOf(raw),
+      tool_calls: toolCallsOf(raw),
       evidence_unverified: unverifiedCountOf(raw),
       diff_shown: diffCoverageOf(raw)?.shown ?? null,
       diff_total: diffCoverageOf(raw)?.total ?? null,
@@ -627,7 +855,7 @@ function parseCall(rawIn) {
       ...parseProviderFields(raw)
     };
   }
-  const errorMessage = typeof raw.error_message === "string" && raw.error_message.length > 0 ? raw.error_message : null;
+  const errorMessage = typeof raw.error_message === "string" && raw.error_message.length > 0 ? raw.error_message : raw.brain_output === undefined ? failureReasonOf(raw.m112_reason) : null;
   if (errorMessage !== null) {
     return {
       timestamp: ts,
@@ -638,6 +866,8 @@ function parseCall(rawIn) {
       skip_reason: "brain_error",
       audit_absence: absenceOf(raw, false),
       evidence_label: evidenceLabelOf(raw),
+      injection_alert: injectionAlertOf(raw),
+      tool_calls: toolCallsOf(raw),
       evidence_unverified: unverifiedCountOf(raw),
       diff_shown: diffCoverageOf(raw)?.shown ?? null,
       diff_total: diffCoverageOf(raw)?.total ?? null,
@@ -689,6 +919,8 @@ function parseCall(rawIn) {
     evidence: evidenceArr,
     audit_absence: absenceOf(raw, false),
     evidence_label: evidenceLabelOf(raw),
+    injection_alert: injectionAlertOf(raw),
+    tool_calls: toolCallsOf(raw),
     evidence_unverified: unverifiedCountOf(raw),
     diff_shown: diffCoverageOf(raw)?.shown ?? null,
     diff_total: diffCoverageOf(raw)?.total ?? null,
@@ -726,6 +958,10 @@ function parseLine(line) {
     return null;
   }
 }
+var IDLE_EVICT_MS = 10 * 60000;
+var parsedLogs = new Map;
+var inFlight = new Map;
+var evictTimers = new Map;
 
 // src/state/critic-event-log.ts
 function readTailWindow(lines, limit) {
@@ -768,10 +1004,10 @@ function scanBoundedWindow(lines, limit, rangeCutoff, before) {
   return { calls, hasMore };
 }
 async function readBrainCalls(basePath, limit = 50, opts = {}) {
-  const path = join6(basePath, "brain-calls.jsonl");
+  const path = join7(basePath, "brain-calls.jsonl");
   if (!existsSync3(path))
     return { calls: [], hasMore: false };
-  const raw = await readFile3(path, "utf8");
+  const raw = await readFile4(path, "utf8");
   const lines = raw.split(`
 `).filter((l) => l.length > 0);
   const rangeCutoff = opts.rangeCutoff ?? null;
@@ -780,10 +1016,10 @@ async function readBrainCalls(basePath, limit = 50, opts = {}) {
 }
 async function readUserActions(basePath) {
   const map = new Map;
-  const path = join6(basePath, "critic-actions.jsonl");
+  const path = join7(basePath, "critic-actions.jsonl");
   if (!existsSync3(path))
     return map;
-  const raw = await readFile3(path, "utf8");
+  const raw = await readFile4(path, "utf8");
   for (const line of raw.split(`
 `)) {
     if (!line)
@@ -806,13 +1042,13 @@ async function readUserActions(basePath) {
 }
 
 // src/state/critique-status.ts
-import { readFile as readFile4, writeFile as writeFile3, readdir } from "fs/promises";
+import { readFile as readFile5, writeFile as writeFile3, readdir } from "fs/promises";
 import { existsSync as existsSync4 } from "fs";
-import { join as join7 } from "path";
+import { join as join8 } from "path";
 var STATUS_LINE = /^status:\s*(\S+)\s*$/m;
 async function readStatus(critiquePath) {
   try {
-    const raw = await readFile4(critiquePath, "utf8");
+    const raw = await readFile5(critiquePath, "utf8");
     const match = raw.match(STATUS_LINE);
     if (!match)
       return null;
@@ -826,22 +1062,22 @@ async function readStatus(critiquePath) {
   }
 }
 async function findCritiqueByIdOrLatest(basePath, idOrLatest) {
-  const critiqueRoot = join7(basePath, "critiques");
+  const critiqueRoot = join8(basePath, "critiques");
   if (idOrLatest === "latest") {
-    const latestPath = join7(critiqueRoot, "latest.md");
+    const latestPath = join8(critiqueRoot, "latest.md");
     return existsSync4(latestPath) ? latestPath : null;
   }
-  const archiveRoot = join7(critiqueRoot, "archive");
+  const archiveRoot = join8(critiqueRoot, "archive");
   if (!existsSync4(archiveRoot))
     return null;
   try {
     const dates = await readdir(archiveRoot);
     for (const date of dates.sort().reverse()) {
-      const dateDir = join7(archiveRoot, date);
+      const dateDir = join8(archiveRoot, date);
       const files = await readdir(dateDir);
       const match = files.find((f) => f === `${idOrLatest}.md`);
       if (match)
-        return join7(dateDir, match);
+        return join8(dateDir, match);
     }
     return null;
   } catch {
@@ -868,7 +1104,7 @@ function isPending(c, actionsMap) {
 async function isActionedViaCli(c) {
   if (c.cwd === null || c.critique_id === null)
     return false;
-  const basePath = join8(c.cwd, ".siltpoke");
+  const basePath = join9(c.cwd, ".siltpoke");
   const path = await findCritiqueByIdOrLatest(basePath, c.critique_id);
   if (!path)
     return false;
@@ -1061,8 +1297,8 @@ function getSpecies(name) {
 
 // src/face/tasklist.ts
 import { existsSync as existsSync5 } from "fs";
-import { readFile as readFile5 } from "fs/promises";
-import { join as join9 } from "path";
+import { readFile as readFile6 } from "fs/promises";
+import { join as join10 } from "path";
 var LEAF = /^\s*[-*+]\s+\[(.)\]\s*(.*)$/;
 var FENCE = /^\s*(```|~~~)/;
 function parseTasklist(md) {
@@ -1111,54 +1347,16 @@ async function readTasklist(cwd) {
   if (!cwd)
     return null;
   try {
-    const path = join9(cwd, ".claude", "tasklist.md");
+    const path = join10(cwd, ".claude", "tasklist.md");
     if (!existsSync5(path))
       return null;
-    return await readFile5(path, "utf8");
+    return await readFile6(path, "utf8");
   } catch {
     return null;
   }
 }
 
-// src/face/wrapper.ts
-async function logError(basePath, message) {
-  try {
-    const logsDir = join10(basePath, "logs");
-    await mkdir3(logsDir, { recursive: true });
-    const line = `[${new Date().toISOString()}] ERROR ${message}
-`;
-    await appendFile(join10(logsDir, "errors.log"), line);
-  } catch {}
-}
-async function readConfig(basePath) {
-  const fallback = {
-    species: DEFAULT_SPECIES,
-    name: "",
-    bubble: "",
-    bubbleColor: "cyan",
-    terminalWidth: 0,
-    minimalMode: false,
-    showTasklist: false
-  };
-  try {
-    const configPath = join10(basePath, "config.json");
-    if (!existsSync6(configPath))
-      return fallback;
-    const raw = await readFile6(configPath, "utf8");
-    const parsed = JSON.parse(raw);
-    return {
-      species: typeof parsed?.species === "string" ? parsed.species : DEFAULT_SPECIES,
-      name: typeof parsed?.name === "string" ? parsed.name : "",
-      bubble: typeof parsed?.bubble === "string" ? parsed.bubble : "",
-      bubbleColor: typeof parsed?.bubbleColor === "string" ? parsed.bubbleColor : "cyan",
-      terminalWidth: typeof parsed?.terminalWidth === "number" && parsed.terminalWidth > 0 ? Math.floor(parsed.terminalWidth) : 0,
-      minimalMode: parsed?.minimalMode === true,
-      showTasklist: parsed?.showTasklist === true
-    };
-  } catch {
-    return fallback;
-  }
-}
+// src/face/bubble.ts
 var SEVERITY_TO_COLOR = {
   high: "red",
   medium: "yellow",
@@ -1235,7 +1433,7 @@ function wrapBubble(text2, maxWidth, maxLines) {
   }
   return flat;
 }
-function bubbleTimeStamp(atMs) {
+function bubbleTimeStamp(atMs, nowMs = Date.now()) {
   if (atMs === undefined || !Number.isFinite(atMs) || atMs <= 0)
     return "";
   const d = new Date(atMs);
@@ -1243,15 +1441,65 @@ function bubbleTimeStamp(atMs) {
   const meridiem = h24 < 12 ? "AM" : "PM";
   const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
   const mm = String(d.getMinutes()).padStart(2, "0");
-  return `[${h12}:${mm} ${meridiem}]: `;
+  return `[${dayPrefix(d, new Date(nowMs))}${h12}:${mm} ${meridiem}]: `;
 }
-function buildBubbleBlock(bubble, colorName, faceWidth, termWidth, atMs) {
-  const quoted = `${bubbleTimeStamp(atMs)}"${bubble}"`;
+var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function dayPrefix(at, now) {
+  const sameYear = at.getFullYear() === now.getFullYear();
+  if (sameYear && at.getMonth() === now.getMonth() && at.getDate() === now.getDate())
+    return "";
+  const day = `${MONTHS[at.getMonth()]} ${at.getDate()}`;
+  return sameYear ? `${day}, ` : `${day} ${at.getFullYear()}, `;
+}
+function buildBubbleBlock(bubble, colorName, faceWidth, termWidth, atMs, nowMs) {
+  const quoted = `${bubbleTimeStamp(atMs, nowMs)}"${bubble}"`;
   const effective = termWidth > 0 ? termWidth : 160;
   const available = Math.max(20, effective - faceWidth - 2);
   const wrapped = wrapBubble(quoted, available, 3);
   return wrapped.map((l) => colorize(l, colorName)).join(`
 `);
+}
+
+// src/face/wrapper.ts
+var INNER_TIMEOUT_MS = 2000;
+var INNER_GRACE_MS = 500;
+async function logError(basePath, message) {
+  try {
+    const logsDir = join11(basePath, "logs");
+    await mkdir3(logsDir, { recursive: true });
+    const line = `[${new Date().toISOString()}] ERROR ${message}
+`;
+    await appendFile(join11(logsDir, "errors.log"), line);
+  } catch {}
+}
+async function readConfig(basePath) {
+  const fallback = {
+    species: DEFAULT_SPECIES,
+    name: "",
+    bubble: "",
+    bubbleColor: "cyan",
+    terminalWidth: 0,
+    minimalMode: false,
+    showTasklist: false
+  };
+  try {
+    const configPath = join11(basePath, "config.json");
+    if (!existsSync6(configPath))
+      return fallback;
+    const raw = await readFile7(configPath, "utf8");
+    const parsed = JSON.parse(raw);
+    return {
+      species: typeof parsed?.species === "string" ? parsed.species : DEFAULT_SPECIES,
+      name: typeof parsed?.name === "string" ? parsed.name : "",
+      bubble: typeof parsed?.bubble === "string" ? parsed.bubble : "",
+      bubbleColor: typeof parsed?.bubbleColor === "string" ? parsed.bubbleColor : "cyan",
+      terminalWidth: typeof parsed?.terminalWidth === "number" && parsed.terminalWidth > 0 ? Math.floor(parsed.terminalWidth) : 0,
+      minimalMode: parsed?.minimalMode === true,
+      showTasklist: parsed?.showTasklist === true
+    };
+  } catch {
+    return fallback;
+  }
 }
 function detectTermWidth() {
   if (process.stderr.columns && process.stderr.columns > 0) {
@@ -1330,13 +1578,47 @@ function applyAura(faceBlock, glyph) {
   return [top, ...middle, bottom].join(`
 `);
 }
+async function runInner(innerCommand, options) {
+  const useReplay = typeof options.innerStdin === "string";
+  const proc = Bun.spawn(["bash", "-c", innerCommand], {
+    stdin: useReplay ? "pipe" : "inherit",
+    stderr: "inherit",
+    stdout: "pipe"
+  });
+  if (useReplay && proc.stdin) {
+    proc.stdin.write(options.innerStdin);
+    proc.stdin.end();
+  }
+  const limitMs = options.innerTimeoutMs ?? INNER_TIMEOUT_MS;
+  let timedOut = false;
+  let exited = false;
+  proc.exited.then(() => {
+    exited = true;
+  }, () => {
+    exited = true;
+  });
+  const timer = setTimeout(() => {
+    if (exited)
+      return;
+    timedOut = true;
+    try {
+      stopProcess(proc, INNER_GRACE_MS);
+    } catch {}
+  }, limitMs);
+  try {
+    const { stdout, exitCode } = await drainProcess({ stdout: proc.stdout, exited: proc.exited }, INNER_GRACE_MS);
+    return { stdout, exitCode, timedOut, limitMs };
+  } finally {
+    clearTimeout(timer);
+  }
+}
 async function runWrapper(options) {
-  const innerPath = join10(options.basePath, "inner.txt");
+  const innerPath = join11(options.basePath, "inner.txt");
   let stdout = "";
   if (!options.agent && existsSync6(innerPath)) {
     let innerCommand;
     try {
-      innerCommand = (await readFile6(innerPath, "utf8")).trim();
+      innerCommand = (await readFile7(innerPath, "utf8")).trim();
     } catch (err) {
       await logError(options.basePath, `Failed to read inner.txt: ${err}`);
       return "";
@@ -1346,18 +1628,13 @@ async function runWrapper(options) {
       return "";
     }
     try {
-      const useReplay = typeof options.innerStdin === "string";
-      const proc = Bun.spawn(["bash", "-c", innerCommand], {
-        stdin: useReplay ? "pipe" : "inherit",
-        stderr: "inherit",
-        stdout: "pipe"
-      });
-      if (useReplay && proc.stdin) {
-        proc.stdin.write(options.innerStdin);
-        proc.stdin.end();
+      const inner = await runInner(innerCommand, options);
+      if (inner.timedOut) {
+        await logError(options.basePath, `Inner command took over ${inner.limitMs} ms; stopped`);
+        return spliceFace(options, "");
       }
-      stdout = await new Response(proc.stdout).text();
-      const exitCode = await proc.exited;
+      stdout = inner.stdout;
+      const exitCode = inner.exitCode;
       if (exitCode !== 0) {
         await logError(options.basePath, `Inner command exited with code ${exitCode}`);
         return "";
@@ -1369,6 +1646,22 @@ async function runWrapper(options) {
   }
   return spliceFace(options, stdout);
 }
+function pickBubble(cfg, fresh, stoppedAtMs, agent, alert) {
+  if (stoppedAtMs !== null) {
+    const how = agent ? "ask your agent to wake Siltpoke" : "run /siltpoke:siltpoke-wake";
+    return { text: `I stopped reviewing \u2014 ${how}`, color: "red", atMs: stoppedAtMs };
+  }
+  if (alert !== undefined)
+    return { text: alert.text, color: "red", atMs: alert.at };
+  if (fresh !== null) {
+    return {
+      text: fresh.bubble_short,
+      color: severityToColor(fresh.severity, cfg.bubbleColor),
+      atMs: fresh.last_updated_ms
+    };
+  }
+  return { text: cfg.bubble, color: cfg.bubbleColor, atMs: undefined };
+}
 async function spliceFace(options, stdout) {
   try {
     const cfg = await readConfig(options.basePath);
@@ -1378,22 +1671,19 @@ async function spliceFace(options, stdout) {
     const state = projectState ?? globalState;
     const stateFresh = state !== null && !isStale(state);
     const mood = stateFresh ? state?.mood : "happy";
-    const bubbleText = stateFresh ? state?.bubble_short : cfg.bubble;
-    const bubbleColor = stateFresh ? severityToColor(state?.severity, cfg.bubbleColor) : cfg.bubbleColor;
+    const stoppedAtMs = latchedSinceMs(await readBrainHealthAsync(options.basePath));
+    const said = pickBubble(cfg, stateFresh ? state : null, stoppedAtMs, options.agent, state?.alert);
     const termWidth = options.termWidth ?? (cfg.terminalWidth > 0 ? cfg.terminalWidth : detectTermWidth());
     const tasklistRaw = cfg.showTasklist ? await readTasklist(options.cwd) : null;
     const tasklistParsed = tasklistRaw ? parseTasklist(tasklistRaw) : null;
     const tasklistSeg = tasklistParsed ? colorize(formatTasklistSegment(tasklistParsed), "gray") : "";
     const appendSeg = (s) => tasklistSeg ? `${s.replace(/\n+$/, "")}
 ${tasklistSeg}` : s;
-    if (cfg.minimalMode) {
-      if (!bubbleText)
-        return appendSeg(stdout);
-      const bubbleBlock = buildBubbleBlock(bubbleText, bubbleColor, 0, termWidth, stateFresh ? state?.last_updated_ms : undefined);
-      return appendSeg(`${stdout.replace(/\n+$/, "")}
+    const withBubble = (faceWidth) => said.text ? `${stdout.replace(/\n+$/, "")}
 
-${bubbleBlock}`);
-    }
+${buildBubbleBlock(said.text, said.color, faceWidth, termWidth, said.atMs, options.nowMs)}` : stdout;
+    if (cfg.minimalMode)
+      return appendSeg(withBubble(0));
     const progression = await readProgression(options.basePath);
     const pose = stateFresh ? state?.pose : undefined;
     const art = resolveArt(species, mood, pose, progression.unlocked_poses ?? []);
@@ -1401,10 +1691,7 @@ ${bubbleBlock}`);
     const rawFace = buildFaceBlock(art, cfg.name, formatProgressionLine(progression), titleLine);
     const auraGlyph = pickAuraGlyph(progression.level ?? 1);
     const face = applyAura(rawFace, auraGlyph);
-    const faceWidth = widestLine(face);
-    const inner = bubbleText ? `${stdout.replace(/\n+$/, "")}
-
-${buildBubbleBlock(bubbleText, bubbleColor, faceWidth, termWidth, stateFresh ? state?.last_updated_ms : undefined)}` : stdout;
+    const inner = withBubble(widestLine(face));
     return composeOutput({ face, inner: appendSeg(inner), termWidth });
   } catch (err) {
     await logError(options.basePath, `Face splice failed, falling through: ${err}`);
@@ -1425,15 +1712,15 @@ function resolveBunBinary(execPath, which) {
 }
 function resolveDaemonScript(hereDir) {
   if (basename(hereDir) === "dist") {
-    return join10(hereDir, "siltpoke-daemon.js");
+    return join11(hereDir, "siltpoke-daemon.js");
   }
-  return join10(hereDir, "..", "cli", "daemon.ts");
+  return join11(hereDir, "..", "cli", "daemon.ts");
 }
 function resolveDashboardCli(hereDir) {
   if (basename(hereDir) === "dist") {
-    return join10(hereDir, "siltpoke-cli.js");
+    return join11(hereDir, "siltpoke-cli.js");
   }
-  return join10(hereDir, "..", "cli", "plugin-cli.ts");
+  return join11(hereDir, "..", "cli", "plugin-cli.ts");
 }
 function resolveRestartField(which, scriptPath) {
   const bun = which("bun");
@@ -1519,7 +1806,7 @@ Open dashboard | href=http://127.0.0.1:9876
     const agent = parseAgentFlag(process.argv);
     const innerStdin = await readStdinAll();
     const cwd = parseCwd(innerStdin);
-    const projectBase = cwd ? join10(cwd, ".siltpoke") : undefined;
+    const projectBase = cwd ? join11(cwd, ".siltpoke") : undefined;
     const output = await runWrapper({
       basePath,
       projectBase,
@@ -1541,6 +1828,5 @@ export {
   resolveDaemonScript,
   resolveBunBinary,
   readConfig,
-  parseAgentFlag,
-  bubbleTimeStamp
+  parseAgentFlag
 };

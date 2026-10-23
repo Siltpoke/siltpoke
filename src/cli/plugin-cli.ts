@@ -22,23 +22,31 @@
  * This module is a router ONLY: each subcommand delegates to the existing
  * implementation in `src/cli/*`. No behavior is reimplemented here.
  */
+
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { probeExec } from "../installer/menubar-setup";
+import { siltpokeRoot } from "../installer/paths";
 import { randomName } from "../installer/personality-seed";
+import { restoreUserStatusLine } from "../installer/statusline-restore";
+import { askYesNo, realWizardIO, type WizardIO } from "../installer/wizard";
+import { runBrainCli } from "./brain-cli";
+import { formatDetect } from "./brain-detect";
+import { openDashboard, restartDashboard } from "./dashboard";
 import { runDoctorCli } from "./doctor";
 import { getCritique } from "./get-critique";
 import { markForwarded } from "./mark-forwarded";
+import { runMenubarCli } from "./menubar";
 import { formatMuteHuman, formatMuteJson, runMute } from "./mute";
 import { helpText } from "./plugin-help";
+import { realUninstallEffects } from "./plugin-uninstall";
 import { computeQuizDials } from "./quiz-score";
-import { openDashboard, restartDashboard } from "./dashboard";
-import { runMenubarCli } from "./menubar";
+import { fsDiskProbes, homeScopedExec } from "./uninstall-disk";
+import { realOutsideTools, runOutsideTool } from "./uninstall-purge";
+import { runUninstallCommand } from "./uninstall-run";
 import { formatUnmuteHuman, formatUnmuteJson, runUnmute } from "./unmute";
 import { formatWakeHuman, formatWakeJson, runWake } from "./wake";
-import { runBrainCli } from "./brain-cli";
-import { formatDetect } from "./brain-detect";
-import { siltpokeRoot } from "../installer/paths";
 
 export interface CliIo {
   stdout: (s: string) => void;
@@ -74,7 +82,15 @@ export function resolveDaemonArgv(): readonly string[] | undefined {
     fileURLToPath(new URL("./daemon.ts", import.meta.url)),
   ];
   const found = candidates.find((p) => existsSync(p));
-  return found ? ["bun", found, "start"] : undefined;
+  // `process.execPath`, not a bare "bun". This argv OVERRIDES openDashboard's
+  // own default, so it is the one a plugin install actually spawns — which is
+  // every user who installed through `/plugin install` rather than from source.
+  // Fixing the default alone left this path unfixed, and on native Windows a
+  // bare "bun" resolves to nothing (`where.exe bun` is empty even with bun
+  // installed), so the daemon would fail to start at all rather than start and
+  // die. Found by the derived sweep in tests/cli/daemon-detached.test.ts, which
+  // exists because a hand-written list of known sites had already missed two.
+  return found ? [process.execPath, found, "start"] : undefined;
 }
 
 /**
@@ -115,7 +131,7 @@ const HANDLERS: Record<string, Handler> = {
     return 0;
   },
 
-  // Prints ONE generated pet name to stdout. The conversational /siltpoke-setup
+  // Prints ONE generated pet name to stdout. The conversational /siltpoke:siltpoke-setup
   // calls this so its "random" option is the REAL combinator (adjective +
   // species-biased noun, e.g. "Velvetpaw") instead of the model inventing a
   // name. Optional first positional = species, to bias the noun pool.
@@ -125,7 +141,7 @@ const HANDLERS: Record<string, Handler> = {
     return 0;
   },
 
-  // Scores the /siltpoke-setup personality quiz into the five dials by calling
+  // Scores the /siltpoke:siltpoke-setup personality quiz into the five dials by calling
   // the REAL scoreQuiz (src/installer/personality-seed.ts) — the .md collects
   // 5 Likert scores + one finale letter per scenario and hands them here, so
   // dials are SCORED from the answers, never guessed by the model. Answers
@@ -181,7 +197,7 @@ const HANDLERS: Record<string, Handler> = {
   wake: async (rest, io) => {
     // Defect [11]: the self-serve clear for a latched Brain breaker. The code
     // existed in src/cli/wake.ts and every user-facing string pointed at
-    // `/siltpoke-wake`, but it was wired into neither the CLI nor the plugin
+    // `/siltpoke:siltpoke-wake`, but it was wired into neither the CLI nor the plugin
     // commands — so the one documented way out did not exist.
     const result = await runWake();
     io.stdout(rest.includes("--json") ? formatWakeJson(result) : formatWakeHuman(result));
@@ -190,7 +206,7 @@ const HANDLERS: Record<string, Handler> = {
 
   brain: (rest, io) => {
     // `detect` is read-only and config-free, so it lives beside the config
-    // verbs rather than inside them. /siltpoke-setup §8 is its caller.
+    // verbs rather than inside them. /siltpoke:siltpoke-setup §8 is its caller.
     if (rest[0] === "detect") {
       io.stdout(`${formatDetect()}\n`);
       return 0;
@@ -201,9 +217,9 @@ const HANDLERS: Record<string, Handler> = {
   },
 
   doctor: async (rest, io) => {
-    // repoRoot must come from the host: once bundled into dist/, doctor's own
-    // `defaultRepoRoot()` walks two directories up from the bundle and lands
-    // ABOVE the plugin root.
+    // Prefer the root the host gives. Without it (a doctor the user starts has
+    // no CLAUDE_PLUGIN_ROOT), doctor's own `defaultRepoRoot()` now resolves the
+    // bundle's root correctly — it used to land one level ABOVE it (defect [32]).
     const root = pluginRoot();
     const { exitCode, output } = await runDoctorCli(rest, root ? { repoRoot: root } : {});
     io.stdout(output);
@@ -237,6 +253,37 @@ const HANDLERS: Record<string, Handler> = {
       io.stderr(`siltpoke-restart-daemon: ${(e as Error).message}\n`);
       return 1;
     }
+  },
+
+  // Not a user command. The statusline shim calls this once after it finds
+  // the plugin uninstalled (defect [61]) — it is the only way anything of
+  // ours still gets to run, and a shell script cannot safely edit JSON.
+  "restore-statusline": (_rest, io) => {
+    io.stdout(`${restoreUserStatusLine(process.env)}\n`);
+    return 0;
+  },
+
+  // Defect [61]: the uninstall a plugin user can reach. Also what
+  // ~/.siltpoke/bin/uninstall.sh runs once the plugin itself is gone.
+  // `[61]` PR 2: it shows one removal plan and removes one group per call;
+  // several groups only through its own y/N loop, which needs a terminal.
+  uninstall: async (rest, io) => {
+    // Opened on the first question only: `--plan` must not need a terminal.
+    let wizard: WizardIO | undefined;
+    const tools = realOutsideTools(probeExec, runOutsideTool);
+    return await runUninstallCommand(rest, process.env, {
+      effects: realUninstallEffects(process.env),
+      probes: fsDiskProbes(homeScopedExec(probeExec, process.env), process.platform, tools.toolPresent),
+      purge: tools.effects,
+      // `defaults delete` acts on the account, not on HOME: refused under any other home.
+      undo: { exec: homeScopedExec(probeExec, process.env), platform: process.platform },
+      isTTY: process.stdin.isTTY === true && process.stdout.isTTY === true,
+      ask: (question) => {
+        wizard ??= realWizardIO();
+        return askYesNo(wizard, question, { default: "no" });
+      },
+      write: io.stdout,
+    });
   },
 
   menubar: async (rest, io) => {

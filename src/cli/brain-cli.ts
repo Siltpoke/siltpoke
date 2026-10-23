@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
 /**
- * `/siltpoke-brain` — the model-select surface (Slice C / Task 7).
+ * `/siltpoke:siltpoke-brain` — the model-select surface (Slice C / Task 7).
  *
  * Baseline, TTY-free twin of the dashboard settings screen (T8): both read and
  * write the SAME `brain.roles.<role>` block in `~/.siltpoke/config.json`, so
@@ -16,6 +16,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BrainRole, ProviderFamily } from "../brain/brain-config";
 import { loadBrainConfigSync } from "../brain/brain-config";
+import {
+  type ChatProviderDeps,
+  type ChatProviderResolution,
+  type ChatProviderSource,
+  installedFamilies,
+  resolveChatProvider,
+} from "../brain/chat-provider";
+import { HOST_BINARY, hostsSeen, lastHostSeenAt, readLastHost } from "../installer/last-host";
 import { CLAUDE_REVIEW_MODELS, familySupportsModelChoice, resolveRoleMeta } from "../brain/registry";
 import { atomicWrite } from "../utils/atomic-write";
 
@@ -56,7 +64,28 @@ export interface BrainBuilderView {
 
 export interface BrainView {
   authorFamily: ProviderFamily;
+  /**
+   * The agent whose session Siltpoke saw last (`last-host`), or null when none
+   * has been recorded. This is what a dashboard may call "the agent you are
+   * building with": `authorFamily` comes from SILTPOKE_HOST, which only a hook
+   * process has, so in the daemon it is "claude" whatever the user runs.
+   */
+  buildingWith: ProviderFamily | null;
+  /** When that record was last written (ISO), or null with no record. */
+  buildingWithSeenAt: string | null;
+  /**
+   * The model the building agent reported. Always null until step 3 of spec
+   * agent-in-use-truth records it; the page then says "not reported" rather
+   * than showing Siltpoke's own default in its place.
+   */
+  buildingWithModel: string | null;
   roles: BrainRoleView[];
+  /**
+   * Which agent dashboard chat uses right now, and why — `resolveChatProvider`'s
+   * own answer, the same call the chat route makes (defect [49]). When it is
+   * `use`, the chat entry in `roles` carries the same family, model and reason.
+   */
+  chat: ChatProviderResolution;
   families: readonly ProviderFamily[];
   /** One entry per builder family — the per-builder review overrides (v2). */
   reviewByBuilder: BrainBuilderView[];
@@ -71,6 +100,12 @@ export interface BrainView {
    * (spec brain-select-four-gaps §3.1).
    */
   modelCapableFamilies: readonly ProviderFamily[];
+  /**
+   * All five agents, in FAMILIES order, for the "Coding agents on this
+   * machine" chips (spec §12.1, §12.4): installed by the rule chat uses, and
+   * when a session of it was last seen (`hosts-seen/`), or null.
+   */
+  agents: { family: ProviderFamily; installed: boolean; seenAt: string | null }[];
 }
 
 // Local validation lists — `asFamily` is intentionally not exported from
@@ -158,15 +193,29 @@ export function sourceIsExplicitPin(source: string): boolean {
   return source !== "default" && source !== "follows builder";
 }
 
+/** Why chat uses the agent it uses, in the words the surfaces print (spec
+ * 2026-10-13 §11.1: the Runs window and Settings use these same two). */
+export const CHAT_SOURCE_LABEL: Record<ChatProviderSource, string> = {
+  chosen: "from settings",
+  installed: "only one installed",
+};
+
 /**
  * Print the resolved brain: the builder that authored this run, then each role
  * with its resolved `family · model`. A role with no pinned model shows
  * "(CLI default)" rather than a blank — the CLI account picks the model.
  */
-export function brainView(home: string): BrainView {
+export function brainView(home: string, chatDeps: ChatProviderDeps = {}): BrainView {
   const config = loadBrainConfigSync(home);
   const raw = readRawConfig(home);
+  const chat = resolveChatProvider(home, chatDeps);
   const roles: BrainRoleView[] = ROLES.map((role) => {
+    // chat does NOT resolve through the config's fallback chain (chat → main →
+    // claude): that printed claude on a machine with no claude while chat used
+    // something else. It shows what the chat route will actually launch.
+    if (role === "chat" && chat.kind === "use") {
+      return { role, family: chat.family, model: chat.model, source: CHAT_SOURCE_LABEL[chat.source] };
+    }
     const meta = resolveRoleMeta(config, role);
     return { role, family: meta.family, model: meta.model, source: roleSource(raw, role) };
   });
@@ -198,21 +247,44 @@ export function brainView(home: string): BrainView {
   });
   return {
     authorFamily: config.authorFamily,
+    buildingWith: readLastHost(home)?.family ?? null,
+    buildingWithSeenAt: lastHostSeenAt(home)?.toISOString() ?? null,
+    buildingWithModel: null,
     roles,
+    chat,
     families: FAMILIES,
     reviewByBuilder,
     claudeModels: CLAUDE_REVIEW_MODELS,
     modelCapableFamilies: FAMILIES.filter(familySupportsModelChoice),
+    agents: agentsOnMachine(home, chatDeps),
   };
 }
 
-export function formatBrainShow(home: string): string {
-  const view = brainView(home);
+function agentsOnMachine(home: string, chatDeps: ChatProviderDeps): BrainView["agents"] {
+  const installed = new Set(installedFamilies(home, chatDeps));
+  const seen = new Map(hostsSeen(home).map((s) => [s.family, s.seenAt]));
+  return FAMILIES.map((family) => ({ family, installed: installed.has(family), seenAt: seen.get(family) ?? null }));
+}
+
+export function formatBrainShow(home: string, chatDeps: ChatProviderDeps = {}): string {
+  const view = brainView(home, chatDeps);
   const lines: string[] = [];
   lines.push(`builder (authored the code): ${view.authorFamily}`);
   lines.push("");
   lines.push("brains by role:");
   for (const r of view.roles) {
+    // With no agent decided there is no family to print for chat — say what is
+    // missing instead of the config fallback, which would name claude.
+    if (r.role === "chat" && view.chat.kind === "choose") {
+      lines.push(
+        `  ${r.role.padEnd(8)} not decided — found ${view.chat.found.join(", ")}; pick one: siltpoke brain set chat <family>`,
+      );
+      continue;
+    }
+    if (r.role === "chat" && view.chat.kind === "none") {
+      lines.push(`  ${r.role.padEnd(8)} no coding-agent CLI found on this machine`);
+      continue;
+    }
     const model = r.model ?? "(CLI default)";
     const marker = r.role === "review" ? " ←" : "";
     lines.push(`  ${r.role.padEnd(8)} ${r.family} · ${model}  [${r.source}]${marker}`);
@@ -416,10 +488,37 @@ export function runBrainUnset(home: string, role: string): BrainCliResult {
   };
 }
 
+/**
+ * A choice is saved even when the agent is not installed (the user may be about
+ * to install it), but it is said out loud. Windows Run 4 (install audit §110
+ * W7): `set review codex` on a machine without codex answered only "review brain
+ * set to codex", and the next review failed. "Installed" is the rule the
+ * Settings page uses (`installedFamilies`): on PATH, or a path a hook recorded.
+ */
+function warnIfNotInstalled(
+  result: BrainCliResult,
+  home: string,
+  family: string,
+  deps: ChatProviderDeps,
+): BrainCliResult {
+  if (!result.ok || !isFamily(family)) return result;
+  if (installedFamilies(home, deps).includes(family)) return result;
+  return {
+    ok: true,
+    message:
+      `${result.message}\n⚠ ${family} is not installed on this machine (\`${HOST_BINARY[family]}\` is not on PATH), ` +
+      "so its reviews will fail until it is — install it, or pick another agent.",
+  };
+}
+
 /** Dispatch: no verb / "show" -> show; "set <role> <family> [model]" -> global
  * role pin; "unset <role>" -> drop that pin; "set-builder <builder> <reviewer>
  * [model]" -> per-builder override. */
-export function runBrainCli(rest: readonly string[], home: string): BrainCliResult {
+export function runBrainCli(
+  rest: readonly string[],
+  home: string,
+  deps: ChatProviderDeps = {},
+): BrainCliResult {
   const verb = rest[0];
 
   if (verb === undefined || verb === "show") {
@@ -431,7 +530,7 @@ export function runBrainCli(rest: readonly string[], home: string): BrainCliResu
     if (role === undefined || family === undefined) {
       return { ok: false, message: "usage: siltpoke brain set <role> <family> [model]" };
     }
-    return runBrainSet(home, role, family, model);
+    return warnIfNotInstalled(runBrainSet(home, role, family, model), home, family, deps);
   }
 
   if (verb === "unset") {
@@ -447,7 +546,7 @@ export function runBrainCli(rest: readonly string[], home: string): BrainCliResu
     if (builder === undefined || reviewer === undefined) {
       return { ok: false, message: "usage: siltpoke brain set-builder <builder> <reviewer> [model]" };
     }
-    return setReviewByBuilder(home, builder, reviewer, model);
+    return warnIfNotInstalled(setReviewByBuilder(home, builder, reviewer, model), home, reviewer, deps);
   }
 
   return {

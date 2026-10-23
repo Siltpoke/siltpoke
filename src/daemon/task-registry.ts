@@ -276,8 +276,8 @@ export class TaskRegistry {
   }
 
   /** Two-phase phase 2: success (or a paid-but-rejected outcome like malformed /
-   * integrity_failed / cost_cap_exceeded — cost is still recorded, errorMsg
-   * carries the parse/integrity/cap reason for diagnosability). */
+   * integrity_failed — cost is still recorded, errorMsg carries the
+   * parse/integrity reason for diagnosability). */
   finish(id: string, patch: { costUsd?: number | null; errorMsg?: string } = {}): void {
     this.complete(id, "done", { costUsd: patch.costUsd ?? null, errorMsg: patch.errorMsg });
   }

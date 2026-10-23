@@ -17,6 +17,56 @@ describe("bootstrap.ps1 guards", () => {
     expect(script).toContain("Siltpoke/siltpoke");
     expect(script).not.toContain("OWNER/siltpoke-dist");
   });
+  // [61] P1.4 — textual only: there is no PowerShell here, so the behaviour of the
+  // note (what the sh script's sibling test runs for real) is UNTESTED on Windows.
+  describe("receipt note about bun (spec §2.3)", () => {
+    const note = (state: string, byUs: boolean) =>
+      `'{"id":"tool:bun","byUs":${byUs},"state":"${state}"}'`;
+    test("writes the note next to the app dir, ASCII, in all three cases", () => {
+      expect(script).toMatch(/\$BunNote\s*=\s*Join-Path \$Home_ "receipt-bootstrap\.json"/);
+      expect(script).toContain(note("pending", true));
+      expect(script).toContain(note("done", true));
+      expect(script).toContain(note("done", false));
+      for (const m of script.match(/Set-Content -Path \$BunNote[^\n]*/g) ?? []) expect(m).toContain("-Encoding ascii");
+    });
+    test("pending is written BEFORE the bun installer, done only after it", () => {
+      const pending = script.indexOf(note("pending", true));
+      const install = script.indexOf("irm https://bun.sh/install.ps1 | iex");
+      const done = script.indexOf(note("done", true));
+      expect(pending).toBeGreaterThan(-1);
+      expect(pending).toBeLessThan(install);
+      expect(install).toBeLessThan(done);
+    });
+    test("an existing note is not overwritten when bun is already present", () => {
+      expect(script).toMatch(/elseif \(-not \(Test-Path \$BunNote\)\)/);
+    });
+  });
+  // [63] P1.6 — textual only, UNTESTED on Windows (how Read-Host behaves under `irm | iex`).
+  describe("asks before installing Bun", () => {
+    test("asks with Read-Host, only on an interactive console, default yes", () => {
+      expect(script).toMatch(/Read-Host "[^"]*Install it now\? \[Y\/n\]"/);
+      expect(script).toMatch(/UserInteractive -and -not \[Console\]::IsInputRedirected/);
+      expect(script).toMatch(/\$Answer -eq ""/);
+    });
+    test("--yes or $env:SILTPOKE_YES=1 counts; with no console and neither it stops with the manual command", () => {
+      expect(script).toMatch(/\$args -contains "--yes"/);
+      expect(script).toMatch(/\$env:SILTPOKE_YES -eq "1"/);
+      expect(script).toMatch(/throw "siltpoke: Bun is required[^"]*irm bun\.sh\/install\.ps1/);
+    });
+    test("the advice works under `irm | iex`, where no argument can be passed (review M6)", () => {
+      const msg = script.match(/throw "siltpoke: Bun is required[^"]*"/)?.[0] ?? "";
+      expect(msg).toContain("SILTPOKE_YES");
+      expect(msg).not.toContain("--yes");
+    });
+    test("the question comes before the pending note and the installer", () => {
+      const ask = script.indexOf("Read-Host");
+      const pending = script.indexOf('"state":"pending"');
+      const install = script.indexOf("irm https://bun.sh/install.ps1 | iex");
+      expect(ask).toBeGreaterThan(-1);
+      expect(ask).toBeLessThan(pending);
+      expect(pending).toBeLessThan(install);
+    });
+  });
   test("verifies SHA-256 via Get-FileHash and throws on mismatch", () => {
     expect(script).toMatch(/Get-FileHash/);
     expect(script).toMatch(/SHA256/);

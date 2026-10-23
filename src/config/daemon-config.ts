@@ -11,7 +11,7 @@ import { z } from "zod";
  * `enabled` — whether the daemon should be autostarted / respawned. Default
  * `false`: core review runs entirely in the Stop hook process and never needs
  * the daemon; only the opt-in web surfaces (dashboard / chat / repo-index) do.
- * Turned on by opening `/siltpoke-dashboard`, which lazy-starts the server.
+ * Turned on by opening `/siltpoke:siltpoke-dashboard`, which lazy-starts the server.
  */
 export const daemonConfigSchema = z.object({
   enabled: z.boolean().default(false),

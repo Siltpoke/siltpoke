@@ -41,9 +41,10 @@ describe("doctor — orchestration", () => {
   // it always passes. The once-a-day version check is the only request
   // siltpoke makes on its own, and a switch nobody can find from inside the
   // product is not really a switch).
-  test("runAllChecks returns 17 entries (one per check)", () => {
+  // 19 → 20 on 2026-10-15: "ripgrep available" (install audit §110 W4).
+  test("runAllChecks returns one entry per check", () => {
     const results = runAllChecks({ claudeHome: env.claudeHome, siltpokeHome: env.siltpokeHome });
-    expect(results).toHaveLength(17);
+    expect(results).toHaveLength(19);
     for (const r of results) {
       expect(typeof r.name).toBe("string");
       expect(typeof r.pass).toBe("boolean");
@@ -164,7 +165,7 @@ describe("doctor — formatters", () => {
     const out = formatChecklist(withWarn);
     expect(out).toContain("⚠  stale-row");
     expect(out).toContain("daemon 3 commits behind — restart");
-    // warn-only: still "all passed" + healthy (no exit-code impact).
+    // warn-only: still "all passed" (no exit-code impact), but no longer "Install healthy" (§110 W2).
     expect(out).toContain("All 2 checks passed");
   });
 

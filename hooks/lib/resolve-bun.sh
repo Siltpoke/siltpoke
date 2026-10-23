@@ -26,7 +26,7 @@
 # Prints the resolved path on stdout and returns 0; prints nothing and returns
 # 1 when bun is genuinely unreachable. Callers decide what to do with that —
 # the hook guards stay silent (nothing may reach the user's session), while
-# /siltpoke-doctor and the statusline are the surfaces that say it out loud.
+# /siltpoke:siltpoke-doctor and the statusline are the surfaces that say it out loud.
 siltpoke_resolve_bun() {
   _siltpoke_bun="$(command -v bun 2>/dev/null || true)"
   if [ -n "$_siltpoke_bun" ]; then
@@ -37,7 +37,7 @@ siltpoke_resolve_bun() {
   # `cat`, not `read`: a pointer file written without a trailing newline makes
   # `read` return non-zero even though it did set the variable, and under the
   # callers' `set -e`-free-but-`set -u` shells that reads as "no pointer".
-  _siltpoke_ptr="${HOME:-}/.siltpoke/bun-path"
+  _siltpoke_ptr="${SILTPOKE_HOME:-${HOME:-}/.siltpoke}/bun-path"
   if [ -f "$_siltpoke_ptr" ]; then
     # Command substitution already strips trailing newlines, so the writer's
     # trailing \n needs no `tr` — and must not use one: tr is external, and this

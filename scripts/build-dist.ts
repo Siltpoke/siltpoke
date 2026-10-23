@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
-import { existsSync, mkdirSync, copyFileSync, cpSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 export interface BundleSpec {
@@ -54,6 +54,11 @@ export const BUNDLES: BundleSpec[] = [
   { entry: "src/hooks/codex-stop.ts", out: "dist/codex-stop.js", external: ["fastembed"] },
   { entry: "src/hooks/agy-stop.ts", out: "dist/agy-stop.js" },
   { entry: "src/hooks/handle-session-start.ts", out: "dist/handle-session-start.js" },
+  // The Windows half of hooks/stop.sh + hooks/session-start.sh. Started by
+  // hooks/siltpoke-hook.ps1, which finds bun and hands over; every decision
+  // lives here so it is testable in one place rather than twice in two shell
+  // dialects.
+  { entry: "src/hooks/hook-guard.ts", out: "dist/siltpoke-hook-guard.js" },
   // The repo indexer, spawned by the daemon's dashboard "Index a repo" flow.
   // It MUST be a bundle: the daemon itself runs as dist/siltpoke-daemon.js, and
   // a plugin cache ships no `src/` and no `node_modules`, so a `.ts` target is
@@ -136,6 +141,20 @@ export function copyCodexPluginSkills(): void {
   console.log("copied skills/ -> .codex-plugin/skills/");
 }
 
+/**
+ * The directory a manifest's relative paths resolve against.
+ *
+ * codex resolves them against the PLUGIN ROOT, not against `.codex-plugin/`:
+ * `resolve_manifest_paths(&plugin_root, …)` in codex's `core-plugins`
+ * (read at `rust-v0.162.1`). Resolving codex's `"hooks": "./hooks.json"` next to
+ * the manifest would fail this check on a file codex never looks for there.
+ * The other hosts keep the manifest's own directory.
+ */
+function manifestBase(manifest: string): string {
+  const dir = dirname(manifest);
+  return basename(dir) === ".codex-plugin" ? dirname(dir) : dir;
+}
+
 /** A shipped manifest and the relative paths it declares. */
 export interface ManifestPathClaim {
   manifest: string;
@@ -163,7 +182,7 @@ export function manifestPathClaims(
         manifest,
         key,
         declared: value,
-        resolved: join(dirname(manifest), value),
+        resolved: join(manifestBase(manifest), value),
       });
     }
   }
@@ -266,18 +285,23 @@ export function copyAgyPluginSelfContained(): void {
   // above — an agy install sees ONLY this subdir, so the lib has to travel with
   // the wrapper. Without it the wrapper still runs (it falls back to a PATH-only
   // lookup) but agy users would silently keep the bug this fix exists to close.
-  mkdirSync(join(hooksDir, "lib"), { recursive: true });
-  copyFileSync("hooks/lib/resolve-bun.sh", join(hooksDir, "lib", "resolve-bun.sh"));
-  console.log("copied .antigravity-plugin/hooks/lib/resolve-bun.sh");
+  //
+  // The WHOLE lib directory, not a list of names (defect [49]): every helper is
+  // sourced behind a `-r` test, so one that is missing from the copy is skipped
+  // without a sound. A hand-kept list would ship the next helper to every host
+  // except agy. rm first, so a helper deleted from hooks/lib does not linger.
+  rmSync(join(hooksDir, "lib"), { recursive: true, force: true });
+  cpSync(join("hooks", "lib"), join(hooksDir, "lib"), { recursive: true });
+  console.log("copied hooks/lib/ -> .antigravity-plugin/hooks/lib/");
 
   // agy `plugin install <repo>/.antigravity-plugin` copies ONLY that subdir
-  // (same fact as the dist/ comment above), and plugin.json now declares
-  // "skills": "./skills/" (audit defect [9]: without this the manifest points
-  // at a directory that doesn't exist in the shipped plugin, so `agy plugin
-  // install` reports "skills: skipped (not found)" and the conversational
-  // setup guide never reaches agy users — the plugin installs and does
-  // nothing, with no error). rm-then-cp (not a merge-copy) so a skill deleted
-  // from the source repo cannot linger in the shipped plugin.
+  // (same fact as the dist/ comment above), so skills/ must be copied in or
+  // the conversational setup guide never reaches agy users (audit defect [9]).
+  // agy finds ./skills/ by folder name; plugin.json must NOT name it — agy
+  // 1.4.2/1.4.4 reject `"skills": "./skills/"` and skips the whole plugin, Stop
+  // hook included (an internal design note).
+  // rm-then-cp (not a merge-copy) so a skill deleted from the source repo
+  // cannot linger in the shipped plugin.
   rmSync(skillsDir, { recursive: true, force: true });
   cpSync("skills", skillsDir, { recursive: true });
   console.log("copied skills/ -> .antigravity-plugin/skills/");

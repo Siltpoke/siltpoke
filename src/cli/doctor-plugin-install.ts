@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { resolvePluginRoot } from "../installer/shim";
-import { defaultRepoRoot, type DoctorOptions } from "./doctor";
+import { type DoctorOptions, defaultRepoRoot } from "./doctor";
 
 /**
  * Is this a plugin install?
  *
  * Defect [24]: this used to be `Boolean(process.env.CLAUDE_PLUGIN_ROOT)` alone.
  * The host exports that variable to hooks and commands, but NOT to a doctor the
- * user starts themselves — so running `/siltpoke-doctor` by hand on a perfectly
+ * user starts themselves — so running `/siltpoke:siltpoke-doctor` by hand on a perfectly
  * healthy plugin install read as a from-source checkout, and two rows went red
  * about files that were never supposed to exist ("slash command symlinks
  * intact … repo layout is broken", and hooks.Stop[] being empty in
@@ -40,6 +41,11 @@ export function isPluginInstall(opts: DoctorOptions): boolean {
     } catch {
       // Either path vanished mid-check — fall through to the env var.
     }
+    // Defect [91]: with several hosts installed the pointer names the NEWEST
+    // copy, so another host's copy no longer finds itself there. A host's
+    // plugin copy carries the manifest and no `.git`; a from-source checkout
+    // or worktree always has `.git` (a dir, or a file in a worktree).
+    if (existsSync(join(here, ".claude-plugin", "plugin.json")) && !existsSync(join(here, ".git"))) return true;
   }
   return Boolean(process.env.CLAUDE_PLUGIN_ROOT);
 }

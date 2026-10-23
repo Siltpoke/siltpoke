@@ -2,8 +2,11 @@
 // Copyright (c) 2026 Jiaqi Duan
 
 import { spawnSync } from "node:child_process";
-import { existsSync as realExistsSync, writeFileSync } from "node:fs";
+import { existsSync as realExistsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, normalize } from "node:path";
+import { notThisAccount, otherAccountHome } from "./account-home";
+import { markDone, recordBefore } from "./receipt";
+import { menubarShimEntry, swiftbarAppEntry, swiftbarPrefEntry } from "./receipt-sites";
 import { installSwiftbarAutostart, SWIFTBAR_APP_PATH } from "./swiftbar-autostart";
 import type { WizardIO } from "./wizard";
 import { askYesNo } from "./wizard";
@@ -14,8 +17,8 @@ export const SWIFTBAR_DOWNLOAD_URL = "https://github.com/swiftbar/SwiftBar/relea
 export const SHIM_NAME = "siltpoke.1m.sh";
 /** Wall-clock bound for a read-only probe (`defaults read`, `pgrep`). */
 const PROBE_TIMEOUT_MS = 3000;
-const SWIFTBAR_DEFAULTS_DOMAIN = "com.ameba.SwiftBar";
-const SWIFTBAR_PLUGIN_DIR_KEY = "PluginDirectory";
+export const SWIFTBAR_DEFAULTS_DOMAIN = "com.ameba.SwiftBar";
+export const SWIFTBAR_PLUGIN_DIR_KEY = "PluginDirectory";
 
 export interface MenubarSetupDeps {
   io: WizardIO;
@@ -26,7 +29,7 @@ export interface MenubarSetupDeps {
   existsSync?: (path: string) => boolean;
   /**
    * Skip the interactive "Install SwiftBar with Homebrew?" prompt. Used by the
-   * `/siltpoke-menubar` slash command, which has no TTY — running the command
+   * `/siltpoke:siltpoke-menubar` slash command, which has no TTY — running the command
    * IS the consent. When SwiftBar isn't already installed, a non-interactive
    * run does NOT auto-brew (too invasive without a prompt); it prints the
    * download link and returns `no-swiftbar` instead.
@@ -35,14 +38,19 @@ export interface MenubarSetupDeps {
   /**
    * Absolute path the SwiftBar shim should invoke to render the pet. Defaults
    * to the source `src/face/wrapper.ts` (from-source installs). A plugin
-   * install has no `src/`, so `/siltpoke-menubar` passes the bundled
+   * install has no `src/`, so `/siltpoke:siltpoke-menubar` passes the bundled
    * `${CLAUDE_PLUGIN_ROOT}/dist/siltpoke-card.js` here.
    */
   rendererPath?: string;
+  /** Reads the file already at the shim path (null = none); decides the receipt's byUs. */
+  readFile?: (path: string) => string | null;
+  /** Env for the install receipt (`~/.siltpoke/receipt.json`); defaults to process.env. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export type MenubarSetupReason =
   | "not-darwin"
+  | "not-account-home"
   | "declined"
   | "no-brew"
   | "no-swiftbar"
@@ -93,6 +101,14 @@ function resolveBunPath(exec: (cmd: string, args: string[]) => { status: number;
   return trimmed || "bun";
 }
 
+function readFileOrNull(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
 function renderShim(bunPath: string, wrapperPath: string): string {
   return `#!/bin/bash\nexec "${bunPath}" "${wrapperPath}" --menubar\n`;
 }
@@ -110,13 +126,19 @@ function renderShim(bunPath: string, wrapperPath: string): string {
 function resolvePluginDir(
   exec: (cmd: string, args: string[]) => { status: number; stdout: string },
   home: string,
+  receiptEnv: NodeJS.ProcessEnv,
 ): string {
   const existing = readPluginDirPref(exec, home);
+  // Receipt (spec §2.1): the pref is ours only when it was unset and we write it.
+  const entry = swiftbarPrefEntry(SWIFTBAR_DEFAULTS_DOMAIN, SWIFTBAR_PLUGIN_DIR_KEY, !existing);
+  recordBefore(entry, receiptEnv);
   if (existing) {
+    markDone(entry.id, receiptEnv);
     return existing;
   }
   const fallback = defaultPluginDir(home);
-  exec("defaults", ["write", SWIFTBAR_DEFAULTS_DOMAIN, SWIFTBAR_PLUGIN_DIR_KEY, fallback]);
+  const wrote = exec("defaults", ["write", SWIFTBAR_DEFAULTS_DOMAIN, SWIFTBAR_PLUGIN_DIR_KEY, fallback]);
+  if (wrote.status === 0) markDone(entry.id, receiptEnv);
   return fallback;
 }
 
@@ -216,7 +238,7 @@ export function anyInstalledShimPath(
  * Separate from `defaultExec` rather than a timeout added to it: that one also
  * runs `brew install --cask swiftbar`, which legitimately takes minutes, so a
  * few-second bound there would abort real installs. A question, by contrast,
- * has no business taking seconds — and `/siltpoke-menubar status` runs inside
+ * has no business taking seconds — and `/siltpoke:siltpoke-menubar status` runs inside
  * an agent turn, where a wedged `defaults`/`pgrep` would hang the turn itself.
  */
 export function probeExec(cmd: string, args: string[]): { status: number; stdout: string } {
@@ -242,14 +264,31 @@ export async function runMenubarSetup(deps: MenubarSetupDeps): Promise<MenubarSe
   const { io } = deps;
   const home = deps.home ?? process.env.HOME ?? "";
   const exec = deps.exec ?? defaultExec;
+  // [71]: everything below acts on the macOS ACCOUNT — SwiftBar's plugin folder
+  // comes from `defaults`, SwiftBar is restarted, the login item goes into the
+  // account's launchd domain. Under a home that is not the account's (a
+  // sandbox, a test, `HOME=… siltpoke`) it would change the real one. Asked
+  // before anything else runs; a home that cannot be checked goes on as before.
+  const account = otherAccountHome(home, exec);
+  if (account !== null) {
+    io.write(`The menu-bar pet was not set up: ${notThisAccount(home, account)} Nothing was changed.\n`);
+    return { installed: false, wroteShim: false, reason: "not-account-home" };
+  }
   const writeFile = deps.writeFile ?? ((p: string, c: string) => writeFileSync(p, c));
   const existsSync = deps.existsSync ?? realExistsSync;
+  const readFile = deps.readFile ?? readFileOrNull;
+  const receiptEnv = deps.env ?? process.env;
 
   const swiftBarAppPresent = existsSync(SWIFTBAR_APP_PATH);
   const swiftBarCaskInstalled =
     swiftBarAppPresent || exec("brew", ["list", "--cask", "swiftbar"]).status === 0;
+  const appEntry = swiftbarAppEntry(SWIFTBAR_APP_PATH, !swiftBarCaskInstalled);
 
-  if (!swiftBarCaskInstalled) {
+  if (swiftBarCaskInstalled) {
+    // Already on the machine: recorded as the user's, so purge never offers it.
+    recordBefore(appEntry, receiptEnv);
+    markDone(appEntry.id, receiptEnv);
+  } else {
     if (deps.nonInteractive) {
       // No TTY (slash command). Don't auto-brew without a prompt — just point
       // the user at the download and bail. They re-run once SwiftBar is there.
@@ -269,16 +308,26 @@ export async function runMenubarSetup(deps: MenubarSetupDeps): Promise<MenubarSe
       );
       return { installed: false, wroteShim: false, reason: "no-brew" };
     }
-    exec("brew", ["install", "--cask", "swiftbar"]);
+    recordBefore(appEntry, receiptEnv);
+    if (exec("brew", ["install", "--cask", "swiftbar"]).status === 0) markDone(appEntry.id, receiptEnv);
   }
 
-  const pluginDir = resolvePluginDir(exec, home);
-  exec("mkdir", ["-p", pluginDir]);
-
+  const pluginDir = resolvePluginDir(exec, home, receiptEnv);
   const shimPath = join(pluginDir, SHIM_NAME);
   const bunPath = resolveBunPath(exec);
   const wrapperPath = deps.rendererPath ?? resolveWrapperPath();
-  writeFile(shimPath, renderShim(bunPath, wrapperPath));
+  const shim = renderShim(bunPath, wrapperPath);
+  const priorShim = existsSync(shimPath) ? readFile(shimPath) : undefined;
+  const shimEntry = menubarShimEntry(
+    shimPath,
+    priorShim === undefined ? "absent" : priorShim === null ? "unreadable" : { content: priorShim },
+    shim,
+  );
+  recordBefore(shimEntry, receiptEnv);
+  // After the receipt entry, so the folders this makes are recorded as new (`[80]`).
+  exec("mkdir", ["-p", pluginDir]);
+  writeFile(shimPath, shim);
+  markDone(shimEntry.id, receiptEnv);
   exec("chmod", ["+x", shimPath]);
 
   // Restart SwiftBar so a already-running instance re-reads the (possibly
@@ -298,6 +347,7 @@ export async function runMenubarSetup(deps: MenubarSetupDeps): Promise<MenubarSe
     mkdirSync: (dir) => {
       exec("mkdir", ["-p", dir]);
     },
+    env: receiptEnv,
   });
 
   return { installed: true, wroteShim: true, reason: "ok", autostart: auto.installed };

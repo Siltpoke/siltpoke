@@ -17,34 +17,15 @@ import { tokens } from "../../tokens/tokens";
 import { prettifyProject } from "../critic/filter-bar";
 import { type FilterState, filterHref, formatTimeAgo, STATUS_COLOR } from "../critic/helpers";
 import { groupRecursionGuards } from "../critic/recent-table";
-import { builderFamily, familyColor, fmtCost, fmtTokens, reviewerFamily, rowTokens, turnKey } from "./format";
+import { quotaCapNoteFor } from "./quota-cap-note";
+import { QuotaCapNote, RailGuardGroupRow, RailRowCostLine } from "./rail-parts";
+import { builderFamily, familyColor, reviewerFamily, turnKey } from "./format";
 
 const KIND_COLOR: Record<string, string> = {
   critical: tokens.color.terra,
   warning: tokens.color.amber,
   comment: tokens.color.moss,
 };
-
-function RailGuardGroupRow({ count, timestamp, now }: { count: number; timestamp: string; now: Date }) {
-  return (
-    <div
-      style={{
-        borderBottom: `1px solid ${tokens.color.edge}`,
-        padding: "6px 14px",
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        opacity: 0.45,
-        fontFamily: tokens.font.mono,
-        fontSize: 10,
-        color: tokens.color.ink3,
-      }}
-    >
-      <span style={{ minWidth: 40 }}>{formatTimeAgo(timestamp, now)} ago</span>
-      <span>{count}× recursion_guard skipped</span>
-    </div>
-  );
-}
 
 function KindDot({ speechKind }: { speechKind: string | null }) {
   const kindColor = (speechKind && KIND_COLOR[speechKind]) || tokens.color.ink3;
@@ -171,30 +152,18 @@ function RailRowTopLine({ c, now, homeBasename, tagColor }: {
   );
 }
 
-function RailRowCostLine({ c }: { c: CriticCall }) {
-  const tokTotal = rowTokens(c);
-  return (
-    <div
-      style={{
-        display: "flex",
-        gap: 9,
-        marginTop: 4,
-        fontFamily: tokens.font.mono,
-        fontSize: 9,
-        color: tokens.color.ink3,
-      }}
-    >
-      <span>{c.cost_usd !== null ? fmtCost(c.cost_usd) : "$—"}</span>
-      <span>{tokTotal !== null ? `${fmtTokens(tokTotal)} tok` : "— tok"}</span>
-      {c.duration_ms !== null && <span>{(c.duration_ms / 1000).toFixed(1)}s</span>}
-    </div>
-  );
+/** A non-fired row's text: the skip code, plus the failure reason for an error row. */
+function skippedRowLabel(c: CriticCall): string {
+  if (c.error_message !== null) return `${c.skip_reason ?? "unknown"}: ${c.error_message}`;
+  return c.skip_reason ?? "unknown reason";
 }
 
-function RailRow({ c, now, homeBasename }: {
+function RailRow({ c, now, homeBasename, quotaNote }: {
   c: CriticCall;
   now: Date;
   homeBasename: string | null;
+  /** Set only on telemetry that knows the cap; a quota_cap row shows it. */
+  quotaNote: string | null;
 }) {
   const fired = c.status === "fired";
   const key = turnKey(c);
@@ -221,6 +190,7 @@ function RailRow({ c, now, homeBasename }: {
     >
       <RailRowTopLine c={c} now={now} homeBasename={homeBasename} tagColor={tagColor} />
       <div
+        title={fired ? undefined : skippedRowLabel(c)}
         style={{
           fontFamily: fired ? tokens.font.body : tokens.font.mono,
           fontSize: 11,
@@ -232,9 +202,10 @@ function RailRow({ c, now, homeBasename }: {
           textDecoration: c.user_action === "dismissed" ? "line-through" : "none",
         }}
       >
-        {fired ? c.bubble_short ?? "(no bubble)" : c.skip_reason ?? "unknown reason"}
+        {fired ? `${c.injection_alert?.level === "loud" ? "⚠ " : ""}${c.bubble_short ?? "(no bubble)"}` : skippedRowLabel(c)}
       </div>
       {fired && <RailRowCostLine c={c} />}
+      {!fired && quotaNote !== null && <QuotaCapNote text={quotaNote} />}
     </div>
   );
 }
@@ -286,8 +257,12 @@ function RailPager({ newerHref, olderHref, sort }: {
     <div
       class="tl-pager"
       style={{
+        // Pinned under the scrolling list (a sibling of .tl-scroll, not a
+        // child), so prev/next stay in view however the rail is scrolled and
+        // the rail runs to the bottom of the box.
         display: "flex",
-        borderBottom: `1px solid ${tokens.color.edge}`,
+        flexShrink: 0,
+        borderTop: `1px solid ${tokens.color.edge}`,
         background: tokens.color.cream,
       }}
     >
@@ -414,12 +389,13 @@ export function TimelineRail({ telemetry, now }: { telemetry: CriticTelemetry; n
                 c={item as CriticCall}
                 now={now}
                 homeBasename={telemetry.homeBasename}
+                quotaNote={quotaCapNoteFor(item as CriticCall, telemetry, now)}
               />
             ),
           )
         )}
-        <RailPager newerHref={newerHref} olderHref={olderHref} sort={telemetry.activeSort} />
       </div>
+      <RailPager newerHref={newerHref} olderHref={olderHref} sort={telemetry.activeSort} />
     </div>
   );
 }

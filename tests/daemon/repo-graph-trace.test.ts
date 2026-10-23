@@ -370,7 +370,7 @@ describe("GET /api/repo-graph/trace — trace from any node contracts", () => {
 });
 
 describe("POST/GET /api/repo-graph/trace/purpose (M3 grounded generate)", () => {
-  function appWithBrain(markdown: string, opts: { throws?: boolean } = {}): Hono {
+  function appWithBrain(markdown: string, opts: { throws?: boolean; costUsd?: number } = {}): Hono {
     const app = new Hono();
     mountRepoGraphRoutes(app, {
       cwd,
@@ -383,7 +383,7 @@ describe("POST/GET /api/repo-graph/trace/purpose (M3 grounded generate)", () => 
           }
         : async () => ({
             markdown,
-            usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 1, output_tokens: 1, total_cost_usd: 0.001 },
+            usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 1, output_tokens: 1, total_cost_usd: opts.costUsd ?? 0.001 },
           }),
     });
     return app;

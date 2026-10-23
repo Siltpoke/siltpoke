@@ -20,6 +20,8 @@ export interface ContainerStats {
   funcCount: number;
   /** Filenames appearing >1× in the container, count desc, capped at `topN`. */
   recurringBasenames: Array<{ name: string; count: number }>;
+  /** Non-code files drawn in the container (docs, tests, config); absent = none listed. */
+  otherCount?: number;
 }
 
 const DEFAULT_TOP_N = 4;

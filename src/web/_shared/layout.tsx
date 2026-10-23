@@ -13,6 +13,7 @@
  */
 import type { PropsWithChildren } from "hono/jsx";
 import { BrandIcons } from "./brand-icons";
+import { CHAT_RUNS_CSS } from "./chat-runs-css";
 import { FloatingChat } from "./FloatingChat";
 import {
   isPerfTraceEnabled,
@@ -92,20 +93,12 @@ export function Layout(props: PropsWithChildren<LayoutProps>) {
         {/* Brand mark — see src/web/_shared/brand-icons.tsx for why this is a
             component and not two literal <link>s. */}
         <BrandIcons />
-        {/* Google Fonts — Pixelify Sans (display) + JetBrains Mono (labels/code)
-            + Geist (body), matching the 记忆之书 design system. tokens.font
-            references these families; without this link they fall back to
-            system-ui. */}
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link
-          rel="preconnect"
-          href="https://fonts.gstatic.com"
-          crossorigin="anonymous"
-        />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Geist:wght@400;500;600;700&display=swap"
-          rel="stylesheet"
-        />
+        {/* Pixelify Sans (display) + JetBrains Mono (labels/code) + Geist
+            (body), matching the 记忆之书 design system. tokens.font references
+            these families; without this sheet they fall back to system-ui.
+            Served from Siltpoke itself (scripts/vendor-dashboard-fonts.ts), so
+            no page waits on, or tells, fonts.googleapis.com. */}
+        <link rel="stylesheet" href="/static/fonts/dashboard.css" />
         <link rel="stylesheet" href="/static/tokens.css" />
         {/* Tailwind v4 utilities (incremental adoption). After tokens.css so
             utility classes win over token-var defaults at equal specificity.
@@ -222,7 +215,9 @@ export function Layout(props: PropsWithChildren<LayoutProps>) {
               ".fc-md ol.fc-md-ol{list-style:decimal}" +
               ".fc-md li{margin:.12em 0}" +
               ".fc-md a.fc-md-a{color:var(--color-ink);text-decoration:underline;opacity:.8}" +
-              ".fc-md a.fc-md-a:hover{opacity:1}",
+              ".fc-md a.fc-md-a:hover{opacity:1}" +
+              // Runs window beside the chat (spec 2026-10-13 §10.1).
+              CHAT_RUNS_CSS,
           }}
         />
         <script src={`https://unpkg.com/htmx.org@${HTMX_VERSION}`} defer></script>

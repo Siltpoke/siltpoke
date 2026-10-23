@@ -54,7 +54,7 @@ describe("statusline shim, bun not on PATH", () => {
       expect(out).toContain("bun");
       // Names the next step, and names a command this host really has — the
       // mistake defects [16] / [19] were both about.
-      expect(out).toContain("/siltpoke-doctor");
+      expect(out).toContain("/siltpoke:siltpoke-doctor");
       // One line: the statusline has exactly one.
       expect(out.split("\n").filter((l) => l.length > 0)).toHaveLength(1);
     });

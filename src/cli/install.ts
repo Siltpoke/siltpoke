@@ -3,20 +3,15 @@
 
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import {
-  copyFile,
   mkdir,
-  readdir,
   readFile,
   rename,
-  symlink,
-  unlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { generateSecret } from "../daemon/auth";
 import { DEFAULT_SPECIES } from "../face/species";
 import type { AgentTarget } from "../installer/agent-types";
 import {
@@ -24,13 +19,21 @@ import {
   installAutostartForPlatform,
 } from "../installer/autostart";
 import { backupSettings } from "../installer/backup";
-import { type HostWireContext, secondaryHostAdapters } from "../installer/host-adapter";
+import { symlinkCommands } from "../installer/command-links";
+import { secondaryHostAdapters } from "../installer/host-adapter";
+import { recordInstallHost } from "../installer/last-host";
 import {
   type MenubarSetupDeps,
   type MenubarSetupResult,
   runMenubarSetup,
 } from "../installer/menubar-setup";
 import { migrateAll } from "../installer/migrations";
+import { markDone, recordBefore } from "../installer/receipt";
+import {
+  claudeStatuslineEntry,
+  recordedAutostart,
+  settingsHooksEntry,
+} from "../installer/receipt-sites";
 import { askMultiSelectTTY } from "../installer/multiselect-tty";
 import {
   codexHooksJsonPath,
@@ -53,6 +56,8 @@ import {
   type StopHookPair,
   swapStatusLine,
 } from "../installer/settings-mutator";
+import { askInstall, HOW_TO } from "../installer/consent";
+import { loadOrCreateSecret, readSecretIfPresent, wireSecondaryHosts } from "../installer/secondary-hosts";
 import { OLLAMA_MODEL, type OllamaIo, setupOllamaInteractive } from "../installer/setup-ollama";
 import {
   askYesNo,
@@ -60,9 +65,10 @@ import {
   type WizardIO,
 } from "../installer/wizard";
 import { migrateV2toV3 } from "../memory/migrate-v3";
-import { atomicWrite } from "../utils/atomic-write";
 
 export type { AgentTarget } from "../installer/agent-types";
+// Moved to installer/command-links.ts (install.ts is length-pinned); tests and callers import it from here.
+export { symlinkCommands } from "../installer/command-links";
 
 import { detectAgents } from "../installer/agent-detect";
 import { buildAgentChoices, filterPresetByPresence, labelFor, resolveAgentFlag } from "../installer/agent-menu";
@@ -144,7 +150,14 @@ export interface InstallOptions {
    *  purpose — `runInstall` has never passed it, and a test that wants the real
    *  setup logic with fake deps should call `setupOllamaInteractive` directly
    *  (`tests/installer/setup-ollama.test.ts` already does). */
-  setupOllamaFn?: (opts: { skip?: boolean; io?: OllamaIo }) => Promise<{ enabled: boolean }>;
+  setupOllamaFn?: (opts: {
+    skip?: boolean;
+    io?: OllamaIo;
+    env?: NodeJS.ProcessEnv;
+    consent?: () => Promise<boolean>;
+  }) => Promise<{ enabled: boolean }>;
+  /** `--with-local-model`: the one way to say yes to the ~4.7 GB model without being asked ([63], spec §8 D-B). */
+  withLocalModel?: boolean;
 }
 
 export interface InstallResult {
@@ -160,6 +173,9 @@ export interface InstallResult {
   config_path: string;
   backup_path?: string;
   personality_seed_used: boolean;
+  /** Agents this run actually wired (or found already wired) — not the ones selected.
+   *  The install ending names these; empty means nothing was connected. */
+  wired: AgentTarget[];
 }
 
 function detectRepoRoot(): string {
@@ -188,108 +204,6 @@ async function readJsonOrEmpty(path: string): Promise<Record<string, unknown>> {
   } catch {
     return {};
   }
-}
-
-export async function symlinkCommands(
-  pluginCommandsDir: string,
-  claudeCommandsDir: string,
-  platform: NodeJS.Platform = process.platform,
-): Promise<string[]> {
-  await mkdir(claudeCommandsDir, { recursive: true });
-  const entries = await readdir(pluginCommandsDir);
-  const linked: string[] = [];
-  for (const name of entries) {
-    if (!name.endsWith(".md")) continue;
-    const src = join(pluginCommandsDir, name);
-    const dest = join(claudeCommandsDir, name);
-    try {
-      await unlink(dest);
-    } catch {
-      // missing dest is fine
-    }
-    if (platform === "win32") {
-      // Windows symlink() needs elevation → EPERM. Copy the command file instead;
-      // re-run of install re-copies (idempotent), matching plugin-update semantics.
-      await copyFile(src, dest);
-    } else {
-      await symlink(src, dest);
-    }
-    linked.push(name);
-  }
-  return linked;
-}
-
-function readSecretIfPresent(home: string): string | null {
-  const secretPath = join(home, "secret");
-  if (!existsSync(secretPath)) return null;
-  const value = readFileSync(secretPath, "utf8").trim();
-  return value.length > 0 ? value : null;
-}
-
-function loadOrCreateSecret(home: string): string {
-  const existing = readSecretIfPresent(home);
-  if (existing !== null) return existing;
-  const s = generateSecret();
-  atomicWrite(join(home, "secret"), s, { mode: 0o600 });
-  return s;
-}
-
-interface WireSecondaryHostsOpts {
-  env: NodeJS.ProcessEnv;
-  home: string;
-  repoRoot: string;
-  selectedAgents: AgentTarget[];
-  pluginCommandsDir: string;
-  platform: NodeJS.Platform;
-  io: WizardIO;
-}
-
-/**
- * Secondary hosts (codex + codebuddy + qoder): wire each selected host's hooks
- * via its HostAdapter. codex writes ~/.codex/hooks.json (no command symlinks);
- * CC-fork hosts write settings.json + symlink slash-commands. Each host is
- * independent — one failure never blocks the others. Returns the count wired
- * (feeds the already_installed early-returns). Secret loaded once.
- *
- * Extracted out of runInstall (rather than inlined) to keep runInstall's
- * cognitive-complexity flat — this loop's branching lives here instead.
- */
-async function wireSecondaryHosts(opts: WireSecondaryHostsOpts): Promise<number> {
-  // secondaryHostAdapters' id is SupportedAgent; selectedAgents is
-  // AgentTarget[] — the two unions now mirror each other exactly (agy
-  // track), but comparing as strings avoids re-coupling this membership
-  // check to the two types staying identical forever.
-  const selectedAgentIds: readonly string[] = opts.selectedAgents;
-  const selected = secondaryHostAdapters.filter((a) =>
-    selectedAgentIds.includes(a.id),
-  );
-  if (selected.length === 0) return 0;
-  const ctx: HostWireContext = {
-    repoRoot: opts.repoRoot,
-    secret: loadOrCreateSecret(opts.home),
-  };
-  let wired = 0;
-  for (const adapter of selected) {
-    try {
-      const { path } = await adapter.writeHooks(opts.env, ctx);
-      // codex has no separate commands dir; agy has no slash-command
-      // symlink semantics either (its skill surface is agy's own, not
-      // markdown commands under a commands/ dir) — both excluded here.
-      if (adapter.id !== "codex" && adapter.id !== "antigravity") {
-        await symlinkCommands(
-          opts.pluginCommandsDir,
-          adapter.commandsDir(opts.env),
-          opts.platform,
-        );
-      }
-      opts.io.write(`✓ Registered ${adapter.label} hooks at ${path}\n`);
-      wired += 1;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      opts.io.write(`⚠ ${adapter.label} host wiring failed: ${msg}\n`);
-    }
-  }
-  return wired;
 }
 
 function personalityToConfig(p: Personality): Record<string, unknown> {
@@ -364,6 +278,7 @@ export async function runInstall(
       hook_command: "",
       config_path: "",
       personality_seed_used: false,
+      wired: [],
     };
   }
 
@@ -401,9 +316,10 @@ export async function runInstall(
     );
     if (!wantsAutostart) return;
     const installAutostart =
-      opts.installAutostartFn ?? (() => installAutostartForPlatform());
+      opts.installAutostartFn ??
+      (() => installAutostartForPlatform({ home: env.HOME ?? env.USERPROFILE, env }));
     try {
-      const result = await installAutostart();
+      const result = await recordedAutostart(env, installAutostart, platform);
       if (result.status === "installed") {
         io.write(`✓ Daemon autostart installed (${result.platform}).\n`);
       } else if (result.status === "skipped") {
@@ -439,7 +355,9 @@ export async function runInstall(
     );
     if (!wantsMenubar) return;
     const runMenubar = opts.runMenubarSetupFn ?? runMenubarSetup;
-    await runMenubar({ io, platform });
+    // The install's home and env, like autostart ([66]): the shim, the login
+    // item and the receipt all land under the home this install was given.
+    await runMenubar({ io, platform, home: env.HOME ?? env.USERPROFILE, env });
   };
   const selectedAgents = opts.presetAgents?.length
     ? opts.agentFlagUsed
@@ -530,6 +448,7 @@ export async function runInstall(
       hook_command: hookCommand,
       config_path: join(home, "config.json"),
       personality_seed_used: false,
+      wired: [],
     };
   }
 
@@ -572,6 +491,7 @@ export async function runInstall(
       hook_command: hookCommand,
       config_path: join(home, "config.json"),
       personality_seed_used: false,
+      wired: [],
     };
   }
 
@@ -590,6 +510,7 @@ export async function runInstall(
       inner_command: null,
       config_path: join(home, "config.json"),
       personality_seed_used: false,
+      wired: ["claude-code"],
     };
   }
 
@@ -619,6 +540,7 @@ export async function runInstall(
       hook_command: hookCommand,
       config_path: join(home, "config.json"),
       personality_seed_used: false,
+      wired: [],
     };
   }
 
@@ -697,7 +619,14 @@ export async function runInstall(
     // Also register the SessionStart hook so baseline.json is written at
     // session start before any code changes occur.
     const withSessionStart = registerSessionStartHook(withHook, sessionStartCommand);
+    // Receipt (spec §2.1): pending before settings.json is rewritten, done after.
+    const receiptEntries = [
+      claudeStatuslineEntry(settingsPath, join(home, "inner.txt")),
+      settingsHooksEntry("claude-code", settingsPath, repoRoot),
+    ];
+    for (const e of receiptEntries) recordBefore(e, env);
     await atomicWriteJson(settingsPath, withSessionStart);
+    for (const e of receiptEntries) markDone(e.id, env);
     installedClaude = true;
   }
 
@@ -708,6 +637,14 @@ export async function runInstall(
   const setupOllama = opts.setupOllamaFn ?? setupOllamaInteractive;
   const ollamaResult = await setupOllama({
     skip: noOllama,
+    env,
+    // [63]: ask once, default No; no terminal ⇒ skip and say how; --with-local-model ⇒ yes.
+    consent: async () =>
+      opts.withLocalModel === true ||
+      (await askInstall(io, "Pull the local bias-audit model (about 4.7 GB)?", HOW_TO.model, {
+        default: "no",
+        interactive: !noninteractive,
+      })),
     io: { write: (s: string) => io.write(s) },
   });
   if (ollamaResult.enabled) {
@@ -726,11 +663,13 @@ export async function runInstall(
 
   // 6. Symlink Claude slash commands and wire secondary hosts.
   if (installedClaude) {
-    await symlinkCommands(pluginCommandsDir, claudeCommandsDir, platform);
+    await symlinkCommands(pluginCommandsDir, claudeCommandsDir, platform, env);
   }
 
   // Secondary hosts (codex + codebuddy/qoder) — see wireSecondaryHosts for details.
+  const wiredSecondary: AgentTarget[] = [];
   const installedSecondaryCount = await wireSecondaryHosts({
+    onWired: (id) => wiredSecondary.push(id as AgentTarget),
     env,
     home,
     repoRoot,
@@ -740,6 +679,12 @@ export async function runInstall(
     io,
   });
 
+  recordInstallHost(env, selectedAgents); // [49]; before BOTH returns below, so a re-run records too
+  // Wired = what the code above actually wrote, or found already wired — never the selection.
+  const wired: AgentTarget[] = [
+    ...(installedClaude || alreadyInstalled ? (["claude-code"] as const) : []),
+    ...wiredSecondary,
+  ];
   if (!installedClaude && installedSecondaryCount === 0 && alreadyInstalled) {
     // Same rationale as the earlier already_installed return: existing
     // installs still get the autostart offer on re-run.
@@ -752,6 +697,7 @@ export async function runInstall(
       inner_command: null,
       config_path: join(home, "config.json"),
       personality_seed_used: false,
+      wired,
     };
   }
 
@@ -777,6 +723,7 @@ export async function runInstall(
     config_path: join(home, "config.json"),
     backup_path: backup?.path,
     personality_seed_used: Boolean(personality.seedUsedAt),
+    wired,
   };
 }
 
@@ -796,7 +743,8 @@ if (import.meta.main) {
     presetAgents = resolved.agents;
     agentFlagUsed = true;
   }
-  const result = await runInstall({ noninteractive, presetAgents, agentFlagUsed });
+  const withLocalModel = process.argv.includes("--with-local-model");
+  const result = await runInstall({ noninteractive, presetAgents, agentFlagUsed, withLocalModel });
   if (wantJson) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   }

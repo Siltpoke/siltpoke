@@ -10,7 +10,17 @@
 
 import { join } from "node:path";
 import { resolveClaudeHome } from "../installer/paths";
-import { type CheckResult, type DoctorOptions, detectDoctorHost, hostWiringPath, readJson, setupAdviceFor } from "./doctor";
+import {
+  type CheckResult,
+  type DoctorOptions,
+  defaultRepoRoot,
+  detectDoctorHost,
+  hostWiringPath,
+  readJson,
+  setupAdviceFor,
+} from "./doctor";
+import { aHost, hostOfRunningCopy } from "./doctor-agy-plugin-host";
+import { checkCodexStopHook } from "./doctor-codex-hook-check";
 import { pluginOwnsStopHook } from "./doctor-plugin-hook-check";
 import { isPluginInstall } from "./doctor-plugin-install";
 
@@ -30,12 +40,16 @@ export function checkStopHook(opts: DoctorOptions): CheckResult {
   // positively-detected other host that is a question about the wrong machine
   // — and that host has its own row (checkAgyHooksJson for agy).
   const host = detectDoctorHost(opts);
+  // §110 W2: the codex copy's own hook declaration is checked, not skipped —
+  // a skipped row cannot go red, and this one stayed green while codex never ran it.
+  const root = opts.repoRoot ?? defaultRepoRoot();
+  if (host === "codex" && hostOfRunningCopy(opts, root) === "codex") return checkCodexStopHook(opts, root);
   if (host !== "claude-code") {
     return {
       name,
       pass: true,
       status: "info",
-      detail: `skipped — this is a ${host} install; its Stop hook lives in ${hostWiringPath(host, opts)}`,
+      detail: `skipped — this is ${aHost(host)} install; its Stop hook lives in ${hostWiringPath(host, opts)}`,
     };
   }
 

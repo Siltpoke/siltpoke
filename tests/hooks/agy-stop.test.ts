@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
+  type AgyReviewSpawnFn,
   normalizeAgyStop,
   resolveOnStopTarget,
   runAgyStopHook,
   writeStopResponse,
-  type AgyReviewSpawnFn,
 } from "../../src/hooks/agy-stop";
 
 const REAL_STOP_PAYLOAD = JSON.stringify({
@@ -69,43 +69,54 @@ describe("resolveOnStopTarget", () => {
   });
 });
 
-describe("runAgyStopHook", () => {
-  function spyStdinSpawn(): {
-    spawnFn: AgyReviewSpawnFn;
-    calls: {
-      cmd: string[];
-      env?: Record<string, string | undefined>;
-      written: string;
-      ended: boolean;
-      unrefed: boolean;
-    }[];
-  } {
-    const calls: {
-      cmd: string[];
-      env?: Record<string, string | undefined>;
-      written: string;
-      ended: boolean;
-      unrefed: boolean;
-    }[] = [];
-    const spawnFn: AgyReviewSpawnFn = (cmd, opts) => {
-      const call = { cmd, env: opts.env, written: "", ended: false, unrefed: false };
-      calls.push(call);
-      return {
-        stdin: {
-          write: (chunk: string) => {
-            call.written += chunk;
-          },
-          end: () => {
-            call.ended = true;
-          },
+function spyStdinSpawn(): {
+  spawnFn: AgyReviewSpawnFn;
+  calls: {
+    cmd: string[];
+    env?: Record<string, string | undefined>;
+    /**
+     * Recorded because this suite's own test title has said "dispatches a
+     * DETACHED … child" since it was written, while asserting only `unrefed`
+     * — and the spawn was not detached. `unref()` frees the parent's event
+     * loop; it says nothing about the child's process group, which is what
+     * decides whether the child dies with its parent. On Windows agy's Stop
+     * hook is synchronous and exits at once, so the review was silently lost.
+     */
+    detached: boolean;
+    written: string;
+    ended: boolean;
+    unrefed: boolean;
+  }[];
+} {
+  const calls: {
+    cmd: string[];
+    env?: Record<string, string | undefined>;
+    detached: boolean;
+    written: string;
+    ended: boolean;
+    unrefed: boolean;
+  }[] = [];
+  const spawnFn: AgyReviewSpawnFn = (cmd, opts) => {
+    const call = { cmd, env: opts.env, detached: opts.detached, written: "", ended: false, unrefed: false };
+    calls.push(call);
+    return {
+      stdin: {
+        write: (chunk: string) => {
+          call.written += chunk;
         },
-        unref: () => {
-          call.unrefed = true;
+        end: () => {
+          call.ended = true;
         },
-      };
+      },
+      unref: () => {
+        call.unrefed = true;
+      },
     };
-    return { spawnFn, calls };
-  }
+  };
+  return { spawnFn, calls };
+}
+
+describe("runAgyStopHook", () => {
 
   test("dispatches a detached `bun src/hooks/on-stop.ts` child, pipes the normalized JSON to its stdin, and unrefs it", async () => {
     const { spawnFn, calls } = spyStdinSpawn();
@@ -116,12 +127,23 @@ describe("runAgyStopHook", () => {
     });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.cmd).toEqual(["bun", "/repo/src/hooks/on-stop.ts"]);
+    // `process.execPath`, not "bun" — see the spawn site's comment. This
+    // assertion used to read "bun" and was the reason that shape looked
+    // deliberate.
+    expect(calls[0]!.cmd).toEqual([process.execPath, "/repo/src/hooks/on-stop.ts"]);
+    // The half the title always claimed and never checked.
+    expect(calls[0]!.detached).toBe(true);
     expect(calls[0]!.written).toBe(normalized);
     expect(calls[0]!.ended).toBe(true);
     expect(calls[0]!.unrefed).toBe(true);
   });
 
+});
+
+// Split from the block above when it passed the 50-LOC function cap. The seam:
+// above is the SOURCE install's dispatch; here is what a plugin cache does,
+// which is the install shape most users actually have.
+describe("runAgyStopHook — plugin-install dispatch", () => {
   test("PLUGIN install (hereDir under dist/): dispatches the BUNDLED dist/siltpoke-stop.js, not the TS source a plugin cache never ships", async () => {
     const { spawnFn, calls } = spyStdinSpawn();
     const { normalized } = await runAgyStopHook({
@@ -132,9 +154,10 @@ describe("runAgyStopHook", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.cmd).toEqual([
-      "bun",
+      process.execPath,
       "/Users/x/.claude/plugins/siltpoke/dist/siltpoke-stop.js",
     ]);
+    expect(calls[0]!.detached).toBe(true);
     expect(calls[0]!.written).toBe(normalized);
     expect(calls[0]!.ended).toBe(true);
     expect(calls[0]!.unrefed).toBe(true);

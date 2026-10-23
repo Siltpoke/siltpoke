@@ -177,6 +177,22 @@ describe("runExplain — happy path", () => {
 });
 
 describe("runExplain — cache", () => {
+  test("[83] the Brain is told to run in the project being explained", async () => {
+    await seedGraph();
+    const seen: Array<string | undefined> = [];
+    const brain = mockBrain("# runDoctor\n\nDefined in [src/cli/doctor.ts:42-87].\n");
+    await runExplain(
+      { target: "runDoctor" },
+      makeCtx({
+        brainProvider: async (input) => {
+          seen.push(input.cwd);
+          return brain(input);
+        },
+      }),
+    );
+    expect(seen).toEqual([cwd]);
+  });
+
   test("second call returns cached without invoking Brain", async () => {
     await seedGraph();
     let calls = 0;
@@ -338,25 +354,6 @@ describe("runExplain — pre-check + resolve failures", () => {
     expect(outcome.kind).toBe("not_found");
     if (outcome.kind !== "not_found") return;
     expect(outcome.suggestions).toContain("runDoctor");
-  });
-});
-
-describe("runExplain — cost cap", () => {
-  test("cost > hard cap → cost_cap_exceeded, no file written", async () => {
-    await seedGraph();
-    // Default hard cap is $0.10 (post-F29 raise); use 0.15 to trigger abort.
-    const outcome = await runExplain(
-      { target: "runDoctor" },
-      makeCtx({
-        brainProvider: mockBrain(
-          "# runDoctor\n\nDefined in [src/cli/doctor.ts:42-87].\n",
-          0.15,
-        ),
-      }),
-    );
-    expect(outcome.kind).toBe("cost_cap_exceeded");
-    if (outcome.kind !== "cost_cap_exceeded") return;
-    expect(outcome.costUsd).toBe(0.15);
   });
 });
 

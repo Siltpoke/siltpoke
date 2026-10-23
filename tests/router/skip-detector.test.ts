@@ -1,4 +1,4 @@
-import { test, expect, beforeEach, afterEach } from "bun:test";
+import { test, expect, beforeEach, afterEach, describe } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,7 @@ import {
   evaluateSkip,
   commitHash,
   buildSignature,
+  computeContextHash,
 } from "../../src/router/skip-detector";
 
 let tmp: string;
@@ -148,4 +149,18 @@ test("same files + same user msg + same cwd → SAME signature even if assistant
     latestUserMessage: "what does this do",
   });
   expect(s1).toBe(s2);
+});
+
+describe("[59] the review unit is part of the signature", () => {
+  const base = { sessionId: "s", cwd: "/r", changedFiles: ["a.py"], latestUserMessage: "change a.py again and commit it" };
+  test("a different unit gives a different hash", () => {
+    expect(computeContextHash(buildSignature({ ...base, revisionRange: "a..b" }))).not.toBe(
+      computeContextHash(buildSignature({ ...base, revisionRange: "b..c" })),
+    );
+  });
+  test("the same unit gives the same hash (dedupe still works)", () => {
+    expect(computeContextHash(buildSignature({ ...base, revisionRange: "a..b" }))).toBe(
+      computeContextHash(buildSignature({ ...base, revisionRange: "a..b" })),
+    );
+  });
 });

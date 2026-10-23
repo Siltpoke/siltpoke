@@ -15,9 +15,9 @@ Three shapes only:
   brain at a CLI family for every builder, optionally pinning a model.
 - **`set-builder <builder> <reviewer> [model]`** → a PER-BUILDER override: "when
   code built by `<builder>` is reviewed, use `<reviewer>`". Lets each concurrent
-  window (claude / codex / agy …) review with its own rule. A `[model]` is only
-  accepted when `<reviewer>` is `claude` (the other families serve an auth-fixed
-  model — the CLI rejects a model on them).
+  window (claude / codex / agy …) review with its own rule. A `[model]` is
+  accepted for every family (codex: only a model it lists for the account —
+  `codex debug models`).
 
 Legal `<family>` / `<builder>` / `<reviewer>` values — this is the COMPLETE list:
 
@@ -46,10 +46,12 @@ contain nothing a shell can act on.
 
 The CLI validates the family/role again and refuses to write on an unknown
 token, so a bad value is safe — it just prints the legal list and exits
-non-zero. Report the CLI output verbatim.
+non-zero. Report the CLI output verbatim. A `⚠` line after a successful
+`set` means the choice was saved but that agent is not installed — say so; it is
+not a failure.
 
 Then mention:
 
 - The change takes effect on the NEXT review — nothing re-runs past reviews.
 - The dashboard settings screen writes the same config, so either surface works.
-- `/siltpoke-doctor` shows which brain is currently resolved for review.
+- `/siltpoke:siltpoke-doctor` shows which brain is currently resolved for review.

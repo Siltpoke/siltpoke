@@ -8,7 +8,7 @@
  *
  *   - throttle  → exactly 1 in-process retry (jittered)
  *   - resource  → 0 retries, breaker 15min → 60min
- *   - permanent → 0 retries, breaker latched until /siltpoke-wake or doctor re-verify
+ *   - permanent → 0 retries, breaker latched until /siltpoke:siltpoke-wake or doctor re-verify
  *   - ambiguous → 0 retries (the paid-and-discarded risk class), breaker after 3 consecutive
  *
  * Marker regexes FROZEN against real captured evidence (2026-06-11):
@@ -20,6 +20,12 @@
  *     Per the signed contingency the throttle set is the standard Anthropic
  *     API error shapes ONLY; everything unrecognized buckets to `ambiguous`,
  *     never `throttle`.
+ *
+ * ONE marker pair has been added since that freeze, on the same terms (a real
+ * captured failure, not a guess): the Windows `.cmd` argv refusal
+ * (`ERR_INVALID_ARG_VALUE`), measured 2026-09-24. It lives in its OWN set,
+ * SPAWN_PERMANENT_MARKERS, checked against `spawnError` only — see that
+ * declaration for why the field is as load-bearing as the pattern.
  *
  * The classifier examines BOTH stderr and stdout tails —
  * `claude -p` errors can land on stdout with --output-format json.
@@ -52,6 +58,64 @@ const PERMANENT_MARKERS: readonly RegExp[] = [
   // Net-new alternatives only; /not logged in/i already covered above.
   /login required|codex login/i,
 ];
+
+/**
+ * Permanent failures recognised ONLY on `spawnError` — the field set when the
+ * process never started. Kept separate from PERMANENT_MARKERS on purpose, and
+ * the reason is measured rather than theoretical.
+ *
+ * Windows argv refusal (defect `[26]`, measured on a real machine 2026-09-24):
+ * npm's `claude` on Windows is `claude.cmd`, and the runtime refuses to pass a
+ * parameter containing a cmd.exe special character to a `.bat`/`.cmd`
+ * (CVE-2024-27980 hardening). The review prompt always contains one, so the
+ * call fails identically every time — deterministic, which is what `permanent`
+ * means here. It fell through to `ambiguous` before, whose breaker reopens
+ * after 5 minutes, so the next commit spent another call on a failure that
+ * could not succeed.
+ *
+ * WHY `spawnError` ONLY, and not the stderr/stdout tails like every marker
+ * above. Two independent reasons, both load-bearing:
+ *
+ * 1. It is where the text actually IS. This is a spawn-time validation throw —
+ *    the process never runs — so all four providers funnel it into
+ *    `spawnError` with `exitCode: null` and EMPTY streams (brain.ts's
+ *    spawn-catch, and its three mirrors). A marker checked against
+ *    `stderr + stdout` never sees it. Measured: the production shape
+ *    classified `ambiguous` while a hand-built stderr-shaped input — which
+ *    production never produces — classified `permanent`. The first version of
+ *    this fix shipped that hand-built shape as its test and was green.
+ * 2. Model output can never reach this field. `classifierStdout` falls back to
+ *    the raw stdout tail whenever the envelope does not parse, which is
+ *    exactly the timeout case, and that tail carries assistant prose. Both
+ *    patterns here are unanchored substrings of ordinary Node vocabulary — and
+ *    `ERR_INVALID_ARG_VALUE` appears verbatim in this repo's own source and
+ *    docs, so a review OF THIS FILE could quote it. brain.ts:195-201 records
+ *    the same collision already happening once (`rate_limit_event` in the
+ *    event stream matched the throttle marker and authorised a second PAID
+ *    spawn), and states the rule this obeys: the markers stay frozen, what is
+ *    FED to them is what changes. `permanent` latches the breaker until
+ *    `/siltpoke:siltpoke-wake`, so a false match here silences the pet indefinitely.
+ *
+ * Consequence stated rather than hidden: a runtime that reports this refusal on
+ * stderr from a process that DID start would not be caught. No such runtime is
+ * known — the refusal is raised by the parent before any child exists.
+ */
+const SPAWN_PERMANENT_MARKERS: readonly RegExp[] = [
+  /ERR_INVALID_ARG_VALUE/,
+  /cmd\.exe special character/i,
+];
+
+/**
+ * The one ERR_INVALID_ARG_VALUE that is NOT permanent: a NUL character in an
+ * argv entry. It carries the same error class as the Windows refusal above but
+ * says something different — this INPUT cannot be passed, not this machine
+ * cannot review. Measured 2026-09-29 on macOS: one reviewed diff held a raw
+ * NUL, the class marker above matched, the breaker latched, and every review on
+ * that machine was skipped for two days (562 turns) with nothing saying so.
+ * `nulSafe` now keeps NULs out of argv; this stays as the second line, so a
+ * path that forgets to call it costs one skipped turn instead of all of them.
+ */
+const NUL_ARG_MARKER = /without null bytes/i;
 
 /**
  * Binary missing at spawn time — permanent until the binary is back on PATH.
@@ -100,6 +164,13 @@ export function classifyBrainFailure(input: BrainFailureInput): FailureClass {
   // Spawn never started: ENOENT = binary missing (permanent); EAGAIN = resource.
   if (spawnErr.length > 0) {
     if (BINARY_MISSING_MARKER.test(spawnErr)) return "permanent";
+    // Before the permanent markers: same error class, opposite meaning.
+    if (NUL_ARG_MARKER.test(spawnErr)) return "ambiguous";
+    // Checked here and nowhere else — see SPAWN_PERMANENT_MARKERS for why the
+    // field matters as much as the pattern.
+    if (matchesAny(spawnErr, SPAWN_PERMANENT_MARKERS)) return "permanent";
+    // Checked here and nowhere else — see SPAWN_PERMANENT_MARKERS for why the
+    // field matters as much as the pattern.
     if (matchesAny(spawnErr, RESOURCE_MARKERS)) return "resource";
   }
 

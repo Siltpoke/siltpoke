@@ -337,6 +337,20 @@ describe("deriveC4FromProjection — degraded first-segment bands", () => {
     expect(Object.keys(m.N)).toHaveLength(3); // all 3 in the one band
   });
 
+  it("a root bucket (path \"\") keeps first-segment banding and gets its own (root) band", () => {
+    // agent-runtime shape: main.py at the root beside utils/. The root bucket's
+    // path is "" — it must not read as "path-less" and flip the whole diagram
+    // to supergroup banding, and its band must not be labelled "".
+    const m = deriveC4FromProjection(
+      degraded([
+        { id: "(root)", group: "(root)", path: "", files: 1, purpose: "", inbound: 0, outbound: 1 },
+        { id: "utils", group: "g", path: "utils/", files: 4, purpose: "", inbound: 1, outbound: 0 },
+      ]),
+    );
+    expect(m.BANDS.map((b) => b.label)).toEqual(["(root)", "utils"]);
+    expect(Object.keys(m.N).sort()).toEqual(["(root)", "utils"]);
+  });
+
   it("no band carries the 'by name' heuristic marker (verbatim is data, not a guess)", () => {
     const m = deriveC4FromProjection(
       degraded([

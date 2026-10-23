@@ -13,16 +13,17 @@
  */
 
 import { existsSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expandLanguage, loadPersonality } from "../brain/personality";
-import { makeRoleRawBrain } from "../brain/role-brain";
+import { makeRoleRawBrain, makeRoleTextBrain } from "../brain/role-brain";
 import { readSession as readSessionFile } from "../chat/jsonl-store";
 import type { ApplyResult } from "./apply-candidates";
 import { applyCandidates } from "./apply-candidates";
 import { loadRecentChatMessages } from "./chat-signal";
 import type { CommitSignal } from "./coding-signal";
 import { loadRecentCommits, summarizeCriticEvents } from "./coding-signal";
+import { walkCritiqueArchive } from "./critique-archive";
 import type { DecayResult } from "./decay";
 import { proposeDecayedFacts } from "./decay";
 import { applyEpisodes } from "./episode";
@@ -35,7 +36,7 @@ import type { PruneResult } from "./prune";
 import { pruneStaleFacts } from "./prune";
 import { isRubricNoiseCritique } from "./rubric-noise";
 import { callSummarizerBrain } from "./summarizer";
-import { type SynthesizeFn, synthesizeEpisodes } from "./synthesize-episodes";
+import { roleSynthesizeFn, type SynthesizeFn, synthesizeEpisodes } from "./synthesize-episodes";
 import { tagUntaggedEntities } from "./tag-entities";
 
 // Re-exported for back-compat: callers/tests import the rubric-noise predicate
@@ -200,83 +201,8 @@ async function countBrainCallsSince(
 // on this very function sent one audit to the wrong conclusion.
 // Parses YAML frontmatter for `timestamp` and extracts `critique_for_claude`
 // body. Returns up to CRITIQUES_CAP strings, sorted newest-first.
+// The walk and the parse live in ./critique-archive (cached per file).
 // ---------------------------------------------------------------------------
-
-type CritiqueEntry = { ts: Date; body: string };
-
-function parseCritiqueFile(content: string): CritiqueEntry | null {
-  // Frontmatter: ---\nkey: value\n---
-  const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!frontmatterMatch) return null;
-  const frontmatterStr = frontmatterMatch[1] ?? "";
-
-  const tsMatch = frontmatterStr.match(/^timestamp:\s*(.+)$/m);
-  if (!tsMatch) return null;
-  const ts = new Date(tsMatch[1]?.trim());
-  if (Number.isNaN(ts.getTime())) return null;
-
-  // Extract critique_for_claude body between the fence markers after the heading
-  const bodyMatch = content.match(
-    /## Critique \(for Claude[^\n]*\)\n\n(`{3,})\n([\s\S]*?)\n\1/,
-  );
-  if (!bodyMatch) return null;
-  const body = bodyMatch[2]?.trim() ?? "";
-  if (!body) return null;
-
-  return { ts, body };
-}
-
-type RawCritiqueEntry = { id: string; ts: Date; body: string };
-
-/**
- * Walk `base/critiques/archive/<date>/*.md`, parse each critique file,
- * and collect entries passing `predicate` — the shared file-walking core for
- * loadRecentCritiques / loadAllCritiqueEntries /
- * loadAllCritiqueEntriesUnfiltered, which differ only in which entries pass
- * (time-gate + rubric-noise filter, rubric-noise filter only, or no filter)
- * and how the result is shaped. Returns entries newest-first (by ts, desc);
- * unreadable files/dirs are skipped, a missing/unreadable archive → [].
- */
-async function walkCritiqueArchive(
-  base: string,
-  predicate: (entry: CritiqueEntry) => boolean,
-): Promise<RawCritiqueEntry[]> {
-  const archiveRoot = join(base, "critiques", "archive");
-  if (!existsSync(archiveRoot)) return [];
-
-  const entries: RawCritiqueEntry[] = [];
-
-  try {
-    const dateDirs = await readdir(archiveRoot);
-    for (const dateDir of dateDirs) {
-      const dayPath = join(archiveRoot, dateDir);
-      let files: string[];
-      try {
-        files = await readdir(dayPath);
-      } catch {
-        continue;
-      }
-      for (const file of files) {
-        if (!file.endsWith(".md")) continue;
-        const id = file.slice(0, -3); // strip ".md" extension to get the id
-        try {
-          const content = await readFile(join(dayPath, file), "utf8");
-          const entry = parseCritiqueFile(content);
-          if (entry && predicate(entry)) {
-            entries.push({ id, ts: entry.ts, body: entry.body });
-          }
-        } catch {
-          // skip unreadable file
-        }
-      }
-    }
-  } catch {
-    return [];
-  }
-
-  entries.sort((a, b) => b.ts.getTime() - a.ts.getTime());
-  return entries;
-}
 
 export async function loadRecentCritiques(
   base: string,
@@ -681,13 +607,15 @@ export async function consolidate(opts: ConsolidateOpts): Promise<ConsolidateRes
     // `knownRefs.size > 0` gate above the event extractor): `synthesizeEpisodes`
     // already applies its own EPISODE_MIN_MEMBERS floor + skip-if-
     // unchanged diff internally, so an empty or all-unchanged fragment set
-    // makes zero Haiku calls with no extra guard needed here — an outer
+    // makes zero brain calls with no extra guard needed here — an outer
     // pre-check would just duplicate that logic as dead code. `synthesizeFn`
-    // undefined (not overridden by a test) falls through to the real Haiku
-    // wiring inside `synthesizeEpisodes` itself.
+    // undefined (not overridden by a test) means the extract-role brain below:
+    // the Summarizer's agent, model and daily cap.
     const personality = await loadPersonalityFn(homeBase);
     const episodeDrafts = await synthesizeEpisodes(finalMemory, {
-      synthesizeFn: synthesizeFnDep,
+      // Same role as the summary and the event extractor: its agent, its model,
+      // its daily cap.
+      synthesizeFn: synthesizeFnDep ?? roleSynthesizeFn(makeRoleTextBrain(homeBase, "extract")),
       now,
       language: expandLanguage(personality.language),
     });

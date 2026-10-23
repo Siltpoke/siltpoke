@@ -64,12 +64,13 @@ describe("plugin command files carry no machine-specific paths", () => {
   });
 });
 
-describe("the shipped command surface is exactly the 11 core commands", () => {
+describe("the shipped command surface is exactly the 12 core commands", () => {
   test("the .md files on disk match the manual's list, both ways", () => {
-    const onDisk = commandFiles.map((f) => `/${f.replace(/\.md$/, "")}`).sort();
+    // Shown as the plugin-namespaced name: the bare one is "Unknown command" (§110 W6).
+    const onDisk = commandFiles.map((f) => `/siltpoke:${f.replace(/\.md$/, "")}`).sort();
     const advertised = PLUGIN_COMMANDS.map((c) => c.name).sort();
     expect(onDisk).toEqual(advertised);
-    expect(onDisk).toHaveLength(11);
+    expect(onDisk).toHaveLength(12);
   });
 
   test("README's command list and count match the shipped surface", () => {
@@ -94,7 +95,7 @@ describe("the shipped command surface is exactly the 11 core commands", () => {
   });
 });
 
-describe("/siltpoke-setup command", () => {
+describe("/siltpoke:siltpoke-setup command", () => {
   test("is CONVERSATIONAL, not AskUserQuestion cards — the cards gutted the wizard's range", () => {
     // The whole point of this rewrite: the model runs the wizard in prose so it
     // can offer all 5 species / 8 languages / a real random-name roll / 4
@@ -128,7 +129,7 @@ describe("/siltpoke-setup command", () => {
     // configure.ts `if (opts.daemon) installAutostartForPlatform()`. #329 made
     // the daemon opt-in (core review runs in the Stop hook; the daemon only
     // powers the dashboard/chat/index web surfaces, started on demand by
-    // `/siltpoke-dashboard`). So this command MUST NOT ship `"daemon": true`,
+    // `/siltpoke:siltpoke-dashboard`). So this command MUST NOT ship `"daemon": true`,
     // or every plugin user silently gets a launchd/systemd unit installed —
     // exactly the reboot-ECONNREFUSED friction #329 removed from `bun run setup`
     // but which had never reached the plugin path.
@@ -275,7 +276,7 @@ describe("/siltpoke-setup command", () => {
 
   test("tells the user where the things setup does NOT do live", () => {
     // The local-model (Ollama) path is the remaining "not part of setup"
-    // capability; /siltpoke-menubar was cut entirely in the 37→8 cull.
+    // capability; /siltpoke:siltpoke-menubar was cut entirely in the 37→8 cull.
     expect(setup.toLowerCase()).toContain("ollama");
   });
 
@@ -310,7 +311,7 @@ describe("/siltpoke-setup command", () => {
   });
 });
 
-describe("/siltpoke-setup §8 — offers cross-family review only when another CLI is really installed", () => {
+describe("/siltpoke:siltpoke-setup §8 — offers cross-family review only when another CLI is really installed", () => {
   const section = (() => {
     const start = setup.indexOf("## 8.");
     const end = setup.indexOf("## 9.");
@@ -356,7 +357,7 @@ describe("/siltpoke-setup §8 — offers cross-family review only when another C
 // The offer used to read "a reviewer without Claude's blind spots" and stop —
 // more certain than anything measured. The user decides from this message
 // alone, so it must say why, and what is not known.
-describe("/siltpoke-setup §8 — the offer tells the user why, and what is not known", () => {
+describe("/siltpoke:siltpoke-setup §8 — the offer tells the user why, and what is not known", () => {
   const section = setup.slice(setup.indexOf("## 8."), setup.indexOf("## 9."));
 
   test("explains WHY in everyday words, and forbids cutting it down to the bare question", () => {

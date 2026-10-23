@@ -26,6 +26,19 @@ describe("badgeLabel", () => {
       "229 files · 122 fn",
     );
   });
+
+  test("code box with other files appends '· N other'", () => {
+    expect(badgeLabel(stats({ fileCount: 1, funcCount: 1, otherCount: 2 }))).toBe("1 file · 1 fn · 2 other");
+  });
+
+  test("a box of only other files says so instead of '0 files'", () => {
+    expect(badgeLabel(stats({ otherCount: 3 }))).toBe("3 other files");
+    expect(badgeLabel(stats({ otherCount: 1 }))).toBe("1 other file");
+  });
+
+  test("otherCount 0 or absent leaves the label unchanged", () => {
+    expect(badgeLabel(stats({ fileCount: 4, funcCount: 5, otherCount: 0 }))).toBe("4 files · 5 fn");
+  });
 });
 
 describe("breakdownRows", () => {

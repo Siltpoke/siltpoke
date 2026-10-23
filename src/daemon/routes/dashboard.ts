@@ -36,6 +36,7 @@ import {
 import { SPECIES } from "../../web/creature/parts";
 import type { Species } from "../../web/creature/parts";
 import { isAuthorized } from "../auth";
+import { dayKey } from "../../state/usage";
 
 const VALID_ACTIONS: PetAction[] = ["feed", "play", "pet", "tease", "clean", "sleep"];
 
@@ -112,8 +113,12 @@ async function saveConfig(
   );
 }
 
+// The pet's day is the user's local day — the same key `siltpoke pet` and
+// `siltpoke action` already write (src/cli/pet.ts, action.ts). This was the UTC
+// date, so a pet from the dashboard and one from the CLI could land on
+// different days between local and UTC midnight.
 function todayKey(): string {
-  return new Date().toISOString().slice(0, 10);
+  return dayKey(new Date());
 }
 
 export interface DashboardRouteDeps {

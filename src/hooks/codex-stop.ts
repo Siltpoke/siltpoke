@@ -3,6 +3,7 @@
 import { runHook, type DaemonSpawnFn } from "./on-stop";
 import type { CallBrainOptions, BrainCallResult } from "../brain/brain";
 import { maybeRecordWhy } from "./why-index-wiring";
+import { isSiltpokeInternal } from "../router/router";
 
 async function readStdinAll(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -106,6 +107,11 @@ export async function runCodexStopHook(opts: RunCodexStopHookOptions): Promise<v
 if (import.meta.main) {
   try {
     const raw = await readStdinAll();
+    // Defect [73]: Codex source installs wire this file directly (no .sh), so a
+    // siltpoke-spawned codex child lands here. Exit before runHook writes a
+    // recursion_guard row or respawns the daemon. Guard lives in the entry:
+    // runCodexStopHook's own row is a tested contract for direct callers.
+    if (isSiltpokeInternal(process.env)) process.exit(0);
     await runCodexStopHook({ rawJson: raw });
     process.exit(0);
   } catch {

@@ -46,6 +46,8 @@ interface ProjSubdir {
   purpose: string;
   inbound: number;
   outbound: number;
+  /** Non-code files drawn in the box (docs, tests, config). */
+  otherFiles?: number;
 }
 interface ProjEdge {
   source: string;
@@ -120,7 +122,8 @@ export function bandsByFirstSegment(
   const bySeg = new Map<string, string[]>();
   const order: string[] = [];
   for (const sd of subdirs) {
-    const seg = sd.path.split("/")[0] || sd.path;
+    // The repo-root bucket has path "" and so no segment — it bands under its id.
+    const seg = sd.path === "" ? sd.id : sd.path.split("/")[0] || sd.path;
     let members = bySeg.get(seg);
     if (members === undefined) {
       members = [];
@@ -231,6 +234,7 @@ export function deriveC4FromProjection(
         fileCount: sd.files,
         funcCount: sd.funcCount ?? 0,
         recurringBasenames: sd.recurringBasenames ?? [],
+        otherCount: sd.otherFiles ?? 0,
       },
       x: 0,
       y: 0,
@@ -245,11 +249,12 @@ export function deriveC4FromProjection(
   // (groupingMode !== "fallback") keeps its author-given supergroups untouched.
   // The first-segment path requires every subdir to carry `path`; a path-less
   // projection (older fixtures) degrades safely to the supergroup grouping.
+  // An EMPTY path is not path-less: it is the repo-root bucket.
   const fallbackMode = proj.repo.groupingMode === "fallback";
   const useFirstSeg =
     fallbackMode &&
     proj.subdirs.length > 0 &&
-    proj.subdirs.every((sd) => typeof sd.path === "string" && sd.path.length > 0);
+    proj.subdirs.every((sd) => typeof sd.path === "string");
 
   let seeds: BandSeed[];
   if (useFirstSeg) {

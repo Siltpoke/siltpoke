@@ -69,8 +69,39 @@ const DOC_PATH_RE = /(^|\/)docs?\/|\.(md|mdx|txt|rst)$/i;
  */
 const AGENT_CONFIG_RE = /(^|\/)\.claude\//;
 
-function tierOf(file: string): DiffTier {
-  if (GENERATED_DIR_RE.test(file) || GENERATED_FILE_RE.test(file)) return "generated";
+/**
+ * A line this long was not written by a person. Detected by CONTENT because no
+ * path shape holds across repos: siltpoke's own `public/static/index.js` is a
+ * minified bundle (longest line 184,428 chars) that every rule above read as
+ * `source`, while another repo's `public/static/` may be hand-written. Hand
+ * code tops out far below this — a 10 KB line is a bundle, a data blob or an
+ * inlined asset, and none of those is what a review is about.
+ */
+const MINIFIED_LINE_CHARS = 10_000;
+
+function hasMinifiedLine(body: string): boolean {
+  if (body.length <= MINIFIED_LINE_CHARS) return false;
+  return body.split("\n").some((line) => line.length > MINIFIED_LINE_CHARS);
+}
+
+/**
+ * Files with a minified line in ANY of the given hunks. Per file, not per
+ * hunk: ranking keys are file-derived so that a file's hunks stay together,
+ * and a per-hunk verdict would split a bundle's short-line hunks from its long
+ * ones.
+ */
+function minifiedFiles(hunks: readonly { file: string; body?: string }[]): Set<string> {
+  const files = new Set<string>();
+  for (const h of hunks) {
+    if (h.body !== undefined && hasMinifiedLine(h.body)) files.add(h.file);
+  }
+  return files;
+}
+
+function tierOf(file: string, minified: ReadonlySet<string> = new Set()): DiffTier {
+  if (GENERATED_DIR_RE.test(file) || GENERATED_FILE_RE.test(file) || minified.has(file)) {
+    return "generated";
+  }
   if (TEST_PATH_RE.test(file)) return "tests";
   if (DOC_PATH_RE.test(file) || AGENT_CONFIG_RE.test(file)) return "docs";
   return "source";
@@ -140,7 +171,7 @@ function buildLinterHitSet(
  *
  * Pure: the input array is not mutated.
  */
-export function selectHunksForBudget<T extends { file: string }>(
+export function selectHunksForBudget<T extends { file: string; body?: string }>(
   hunks: readonly T[],
   opts: { linterFiles?: readonly string[]; budget?: number } = {},
 ): { kept: T[]; omitted: T[] } {
@@ -149,12 +180,14 @@ export function selectHunksForBudget<T extends { file: string }>(
     hunks.map((h) => h.file),
     opts.linterFiles ?? [],
   );
+  const minified = minifiedFiles(hunks);
 
   const ranked = hunks
     .map((hunk, index) => ({ hunk, index }))
     .sort((a, b) => {
       const tierCmp =
-        DIFF_TIERS.indexOf(tierOf(a.hunk.file)) - DIFF_TIERS.indexOf(tierOf(b.hunk.file));
+        DIFF_TIERS.indexOf(tierOf(a.hunk.file, minified)) -
+        DIFF_TIERS.indexOf(tierOf(b.hunk.file, minified));
       if (tierCmp !== 0) return tierCmp;
       const aHit = linterHits.has(a.hunk.file) ? 0 : 1;
       const bHit = linterHits.has(b.hunk.file) ? 0 : 1;
@@ -209,13 +242,21 @@ export type DiffCoverage = {
   omitted: Array<{ tier: DiffTier; count: number }>;
 };
 
+/**
+ * `allHunks` is the whole diff, for the minified-file test: a bundle's
+ * short-line hunk that was cut must still count as `generated` when only its
+ * long-line sibling was kept. Defaults to `omitted` for callers that have
+ * nothing more.
+ */
 export function describeCoverage(
   kept: number,
-  omitted: readonly { file: string }[],
+  omitted: readonly { file: string; body?: string }[],
+  allHunks: readonly { file: string; body?: string }[] = omitted,
 ): DiffCoverage {
+  const minified = minifiedFiles(allHunks);
   const byTier = new Map<DiffTier, number>();
   for (const h of omitted) {
-    const t = tierOf(h.file);
+    const t = tierOf(h.file, minified);
     byTier.set(t, (byTier.get(t) ?? 0) + 1);
   }
   return {
@@ -230,17 +271,12 @@ export function describeCoverage(
 
 export function formatCoverageNotice(
   kept: number,
-  omitted: readonly { file: string }[],
+  omitted: readonly { file: string; body?: string }[],
+  allHunks: readonly { file: string; body?: string }[] = omitted,
 ): string[] {
-  const total = kept + omitted.length;
-  const byTier = new Map<DiffTier, number>();
-  for (const h of omitted) {
-    const t = tierOf(h.file);
-    byTier.set(t, (byTier.get(t) ?? 0) + 1);
-  }
-  const breakdown = DIFF_TIERS.filter((t) => byTier.has(t))
-    .map((t) => `${byTier.get(t)} ${t}`)
-    .join(" · ");
+  const coverage = describeCoverage(kept, omitted, allHunks);
+  const total = coverage.total;
+  const breakdown = coverage.omitted.map((o) => `${o.count} ${o.tier}`).join(" · ");
 
   return [
     "",

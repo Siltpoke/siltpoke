@@ -2,6 +2,11 @@
 // Copyright (c) 2026 Jiaqi Duan
 import { z } from "zod";
 
+const INJECTION_WHERE_CAP = 200;
+const INJECTION_QUOTE_CAP = 300;
+const INJECTION_WHY_CAP = 200;
+const INJECTION_CAP = 5;
+
 // Evidence item schema.
 export const evidenceItemSchema = z.object({
   tool: z.enum(["tsc", "eslint", "git-diff", "ripgrep", "rubric"]),
@@ -11,6 +16,20 @@ export const evidenceItemSchema = z.object({
 });
 
 export type EvidenceItem = z.infer<typeof evidenceItemSchema>;
+
+/**
+ * One attempt, found in text the reviewer was shown, to instruct the reviewer.
+ * Declared with the caps `coerceBrainOutputShape` trims to, so an over-long
+ * `quote` is cut rather than rejected. No `.nullable()` anywhere: the codex
+ * strict schema turns optionals into null-unions and `stripNulls` removes them.
+ */
+export const injectionSuspectedItemSchema = z.object({
+  where: z.string().min(1).max(INJECTION_WHERE_CAP),
+  quote: z.string().min(1).max(INJECTION_QUOTE_CAP),
+  why: z.string().max(INJECTION_WHY_CAP),
+});
+
+export type InjectionSuspectedItem = z.infer<typeof injectionSuspectedItemSchema>;
 
 export const moodEnum = z.enum([
   "happy",
@@ -192,6 +211,14 @@ export const brainOutputSchema = z.object({
    * what it cut in `truncated.findings`.
    */
   findings: z.array(modelFindingSchema).default([]),
+
+  /**
+   * Planted instructions the reviewer saw in fenced text. Optional: absent means
+   * none were reported, and every critique already on disk still parses. Like
+   * `findings`, the ceiling is applied by TRIMMING in `coerceBrainOutputShape`;
+   * the `.max(5)` here is the declared contract, not the wall.
+   */
+  injection_suspected: z.array(injectionSuspectedItemSchema).max(INJECTION_CAP).optional(),
 
   // ── The bubble sits AFTER `findings`, and the order is load-bearing ────────
   // Zod preserves declaration order, `z.toJSONSchema` preserves Zod's, and the
@@ -396,6 +423,46 @@ export function coerceBrainOutputLengths(raw: unknown): unknown {
  * one direction that must never happen is a calm face on a serious review: that
  * understates the finding, and the reader has no way to tell it was a fallback.
  */
+const INJECTION_CAPS = {
+  where: INJECTION_WHERE_CAP,
+  quote: INJECTION_QUOTE_CAP,
+  why: INJECTION_WHY_CAP,
+} as const;
+
+/** Shorten over-long strings and default a missing why/where, so neither alone disqualifies an item. */
+function trimInjectionItem(item: unknown): unknown {
+  if (item === null || typeof item !== "object") return item;
+  const it = { ...(item as Record<string, unknown>) };
+  // Only `quote` is required; defaulted here, not via `.default()`, so the codex strict schema is unchanged.
+  if (it.why === undefined) it.why = "";
+  if (it.where === undefined || it.where === "") it.where = "(unspecified)";
+  for (const [key, cap] of Object.entries(INJECTION_CAPS)) {
+    const v = it[key];
+    if (typeof v === "string" && v.length > cap) it[key] = truncStr(v, cap);
+  }
+  return it;
+}
+
+/**
+ * Same trim -> drop -> cap order as `evidence` and `findings`. A non-array value
+ * is removed outright (the field is optional, so absence is its safe state);
+ * malformed items are dropped one at a time and noted in `repaired`.
+ */
+function coerceInjectionSuspected(value: unknown, repaired: string[]): InjectionSuspectedItem[] | undefined {
+  if (!Array.isArray(value)) {
+    repaired.push("injection_suspected");
+    return undefined;
+  }
+  const kept: InjectionSuspectedItem[] = [];
+  for (const [index, item] of value.entries()) {
+    const it = trimInjectionItem(item);
+    const verdict = injectionSuspectedItemSchema.safeParse(it);
+    if (verdict.success) kept.push(verdict.data);
+    else repaired.push(`injection_suspected.${index}: ${describeFirstIssue(verdict.error, it)}`);
+  }
+  return kept.slice(0, INJECTION_CAP);
+}
+
 /**
  * The TYPE a rejected field arrived as — never the value.
  *
@@ -570,6 +637,12 @@ function coerceBrainOutputShape(raw: unknown): unknown {
     if (malformed > 0) truncated.findings_malformed = malformed;
     if (claimedMalformed > 0) truncated.claimed_line_malformed = claimedMalformed;
     if (survivors.length > FINDINGS_CAP) truncated.findings = survivors.length - FINDINGS_CAP;
+  }
+
+  if (o.injection_suspected !== undefined) {
+    const items = coerceInjectionSuspected(o.injection_suspected, repaired);
+    if (items === undefined) delete next.injection_suspected;
+    else next.injection_suspected = items;
   }
 
   if (!poseEnum.safeParse(o.pose).success) {

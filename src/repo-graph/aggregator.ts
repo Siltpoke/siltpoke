@@ -259,11 +259,13 @@ export function aggregateBySuperGroup(
     const sourceFileMatch = /^file:([^:]+):$/.exec(edge.source);
     if (!sourceFileMatch) continue;
     const sourceFilePath = sourceFileMatch[1]!;
+    // Explicit undefined/null checks: the root container's path is "", which
+    // is falsy but a real container.
     const sourceSubdir = pathToSubdir.get(sourceFilePath);
-    if (!sourceSubdir) continue;
+    if (sourceSubdir === undefined) continue;
     const targetFile = resolveImportTarget(sourceFilePath, edge.target, fileIndex, anchorMap);
     const targetSubdir = targetFile ? resolve(targetFile) : null;
-    if (!targetSubdir) continue;
+    if (targetSubdir === null) continue;
     if (sourceSubdir === targetSubdir) continue; // intra-subdir
     const key = `${sourceSubdir}->${targetSubdir}`;
     const existing = edgeCounts.get(key);

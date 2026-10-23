@@ -22,10 +22,10 @@ Translate for the user:
 - `SwiftBar isn't installed …` (reason `no-swiftbar`) — the menu-bar pet
   needs the free SwiftBar app. Give them the link it printed
   (https://github.com/swiftbar/SwiftBar) and tell them to re-run
-  `/siltpoke-menubar install` once it's installed.
+  `/siltpoke:siltpoke-menubar install` once it's installed.
 - `menu-bar pet: installed, SwiftBar running` — from `status`; the pet is
   showing right now.
-- `menu-bar pet: not installed` — from `status`; offer `/siltpoke-menubar
+- `menu-bar pet: not installed` — from `status`; offer `/siltpoke:siltpoke-menubar
   install`.
 - `menu-bar pet: installed, but SwiftBar is not running …` — from `status`;
   the shim is fine, the menu bar is empty only because SwiftBar isn't up.
@@ -36,7 +36,7 @@ Translate for the user:
   absent.
 - `menu-bar pet: installed at <A>, but SwiftBar is now reading <B> …` — from
   `status`; the install succeeded, then SwiftBar's plugin folder changed. Offer
-  `/siltpoke-menubar install` to put it where SwiftBar now looks.
+  `/siltpoke:siltpoke-menubar install` to put it where SwiftBar now looks.
 - `menu-bar pet: installed, but I could not tell whether SwiftBar is running`
   — from `status`; the process probe itself failed. Ask them to look at their
   menu bar; do not assert either way.

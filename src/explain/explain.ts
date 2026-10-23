@@ -28,10 +28,9 @@ import { join } from "node:path";
 import type { BrainUsage } from "../brain/brain";
 import { loadRepoGraphConfig } from "../config/repo-graph-config";
 import { siltpokeRoot } from "../installer/paths";
-import { ledgerBrainCall } from "../state/usage";
 import { readIndexStalenessAt } from "../repo-graph/index-health";
 import { resolveTarget } from "../repo-graph/query";
-import { stalenessVerdict, type StalenessVerdict } from "../repo-graph/staleness-verdict";
+import { type StalenessVerdict, stalenessVerdict } from "../repo-graph/staleness-verdict";
 import {
   readFingerprints,
   readGraph,
@@ -44,13 +43,17 @@ import {
   type NodeCandidate,
 } from "../repo-graph/symbol-table";
 import type { RepoGraph } from "../repo-graph/types";
+import { ledgerBrainCall } from "../state/usage";
 import { readCachedExplanation } from "./cache";
 import {
-  scoreCitations,
   type KnownFile,
+  scoreCitations,
 } from "./evidence-score";
+import { expandLanguage, loadPersonality } from "../brain/personality";
 import {
   assemblePrompt,
+  explainSystemPrompt,
+  explainUserContent,
 } from "./prompt-assembly";
 import {
   cacheKey,
@@ -66,12 +69,27 @@ const DEFAULT_DEPTH: 1 | 2 = 1;
 // Default cost caps raised from $0.005 / $0.02 after F29 smoke (2026-05-28):
 // real `claude -p` subprocess invocations charge ~$0.03-0.06 per call due to
 // CLI system-context cache creation. The original $0.005 design estimate was
-// 6-12x low. New defaults: soft warns above expected ceiling; hard cap aborts
-// only on truly pathological calls. Env vars `SILTPOKE_EXPLAIN_SOFT_CAP_USD`
-// and `SILTPOKE_EXPLAIN_HARD_CAP_USD` still override at runtime.
+// 6-12x low. Env vars `SILTPOKE_EXPLAIN_SOFT_CAP_USD` and
+// `SILTPOKE_EXPLAIN_HARD_CAP_USD` still override at runtime.
+//
+// Neither cap can stop a call: the cost is only known AFTER the Brain has been
+// billed. So both caps are warnings — an over-cap explanation is kept and
+// flagged, never discarded (defect [38]: discarding it threw away results the
+// user had already paid for, and real-size repos crossed $0.10 more often
+// than not).
 const DEFAULT_SOFT_CAP_USD = 0.05;
-const DEFAULT_HARD_CAP_USD = 0.1;
+export const EXPLAIN_DEFAULT_HARD_CAP_USD = 0.1;
 const LOW_CONFIDENCE_THRESHOLD = 0.9;
+
+/** Both caps are warnings, never gates: flag an overspend against each. */
+function capFlags(costUsd: number, softCapUsd: number, hardCapUsd: number) {
+  return {
+    softCapExceeded: costUsd > softCapUsd,
+    softCapUsd,
+    hardCapExceeded: costUsd > hardCapUsd,
+    hardCapUsd,
+  };
+}
 
 export type SourceProvider = (path: string) => Promise<string | null>;
 /** Minimal killable subprocess handle the provider can hand back (structural —
@@ -94,6 +112,12 @@ export type BrainProvider = (input: {
    * AS IT DRAINS — the per-task result file is the source of truth that survives
    * the daemon dying mid-run. ABSENT = the CLI path (result only in memory). */
   resultFilePath?: string;
+  /** Injected in tests only; defaults to the real platform. Decides whether the
+   * system prompt travels in argv or in a file (defect `[26]`). */
+  platform?: NodeJS.Platform;
+  /** The project being explained. The subprocess runs here, so any file it
+   * reads is that project's (defect `[83]`). ABSENT = the daemon's own cwd. */
+  cwd?: string;
 }) => Promise<{ markdown: string; usage: BrainUsage }>;
 
 export interface ExplainCtx {
@@ -144,6 +168,11 @@ export type ExplainOutcome =
       softCapExceeded: boolean;
       /** The soft cap value that was checked, for display. */
       softCapUsd: number;
+      /** True iff the cost exceeded the hard cap. The result is still kept —
+       *  the money is spent by the time the cost is known (defect [38]). */
+      hardCapExceeded: boolean;
+      /** The hard cap value that was checked, for display. */
+      hardCapUsd: number;
       /** Index-staleness verdict for the repo-graph this explanation was drawn
        *  from. Attached on BOTH the cache-hit AND cache-miss success returns —
        *  a cached explanation must not silently drop the warning (R9). */
@@ -151,8 +180,7 @@ export type ExplainOutcome =
     }
   | { kind: "ambiguous"; candidates: NodeCandidate[] }
   | { kind: "not_found"; target: string; suggestions: string[] }
-  | { kind: "pre_check_failed"; message: string }
-  | { kind: "cost_cap_exceeded"; usage: BrainUsage; costUsd: number };
+  | { kind: "pre_check_failed"; message: string };
 
 function buildKnownFiles(graph: RepoGraph): Map<string, KnownFile> {
   const out = new Map<string, KnownFile>();
@@ -184,7 +212,7 @@ export async function runExplain(
 ): Promise<ExplainOutcome> {
   const depth: 1 | 2 = opts.depth ?? DEFAULT_DEPTH;
   const softCap = ctx.costSoftCapUsd ?? DEFAULT_SOFT_CAP_USD;
-  const hardCap = ctx.costHardCapUsd ?? DEFAULT_HARD_CAP_USD;
+  const hardCap = ctx.costHardCapUsd ?? EXPLAIN_DEFAULT_HARD_CAP_USD;
   const now = ctx.now ?? (() => new Date());
 
   // Step 1 — pre-check
@@ -261,8 +289,7 @@ export async function runExplain(
         lowConfidence: cached.meta.low_confidence,
         truncated: false,
         usage: cached.meta.brain_usage,
-        softCapExceeded: cachedCost > softCap,
-        softCapUsd: softCap,
+        ...capFlags(cachedCost, softCap, hardCap),
         staleness,
       };
     }
@@ -285,20 +312,24 @@ export async function runExplain(
     sources,
   });
 
-  // Step 9 — Brain call
+  // Step 9 — Brain call. The language is siltpoke's own setting (the one the
+  // reviewer writes in), read here so every caller gets it: the CLI, the
+  // detached daemon explain, and the trace card's purpose.
+  const configured: unknown = (await loadPersonality(home)).language;
+  const language = typeof configured === "string" ? expandLanguage(configured) : configured;
   const { markdown: rawMarkdown, usage } = await ctx.brainProvider({
-    systemPrompt: prompt.systemPrompt,
-    contextBundle: prompt.contextBundle,
+    systemPrompt: explainSystemPrompt(language),
+    contextBundle: explainUserContent(prompt.contextBundle, language),
     signal: ctx.signal,
     onSpawn: ctx.onSpawn,
     resultFilePath: ctx.resultFilePath,
+    cwd: ctx.cwd,
   });
   const costUsd = usage.total_cost_usd ?? 0;
 
   // Honest ledger (cost-honesty batch A): a real Brain call ran (this is the
-  // cache-MISS path — a hit returned at Step 5, before any spend). Fires for
-  // BOTH the success path below AND the cost_cap_exceeded early-return — both
-  // spent real money. The single shared writer; the daemon detached route no
+  // cache-MISS path — a hit returned at Step 5, before any spend), so it is
+  // recorded before anything below can fail. The single shared writer; the daemon detached route no
   // longer ledgers inline (would double-bill). Gated on ledgerBasePath so
   // opt-out callers / the existing test suite are unaffected.
   if (ctx.ledgerBasePath) {
@@ -309,11 +340,8 @@ export async function runExplain(
     });
   }
 
-  // Step 10 — cost-cap gate (hard cap aborts before persistence)
-  if (costUsd > hardCap) {
-    return { kind: "cost_cap_exceeded", usage, costUsd };
-  }
-  const softCapExceeded = costUsd > softCap;
+  // Step 10 — cost caps are after-the-fact warnings (see `capFlags`): the call
+  // is already billed, so the result is persisted either way.
 
   // Step 11 — evidence score
   const knownFiles = buildKnownFiles(graph);
@@ -359,8 +387,7 @@ export async function runExplain(
     lowConfidence,
     truncated: prompt.truncated || subgraph.truncated,
     usage,
-    softCapExceeded,
-    softCapUsd: softCap,
+    ...capFlags(costUsd, softCap, hardCap),
     staleness,
   };
 }

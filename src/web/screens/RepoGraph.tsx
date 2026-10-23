@@ -23,6 +23,7 @@ import { CANONICAL_NAV } from "../routes/nav";
 import type { ArchitectureProjection } from "../../repo-graph/project-architecture";
 import { repoDisplayName } from "../../repo-graph/repo-label";
 import type { RepoEntry } from "../../repo-graph/repo-registry";
+import type { UndrawnSummary } from "../../repo-graph/undrawn-files";
 
 export interface RepoGraphScreenProps {
   /** id-keyed architecture projection — the island renders this DOM+SVG. */
@@ -39,12 +40,13 @@ export interface RepoGraphScreenProps {
   stats: { files: number; symbols: number; edges: number };
   /** Imports that point outside the indexed root. null/undefined = unknown (older index) → render nothing. */
   outsideImports?: { count: number; examples: string[] } | null;
+  /** Non-code files drawn as plain files (derived view only); null = none listed / older index. */
+  otherFiles?: { count: number; truncated: boolean } | null;
   /** Wording of the suffix: a sub-folder index says "folder", a repo index "repo". */
   outsideScope?: "folder" | "repo";
   /** Daemon secret, embedded for the island's mutating index POSTs. */
   secret?: string;
-  /** The cached LLM-derived model (raw ArchModelDoc — the
-   * island adapts it to a C4Model), with its grounded share + staleness. */
+  /** The cached LLM-derived model (raw ArchModelDoc; the island adapts it to a C4Model), with its grounded share + staleness. */
   generatedModel?: {
     doc: unknown;
     groundedPct: number;
@@ -55,8 +57,9 @@ export interface RepoGraphScreenProps {
     /** Wall-clock duration of the Brain call (ms). Absent on legacy caches. */
     durationMs?: number;
     costUsd?: number;
-    /** Grounding counts. Absent on legacy caches from before this field existed — never
-     * default to 0; the popover omits the formula line gracefully. */
+    /** Hard cap the run is judged against — flags a kept over-cap model (defect [38]). */
+    hardCapUsd?: number;
+    /** Grounding counts. Absent on legacy caches — never default to 0; the popover omits the formula line. */
     citedClaims?: number;
     totalClaims?: number;
     topologyBlindClaims?: number;
@@ -66,10 +69,12 @@ export interface RepoGraphScreenProps {
   authoredModel?: unknown | null;
   /** A file existed but failed validation → the visible fail-soft notice. */
   authoredInvalid?: boolean;
+  /** Indexed files each view leaves out of its boxes (`undrawn-files.ts`); generated null = not generated. */
+  undrawn?: { structural: UndrawnSummary; generated: UndrawnSummary | null };
 }
 
 export function RepoGraph(props: RepoGraphScreenProps) {
-  const { projection, repoEntries, currentProjHash, stalenessBanner, stats, outsideImports, outsideScope, secret, generatedModel, authoredModel, authoredInvalid } = props;
+  const { projection, repoEntries, currentProjHash, stalenessBanner, stats, outsideImports, outsideScope, secret, generatedModel, authoredModel, authoredInvalid, undrawn, otherFiles } = props;
 
   const initialPayload = JSON.stringify({
     projection,
@@ -81,6 +86,7 @@ export function RepoGraph(props: RepoGraphScreenProps) {
     generatedModel: generatedModel ?? null,
     // The authored model rides the same payload pipeline.
     authoredModel: authoredModel ?? null,
+    undrawn: undrawn ?? null,
   });
 
   const fmt = (n: number) => n.toLocaleString();
@@ -252,6 +258,9 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .arch-chip:focus-visible{outline:2px solid var(--resolved);outline-offset:1px}
             .rg-host .arch-chip b{color:var(--resolved);font-weight:600}
             .rg-host .arch-noevi{font-family:var(--mono);font-size:10.5px;color:var(--ink3);white-space:nowrap}
+            .rg-host .idx-notes{display:flex;flex-wrap:wrap;gap:4px 14px;padding:5px 20px;border-bottom:1px solid var(--edge);background:var(--cream);font-family:var(--mono);font-size:11px;color:var(--ink2)}
+            .rg-host .idx-notes:not(:has(> :not([hidden]))){display:none}
+            .rg-host .idx-stale{background:none;border:0;padding:0;font:inherit;color:var(--terra);cursor:pointer;text-decoration:underline;text-align:left}
             .rg-host .arch-noevi[hidden]{display:none}
             /* Grounded chip lives in the toolbar; tight position:relative
                wrapper so the anchor-popover anchors to the chip, not the whole toolbar.
@@ -546,6 +555,9 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             .rg-host .p-note .warn{color:var(--amber);font-weight:600}
             .rg-host .p-note .muted{color:var(--ink3)}
             .rg-host .btn.gening{pointer-events:none;opacity:.85}
+            .rg-host .rg-regen{display:block;margin:14px auto 0;padding:7px 16px;min-height:32px;white-space:nowrap;font-family:var(--body);font-size:12px;font-weight:600;color:var(--ink2);background:transparent;border:1px dashed var(--edge);border-radius:8px;cursor:pointer}
+            .rg-host .rg-regen:hover{background:var(--paperD);color:var(--ink)}
+            .rg-host .rg-regen.gening{pointer-events:none;opacity:.85}
             .rg-host .spin,#rg-ex-overlay .spin{display:inline-block;width:13px;height:13px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:rgspin .7s linear infinite;vertical-align:-2px;margin-right:5px}
             .rg-host .nbadge.expl{color:var(--moss);border-color:var(--moss)}
 
@@ -835,6 +847,11 @@ export function RepoGraph(props: RepoGraphScreenProps) {
                 · <b>{fmt(outsideImports.count)}</b> imports point outside this {outsideScope === "folder" ? "folder" : "repo"} (not shown)
               </span>
             ) : null}
+            {otherFiles && otherFiles.count > 0 ? (
+              <span class="idx-other" title="Docs, tests and config — drawn in the Auto view as plain files, never parsed">
+                · <b id="rg-st-other">{fmt(otherFiles.count)}{otherFiles.truncated ? "+" : ""}</b> other files
+              </span>
+            ) : null}
           </span>
           {/* Flex spacer: pushes everything after it to the trailing edge */}
           <span class="ph-spacer" aria-hidden="true" />
@@ -862,6 +879,11 @@ export function RepoGraph(props: RepoGraphScreenProps) {
             <span id="rg-arch-gen-label">⚡ Generate architecture</span>
             <span class="cost" id="rg-arch-gen-cost"></span>
           </button>
+        </div>
+        {/* Notes about the map itself — own row so a long one wraps instead of pushing the pagehead's buttons off-screen. */}
+        <div class="idx-notes">
+          <span class="idx-undrawn" id="rg-undrawn" hidden></span>{/* filled per view by repo-graph-undrawn.ts */}
+          <button type="button" class="idx-stale" id="rg-index-stale" hidden></button>{/* repo-graph-index-freshness.ts */}
         </div>
 
         {/* Daemon-staleness strip. NON-dismissible by

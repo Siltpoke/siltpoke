@@ -374,16 +374,16 @@ describe("formula headline and definition line", () => {
     expect(pop!.textContent).not.toContain("pinned to exactly one definition");
   });
 
-  test("so-what: label stripped → 'Solid arrows and labels' (cycle-2 de-label)", () => {
-    // flipped per 2026-06-12 cycle-2 de-label ruling
+  test("so-what: label stripped → 'Solid arrows' (AC32 legend wording)", () => {
+    // flipped per 2026-06-12 cycle-2 de-label ruling; wording updated 2026-09-26 (AC32)
     const btn = makeArchChip(PAYLOAD_MATCHED);
     btn.click();
 
     const pop = getPopover();
     expect(pop).not.toBeNull();
     expect(pop!.textContent).not.toContain("So what:"); // bold lead-in stripped
-    expect(pop!.textContent).toContain("Solid arrows and labels are evidence-backed"); // capitalized opening
-    expect(pop!.textContent).toContain("inferred ones render dashed"); // so-what phrasing intact
+    expect(pop!.textContent).toContain("Solid arrows are an import or a source citation checked just now");
+    expect(pop!.textContent).toContain("dashed ones are neither"); // so-what phrasing intact
   });
 });
 

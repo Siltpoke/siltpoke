@@ -7,6 +7,20 @@ import { palette, graphPalette, kindPalette } from "../../../src/web/tokens/pale
 describe("tokensToCss", () => {
   const css = tokensToCss();
 
+  // Settings' in-use fill: green in light, none in dark —
+  // under all four routes, forced light on a dark OS included.
+  test("the in-use fill is green in both light blocks and transparent in both dark blocks", () => {
+    const block = (head: string) => {
+      const at = css.indexOf(head);
+      return css.slice(at, css.indexOf("}", at));
+    };
+    const value = (b: string) => b.match(/--shadow-inUseWash: ([^;]+);/)?.[1];
+    expect(value(block(":root {"))).toBe("rgba(122,154,94,0.14)");
+    expect(value(block(':root[data-theme="light"] {'))).toBe("rgba(122,154,94,0.14)");
+    expect(value(block(':root:not([data-theme="light"]) {'))).toBe("transparent");
+    expect(value(block(':root[data-theme="dark"] {'))).toBe("transparent");
+  });
+
   test("emits the four blocks", () => {
     expect(css).toContain(":root {");
     expect(css).toContain("@media (prefers-color-scheme: dark)");

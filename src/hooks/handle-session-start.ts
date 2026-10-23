@@ -347,9 +347,11 @@ export async function handleSessionStart(input: SessionStartInput): Promise<void
   //
   // Raw env.HOME, not siltpokeRoot(env) — that is where the shims live and where
   // the statusLine command and the autostart unit point (see installer/shim.ts).
-  // Only refreshes files that already exist, and only on a real content
-  // difference, so this is a no-op for anyone who never opted in and for every
-  // session after the first one following an upgrade.
+  // Refreshes the two shims only where they already exist, and only on a real
+  // content difference, so this is a no-op for anyone who never opted in and
+  // for every session after the first one following an upgrade. The one file
+  // it may CREATE is uninstall.sh, and only beside an existing statusline shim
+  // (defect [61]: someone who set up before that script existed still needs it).
   const rawHome = env.HOME;
   if (rawHome) await refreshStaleShims(rawHome).catch(() => {});
 }

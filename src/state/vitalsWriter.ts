@@ -4,13 +4,14 @@
  * Vitals JSONL writer.
  *
  * Appends a daily snapshot to vitals.jsonl on the first action of a new
- * UTC day. Retains at most VITALS_RETENTION entries (head-drop).
+ * local day. Retains at most VITALS_RETENTION entries (head-drop).
  */
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Progression } from "./progression";
 import { ACTION_BASE_XP } from "./progression";
+import { dayBefore, dayKey } from "./usage";
 
 export interface VitalsSnapshot {
   readonly day: string;
@@ -30,9 +31,7 @@ function vitalsPath(basePath: string): string {
 }
 
 function yesterdayOf(now: Date): string {
-  const d = new Date(now);
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
+  return dayBefore(dayKey(now));
 }
 
 async function readLines(path: string): Promise<VitalsSnapshot[]> {
@@ -78,7 +77,7 @@ function computeXpAwarded(prog: Progression, day: string): number {
 }
 
 function todayOf(now: Date): string {
-  return new Date(now).toISOString().slice(0, 10);
+  return dayKey(now);
 }
 
 function buildSnapshot(prog: Progression, day: string): VitalsSnapshot {
@@ -96,7 +95,7 @@ function buildSnapshot(prog: Progression, day: string): VitalsSnapshot {
 /**
  * Append (or update) snapshots in vitals.jsonl so the dashboard sparkline
  * has live data:
- *   - Yesterday: written ONCE when the first action of a new UTC day fires
+ *   - Yesterday: written ONCE when the first action of a new local day fires
  *     (idempotent, guarded by hadActionYesterday).
  *   - Today: overwritten on every call so the latest stats land in the
  *     7-day window immediately, even before the next day rolls over.

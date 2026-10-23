@@ -159,7 +159,7 @@ describe("makeFloatingChatData", () => {
       anchor: { name: "applyDiscount", path: "src/foo.ts", node_type: "function", proj_hash: "abc123def456" },
     });
     expect(d.active()?.serverSessionId).toBe("s-deadbeef");
-    expect(d.active()?.messages.at(-1)).toEqual({ role: "assistant", text: "it multiplies." });
+    expect(d.active()?.messages.at(-1)).toEqual({ role: "assistant", text: "it multiplies.", at: expect.any(String) });
     // first user message becomes the history title locally (no reload needed)
     expect(d.active()?.title).toBe("what is this?");
   });
@@ -273,7 +273,8 @@ describe("makeFloatingChatData", () => {
     // dropping `page` from the body (or reading the wrong provider) fails this.
     expect(sent[0].page).toBe("/memory");
     // The context-preview endpoint was hit with the same page (refreshed after send).
-    expect(contextPreviewHits[0]).toBe("/api/chat/context-preview?page=%2Fmemory");
+    // It also names the conversation; the pin was sent, so the stored anchor decides.
+    expect(contextPreviewHits[0]).toBe("/api/chat/context-preview?page=%2Fmemory&session=s-page");
   });
 
   test("transparency bar reflects preview (page + facts) after refreshContextPreview", async () => {
@@ -287,7 +288,7 @@ describe("makeFloatingChatData", () => {
     const d = makeFloatingChatData(fetchFn, { pageProvider: () => "/memory" });
     // No active conversation — the 📍 node chip stays null; page/facts still populate
     // (INTENDED: facts recall is not scoped to an anchored conversation).
-    expect(d.contextChips()).toEqual({ node: null, page: "", facts: 0 });
+    expect(d.contextChips()).toEqual({ node: null, page: "", facts: 0, code: null });
 
     await d.refreshContextPreview();
 
@@ -317,8 +318,12 @@ describe("makeFloatingChatData", () => {
   });
 
   test("deleteConversation removes it and reselects next", async () => {
+    const deletes: Array<string | null> = [];
     const fetchFn = (async (url: string, init?: RequestInit) => {
-      if (init?.method === "DELETE") return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      if (init?.method === "DELETE") {
+        deletes.push(((init.headers ?? {}) as Record<string, string>)["X-Siltpoke-Secret"] ?? null);
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
       return new Response(JSON.stringify({ messages: [] }), { status: 200 });
     }) as unknown as typeof fetch;
     const d = makeFloatingChatData(fetchFn);
@@ -327,9 +332,28 @@ describe("makeFloatingChatData", () => {
       { id: "b", serverSessionId: "b", anchor: null, anchorNodeId: null, label: "b", pin: "b", badge: "file", pinSent: true, messages: [] },
     ];
     d.activeId = "a";
+    d.secret = "s3cret";
     await d.deleteConversation("a");
     expect(d.conversations.map((c) => c.id)).toEqual(["b"]);
     expect(d.activeId).toBe("b");
+    // The delete carries the secret (C1).
+    expect(deletes).toEqual(["s3cret"]);
+  });
+
+  test("deleteConversation refused by the server keeps the chat and says why", async () => {
+    const fetchFn = (async (_url: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+      return new Response(JSON.stringify({ messages: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const d = makeFloatingChatData(fetchFn);
+    d.conversations = [
+      { id: "a", serverSessionId: "a", anchor: null, anchorNodeId: null, label: "a", pin: "a", badge: "fn", pinSent: true, messages: [] },
+    ];
+    d.activeId = "a";
+    await d.deleteConversation("a");
+    expect(d.conversations.map((c) => c.id)).toEqual(["a"]);
+    expect(d.activeId).toBe("a");
+    expect(d.error).toContain("this page is out of date");
   });
 
   test("deleteConversation of the last conversation clears activeId to null", async () => {

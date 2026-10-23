@@ -3,7 +3,7 @@
 //
 // Regression guard for audit defect [8]: the only post-install guidance
 // siltpoke gives is a once-ever stderr nudge. hooks/stop.sh's nudge told
-// EVERY host to run `/siltpoke-setup`, but codex and agy have no such slash
+// EVERY host to run `/siltpoke:siltpoke-setup`, but codex and agy have no such slash
 // command — and hooks/codex-stop.sh / hooks/agy-stop.sh had NO nudge at all,
 // so those hosts got total silence on a broken install.
 //
@@ -18,7 +18,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -32,14 +31,6 @@ const REPO = process.cwd();
 // redirection failure on a special builtin) that dash treats as fatal.
 const SHELL = existsSync("/bin/dash") ? "/bin/dash" : "sh";
 
-// Real agy Stop payload, captured verbatim (see tests/hooks/agy-stop.test.ts's
-// REAL_STOP_PAYLOAD for the JSON-shape sibling of this same capture). The
-// hooks under test never parse this — they just drain-and-pipe — so the
-// leading debug-log framing in the fixture is harmless as raw stdin bytes.
-const AGY_PAYLOAD = readFileSync(
-  join(REPO, "tests", "fixtures", "agy", "stop-hook-payload.txt"),
-  "utf8",
-);
 const CODEX_PAYLOAD = JSON.stringify({
   session_id: "codex-abc",
   transcript_path: "/tmp/codex-transcript.jsonl",
@@ -57,6 +48,12 @@ type HookSpec = {
   mustNotContain: string[];
   /** This host's own once-ever marker filename under ~/.siltpoke (per-host, not shared). */
   marker: string;
+  /**
+   * Where the nudge goes. stop.sh moved to stdout `systemMessage` JSON for
+   * defect [33] — Claude Code never shows an exit-0 hook's stderr. codex and
+   * agy were not re-measured in that fix, so they keep the channel they had.
+   */
+  channel: "stdout-system-message" | "stderr";
   extraEnv?: Record<string, string>;
 };
 
@@ -64,9 +61,10 @@ const HOOKS: HookSpec[] = [
   {
     label: "stop.sh (CC-family: claude/qoder/codebuddy)",
     script: "stop.sh",
-    marker: ".nudged",
+    marker: ".setup-nudged",
+    channel: "stdout-system-message",
     payload: CC_PAYLOAD,
-    mustContain: "/siltpoke-setup",
+    mustContain: "/siltpoke:siltpoke-setup",
     mustNotContain: [],
     extraEnv: { CLAUDE_PLUGIN_ROOT: REPO },
   },
@@ -74,18 +72,15 @@ const HOOKS: HookSpec[] = [
     label: "codex-stop.sh",
     script: "codex-stop.sh",
     marker: ".codex-stop-nudged",
+    channel: "stderr",
     payload: CODEX_PAYLOAD,
     mustContain: "/skills",
     mustNotContain: ["/siltpoke-"],
   },
-  {
-    label: "agy-stop.sh",
-    script: "agy-stop.sh",
-    marker: ".agy-stop-nudged",
-    payload: AGY_PAYLOAD,
-    mustContain: "set up Siltpoke",
-    mustNotContain: ["/siltpoke-"],
-  },
+  // agy-stop.sh is not here any more: agy shows nothing a Stop hook prints
+  // (install audit §50), so its hint moved to the statusline. That behaviour,
+  // its no-slash-command text and its stdin drain are pinned in
+  // tests/hooks/agy-setup-hint.test.ts.
 ];
 
 let home: string;
@@ -103,6 +98,30 @@ function runHook(spec: HookSpec) {
   });
 }
 
+type SpawnResult = ReturnType<typeof Bun.spawnSync>;
+
+/**
+ * The nudge text a hook emitted on ITS channel, "" when it said nothing there.
+ * A stdout nudge must be exactly one line of `{"systemMessage": …}` JSON — a
+ * bare string on stdout would reach no one, which is defect [33] again.
+ */
+function nudgeOf(spec: HookSpec, r: SpawnResult): string {
+  const out = new TextDecoder().decode(r.stdout);
+  const err = new TextDecoder().decode(r.stderr);
+  if (spec.channel === "stderr") return err;
+  if (out === "") return "";
+  const parsed = JSON.parse(out) as { systemMessage?: unknown };
+  expect(out.trim().split("\n")).toHaveLength(1);
+  expect(typeof parsed.systemMessage).toBe("string");
+  return parsed.systemMessage as string;
+}
+
+/** Silence means BOTH streams — a nudge that moved channels must not hide on the other one. */
+function expectSilent(r: SpawnResult): void {
+  expect(new TextDecoder().decode(r.stdout)).toBe("");
+  expect(new TextDecoder().decode(r.stderr)).toBe("");
+}
+
 describe("host-aware install nudge (defect [8])", () => {
   for (const spec of HOOKS) {
     describe(spec.label, () => {
@@ -113,18 +132,18 @@ describe("host-aware install nudge (defect [8])", () => {
         // that silently captured nothing could never read as green here.
         const first = runHook(spec);
         expect(first.exitCode).toBe(0);
-        const firstErr = new TextDecoder().decode(first.stderr);
-        expect(firstErr.length).toBeGreaterThan(0);
-        expect(firstErr).toContain(spec.mustContain);
+        const firstNudge = nudgeOf(spec, first);
+        expect(firstNudge.length).toBeGreaterThan(0);
+        expect(firstNudge).toContain(spec.mustContain);
         for (const forbidden of spec.mustNotContain) {
-          expect(firstErr).not.toContain(forbidden);
+          expect(firstNudge).not.toContain(forbidden);
         }
         expect(existsSync(join(home, ".siltpoke", spec.marker))).toBe(true);
 
         // Second run, same HOME: once-ever — must go silent.
         const second = runHook(spec);
         expect(second.exitCode).toBe(0);
-        expect(new TextDecoder().decode(second.stderr)).toBe("");
+        expectSilent(second);
       });
 
       test("~/.siltpoke permanently unwritable: silent on EVERY run, never a per-turn nag", () => {
@@ -134,12 +153,12 @@ describe("host-aware install nudge (defect [8])", () => {
         try {
           const first = runHook(spec);
           expect(first.exitCode).toBe(0);
-          expect(new TextDecoder().decode(first.stderr)).toBe("");
+          expectSilent(first);
           expect(existsSync(join(siltpokeDir, spec.marker))).toBe(false);
 
           const second = runHook(spec);
           expect(second.exitCode).toBe(0);
-          expect(new TextDecoder().decode(second.stderr)).toBe("");
+          expectSilent(second);
         } finally {
           chmodSync(siltpokeDir, 0o755);
         }
@@ -211,8 +230,7 @@ describe("host-aware install nudge (defect [8])", () => {
           stdin: new TextEncoder().encode(spec.payload),
         });
         expect(r.exitCode).toBe(0);
-        const stderr = new TextDecoder().decode(r.stderr);
-        expect(stderr).toContain(spec.mustContain);
+        expect(nudgeOf(spec, r)).toContain(spec.mustContain);
         expect(existsSync(join(siltpokeDir, spec.marker))).toBe(true);
       } finally {
         rmSync(scratchHome, { recursive: true, force: true });
@@ -220,7 +238,7 @@ describe("host-aware install nudge (defect [8])", () => {
     }
   });
 
-  test("codex and agy nudge text is free of the /siltpoke- slash-command family (the defect's exact regression)", () => {
+  test("codex nudge text is free of the /siltpoke- slash-command family (the defect's exact regression; agy's is in agy-setup-hint.test.ts)", () => {
     // Isolated from the per-hook describe blocks above so this file has ONE
     // assertion whose sole job is exactly what the defect was: telling a
     // non-CC host to run a command it doesn't have. Each spec still gets its

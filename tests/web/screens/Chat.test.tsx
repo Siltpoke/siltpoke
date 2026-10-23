@@ -195,4 +195,12 @@ describe("Chat screen SSR", () => {
     const html = render();
     expect(html).toContain('x-bind:disabled="streaming || !input.trim()"');
   });
+
+  // Defect [49]: an agent that answers in one piece leaves `buffer` empty for
+  // the whole wait. The waiting bubble shows the island's `waitNote` until the
+  // first text arrives — the island sets it; this pins that the page reads it.
+  test("the waiting bubble shows the whole-reply note while there is no text yet", () => {
+    const html = render();
+    expect(html).toMatch(/x-show="streaming"[^>]*x-text="buffer \|\| waitNote"/);
+  });
 });

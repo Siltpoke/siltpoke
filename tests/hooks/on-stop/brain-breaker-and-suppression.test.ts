@@ -76,7 +76,7 @@ test("open breaker: Stop hook skips the Brain spawn and writes a skip record wit
   expect(log).toContain('"breaker_class":"resource"');
 });
 
-test("/siltpoke-wake clears the breaker (incl. latched permanent) and the call proceeds", async () => {
+test("/siltpoke:siltpoke-wake clears the breaker (incl. latched permanent) and the call proceeds", async () => {
   const latched = recordFailure(freshBrainHealth(), {
     class: "permanent",
     exit_code: 1,

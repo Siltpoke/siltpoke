@@ -16,6 +16,7 @@
  */
 import { type BrainCallResult, type BrainUsage, type CallBrainOptions, callBrainText, DEFAULT_MODEL } from "./brain";
 import { brainOutputFromText } from "./parse-raw";
+import type { ToolCallRecord } from "./tool-calls";
 
 export type BillingKind = "usd" | "quota";
 
@@ -56,13 +57,15 @@ export const FAMILY_ACCEPTS_MODEL = {
   agy: true, // providers/agy.ts argv --model
   qoder: true, // ccfork buildArgv --model
   codebuddy: true, // ccfork buildArgv --model
-  codex: false, // providers/codex.ts spawn array has no -m at all
+  codex: true, // providers/codex.ts argv -m (a model from `codex debug models`; others are refused under ChatGPT auth)
 } as const satisfies Record<BrainProviderMeta["name"], boolean>;
 
 export interface CallRawResult {
   text: string;
   usage: BrainUsage;
   servedModel?: string;
+  /** Tools the model used (🛡 [C]); absent = this provider's output carries no tool record. */
+  toolCalls?: ToolCallRecord[];
 }
 
 // "Reviewer" prefix: src/explain/explain.ts already exports an unrelated
@@ -86,8 +89,8 @@ export interface ReviewerBrainProvider {
  */
 export function makeClaudeProvider(): ReviewerBrainProvider {
   const callRaw = async (opts: CallBrainOptions): Promise<CallRawResult> => {
-    const { text, usage } = await callBrainText(opts);
-    return { text, usage, servedModel: opts.model ?? DEFAULT_MODEL };
+    const { text, usage, toolCalls } = await callBrainText(opts);
+    return { text, usage, servedModel: opts.model ?? DEFAULT_MODEL, toolCalls };
   };
   return {
     meta: {
@@ -99,7 +102,7 @@ export function makeClaudeProvider(): ReviewerBrainProvider {
     callRaw,
     call: async (opts: CallBrainOptions): Promise<BrainCallResult & { servedModel?: string }> => {
       const raw = await callRaw(opts);
-      return { output: brainOutputFromText(raw.text), usage: raw.usage, servedModel: raw.servedModel };
+      return { output: brainOutputFromText(raw.text), usage: raw.usage, servedModel: raw.servedModel, toolCalls: raw.toolCalls };
     },
   };
 }

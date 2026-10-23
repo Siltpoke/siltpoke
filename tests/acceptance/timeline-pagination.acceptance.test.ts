@@ -180,16 +180,17 @@ function keyPresent(html: string, sid: string, ms: number): boolean {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("window counts display-eligible turns, never lines", () => {
-  test("default view over the flooded store shows exactly 20 real turns — the 1,500-skip tail consumes zero window slots", async () => {
+  test("default view over the flooded store shows exactly 12 real turns — the 1,500-skip tail consumes zero window slots", async () => {
     const home = makeHome("ac1", floodedFixture());
     const html = await getTimeline(home, "/timeline"); // default status=fired, range=all
 
-    // 20 fired rows despite the newest ~1,500 lines being pure skips.
-    expect(railRowCount(html)).toBe(20);
-    expect(allRowCount(html)).toBe(20); // no skip row leaked into the rail
-    // Newest 20 turns = rec 80..99; the window's oldest row is rec-80…
+    // 12 fired rows despite the newest ~1,500 lines being pure skips.
+    expect(railRowCount(html)).toBe(12);
+    expect(allRowCount(html)).toBe(12); // no skip row leaked into the rail
+    // Newest 12 turns = rec 88..99; the window's oldest row is rec-88…
     expect(keyPresent(html, "s-rec-99", recMs(99))).toBe(true);
-    expect(keyPresent(html, "s-rec-80", recMs(80))).toBe(true);
+    expect(keyPresent(html, "s-rec-88", recMs(88))).toBe(true);
+    expect(keyPresent(html, "s-rec-87", recMs(87))).toBe(false); // belongs to page 2
     // …and the mid/old blocks belong to later pages (a line window would
     // never even reach mid rows).
     expect(html).not.toContain("|s-mid-");
@@ -201,7 +202,7 @@ describe("window counts display-eligible turns, never lines", () => {
     expect(href).not.toBeNull();
     expect(hrefParams(href as string)).toEqual({
       status: "fired",
-      before: iso(recMs(80)),
+      before: iso(recMs(88)),
     });
     // Newest edge: nothing newer — no newer anchor (no-dead-end shape).
     expect(html).not.toContain("tl-load-newer");
@@ -211,19 +212,20 @@ describe("window counts display-eligible turns, never lines", () => {
     const home = makeHome("ac1q", floodedFixture());
     const html = await getTimeline(home, "/timeline?q=vintage");
     // The predicate finds the buried vintage rows (all 60 sit past the naive
-    // tail window). At limit 20 they page: page 1 = the newest 20 vintage.
-    expect(railRowCount(html)).toBe(20);
+    // tail window). At limit 12 they page: page 1 = the newest 12 vintage
+    // (s-old-59..48; 60 - 12 = 48 is the window's oldest).
+    expect(railRowCount(html)).toBe(12);
     expect(keyPresent(html, "s-old-59", oldMs(59))).toBe(true); // newest vintage
-    expect(keyPresent(html, "s-old-40", oldMs(40))).toBe(true); // window's oldest
-    expect(keyPresent(html, "s-old-39", oldMs(39))).toBe(false); // belongs to page 2
+    expect(keyPresent(html, "s-old-48", oldMs(48))).toBe(true); // window's oldest
+    expect(keyPresent(html, "s-old-47", oldMs(47))).toBe(false); // belongs to page 2
     expect(html).not.toContain("|s-mid-"); // mid never matches q=vintage
-    // 60 vintage matches > limit 20 → paged: older control present, and the
+    // 60 vintage matches > limit 12 → paged: older control present, and the
     // newest edge means no newer control.
     expect(html).toContain("tl-load-older");
     expect(html).not.toContain("tl-load-newer");
-    // Range total leads; tok/$ follow the visible 20-row page.
+    // Range total leads; tok/$ follow the visible 12-row page (12 × 15 tok = 180; 12 × $0.001 = $0.012 → $0.01).
     expect(summaryText(html)).toBe(
-      "60 turns in range · showing 20 · 300 tok · $0.02 · 0 acked / 0 dismissed",
+      "60 turns in range · showing 12 · 180 tok · $0.01 · 0 acked / 0 dismissed",
     );
   });
 });
@@ -234,7 +236,7 @@ describe("window counts display-eligible turns, never lines", () => {
 
 describe("bidirectional cursors", () => {
   test("older reaches the vintage page (with a way back); newer returns to the newest window; both directions preserve filters", async () => {
-    // At limit 20 the 260-turn store spans 13 windows, so "reaching the
+    // At limit 12 the 260-turn store spans 22 windows (21 × 12 + 8), so "reaching the
     // vintage page" and "returning to the newest window" are multi-hop
     // walks. Every hop preserves the filter; cursors are exclusive so no
     // row is seen twice going older.
@@ -298,14 +300,14 @@ describe("honest totals in the summary line", () => {
   test("summary leads with the 260-turn range total + page count; tok/$ stay per-visible-page on both pages", async () => {
     const home = makeHome("ac3", floodedFixture());
     const page1 = await getTimeline(home, "/timeline");
-    // 20 visible × 15 tok / $0.001 — NOT the 260-row range sums.
+    // 12 visible × 15 tok = 180 / 12 × $0.001 = $0.012 → $0.01 — NOT the 260-row range sums.
     expect(summaryText(page1)).toBe(
-      "260 turns in range · showing 20 · 300 tok · $0.02 · 0 acked / 0 dismissed",
+      "260 turns in range · showing 12 · 180 tok · $0.01 · 0 acked / 0 dismissed",
     );
 
     const page2 = await getTimeline(home, anchorHref(page1, "tl-load-older") as string);
     expect(summaryText(page2)).toBe(
-      "260 turns in range · showing 20 · 300 tok · $0.02 · 0 acked / 0 dismissed",
+      "260 turns in range · showing 12 · 180 tok · $0.01 · 0 acked / 0 dismissed",
     );
   });
 
@@ -314,10 +316,10 @@ describe("honest totals in the summary line", () => {
     const html = await getTimeline(home, "/timeline?status=skipped");
     // Contingency: under status=skipped, skip rows ARE the display rows —
     // they fill the window and the total counts all 2,320 of them.
-    expect(allRowCount(html)).toBe(20);
+    expect(allRowCount(html)).toBe(12);
     expect(railRowCount(html)).toBe(0); // none selectable (all skipped)
     expect(summaryText(html)).toBe(
-      `${TOTAL_SKIPS.toLocaleString("en-US")} turns in range · showing 20 · 0 tok · $0.00 · 0 acked / 0 dismissed`,
+      `${TOTAL_SKIPS.toLocaleString("en-US")} turns in range · showing 12 · 0 tok · $0.00 · 0 acked / 0 dismissed`,
     );
     expect(anchorHref(html, "tl-load-older")).not.toBeNull();
   });
@@ -332,11 +334,11 @@ describe("sort anchors the first page", () => {
     const home = makeHome("ac4", floodedFixture());
     const html = await getTimeline(home, "/timeline?sort=oldest");
 
-    // Oldest 20 turns: old 0..19.
-    expect(railRowCount(html)).toBe(20);
+    // Oldest 12 turns: old 0..11.
+    expect(railRowCount(html)).toBe(12);
     expect(keyPresent(html, "s-old-0", oldMs(0))).toBe(true);
-    expect(keyPresent(html, "s-old-19", oldMs(19))).toBe(true);
-    expect(keyPresent(html, "s-old-20", oldMs(20))).toBe(false); // belongs to page 2
+    expect(keyPresent(html, "s-old-11", oldMs(11))).toBe(true);
+    expect(keyPresent(html, "s-old-12", oldMs(12))).toBe(false); // belongs to page 2
     // Chronological render: the FIRST rail row is the oldest turn.
     const firstKey = html.match(/data-turn-key="([^"]+)"/)?.[1] ?? "";
     expect(firstKey).toBe(`${iso(oldMs(0))}|s-old-0`);
@@ -348,7 +350,7 @@ describe("sort anchors the first page", () => {
     expect(hrefParams(newerHref as string)).toEqual({
       status: "fired",
       sort: "oldest",
-      after: iso(oldMs(19)),
+      after: iso(oldMs(11)),
     });
 
     // Walk newer to the newest edge: the chain reaches the newest turns and
@@ -393,10 +395,10 @@ describe("regression floor", () => {
     expect(t.windowNewestTs).toBeNull();
   });
 
-  test("/timeline default view = newest window, ≤20 real turns, older control present when more exist", async () => {
+  test("/timeline default view = newest window, ≤12 real turns, older control present when more exist", async () => {
     const home = makeHome("ac5r", floodedFixture());
     const html = await getTimeline(home, "/timeline");
-    expect(railRowCount(html)).toBe(20);
+    expect(railRowCount(html)).toBe(12);
     expect(anchorHref(html, "tl-load-older")).not.toBeNull();
 
     // And with fewer turns than one window: single page, no pager.

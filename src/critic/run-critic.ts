@@ -253,7 +253,7 @@ export async function runCritic(
       tracer.endSpan(rootSpan, { status: "ERROR", message: tools.reason });
       await writeSpan(rootSpan);
     }
-    return { decision: "HARD_SUPPRESS", reason: tools.reason, timing: seal(), providerMeta };
+    return { decision: "HARD_SUPPRESS", reason: tools.reason, brainFailed: true, timing: seal(), providerMeta };
   }
   const { toolResults, diffSnapshotId, diffBody } = tools;
   // Diff summary pre-pass (Haiku). Kicked off as a background promise so
@@ -493,10 +493,10 @@ export async function runCritic(
       await finalizeSummary();
       if (phase.kind === "hard_suppress") {
         await closeRootSpan("ERROR", { decision: "HARD_SUPPRESS" }, phase.reason);
-        return { decision: "HARD_SUPPRESS", reason: phase.reason, diffSnapshotId, diffSummary, summaryError: diffSummaryError, timing: seal(), ...v2, providerMeta, skipCode: phase.skipCode, memoryFunnel: phase.memoryFunnel, promptBytes: phase.promptBytes };
+        return { decision: "HARD_SUPPRESS", reason: phase.reason, diffSnapshotId, diffSummary, summaryError: diffSummaryError, timing: seal(), ...v2, providerMeta, skipCode: phase.skipCode, brainFailed: phase.brainFailed, memoryFunnel: phase.memoryFunnel, promptBytes: phase.promptBytes };
       }
       await closeRootSpan("OK", { decision: "PASSIVE_BUBBLE", severity: phase.critique.severity });
-      return { decision: "PASSIVE_BUBBLE", critique: phase.critique, usage: phase.usage, critiqueId: phase.critiqueId, evidenceLabel: "not_checked", diffSnapshotId, diffSummary, summaryError: diffSummaryError, timing: seal(), ...v2, providerMeta, servedModel: phase.servedModel, memoryFunnel: phase.memoryFunnel, promptBytes: phase.promptBytes };
+      return { decision: "PASSIVE_BUBBLE", critique: phase.critique, usage: phase.usage, critiqueId: phase.critiqueId, evidenceLabel: "not_checked", diffSnapshotId, diffSummary, summaryError: diffSummaryError, timing: seal(), ...v2, providerMeta, servedModel: phase.servedModel, toolCalls: phase.toolCalls, injectionAlert: phase.injectionAlert, memoryFunnel: phase.memoryFunnel, promptBytes: phase.promptBytes };
     }
 
     case "NORMAL": {
@@ -514,14 +514,14 @@ export async function runCritic(
       await finalizeSummary();
       if (phase.outcome.kind === "hard_suppress") {
         await closeRootSpan("ERROR", { decision: "HARD_SUPPRESS" }, phase.outcome.reason);
-        return { decision: "HARD_SUPPRESS", reason: phase.outcome.reason, diffSnapshotId, diffSummary, summaryError: diffSummaryError, timing: seal(), ...v2, providerMeta, skipCode: phase.outcome.skipCode, memoryFunnel: phase.memoryFunnel, promptBytes: phase.promptBytes };
+        return { decision: "HARD_SUPPRESS", reason: phase.outcome.reason, diffSnapshotId, diffSummary, summaryError: diffSummaryError, timing: seal(), ...v2, providerMeta, skipCode: phase.outcome.skipCode, brainFailed: phase.outcome.brainFailed, memoryFunnel: phase.memoryFunnel, promptBytes: phase.promptBytes };
       }
       // No `guard_rejected` branch to handle here any more. The evidence check
       // labels citations rather than discarding reviews, so every NORMAL run
       // that reached the Brain lands on the accepted return below — carrying
       // `evidenceLabel` where a rejection reason used to be.
       await closeRootSpan("OK", { decision: "NORMAL", severity: phase.outcome.critique.severity });
-      return { decision: "NORMAL", accepted: true, critique: phase.outcome.critique, usage: phase.outcome.usage, critiqueId: phase.outcome.critiqueId, evidenceLabel: phase.outcome.evidenceLabel, diffCoverage: phase.outcome.diffCoverage, unverifiedCount: phase.outcome.unverifiedCount, diffSnapshotId, diffSummary, summaryError: diffSummaryError, timing: seal(), ...v2, providerMeta, servedModel: phase.outcome.servedModel, memoryFunnel: phase.memoryFunnel, promptBytes: phase.promptBytes };
+      return { decision: "NORMAL", accepted: true, critique: phase.outcome.critique, usage: phase.outcome.usage, critiqueId: phase.outcome.critiqueId, evidenceLabel: phase.outcome.evidenceLabel, diffCoverage: phase.outcome.diffCoverage, unverifiedCount: phase.outcome.unverifiedCount, diffSnapshotId, diffSummary, summaryError: diffSummaryError, timing: seal(), ...v2, providerMeta, servedModel: phase.outcome.servedModel, toolCalls: phase.outcome.toolCalls, injectionAlert: phase.outcome.injectionAlert, memoryFunnel: phase.memoryFunnel, promptBytes: phase.promptBytes };
     }
   }
 }

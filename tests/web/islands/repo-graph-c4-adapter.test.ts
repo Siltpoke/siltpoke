@@ -94,3 +94,43 @@ describe("archDocToC4Model", () => {
     expect(tiers.bands.Core).toBe("inferred");
   });
 });
+
+describe("the outside column sits level with the bands (found in a hands-on test)", () => {
+  const ext = (id: string) => ({ id, kind: "ext" as const, title: { value: id, evidence: EV }, band: { value: "external", evidence: EV } });
+  const cont = (id: string, band: string) => ({ id, kind: "cont" as const, title: { value: id, evidence: EV }, band: { value: band, evidence: EV }, drillTo: id });
+  /** Three bands of two rows each: a column of `n` outside boxes has room to spread. */
+  function tall(n: number) {
+    const ids = (b: string) => Array.from({ length: 10 }, (_, i) => `${b}${i}`);
+    const bands = ["p", "q", "r"].map((b, order) => ({ id: b, label: { value: b, evidence: EV }, order, members: ids(b) }));
+    const nodes = [...["p", "q", "r"].flatMap((b) => ids(b).map((id) => cont(id, b))), ...Array.from({ length: n }, (_, i) => ext(`x${i}`))];
+    return archDocToC4Model(doc({ bands, nodes, edges: [] }), 80).model;
+  }
+  const outside = (m: ReturnType<typeof tall>) => Object.values(m.N).filter((n) => n.kind !== "cont").sort((a, b) => a.y - b.y);
+  it("spreads evenly from the first band's top to the last band's bottom, sizes unchanged", () => {
+    const m = tall(4);
+    const xs = outside(m);
+    const first = m.BANDS[0];
+    const last = m.BANDS[m.BANDS.length - 1];
+    expect(xs[0].y).toBeCloseTo(first.y, 6);
+    expect(xs[3].y + xs[3].h).toBeCloseTo(last.y + last.h, 6);
+    const gaps = xs.slice(1).map((n, i) => n.y - (xs[i].y + xs[i].h));
+    for (const g of gaps) expect(g).toBeCloseTo(gaps[0], 6);
+    expect(gaps[0]).toBeGreaterThan(16); // more than the old fixed gap: it really spread
+    for (const n of xs) expect([n.w, n.h]).toEqual([200, 92]);
+    expect(new Set(xs.map((n) => n.x)).size).toBe(1);
+  });
+  it("a single outside box is centred on the bands' span", () => {
+    const m = tall(1);
+    const [x] = outside(m);
+    const top = m.BANDS[0].y;
+    const bottom = m.BANDS[m.BANDS.length - 1].y + m.BANDS[m.BANDS.length - 1].h;
+    expect(x.y + x.h / 2).toBeCloseTo((top + bottom) / 2, 6);
+  });
+  it("a column taller than the bands stacks from the first band's top with the plain 16px gap, and the scene grows to hold it", () => {
+    const m = archDocToC4Model(doc({ nodes: [...doc().nodes, ...Array.from({ length: 6 }, (_, i) => ext(`x${i}`))] }), 80).model;
+    const xs = outside(m);
+    expect(xs[0].y).toBe(m.BANDS[0].y);
+    for (const [i, n] of xs.slice(1).entries()) expect(n.y - (xs[i].y + xs[i].h)).toBe(16);
+    expect(m.__bounds.h).toBeGreaterThanOrEqual(xs[5].y + xs[5].h);
+  });
+});

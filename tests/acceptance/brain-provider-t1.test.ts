@@ -281,7 +281,7 @@ describe("AC1 — reviewer_provider unset/claude: byte-identical argv + schema p
 
     // Shape check independent of the dynamically-assembled system prompt text.
     const argv = unsetClaudeCalls[0]!.argv;
-    expect(argv.length).toBe(10);
+    expect(argv.length).toBe(15);
     expect(argv[0]).toBe("claude");
     expect(argv[1]).toBe("-p");
     expect(argv[2]).toBe("--model");
@@ -295,6 +295,11 @@ describe("AC1 — reviewer_provider unset/claude: byte-identical argv + schema p
     // ~/.claude/settings.json `verbose`.
     expect(argv[8]).toBe("--verbose");
     expect(argv[9]).toBe("--no-session-persistence");
+    // The reviewed folder's project settings stay off (its hooks ran, 2026-10-20);
+    // its CLAUDE.md reaches the review as fenced data instead.
+    expect(argv.slice(10, 12)).toEqual(["--setting-sources", "user"]);
+    // The review reads the reviewed repo's diff, so its claude may only read.
+    expect(argv.slice(12)).toEqual(["--tools", "Read,Grep,Glob", "--strict-mcp-config"]);
 
     // Both runs reached the same gate decision (NORMAL) since default = claude.
     expect(unset.result.decision).toBe("NORMAL");

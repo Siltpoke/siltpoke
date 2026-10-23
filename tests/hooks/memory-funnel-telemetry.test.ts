@@ -203,7 +203,7 @@ test("live path: the telemetry row carries all four funnel stages, and they disa
     // `> 0` check and fail this one.
     expect(fired!.prompt_bytes_memory as number).toBeGreaterThan(expectedBytes);
     // Every section is accounted for, and the total is not a sum of them.
-    const parts = ["base", "memory", "recent", "tool_output", "caller_impact", "reverse_deps", "anti_examples"]
+    const parts = ["base", "memory", "recent", "tool_output", "caller_impact", "reverse_deps", "anti_examples", "project_notes"]
       .map((k) => fired![`prompt_bytes_${k}`] as number);
     for (const p of parts) expect(typeof p).toBe("number");
     expect(parts.reduce((a, b) => a + b, 0)).toBeLessThan(fired!.prompt_bytes_total as number);

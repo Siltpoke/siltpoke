@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 import { basename, join } from "node:path";
-import { readPending, pendingQueuePath } from "./pending-queue";
 import { isLockHeld } from "../utils/process-lock";
+import { pendingQueuePath, readPending } from "./pending-queue";
 
 export interface LaunchDeps {
   spawnFn?: (argv: string[]) => void;
@@ -56,7 +56,11 @@ export async function maybeLaunchDistilWorker(
   if (isHeld(lockPath)) return { launched: false, reason: "locked" };
 
   try {
-    spawnFn(["bun", workerPath, "--home", homeBase, "--state", stateBase, "--cwd", cwd]);
+    // `process.execPath`, not a bare "bun" — this worker is dispatched from a
+  // hook, i.e. from a non-login shell on Unix and no shell at all on Windows.
+  // `detached` was already correct here (defaultSpawn sets it); only argv[0]
+  // carried the other half of the same defect family.
+  spawnFn([process.execPath, workerPath, "--home", homeBase, "--state", stateBase, "--cwd", cwd]);
     return { launched: true };
   } catch {
     return { launched: false };

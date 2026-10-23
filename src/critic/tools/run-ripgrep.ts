@@ -81,15 +81,17 @@ export async function runRipgrep(opts: {
   timeoutMs?: number;
   /** Override the rg binary path. Defaults to "rg" (resolved via PATH). Used in tests. */
   rgBin?: string;
+  /** Pass `--text` so files containing a NUL byte are searched instead of skipped as binary. */
+  text?: boolean;
 }): Promise<Extract<ToolResult, { tool: "ripgrep" }>> {
-  const { cwd, patterns, timeoutMs = DEFAULT_TIMEOUT_MS, rgBin = "rg" } = opts;
+  const { cwd, patterns, timeoutMs = DEFAULT_TIMEOUT_MS, rgBin = "rg", text = false } = opts;
 
   const pattern =
     patterns !== undefined && patterns.length > 0
       ? patterns.join("|")
       : DEFAULT_PATTERN;
 
-  const argv = [rgBin, "--json", "-e", pattern, "--max-count", "100", cwd];
+  const argv = [rgBin, "--json", ...(text ? ["--text"] : []), "-e", pattern, "--max-count", "100", cwd];
 
   const result = await spawnWithTimeout({ argv, cwd, timeoutMs });
   const raw = buildRaw(result.stdout, result.stderr);

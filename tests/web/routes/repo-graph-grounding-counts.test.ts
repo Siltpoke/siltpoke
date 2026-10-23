@@ -52,9 +52,10 @@ function parseInitial(html: string): Record<string, unknown> {
   expect(match).not.toBeNull();
   const raw = match![1]!
     .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+    .replace(/&gt;/g, ">")
+    // &amp; last, or `&amp;lt;` decodes twice into `<`.
+    .replace(/&amp;/g, "&");
   return JSON.parse(raw);
 }
 

@@ -106,6 +106,22 @@ describe("removeLegacyStopHook", () => {
     expect(after.hooks.Stop[0]?.hooks.map((h) => h.command)).toEqual(foreign);
   });
 
+  // Same mistake as the bare-"siltpoke" match, one level down: "/hooks/stop" is a
+  // route name any server can have. Our http entry only ever pointed at the
+  // daemon on loopback, and our curl entry always carries our secret header.
+  test("keeps a FOREIGN hook that calls some other server's /hooks/stop", () => {
+    const foreign = [
+      { type: "command", command: "curl -X POST https://ci.example.com/hooks/stop" },
+      { type: "http", url: "https://ci.example.com/hooks/stop" },
+      { type: "http", url: "http://127.0.0.1:9876/hooks/stop-notify" },
+    ];
+    const before = { hooks: { Stop: [{ hooks: foreign }] } };
+    const removed: string[] = [];
+    const after = removeLegacyStopHook(before, (d) => removed.push(d)) as typeof before;
+    expect(after.hooks.Stop[0]?.hooks).toEqual(foreign);
+    expect(removed).toEqual([]);
+  });
+
   test("still strips all three real shapes our own installer wrote", () => {
     const before = {
       hooks: {

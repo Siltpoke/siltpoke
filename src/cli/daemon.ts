@@ -1,17 +1,21 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
-import { startDaemon, DaemonAlreadyRunningError } from "../daemon/server";
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { atomicWrite } from "../utils/atomic-write";
-import { generateSecret } from "../daemon/auth";
-import { runStopWithGuard } from "./daemon-stop-guard";
-import { installAutostartForPlatform } from "../installer/autostart";
-import { runRestart } from "./daemon-restart";
-import { resolveDaemonPort } from "../daemon/port";
-import { siltpokeRoot } from "../installer/paths";
 
-const BASE = siltpokeRoot();
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { generateSecret } from "../daemon/auth";
+import { moveToNeutralCwd } from "../daemon/neutral-cwd";
+import { resolveDaemonPort } from "../daemon/port";
+import { DaemonAlreadyRunningError, startDaemon } from "../daemon/server";
+import { installAutostartForPlatform } from "../installer/autostart";
+import { siltpokeRoot } from "../installer/paths";
+import { atomicWrite } from "../utils/atomic-write";
+import { runRestart } from "./daemon-restart";
+import { runStopWithGuard } from "./daemon-stop-guard";
+
+// Absolute, resolved at import — before `cmdStart` moves the process to the
+// filesystem root — so a relative SILTPOKE_HOME keeps its meaning.
+const BASE = resolve(siltpokeRoot());
 
 function loadOrCreateSecret(): string {
   const path = join(BASE, "secret");
@@ -23,13 +27,29 @@ function loadOrCreateSecret(): string {
 
 async function cmdStart(detach: boolean): Promise<void> {
   if (detach) {
-    const proc = Bun.spawn(["bun", import.meta.path, "start"], {
+    // The parameter has been called `detach` since this function was written,
+    // and the spawn never passed `detached`. `unref()` alone frees the parent's
+    // event loop; it does not put the child in its own process group, so on
+    // Windows the "detached" daemon died with whatever started it. Unix hid it:
+    // the child is re-parented to init there and survives regardless.
+    //
+    // `process.execPath`, not a bare "bun": this code runs under bun, so it
+    // knows the interpreter without a PATH lookup — and on native Windows a
+    // bare "bun" resolves to nothing (`where.exe bun` is empty even on a
+    // machine with bun installed).
+    const proc = Bun.spawn([process.execPath, import.meta.path, "start"], {
       stdio: ["ignore", "ignore", "ignore"],
+      detached: true,
     });
     proc.unref();
     process.stdout.write(`siltpoked spawned (pid=${proc.pid ?? "?"})\n`);
     return;
   }
+  // Before anything can spawn claude: the daemon must not live in the folder
+  // that happened to start it (see neutral-cwd.ts). The routes that fall back
+  // to "the project the daemon was started from" still get that folder.
+  const startCwd = process.cwd();
+  moveToNeutralCwd();
   const port = resolveDaemonPort(process.env);
   let handle: Awaited<ReturnType<typeof startDaemon>>;
   try {
@@ -41,6 +61,7 @@ async function cmdStart(detach: boolean): Promise<void> {
       markerDir: join(BASE, "markers"),
       secret: loadOrCreateSecret(),
       homeBase: BASE,
+      startCwd,
     });
   } catch (err) {
     // A healthy siltpoked already owns the port. Step down with success so

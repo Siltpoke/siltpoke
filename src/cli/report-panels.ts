@@ -15,6 +15,7 @@ import { readStatus } from "../state/critique-status";
 import type { I18nDict } from "./report-i18n";
 import { fmt } from "./report-i18n";
 import { esc, panelWrap, severityClass } from "./report-dom";
+import { lastLocalDays, localDayOf } from "../utils/local-day";
 
 export interface BrainCallRow {
   timestamp?: string;
@@ -104,24 +105,12 @@ export function bucketByDay(
   now: Date,
   days: number,
 ): { dateKey: string; count: number }[] {
-  const todayKey = now.toISOString().slice(0, 10);
-  const todayMs = Date.parse(`${todayKey}T00:00:00Z`);
-  const buckets = new Array<{ dateKey: string; count: number }>(days);
-  for (let i = 0; i < days; i++) {
-    const ms = todayMs - (days - 1 - i) * 86_400_000;
-    buckets[i] = {
-      dateKey: new Date(ms).toISOString().slice(0, 10),
-      count: 0,
-    };
-  }
+  // Local days, oldest first: the user's own calendar, not UTC (C2).
+  const keys = lastLocalDays(now, days);
+  const buckets = keys.map((dateKey) => ({ dateKey, count: 0 }));
   for (const ts of timestamps) {
-    const t = Date.parse(ts);
-    if (!Number.isFinite(t)) continue;
-    const tKey = new Date(t).toISOString().slice(0, 10);
-    const tMs = Date.parse(`${tKey}T00:00:00Z`);
-    const offset = Math.round((todayMs - tMs) / 86_400_000);
-    if (offset < 0 || offset >= days) continue;
-    const idx = days - 1 - offset;
+    const idx = keys.indexOf(localDayOf(ts) ?? "");
+    if (idx < 0) continue;
     buckets[idx]!.count += 1;
   }
   return buckets;

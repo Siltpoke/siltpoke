@@ -88,6 +88,27 @@ describe("EXPLAIN_SYSTEM_PROMPT", () => {
   });
 });
 
+describe("assemblePrompt — the target snippet without targetLineSlice (explain's path)", () => {
+  // The pinned chat opts into a line slice. explain does not, and its prompt
+  // is a paid, cached artifact: this pins that the default cut did not move.
+  test("is the file's first bytes under a bare [path] label, whatever the target's lines are", () => {
+    const { graph, qi } = makeGraph();
+    const st = buildSymbolTable(graph, qi);
+    const targetId = "function:src/a.ts:foo"; // lines 10-30
+    const sub = buildSubgraph(targetId, graph, 1);
+    const lines = Array.from({ length: 40 }, (_, i) => `// line ${i + 1}`).join("\n");
+    const out = assemblePrompt({
+      targetId,
+      subgraph: sub,
+      symbolTable: st,
+      sources: new Map([["src/a.ts", lines]]),
+    });
+    expect(out.contextBundle).toContain("### Source [src/a.ts]\n```\n// line 1\n");
+    expect(out.contextBundle).not.toContain("### Source [src/a.ts:");
+    expect(out.totalBytes).toBeLessThanOrEqual(TOTAL_BUDGET_BYTES_DEFAULT);
+  });
+});
+
 describe("assemblePrompt — budget", () => {
   test("default total budget is 16KB", () => {
     expect(TOTAL_BUDGET_BYTES_DEFAULT).toBe(16 * 1024);

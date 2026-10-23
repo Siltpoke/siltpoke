@@ -10,17 +10,21 @@ Run `uname -s`. If it fails, or prints anything that is not `Darwin` or `Linux`
 (on Windows it will not exist, or a Git-Bash shell prints `MINGW64_NT-...`),
 **stop here and tell me this, in my language, before installing anything:**
 
-> Siltpoke does not support native Windows yet. It will install, the pet will
-> appear, the commands will work and the config will say the setup is fine —
-> but the review hook is registered as `sh ./hooks/stop.sh`, Windows has no
-> `sh`, so no review will ever run and nothing will say so. If you have WSL,
-> run this again inside WSL and everything works, because that is Linux.
-> Otherwise, wait for native Windows support.
+> **On native Windows, reviews work, but only one reviewer has been confirmed.**
+> On a real Windows 10 machine (2026-09-29) a commit triggered the review hook
+> and the reviewer answered — with `claude` as the reviewer. All five reviewer
+> CLIs are wired for Windows, but the other four (`codebuddy`, `qoder`,
+> `codex`, `agy`) have not run on a Windows machine yet. Also not yet checked
+> there: an install path that contains a space, and a diff that contains
+> Chinese characters or emoji. The pet, the statusline, and the dashboard work.
+> If you have WSL, run this again inside WSL — that is Linux, and it is the
+> fully proven path.
 
 Then ask whether I want to continue anyway. **Do not install unless I say yes**,
-and if I do, say once more that reviews will not fire. Project Life Cycle has no
-such problem — it is prompts and commands, no hook — so offer to install only
-PLC instead.
+and if I do, say once more that on native Windows reviews are **confirmed only with
+`claude` as the reviewer**, and that `/siltpoke:siltpoke-doctor`'s **review hook can start** row is where to look if
+none appear — a missing review there is worth reporting, not my fault. Project Life Cycle has no such problem — it is prompts and commands, no
+hook — so offer to install only PLC instead.
 
 ## Step 0 — What do I already have, and what do I want?
 
@@ -86,12 +90,12 @@ Tell me clearly: **run `/plugins reload` in Qoder, or quit and start it again, n
 Before I reload, print this walkthrough in my language, only the parts for what I installed, filled with my real results. Make it a numbered list. For each step give both forms — **the slash command** (if Qoder shows `/siltpoke-…` commands) **or the sentence to say**. Do not invent features that are not listed here.
 
 **Siltpoke — first 10 minutes**
-1. `/siltpoke-doctor` or "check my Siltpoke install". You get a ✓/✗ checklist. All ✓ means it works. If something is ✗, it says what to do.
+1. `/siltpoke:siltpoke-doctor` or "check my Siltpoke install". You get a ✓/✗ checklist. All ✓ means it works. If something is ✗, it says what to do.
 2. Ask Qoder for any small real change (for example: "add a comment explaining this function"). When it finishes, Siltpoke reviews the change in the background. You do not need to do anything.
 3. On a Mac with the menu-bar pet, the menu bar shows the new review within a minute.
-4. `/siltpoke-last` or "show me the latest Siltpoke review".
-5. `/siltpoke-dashboard` or "open the Siltpoke dashboard". It opens http://127.0.0.1:9876 — review history, chat with your pet about your code, what it remembers, and the Code Map. On a review, press **ACK** (seen, useful) or **DISMISS** (wrong). This is how it learns what to stop saying.
-6. Need quiet? `/siltpoke-mute 1h` or "mute Siltpoke for 1 hour"; `/siltpoke-unmute` or "unmute Siltpoke" to undo.
+4. `/siltpoke:siltpoke-last` or "show me the latest Siltpoke review".
+5. `/siltpoke:siltpoke-dashboard` or "open the Siltpoke dashboard". It opens http://127.0.0.1:9876 — review history, chat with your pet about your code, what it remembers, and the Code Map. On a review, press **ACK** (seen, useful) or **DISMISS** (wrong). This is how it learns what to stop saying.
+6. Need quiet? `/siltpoke:siltpoke-mute 1h` or "mute Siltpoke for 1 hour"; `/siltpoke:siltpoke-unmute` or "unmute Siltpoke" to undo.
 
 **PLC — your first project**
 1. Inside a project: `/init-harness` or "set up this project with project-lifecycle". Answer its questions.
@@ -108,11 +112,11 @@ Print this right after the first-day walkthrough, in my language, only the parts
 
 **Siltpoke, every day**
 1. Just work. Siltpoke reviews each turn by itself — you never have to start it.
-2. When the pet looks worried (or the menu-bar number goes up), read the review: `/siltpoke-last` or "show me the latest Siltpoke review".
-3. Teach it. In the dashboard (`/siltpoke-dashboard` or "open the Siltpoke dashboard"), press **DISMISS** on a review that is wrong and **ACK** on one that helped. It remembers, and over time stops repeating what you dismissed.
+2. When the pet looks worried (or the menu-bar number goes up), read the review: `/siltpoke:siltpoke-last` or "show me the latest Siltpoke review".
+3. Teach it. In the dashboard (`/siltpoke:siltpoke-dashboard` or "open the Siltpoke dashboard"), press **DISMISS** on a review that is wrong and **ACK** on one that helped. It remembers, and over time stops repeating what you dismissed.
 4. Once a week, look at the dashboard's Memory page — that is what it has learned about your code.
-5. Reviews went quiet? `/siltpoke-doctor` or "check my Siltpoke install" first; if everything is ✓, `/siltpoke-wake` or "wake Siltpoke".
-6. Busy (a demo, pairing)? `/siltpoke-mute 1h` or "mute Siltpoke for 1 hour" — it turns itself back on when the time is up.
+5. Reviews went quiet? `/siltpoke:siltpoke-doctor` or "check my Siltpoke install" first; if everything is ✓, `/siltpoke:siltpoke-wake` or "wake Siltpoke".
+6. Busy (a demo, pairing)? `/siltpoke:siltpoke-mute 1h` or "mute Siltpoke for 1 hour" — it turns itself back on when the time is up.
 
 **PLC, every session**
 1. Start: `/catchup` or "catch me up from RESUME.md" — where you left off, what shipped, what is next.

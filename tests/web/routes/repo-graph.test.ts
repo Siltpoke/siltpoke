@@ -42,7 +42,7 @@ async function getRepoGraph(query = ""): Promise<{ status: number; html: string 
 function parseInitial(html: string): Record<string, unknown> {
   const match = /data-initial="([^"]+)"/.exec(html);
   expect(match).not.toBeNull();
-  const raw = match![1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+  const raw = match![1]!.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
   return JSON.parse(raw);
 }
 

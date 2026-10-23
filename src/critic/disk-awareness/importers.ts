@@ -233,7 +233,9 @@ export function rgArgs(basenames: string[]): string[] {
   // metacharacters — as a regex `-e` pattern it either misses the real importer line (`foo+bar`
   // ⇒ `fo+bar`, `$schema` ⇒ end-anchor) or explodes the hit set (`[id]` ⇒ any of i/d). `-F`
   // matches the basename literally. `rg --files` (listFiles) takes no pattern, so it is unaffected.
-  const args = ["--no-heading", "--line-number", "--no-messages", "--fixed-strings"];
+  // `--text`: rg treats a file containing a NUL byte as binary and reports no matches in it, which
+  // would hide a real importer. Every hit is resolver-confirmed downstream, so extra hits are safe.
+  const args = ["--no-heading", "--line-number", "--no-messages", "--fixed-strings", "--text"];
   for (const b of basenames) args.push("-e", b);
   return args;
 }

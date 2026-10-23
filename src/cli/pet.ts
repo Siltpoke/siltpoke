@@ -5,7 +5,7 @@ import {
   writeProgression,
   recordAction,
 } from "../state/progression";
-import { writeState } from "../state/state";
+import { writeStateKeepingAlert } from "../state/state";
 import { dayKey } from "../state/usage";
 import { siltpokeRoot } from "../installer/paths";
 
@@ -48,7 +48,7 @@ export async function runPet(opts: PetOptions = {}): Promise<PetResult> {
     PET_BUBBLES[Math.floor(Math.random() * PET_BUBBLES.length)] ??
     PET_BUBBLES[0]!;
 
-  await writeState(homeBase, {
+  await writeStateKeepingAlert(homeBase, {
     schemaVersion: 1,
     mood: "happy",
     pose: "base",
@@ -57,7 +57,7 @@ export async function runPet(opts: PetOptions = {}): Promise<PetResult> {
     confidence: "high",
     last_updated_ms: now.getTime(),
     last_session_id: "pet",
-  });
+  }, "keep");
 
   return {
     awarded: result.awarded,

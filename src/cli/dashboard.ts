@@ -15,13 +15,24 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setDaemonEnabled } from "../config/write-daemon-enabled";
 import { isSiltpokedPing } from "../daemon/port";
+import { bunForCommandString } from "../installer/bun-path";
 import { editorOpener } from "../installer/editor-detect";
 import type { ExecSyncFn } from "../installer/launchd";
 import { siltpokeRoot } from "../installer/paths";
-import { isLaunchdJobInstalled, runRestart, type RestartDeps } from "./daemon-restart";
+import { isLaunchdJobInstalled, type RestartDeps, runRestart } from "./daemon-restart";
 import { stopReport } from "./report-stop";
-import { setDaemonEnabled } from "../config/write-daemon-enabled";
+
+/**
+ * Spawn options for the daemon. `detached` is REQUIRED, not optional: a child
+ * that must outlive its parent is the entire contract here, and an optional
+ * flag is one a future edit can drop without anything going red.
+ */
+export interface DaemonSpawnOptions {
+  stdio: ["ignore", "ignore", "ignore"];
+  detached: true;
+}
 
 /** Where the live dashboard lives once the daemon is up. */
 export const DASHBOARD_URL = "http://127.0.0.1:9876/";
@@ -56,6 +67,16 @@ export interface OpenDashboardOptions {
    * Test seam — see `platform`.
    */
   spawnOpener?: (argv: readonly string[]) => void;
+  /**
+   * Starts the daemon. Defaults to `Bun.spawn` with `detached: true`.
+   *
+   * A seam purely so the spawn OPTIONS are assertable. Without it, "is the
+   * daemon spawned detached" is a question only a human reading the file can
+   * answer — and it went unanswered for the file's whole life, which is how
+   * `/siltpoke:siltpoke-dashboard` shipped a dead link on Windows while three comments
+   * in this file claimed the spawn was detached.
+   */
+  spawnDaemon?: (argv: readonly string[], opts: DaemonSpawnOptions) => { unref(): void };
 }
 
 /**
@@ -72,7 +93,7 @@ export interface OpenDashboardOptions {
  * check inside had no way to be exercised otherwise.
  *
  * WHY the identity check — a bare `r.ok` counted any 2xx, so a stranger holding
- * the dashboard port made `/siltpoke-dashboard` print that URL and open the
+ * the dashboard port made `/siltpoke:siltpoke-dashboard` print that URL and open the
  * browser at somebody else's app. Audit defect `[5b]`, §26.3.
  */
 export async function siltpokedAnswersAt(
@@ -87,11 +108,48 @@ export async function siltpokedAnswersAt(
   }
 }
 
+/**
+ * Refuse to promise a URL for a server that has already died.
+ *
+ * The spawn poll can succeed and the daemon still be gone moments later — that
+ * IS the Windows failure: the server starts, answers `/api/ping`, and then dies
+ * with the short-lived process that spawned it. Printing a URL at that point is
+ * worse than failing outright, because the CLI exits 0 and the user is left
+ * believing the dashboard is up.
+ *
+ * This cannot prevent a death that happens AFTER it. What it does is turn the
+ * common case from a silent dead link into a loud failure, and that is the
+ * whole difference between the two.
+ */
+async function assertStillAnswering(
+  daemonAlive: (timeoutMs: number) => Promise<boolean>,
+): Promise<void> {
+  // Three attempts, not one. A single 500ms shot turns any transient hiccup —
+  // a loaded machine, one slow round trip — into a hard error, and a guard
+  // that manufactures its own failures is worse than the silence it replaced.
+  for (let i = 0; i < 3; i++) {
+    if (await daemonAlive(500)) return;
+    if (i < 2) await new Promise((r) => setTimeout(r, 150));
+  }
+  throw new Error(
+    "siltpoked started but stopped answering — it was killed right after launch. " +
+      "On Windows this usually means the daemon could not detach from the process " +
+      "that started it; run `siltpoke-daemon start` in a terminal you keep open, " +
+      "or see /siltpoke:siltpoke-doctor.",
+  );
+}
+
 export async function openDashboard(opts: OpenDashboardOptions = {}): Promise<void> {
   const homeBase = opts.homeBase ?? siltpokeRoot(process.env);
   const out = opts.out ?? ((s: string) => process.stdout.write(s));
+  // `bunForCommandString()` (= process.execPath), NOT a bare "bun": the code
+  // building this argv is itself running under bun, so it knows the real
+  // interpreter without a PATH lookup. Defect [22]'s family — a bare "bun"
+  // handed to a spawn is a command that fails on any machine where bun is
+  // installed but not on this process's PATH, which is every native Windows
+  // box measured so far (`where.exe bun` finds nothing there).
   const daemonArgv = opts.daemonArgv ?? [
-    "bun",
+    bunForCommandString(),
     fileURLToPath(new URL("./daemon.ts", import.meta.url)),
     "start",
   ];
@@ -113,9 +171,23 @@ export async function openDashboard(opts: OpenDashboardOptions = {}): Promise<vo
     // subsequent Stop hook's respawn gate (on-stop.ts maybeRespawnDaemon)
     // keeps this daemon alive instead of treating it as opted-out.
     await setDaemonEnabled(homeBase, true);
-    // Lazy-spawn detached daemon, then poll up to 3s for it to answer.
-    const proc = Bun.spawn([...daemonArgv], {
+    // Lazy-spawn a detached daemon, then poll up to 3s for it to answer.
+    //
+    // `detached: true` was in this comment and NOT in this call for the whole
+    // life of the file. On Unix the omission is invisible: when the parent
+    // exits the child is re-parented to init and keeps running, so the daemon
+    // survived by accident of process semantics rather than by design. On
+    // Windows there is no equivalent — `unref()` only releases the PARENT's
+    // event loop; it does not move the child out of the parent's process group
+    // — so the daemon died with the CLI that started it. Measured on a real
+    // Windows 10 box, 2026-09-24: the URL printed, the server answered
+    // /api/ping, and nothing was listening on the port seconds later.
+    const spawnDaemon =
+      opts.spawnDaemon ??
+      ((argv: readonly string[], o: DaemonSpawnOptions) => Bun.spawn([...argv], o));
+    const proc = spawnDaemon(daemonArgv, {
       stdio: ["ignore", "ignore", "ignore"],
+      detached: true,
     });
     proc.unref();
     let up = false;
@@ -127,6 +199,14 @@ export async function openDashboard(opts: OpenDashboardOptions = {}): Promise<vo
       }
     }
     if (!up) throw new Error("siltpoked failed to start within 3s");
+    // ONLY on the path that just spawned. The first draft ran this
+    // unconditionally, which meant the already-running case — a repeat
+    // `/siltpoke:siltpoke-dashboard`, the common one — got a second independent check
+    // with LESS tolerance than the freshly-spawned path's 30-attempt poll, and
+    // could fail with a Windows-specific message on a machine where nothing was
+    // spawned at all. Caught in review, 2026-09-24. If the daemon was already
+    // answering, that is the answer; asking again only invents ways to be wrong.
+    await assertStillAnswering(daemonAlive);
   }
 
   // "/" serves Wave 1 Home — the only surface now. The legacy tamagotchi

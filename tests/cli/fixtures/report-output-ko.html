@@ -1189,7 +1189,7 @@
   <article class="md"><h1>Siltpoke — User Manual</h1>
 <blockquote>
 <p>Daily-use reference. For setup, see <a href="../README.md"><code>README.md</code></a>. This file
-is mirrored by the <code>/siltpoke-help</code> slash command — keep them in sync.</p>
+is mirrored by the <code>/siltpoke:siltpoke-help</code> slash command — keep them in sync.</p>
 </blockquote>
 <hr>
 <h2>What Siltpoke does</h2>
@@ -1283,47 +1283,51 @@ plain language through the Siltpoke skill/plugin.</p>
 </tr>
 </thead>
 <tbody><tr>
-<td><code>/siltpoke-setup</code></td>
+<td><code>/siltpoke:siltpoke-setup</code></td>
 <td>Create your pet + finish the install (statusline, dashboard)</td>
 </tr>
 <tr>
-<td><code>/siltpoke-last</code></td>
+<td><code>/siltpoke:siltpoke-last</code></td>
 <td>Pull Siltpoke&#39;s most recent review INTO this conversation</td>
 </tr>
 <tr>
-<td><code>/siltpoke-dashboard</code></td>
+<td><code>/siltpoke:siltpoke-dashboard</code></td>
 <td>Open the dashboard (<a href="http://127.0.0.1:9876">http://127.0.0.1:9876</a>)</td>
 </tr>
 <tr>
-<td><code>/siltpoke-restart-daemon</code></td>
+<td><code>/siltpoke:siltpoke-restart-daemon</code></td>
 <td>Restart the dashboard daemon</td>
 </tr>
 <tr>
-<td><code>/siltpoke-menubar</code></td>
+<td><code>/siltpoke:siltpoke-menubar</code></td>
 <td>Put the pet in your macOS menu bar (needs SwiftBar). install/status/remove</td>
 </tr>
 <tr>
-<td><code>/siltpoke-mute</code></td>
+<td><code>/siltpoke:siltpoke-mute</code></td>
 <td>Silence Siltpoke for a duration (15m / 1h / 2d / indefinite)</td>
 </tr>
 <tr>
-<td><code>/siltpoke-unmute</code></td>
+<td><code>/siltpoke:siltpoke-unmute</code></td>
 <td>Un-silence Siltpoke</td>
 </tr>
 <tr>
-<td><code>/siltpoke-brain</code></td>
+<td><code>/siltpoke:siltpoke-brain</code></td>
 <td>Show or set which CLI + model reviews your code (set review <family> [model])</td>
 </tr>
 <tr>
-<td><code>/siltpoke-doctor</code></td>
+<td><code>/siltpoke:siltpoke-doctor</code></td>
 <td>Install-health diagnostic (✓/✗ checklist)</td>
 </tr>
 <tr>
-<td><code>/siltpoke-wake</code></td>
+<td><code>/siltpoke:siltpoke-wake</code></td>
 <td>Reviews went quiet? Clear the stuck breaker and review the next turn</td>
 </tr>
 <tr>
-<td><code>/siltpoke-help</code></td>
+<td><code>/siltpoke:siltpoke-uninstall</code></td>
+<td>Show what setup changed (status line, dashboard, menu bar), then remove each group you say yes to — before removing the plugin</td>
+</tr>
+<tr>
+<td><code>/siltpoke:siltpoke-help</code></td>
 <td>This manual</td>
 </tr>
 </tbody></table>
@@ -1334,7 +1338,7 @@ command. This table used to list <code>/siltpoke</code>, <code>/siltpoke-inbox</
 <code>/siltpoke-dismiss</code>, <code>/siltpoke-stats</code>, <code>/siltpoke-pet</code> and a
 <code>/siltpoke-review</code> alias; those were culled from the plugin (their <code>src/cli</code>
 code remains) and naming a command that does not exist is the same defect
-<code>/siltpoke-wake</code> was shipped to fix.</p>
+<code>/siltpoke:siltpoke-wake</code> was shipped to fix.</p>
 <h3>Dashboard (browser)</h3>
 <pre><code class="language-bash">bun run report          # ensures the daemon is up, opens http://127.0.0.1:9876/
 </code></pre>
@@ -1345,6 +1349,14 @@ running, then opens <code>http://127.0.0.1:9876/</code> in your default browser;
 Sections: pet header, today&#39;s metrics, 7-day bar chart, per-project table,
 pending-review inbox grouped by project, last 30 brain calls, recent
 verdicts.</p>
+<p><strong>Settings → Agents</strong> (<code>/settings</code>) shows the coding agents on this machine
+(building, with when Siltpoke last saw a session; installed; not installed)
+and Siltpoke&#39;s own three agents — Chat, Critic, Summarizer. Each row says
+which agent and model it uses and why, what its last recorded call was, its
+daily cap (saved when you leave the field) with today&#39;s count, and <strong>Change
+model</strong>, which lists every agent&#39;s models as that agent&#39;s command reports
+them, sorted by models.dev&#39;s price from the model&#39;s maker. The prices only
+sort the list; they are not what your plan charges.</p>
 <hr>
 <h2>Daemon autostart (opt-in)</h2>
 <p>The daemon is <strong>optional</strong>. Core review runs entirely inside the Stop
@@ -1353,7 +1365,7 @@ chat, repo-index). So <code>bun run setup</code> asks &quot;开机自启 siltpok
 and defaults to <strong>no</strong>: nothing extra installed, and no <code>ECONNREFUSED</code>
 on reboot from a hook reaching for a server that isn&#39;t there.</p>
 <p>Turn it on whenever you want the dashboard — just open it:</p>
-<pre><code class="language-bash">/siltpoke-dashboard    # starts the daemon and enables it so it stays up
+<pre><code class="language-bash">/siltpoke:siltpoke-dashboard    # starts the daemon and enables it so it stays up
 </code></pre>
 <p>That flips <code>daemon.enabled</code> on in <code>~/.siltpoke/config.json</code>, so the
 Stop hook keeps the daemon alive from then on. To also survive reboots,
@@ -1362,10 +1374,20 @@ install autostart:</p>
 <li>macOS: a LaunchAgent at <code>~/Library/LaunchAgents/io.siltpoke.daemon.plist</code>
 (<code>RunAtLoad</code> + <code>KeepAlive</code> — relaunches if it crashes).</li>
 <li>Linux: a systemd user unit <code>siltpoked.service</code> (<code>Restart=always</code>).</li>
-<li>Windows: nothing — the install step is skipped, and the dashboard does not
-survive a reboot. This is one of several gaps; native Windows is not
-supported yet (see README &quot;Platforms&quot;), the load-bearing one being that the
-review hook is registered as <code>sh ./hooks/stop.sh</code> and never starts.</li>
+<li>Windows: nothing — the install step is skipped, so the dashboard does not
+survive a reboot and you start it yourself with <code>/siltpoke:siltpoke-dashboard</code>.
+Reviews are registered separately, so autostart has no bearing on them. On
+Windows the review hook is registered again, but the whole path has not been
+confirmed on a Windows machine yet. What is known: the reviewer runs through
+a <code>.cmd</code> shim and the runtime refuses to hand a <code>.cmd</code> an argument containing
+characters it would re-interpret — which the review prompt always contains.
+That was measured there on 2026-09-24, and the fix for it was run on its own
+there on 2026-09-25. Neither the fix reached through the hook, nor the
+re-registration itself, has been exercised on Windows. All five reviewer CLIs
+now hand the prompt over some other way, but only <code>claude</code>&#39;s route has been
+tried on a Windows machine; the other four are implemented and untested there.
+<code>/siltpoke:siltpoke-doctor</code>&#39;s <strong>review hook can start</strong> row says whether the hook
+itself can start on this machine — it does not promise the review succeeds.</li>
 </ul>
 <p>Install/refresh any time: <code>bun src/cli/daemon.ts install-autostart</code>.
 <code>bun run uninstall</code> removes it along with everything else.</p>
@@ -1376,7 +1398,7 @@ re-run <code>install-autostart</code> to repair it.</li>
 <li><strong>Daemon off = a sleeping pet, never a red error.</strong> With the daemon
 disabled (the default) the Stop hook does not respawn it — reviews,
 the statusline pet, and the menu-bar pet all keep working without it.
-<code>/siltpoke-doctor</code> reads a stopped daemon as a normal info row, and
+<code>/siltpoke:siltpoke-doctor</code> reads a stopped daemon as a normal info row, and
 only flags it when you&#39;ve enabled it but it&#39;s unreachable.</li>
 </ul>
 <hr>
@@ -1389,7 +1411,7 @@ each project&#39;s inbox to notice a review landed.</p>
 <p>Install it either from the setup wizard (<code>bun run setup</code> asks &quot;Add
 the menu-bar pet?&quot; right after the autostart question) or any time
 after the fact:</p>
-<pre><code class="language-bash">/siltpoke-menubar install   # or: bun src/cli/menubar.ts install
+<pre><code class="language-bash">/siltpoke:siltpoke-menubar install   # or: bun src/cli/menubar.ts install
 </code></pre>
 <p>Consent-driven, same as autostart: it asks before installing SwiftBar
 via Homebrew (skipped if SwiftBar&#39;s already there) and before writing
@@ -1400,16 +1422,16 @@ opening it lists read-only cards, newest first, each tagged
 <code>repo · branch · #session</code> so you know at a glance which project and
 branch a review came from, with a link into the dashboard Timeline
 for the full detail. Menu-bar notifications go through the same
-gates as everything else — <code>/siltpoke-mute</code> and quiet-hours suppress
+gates as everything else — <code>/siltpoke:siltpoke-mute</code> and quiet-hours suppress
 them exactly like chat-surfaced reviews.</p>
-<p><code>/siltpoke-menubar status</code> reports whether the pet is actually showing —
+<p><code>/siltpoke:siltpoke-menubar status</code> reports whether the pet is actually showing —
 the shim being installed is necessary but not sufficient, since SwiftBar
 is what draws the menu bar. It names the one thing that is missing: the
 shim, SwiftBar itself, a running SwiftBar, or a shim sitting in a folder
 SwiftBar is no longer reading.
-<code>/siltpoke-menubar remove</code> deletes the shim (running the command is the
-consent — no extra prompt, matching <code>/siltpoke-mute</code> /
-<code>/siltpoke-unmute</code>).</p>
+<code>/siltpoke:siltpoke-menubar remove</code> deletes the shim (running the command is the
+consent — no extra prompt, matching <code>/siltpoke:siltpoke-mute</code> /
+<code>/siltpoke:siltpoke-unmute</code>).</p>
 <hr>
 <h2>Review unit</h2>
 <p>Controls <em>when</em> Siltpoke actually runs Brain — by <strong>unit of work</strong>, not by
@@ -1461,7 +1483,7 @@ and logged in) | <code>&quot;agy&quot;</code> (Antigravity CLI must be installed
 <code>&quot;qoder&quot;</code> (Qoder CLI must be installed and logged in) | <code>&quot;codebuddy&quot;</code>
 (CodeBuddy CLI must be installed and logged in).
 <code>SILTPOKE_REVIEWER_PROVIDER</code> env var overrides the config for one-off
-tests/smoke — <code>/siltpoke-doctor</code> shows the effective value and marks
+tests/smoke — <code>/siltpoke:siltpoke-doctor</code> shows the effective value and marks
 env overrides.</p>
 <p>You can also pick <strong>which model</strong> that reviewer runs with the optional
 <code>reviewer_model</code> key:</p>
@@ -1470,10 +1492,12 @@ env overrides.</p>
   &quot;reviewer_model&quot;: &quot;gemini-2.5-pro&quot;
 }
 </code></pre>
-<p><code>reviewer_model</code> reaches <code>agy</code> / <code>qoder</code> / <code>codebuddy</code> as their <code>--model</code> flag.
-<strong><code>codex</code> ignores it</strong> (the Codex CLI takes no model flag under ChatGPT auth — its
-served model is whatever the account defaults to). Unset = each provider&#39;s own
-default. <code>/siltpoke-doctor</code> shows the resolved <code>model=…</code> on the reviewer row.</p>
+<p><code>reviewer_model</code> reaches <code>agy</code> / <code>qoder</code> / <code>codebuddy</code> as their <code>--model</code> flag
+and <code>codex</code> as <code>-m</code>. Under a ChatGPT login codex accepts only the models it lists
+for your account (<code>codex debug models</code>); any other is refused, and the review
+fails with codex&#39;s own message — so when you switch to <code>codex</code>, clear or change a
+<code>reviewer_model</code> left over from another agent. Unset = each provider&#39;s own
+default (for codex, the <code>model</code> in <code>~/.codex/config.toml</code>). <code>/siltpoke:siltpoke-doctor</code> shows the resolved <code>model=…</code> on the reviewer row.</p>
 <p><strong>Scope (allowlist)</strong>: only the per-turn <strong>critic</strong> (and the eval harness)
 honor this key. Chat, Code Map explanations, memory extraction, and every other
 Brain consumer stay on claude by code — migrating them is tracked separately.</p>
@@ -1481,15 +1505,24 @@ Brain consumer stay on claude by code — migrating them is tracked separately.<
 <ul>
 <li><strong>Billing is ChatGPT-plan quota, not dollars.</strong> Codex calls record
 <code>cost_usd: null</code> in the ledger (never a fabricated dollar figure); their
-tokens still count against your <code>dailyTokenLimit</code>, and a separate
-<strong>50 calls/day cap</strong> brakes runaway quota use.</li>
-<li><strong>The served model is not pinnable</strong> under ChatGPT auth — siltpoke records
-the configured model from <code>~/.codex/config.toml</code> as provenance, and OpenAI
-may rotate what that name maps to.</li>
+tokens still count against your <code>dailyTokenLimit</code>, and separate
+<strong>daily call caps</strong> brake runaway quota use. There is one cap per role —
+Critic (reviews), Chat (dashboard chat and its recap) and Summarizer
+(summaries and memory) — 50 calls a day each by default, and each counts
+that role&#39;s calls whichever agent makes them: all five agents, Claude Code
+included, are counted and stopped the same way. Switching agent does not
+restart a count. Change the caps on the dashboard&#39;s Settings page, or in
+<code>~/.siltpoke/config.json</code> with <code>&quot;brain&quot;: { &quot;quota_daily_cap&quot;: 100, &quot;chat_quota_daily_cap&quot;: 100, &quot;extract_quota_daily_cap&quot;: 100 }</code> (<code>0</code> = no
+cap; an invalid value keeps 50). The counts restart at the next day boundary
+(<code>budget.resetAt</code>); <code>/siltpoke:siltpoke-wake</code> does not reset them. Chatting does not
+use up the day&#39;s reviews, and reviews do not use up the day&#39;s chat.</li>
+<li><strong>The served model is the one you chose</strong>, else the configured model from
+<code>~/.codex/config.toml</code> — siltpoke records that name as provenance (codex&#39;s
+output does not report it), and OpenAI may rotate what the name maps to.</li>
 <li><strong>Review quality is eval-gated.</strong> Codex becomes a <em>documented-supported</em>
 default only after passing the release gate
 (an internal release gate); switching
-before that works but logs a one-time warning, and <code>/siltpoke-doctor</code>&#39;s
+before that works but logs a one-time warning, and <code>/siltpoke:siltpoke-doctor</code>&#39;s
 reviewer row shows whether any eval verdict certifies the provider.</li>
 <li><strong>No silent fallback.</strong> If codex is configured but missing/broken, the
 review is skipped (fail-soft) and doctor warns — siltpoke never silently
@@ -1514,7 +1547,7 @@ in agy&#39;s configuration.</li>
 <li><strong>Review quality is uncertified.</strong> Agy becomes a <em>documented-supported</em>
 default only after passing the release gate
 (an internal release gate); switching
-before that works but logs a one-time warning, and <code>/siltpoke-doctor</code>&#39;s
+before that works but logs a one-time warning, and <code>/siltpoke:siltpoke-doctor</code>&#39;s
 reviewer row shows whether any eval verdict certifies the provider.</li>
 <li><strong>No silent fallback.</strong> If agy is configured but missing/broken, the
 review is skipped (fail-soft) and doctor warns — siltpoke never silently
@@ -1534,7 +1567,7 @@ what actually served the request.</li>
 <li><strong>Review quality is uncertified.</strong> Qoder becomes a <em>documented-supported</em>
 default only after passing the release gate
 (an internal release gate); switching
-before that works but logs a one-time warning, and <code>/siltpoke-doctor</code>&#39;s
+before that works but logs a one-time warning, and <code>/siltpoke:siltpoke-doctor</code>&#39;s
 reviewer row shows whether any eval verdict certifies the provider.</li>
 <li><strong>No silent fallback.</strong> If qodercli is configured but missing/broken, the
 review is skipped (fail-soft) and doctor warns — siltpoke never silently
@@ -1554,7 +1587,7 @@ what actually served the request.</li>
 <li><strong>Review quality is uncertified.</strong> CodeBuddy becomes a <em>documented-supported</em>
 default only after passing the release gate
 (an internal release gate); switching
-before that works but logs a one-time warning, and <code>/siltpoke-doctor</code>&#39;s
+before that works but logs a one-time warning, and <code>/siltpoke:siltpoke-doctor</code>&#39;s
 reviewer row shows whether any eval verdict certifies the provider.</li>
 <li><strong>No silent fallback.</strong> If codebuddy is configured but missing/broken, the
 review is skipped (fail-soft) and doctor warns — siltpoke never silently
@@ -1691,7 +1724,7 @@ yourself.</p>
 know an update is waiting. Turn it off with:</p>
 <pre><code class="language-json">{ &quot;updateCheck&quot;: { &quot;enabled&quot;: false } }
 </code></pre>
-<p>in <code>~/.siltpoke/config.json</code>. <code>/siltpoke-doctor</code> has a row showing whether it is
+<p>in <code>~/.siltpoke/config.json</code>. <code>/siltpoke:siltpoke-doctor</code> has a row showing whether it is
 on and what the last check found. The cached answer lives in
 <code>~/.siltpoke/update-check.json</code>; deleting it just forces a fresh check.</p>
 <h2>Files Siltpoke owns</h2>
@@ -1775,9 +1808,141 @@ confirms it mechanically, and a rule is distilled from that validated catch.</p>
 </tbody></table>
 <hr>
 <h2>Uninstall</h2>
-<pre><code class="language-bash">bun run uninstall              # restore settings.json from backup, keep ~/.siltpoke/ data
-bun run uninstall -- --purge   # restore + nuke ~/.siltpoke/ entirely
+<p><strong>Plugin install</strong> (<code>claude plugin install …</code>):</p>
+<pre><code class="language-bash">/siltpoke:siltpoke-uninstall                       # 1. in Claude Code: shows what Siltpoke set up, asks about each group, removes the ones you say yes to
+claude plugin uninstall siltpoke          # 2. in a terminal: removes the plugin
+sh ~/.siltpoke/bin/uninstall.sh --purge   # 3. optional, in a terminal: asks about what is left — your data, and the tools Siltpoke installed
 </code></pre>
+<p>Installed Siltpoke for one project only (<code>--scope local</code> or <code>--scope project</code>)?
+Then step 2 answers &quot;not installed in user scope&quot;. Run it in that project&#39;s
+folder and add the same scope: <code>claude plugin uninstall siltpoke --scope local</code>.
+If you skip this, step 3 refuses and tells you what to run.</p>
+<p>Nothing is removed without a yes. Step 1 shows one list first — the status
+line, the dashboard&#39;s start-at-login entry and server, the menu-bar pet, and
+anything a source install left: Siltpoke&#39;s hooks in the settings of Claude
+Code, codex, codebuddy, qoder and Antigravity, and its slash-command links —
+and asks about each group; things that were on your machine before Siltpoke
+are listed and left alone. Step 3 asks the same way in the terminal (<code>y/N</code>,
+default No). Run without a terminal, it prints the list, removes nothing, and
+exits 3.</p>
+<p>Taking hooks out of another agent&#39;s settings file removes Siltpoke&#39;s entries
+from the Stop and SessionStart hooks and leaves the rest of the file as it
+was. One exception, so that a hook left by an earlier Siltpoke checkout goes
+too: in a file that holds Siltpoke&#39;s own hook, any command that runs a
+<code>…/src/hooks/on-stop.ts</code>, <code>codex-stop.ts</code>, <code>agy-stop.ts</code> or
+<code>handle-session-start.ts</code> is treated as Siltpoke&#39;s, whichever folder it is in.
+If the file is not valid JSON, it is left untouched and the output says so
+(a codex <code>hooks.json</code> that is not valid JSON, on a machine with no install
+record, is not listed at all). If you already deleted part of Siltpoke&#39;s hooks
+by hand, what is left may not be recognised: look for <code>src/hooks/</code> in the
+file. A file Siltpoke wrote that has changed since
+(a menu-bar script, a slash-command file) is kept, and the output names it.
+The SwiftBar plugin-folder setting is deleted only when Siltpoke&#39;s own record
+(<code>~/.siltpoke/receipt.json</code>) says Siltpoke set it. None of this deletes your
+data: <code>~/.siltpoke</code>, the <code>.siltpoke/</code> folder in each project, and the settings
+backups stay until step 3.</p>
+<p>Step 3 (<code>--purge</code>) asks about four more things, in this order, each on its
+own and each defaulting to No. (The order is the terminal&#39;s; a single
+<code>--remove &lt;group&gt;</code> call removes the group it names. Remove the project folders
+before <code>~/.siltpoke</code>: the list of projects is kept in it.)</p>
+<ol>
+<li><strong>The <code>.siltpoke/</code> folder inside each project Siltpoke reviewed.</strong> The
+projects are the ones Siltpoke recorded. A folder is kept, and named, when
+git tracks any file in it (then it is part of your project) or when the
+project is a git repository and git could not answer. A recorded project
+that is no longer at its path is named too; Siltpoke does not go looking
+for where it moved.</li>
+<li><strong>The copies of <code>settings.json</code> that each setup run left</strong> in Claude Code&#39;s
+settings folder (<code>settings.json.pre-siltpoke*</code>). Your <code>settings.json</code> itself
+is not touched.</li>
+<li><strong>Tools Siltpoke itself installed, one question each</strong>: the local Ollama
+model (<code>ollama rm &lt;tag&gt;</code>), the project-lifecycle plugin
+(<code>claude plugin uninstall …</code>), the SwiftBar app (<code>brew uninstall --cask swiftbar</code>). Each is offered only when Siltpoke&#39;s own record
+(<code>~/.siltpoke/receipt.json</code>) says Siltpoke installed it, and the line says
+you may be using it elsewhere. The project-lifecycle plugin is not offered
+while a settings file still enables it — your own Claude Code settings, or
+those of a project Siltpoke knows about; the line names the file. Claude
+Code enables a plugin in your own settings when it installs it, so to have
+this one offered, disable it there first. Projects Siltpoke never opened
+cannot be checked. A tool that is on the machine with no record of who
+installed it is listed once with the command to remove it yourself. bun,
+git, Claude Code and codex are never offered.</li>
+<li><strong><code>~/.siltpoke</code></strong>, last. If you kept something Siltpoke installed (said No
+to the model, say) or a project&#39;s <code>.siltpoke/</code> folder, this folder is
+emptied except <code>receipt.json</code>, cut down to the things that are still there,
+so a later run can still offer them; the output says so. Otherwise the whole
+folder goes.</li>
+</ol>
+<p>None of the four is removed while Siltpoke&#39;s plugin is still installed in any
+coding agent, or when Siltpoke cannot tell whether it is: uninstall the plugin
+first. For <code>~/.siltpoke</code> the reason is that the plugin&#39;s hooks would write it
+straight back; the same rule is applied to the other three so that there is
+one rule to remember.</p>
+<p>To look without changing anything:</p>
+<pre><code class="language-bash">bun &lt;plugin folder&gt;/dist/siltpoke-cli.js uninstall --plan --purge
+</code></pre>
+<p><strong>The report.</strong> Every run that asks or removes ends with one. It is read off the disk after the
+removals, not off what each step said it did, so an item counts as removed
+only when it is no longer found. It says:</p>
+<ul>
+<li>how many items were removed, and how many of them were in Siltpoke&#39;s own
+record (<code>~/.siltpoke/receipt.json</code>);</li>
+<li>anything you said yes to that is still there;</li>
+<li>the groups you said No to;</li>
+<li>what was left in place and why (it was on your machine before Siltpoke, git
+tracks it, another tool may need it);</li>
+<li>recorded items that were already gone before the run;</li>
+<li>what is <strong>not tracked</strong>: Siltpoke records what it installs only since the
+date the report names. Anything an earlier version installed is not in the
+record, and the report cannot say whether it is still on your machine. For
+that reason it never says the machine is clean.</li>
+</ul>
+<p>Empty folders and files that the install itself created are removed with the
+rest: the slash-command folders (<code>~/.claude/commands</code>, and the same folder in
+codebuddy and qoder), and a settings or hooks file the install created in
+another coding agent once it holds nothing but <code>{}</code>. Siltpoke deletes one only
+if its record says the install created it and it is empty at that moment — a
+folder or file that was already there, or that you have put anything into,
+stays. Known: a machine installed before this was recorded keeps those empty
+folders and <code>{}</code> files; they are safe to delete by hand.</p>
+<p>Step 1 prints a short form after each group and the whole report at the end.
+To print it at any time, without changing anything:</p>
+<pre><code class="language-bash">bun &lt;plugin folder&gt;/dist/siltpoke-cli.js uninstall --report
+</code></pre>
+<p>If the plugin is removed first, the status line restores itself on its next
+draw, and step 3 still works while Claude Code keeps the plugin&#39;s files. Once
+those files are gone, <code>uninstall.sh</code> can no longer ask item by item: it tells
+you where the record of what was installed is (<code>~/.siltpoke/receipt.json</code>) and
+does the rest as before. <code>--purge</code> deletes <code>~/.siltpoke</code> only when no coding
+agent still has the plugin (its hooks would write the folder straight back)
+and your status line was put back (the folder holds the only copy of your
+original one). Codex is checked with <code>codex plugin list</code>, which also lists
+plugins that are only available. If Codex is the only place the refusal names
+and Codex does not have Siltpoke installed, delete the folder yourself with
+<code>rm -rf ~/.siltpoke</code>.</p>
+<p>If you installed the plugin, uninstalled it, and now run Siltpoke with
+<code>claude --plugin-dir</code>, your status line shows your own command and the pet
+does not come back: the mark Claude Code left on uninstall is still on disk.
+To bring the pet back while staying on <code>--plugin-dir</code>, delete the copy Claude
+Code left behind (<code>rm -rf ~/.claude/plugins/cache/*/siltpoke</code>) and run
+<code>/siltpoke:siltpoke-setup</code> (give your pet&#39;s current name and species, or the new
+answers replace them; level and XP are kept). Reinstalling the plugin also
+works, but Claude Code may then load Siltpoke twice: once from the plugin and
+once from your folder.</p>
+<p><strong>Source install</strong> (<code>bun run setup</code>):</p>
+<pre><code class="language-bash">bun run uninstall              # take siltpoke out of settings.json, keep ~/.siltpoke/ data
+bun run uninstall -- --purge   # same, then delete ~/.siltpoke/ entirely
+</code></pre>
+<p>Only what setup wrote into <code>~/.claude/settings.json</code> comes out: the status line
+you had before goes back (or the <code>statusLine</code> entry is removed, if you had
+none), and siltpoke&#39;s Stop and SessionStart hooks are removed. Every other
+setting — including anything you changed after setup — stays as it is. The
+backup setup made (<code>settings.json.pre-siltpoke-*.json</code>) is kept and named in
+the output; it is never copied back. If <code>settings.json</code> is not valid JSON, it
+is left untouched and the output says so. Run the uninstall from the same
+folder you ran setup from: if the checkout has moved since, the status line,
+the SessionStart hook and the Stop hook&#39;s <code>bun …</code> entry name the old folder,
+are not recognised, and stay in place.</p>
 <p>Installer is <strong>idempotent</strong>. Re-running <code>bun run setup</code> after a repo
 update will pick up new slash commands (symlinks auto-refresh) without
 re-asking your personality questions.</p>

@@ -326,7 +326,7 @@ export function buildGroundedPopoverHtml(p: GroundedPopoverPayload): string {
         .map((c) => `<div class="ap-inferred-item">· "${_escHtml(c.text)}"</div>`)
         .join("");
       const moreHtml = rest > 0 ? `<div class="ap-inferred-more">+${rest} more</div>` : "";
-      const headerText = `${expectedInferred} claim${expectedInferred !== 1 ? "s" : ""} inferred — no import-graph evidence found${listHeaderSuffix}:`;
+      const headerText = `${expectedInferred} claim${expectedInferred !== 1 ? "s" : ""} not backed by an import or a checked citation${listHeaderSuffix}:`;
       inferredHtml = _rowSection(
         `<div class="ap-inferred-header">${headerText}</div>` + items + moreHtml,
       );
@@ -338,11 +338,9 @@ export function buildGroundedPopoverHtml(p: GroundedPopoverPayload): string {
   let soWhatHtml = "";
   let hintHtml = "";
   if (hasCounts) {
-    const totalMinusCitedNum = totalClaims! - citedClaims!;
-    const totalMinusCitedStr = totalMinusCitedNum.toLocaleString("en-US");
     const soWhatLine =
-      `Solid arrows and labels are evidence-backed; the ${totalMinusCitedStr} inferred ` +
-      `ones render dashed / lighter — read those with healthy doubt.`;
+      "Solid arrows are an import or a source citation checked just now; dashed ones are neither — " +
+      "read those with healthy doubt.";
     soWhatHtml = _defSection(soWhatLine);
   } else {
     // REDUCED (legacy, counts absent): hint line in its own .ap-def block

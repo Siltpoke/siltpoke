@@ -16,8 +16,13 @@ import type { ContainerStats } from "./container-stats";
  * data. Singular became reachable once member-badges count one container's
  * OWN files (badge-door-members M1). */
 export function badgeLabel(s: ContainerStats): string {
+  const other = s.otherCount ?? 0;
+  // A box holding only non-code files (docs/, tests/) — "0 files" would read
+  // as empty.
+  if (s.fileCount === 0 && other > 0) return other === 1 ? "1 other file" : `${other} other files`;
   const filePart = s.fileCount === 1 ? "1 file" : `${s.fileCount} files`;
-  return s.funcCount > 0 ? `${filePart} · ${s.funcCount} fn` : filePart;
+  const code = s.funcCount > 0 ? `${filePart} · ${s.funcCount} fn` : filePart;
+  return other > 0 ? `${code} · ${other} other` : code;
 }
 
 /** Breakdown rows: "46× page.tsx" (basename is DATA) or the no-pattern line. */

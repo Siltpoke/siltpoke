@@ -66,7 +66,7 @@ const ROUTES = [
   "/", "/timeline", "/memory", "/critic", "/repo-graph", "/repo-memory",
   // "a retired page" dropped 2026-08-06 — the route is no longer mounted, so scanning it
   // would scan a 404 page and quietly report the surface clean.
-  "/rubric", "/few-shot", "/preference-log", "/traces", "/chat",
+  "/rubric", "/few-shot", "/preference-log", "/traces", "/settings", "/chat",
   "/explain",
 ] as const;
 

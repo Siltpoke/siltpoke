@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { exec } from "node:child_process";
+import { markDone, recordBefore } from "./receipt";
 const execp = promisify(exec);
 
 const MODEL = "qwen2.5-coder:7b-instruct-q4_K_M";
@@ -37,18 +38,41 @@ export async function validateModel(): Promise<boolean> {
   }
 }
 
+/** Is the model already on this machine? Decides the receipt's `byUs` (spec §2.1). */
+async function hasOllamaModel(): Promise<boolean> {
+  try {
+    const { stdout } = await execp("ollama list");
+    return stdout.includes(MODEL);
+  } catch {
+    return false;
+  }
+}
+
 export interface OllamaIo {
   write: (s: string) => void;
 }
 
 export interface OllamaDeps {
   checkInstalled?: () => Promise<boolean>;
+  hasModel?: () => Promise<boolean>;
   pull?: () => Promise<void>;
   validate?: () => Promise<boolean>;
 }
 
 export async function setupOllamaInteractive(
-  opts: { skip?: boolean; io?: OllamaIo; deps?: OllamaDeps } = {},
+  opts: {
+    skip?: boolean;
+    io?: OllamaIo;
+    deps?: OllamaDeps;
+    /** Env for the install receipt (`~/.siltpoke/receipt.json`); defaults to process.env. */
+    env?: NodeJS.ProcessEnv;
+    /**
+     * `[63]`: asked after we know ollama is installed, before anything is
+     * recorded or pulled. Omitted ⇒ go ahead (the pre-[63] behaviour, kept for
+     * direct callers; runInstall always supplies one).
+     */
+    consent?: () => Promise<boolean>;
+  } = {},
 ): Promise<{ enabled: boolean }> {
   if (opts.skip) return { enabled: false };
   const io = opts.io ?? { write: (s: string) => void process.stdout.write(s) };
@@ -60,6 +84,7 @@ export async function setupOllamaInteractive(
   if (!installed) {
     return { enabled: false };
   }
+  if (opts.consent && !(await opts.consent())) return { enabled: false };
   // sq-ollama-silent-pull (day-1): the pull streams Ollama's own progress bar
   // (pullModel uses stdio:"inherit"), but with no heads-up the user faces a
   // sudden multi-minute, multi-GB download with zero context. Announce it so
@@ -67,8 +92,25 @@ export async function setupOllamaInteractive(
   io.write(
     `\n⏳ Pulling local bias-audit model ${MODEL} (one-time, several GB — this can take a few minutes)...\n`,
   );
+  // Receipt (spec §2.1, §5): byUs is whether the model was already here; the
+  // entry is pending until the pull exits cleanly. Validation failing later
+  // does not undo a pull that happened.
+  const receiptEnv = opts.env ?? process.env;
+  const hasModel = opts.deps?.hasModel ?? hasOllamaModel;
+  recordBefore(
+    {
+      id: "tool:ollama-model",
+      kind: "outside-tool",
+      target: MODEL,
+      byUs: !(await hasModel()),
+      level: "purge",
+      undo: { type: "ollama-rm", model: MODEL },
+    },
+    receiptEnv,
+  );
   try {
     await pull();
+    markDone("tool:ollama-model", receiptEnv);
   } catch (e) {
     console.warn("Pull failed; bias audit disabled.", e);
     return { enabled: false };

@@ -119,7 +119,7 @@ async function writeCritique(c: CritiqueSpec): Promise<void> {
   const evidenceYaml = c.evidence
     .map(
       (e) =>
-        `  - rule_id: ${e.rule_id}\n    tier: ${e.tier}\n    file: ${e.file}\n    line: ${e.line}\n    snippet: "${e.snippet.replace(/"/g, '\\"')}"\n    signal_source: ${e.signal_source}`,
+        `  - rule_id: ${e.rule_id}\n    tier: ${e.tier}\n    file: ${e.file}\n    line: ${e.line}\n    snippet: "${e.snippet.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"\n    signal_source: ${e.signal_source}`,
     )
     .join("\n");
 

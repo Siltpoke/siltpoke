@@ -26,6 +26,8 @@ const BASE_CALL: CriticCall = {
   evidence: [],
   audit_absence: "unrecorded" as const,
   evidence_label: null,
+  injection_alert: null,
+  tool_calls: null,
   evidence_unverified: 0,
   diff_shown: null,
   diff_total: null,

@@ -42,6 +42,11 @@ concurrency:
   group: e2e-${{ github.ref }}
   cancel-in-progress: true
 
+# Read-only GITHUB_TOKEN. Nothing here writes to the repo; cache and
+# upload-artifact use their own runtime token. (CodeQL actions/missing-workflow-permissions.)
+permissions:
+  contents: read
+
 jobs:
   e2e:
     runs-on: ubuntu-latest
