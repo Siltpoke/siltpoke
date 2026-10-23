@@ -358,8 +358,8 @@ function diffOnlyTools(): Record<ToolName, ToolResult> & {
   owaspHints: never[];
   webSearchSources: never[];
 } {
-  // Clean checkers but a real diff hunk => PASSIVE_BUBBLE (nothing to flag,
-  // but the user did change code, so the pet still speaks).
+  // Clean checkers and a docs-only hunk => PASSIVE_BUBBLE. Since gate step [1]
+  // a CODE hunk goes to NORMAL whatever the checkers said, so the file is .md.
   return {
     tsc: { tool: "tsc", status: "ok", parsed: [], raw: "" },
     eslint: { tool: "eslint", status: "not_applicable", parsed: [], raw: "" },
@@ -370,16 +370,16 @@ function diffOnlyTools(): Record<ToolName, ToolResult> & {
       // "nothing changed" and HARD_SUPPRESSes before assembly.
       parsed: [
         {
-          file: "dummy.ts",
+          file: "dummy.md",
           oldStart: 1,
           oldLines: 1,
           newStart: 1,
           newLines: 1,
           header: "@@ -1 +1 @@",
-          body: "-export const dummy = 1;\n+export const dummy = 2;",
+          body: "-dummy one\n+dummy two",
         },
       ],
-      raw: "diff --git a/dummy.ts b/dummy.ts\n@@ -1 +1 @@\n-export const dummy = 1;\n+export const dummy = 2;\n",
+      raw: "diff --git a/dummy.md b/dummy.md\n@@ -1 +1 @@\n-dummy one\n+dummy two\n",
     },
     ripgrep: { tool: "ripgrep", status: "ok", parsed: [], raw: "" },
     securityFindings: [],

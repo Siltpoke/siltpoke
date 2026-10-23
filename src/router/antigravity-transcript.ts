@@ -131,6 +131,23 @@ const EDIT_TOOL_NAMES: Readonly<Record<string, string>> = {
   multi_replace_file_content: "Edit",
 };
 
+/**
+ * The agy CLI JSON-encodes every tool_call arg value — `TargetFile` arrives as
+ * `"\"/abs/path\""` (28 of 28 CLI transcripts with an edit, surveyed
+ * 2026-10-23; fixture tests/fixtures/agy/transcript-cli-quoted-args.jsonl).
+ * The desktop app writes the bare path. Decode only a value wrapped in quotes
+ * at both ends that parses as a JSON string; anything else is kept as written.
+ */
+function decodeArg(value: string): string {
+  if (value.length < 2 || !value.startsWith('"') || !value.endsWith('"')) return value;
+  try {
+    const decoded: unknown = JSON.parse(value);
+    return typeof decoded === "string" ? decoded : value;
+  } catch {
+    return value;
+  }
+}
+
 function editToolUses(toolCalls: AgyToolCall[] | undefined): ToolUsePart[] {
   if (!Array.isArray(toolCalls)) return [];
   const parts: ToolUsePart[] = [];
@@ -140,8 +157,10 @@ function editToolUses(toolCalls: AgyToolCall[] | undefined): ToolUsePart[] {
         ? EDIT_TOOL_NAMES[call.name]
         : undefined;
     if (!name) continue;
-    const targetFile = call.args?.TargetFile;
-    if (typeof targetFile !== "string" || targetFile.length === 0) continue;
+    const rawTarget = call.args?.TargetFile;
+    if (typeof rawTarget !== "string") continue;
+    const targetFile = decodeArg(rawTarget);
+    if (targetFile.length === 0) continue;
     parts.push({ type: "tool_use", name, input: { file_path: targetFile } });
   }
   return parts;

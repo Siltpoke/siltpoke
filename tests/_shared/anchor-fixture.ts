@@ -151,7 +151,11 @@ export function toolsWithFinding(): Tools {
   };
 }
 
-/** Clean tools + diff hunks → PASSIVE_BUBBLE (the clean-refactor branch). */
+/**
+ * Clean tools + diff hunks → PASSIVE_BUBBLE. Since gate step [1] only a change
+ * with nothing reviewable in it gets there (a code hunk goes to NORMAL whatever
+ * the tools said), so the hunk is a docs file.
+ */
 export function toolsCleanRefactor(): Tools {
   return {
     tsc: { tool: "tsc", status: "ok", parsed: [], raw: "" },
@@ -161,16 +165,16 @@ export function toolsCleanRefactor(): Tools {
       status: "ok",
       parsed: [
         {
-          file: "clean-refactor.ts",
+          file: "clean-refactor.md",
           oldStart: 1,
           oldLines: 0,
           newStart: 1,
           newLines: 1,
           header: "@@ -1,0 +1,1 @@",
-          body: "+export const t = 7;",
+          body: "+a line of docs",
         },
       ],
-      raw: "@@ -1,0 +1,1 @@\n+export const t = 7;",
+      raw: "@@ -1,0 +1,1 @@\n+a line of docs",
     },
     ripgrep: { tool: "ripgrep", status: "ok", parsed: [], raw: "" },
     securityFindings: [],

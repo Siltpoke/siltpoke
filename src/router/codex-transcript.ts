@@ -22,7 +22,14 @@
  * - event_msg/patch_apply_end   → assistant tool_use per changed file
  *                                 (add → Write, update/delete → Edit;
  *                                 payload.changes keys are absolute paths)
- * - everything else             → dropped (response_item duplicates the
+ * - event_msg/item_completed    → codex 0.155.1 (verified 2026-10-23) emits
+ *                                 none of the three events above; each item
+ *                                 arrives here instead: UserMessage /
+ *                                 AgentMessage → text turns, FileChange →
+ *                                 tool_use per item.changes key (same shape
+ *                                 as patch_apply_end). No rollout on disk
+ *                                 carried both forms, so nothing double-counts.
+ * - everything else            → dropped (response_item duplicates the
  *                                 event_msg content and would double-count)
  *
  * Deliberately NOT handled yet: shell-command file writes (Codex
@@ -37,6 +44,8 @@ const CODEX_ENVELOPE_TYPES = new Set([
   "turn_context",
   "response_item",
   "event_msg",
+  "world_state",
+  "token_usage_record",
 ]);
 
 interface CodexEnvelope {
@@ -70,7 +79,10 @@ function patchApplyToToolUses(
   timestamp?: string,
 ): TranscriptEvent[] {
   if (payload.success === false) return [];
-  const changes = payload.changes;
+  return changesToToolUses(payload.changes, timestamp);
+}
+
+function changesToToolUses(changes: unknown, timestamp?: string): TranscriptEvent[] {
   if (typeof changes !== "object" || changes === null || Array.isArray(changes)) {
     return [];
   }
@@ -122,6 +134,38 @@ export function normalizeCodexEvents(ev: unknown): TranscriptEvent[] | null {
   }
   if (kind === "patch_apply_end") {
     return patchApplyToToolUses(payload, ts);
+  }
+  if (kind === "item_completed") {
+    return itemCompletedEvents(payload.item, ts);
+  }
+  return [];
+}
+
+/** Text of an item's content parts: UserMessage uses `text`, AgentMessage `Text`. */
+function itemText(content: unknown): string {
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (typeof part !== "object" || part === null) return "";
+      const p = part as { type?: unknown; text?: unknown };
+      return (p.type === "text" || p.type === "Text") && typeof p.text === "string" ? p.text : "";
+    })
+    .join("");
+}
+
+function itemCompletedEvents(item: unknown, ts?: string): TranscriptEvent[] {
+  if (typeof item !== "object" || item === null || Array.isArray(item)) return [];
+  const it = item as Record<string, unknown>;
+  if (it.type === "UserMessage" || it.type === "AgentMessage") {
+    const text = itemText(it.content);
+    if (!text.trim()) return [];
+    return [textTurn(it.type === "UserMessage" ? "user" : "assistant", text, ts)];
+  }
+  if (it.type === "FileChange") {
+    // One real sample (lowercase "completed"); compare case-insensitively so a
+    // casing change cannot silently drop every edit again.
+    if (typeof it.status === "string" && it.status.toLowerCase() !== "completed") return [];
+    return changesToToolUses(it.changes, ts);
   }
   return [];
 }

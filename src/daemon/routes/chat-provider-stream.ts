@@ -21,9 +21,11 @@
  *  - PATH. The autostarted daemon gets a short PATH; `commandDir` (recorded by
  *    a hook in the user's own session) is put in front of the CHILD's PATH for
  *    this one call. `process.env` is never touched.
- *  - A folder. `<home>/chat-cwd/`, empty and ours — nobody's code and no
- *    project instruction file for the agent to pick up. agy ignores it and
- *    runs in its own per-call empty folder (providers/agy-cwd.ts).
+ *  - A folder. The project root when the turn reads the project
+ *    (`projectRoot`, src/chat/repo-access.ts); else `<home>/chat-cwd/`, empty
+ *    and ours — nobody's code and no project instruction file for the agent
+ *    to pick up. agy ignores both and runs in its own per-call empty folder
+ *    (providers/agy-cwd.ts); its prompt names the project's path.
  */
 import { mkdirSync } from "node:fs";
 import { delimiter, join } from "node:path";
@@ -53,6 +55,8 @@ interface StreamChatViaProviderOptions {
   transcript: string;
   systemPrompt?: string;
   signal?: AbortSignal;
+  /** The project the turn reads; absent = the empty chat folder. */
+  projectRoot?: string;
   /**
    * Test seam only. Production passes nothing: each agent keeps the time limit
    * review gives it (90s; codex 120s), which lives in that agent's own file.
@@ -246,8 +250,8 @@ export async function* streamChatViaProvider(
     // delivered: no listener was attached then, so none will fire. Start
     // nothing — this is the one check both cases go through.
     if (signal?.aborted) return;
-    const cwd = join(opts.homeBase, CHAT_CWD_DIRNAME);
-    mkdirSync(cwd, { recursive: true });
+    const cwd = opts.projectRoot ?? join(opts.homeBase, CHAT_CWD_DIRNAME);
+    if (opts.projectRoot === undefined) mkdirSync(cwd, { recursive: true });
     const call = makeGuardedCallRaw({
       homeBase: opts.homeBase,
       provider: providerForFamily(family),

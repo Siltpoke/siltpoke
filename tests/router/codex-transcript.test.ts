@@ -8,7 +8,7 @@
  * event_msg/patch_apply_end with absolute paths in payload.changes.
  */
 import { test, expect, beforeEach, afterEach, describe } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -144,6 +144,99 @@ describe("Codex rollout → extractTranscriptTurns", () => {
     // The patch itself surfaces as a tool-use summary turn so packContext sees code work.
     expect(turns[2]!.text).toContain("math.ts");
     expect(turns[3]!.text).toBe("Created math.ts with the exact requested contents.");
+  });
+});
+
+/**
+ * codex-cli 0.155.1 rollout, captured 2026-10-23 during the 1.5.0 acceptance
+ * run (host codex wrote billing.js). Trimmed: the world_state payload (the
+ * user's global AGENTS.md) is emptied, non-tool response_item lines are dropped,
+ * and the home dir is rewritten to /Users/v. Newer codex no longer emits
+ * event_msg/user_message, agent_message or patch_apply_end: every item arrives
+ * as event_msg/item_completed with item.type UserMessage / AgentMessage /
+ * FileChange. Before the fix this whole file read as zero changed files.
+ */
+const ROLLOUT_0155 = join(
+  import.meta.dir,
+  "..",
+  "fixtures",
+  "codex",
+  "rollout-0.155-filechange.jsonl",
+);
+
+function itemLine(item: Record<string, unknown>): string {
+  return codexLine("event_msg", { type: "item_completed", item });
+}
+
+describe("Codex 0.155 rollout (item_completed) → extractors", () => {
+  test("fixture really has the new shape and none of the old events", () => {
+    const raw = readFileSync(ROLLOUT_0155, "utf8");
+    expect(raw).toContain('"type": "FileChange"');
+    expect(raw).not.toContain("patch_apply_end");
+    expect(raw).not.toContain('"type": "user_message"');
+  });
+
+  test("extractChangedFiles returns the file from the FileChange item", async () => {
+    expect(await extractChangedFiles(ROLLOUT_0155)).toEqual([
+      "/Users/v/siltpoke-accept/c-codex/billing.js",
+    ]);
+  });
+
+  test("extractLatestUserMessage returns the UserMessage text", async () => {
+    const msg = await extractLatestUserMessage(ROLLOUT_0155);
+    expect(msg.startsWith("Create the file billing.js with exactly the content below")).toBe(true);
+  });
+
+  test("extractTranscriptTurns yields user, commentary, the edit, then the final answer", async () => {
+    const turns = await extractTranscriptTurns(ROLLOUT_0155);
+    expect(turns.map((t) => t.role)).toEqual(["user", "assistant", "assistant", "assistant"]);
+    expect(turns[1]!.text).toContain("only create `billing.js`");
+    expect(turns[2]!.text).toContain("billing.js");
+    expect(turns[3]!.text).toBe("Created `billing.js` exactly as provided.");
+  });
+
+  test("update and delete FileChange entries count (any status casing); a FileChange that did not complete does not", async () => {
+    const p = join(tmp, "rollout-items.jsonl");
+    const lines = [
+      itemLine({
+        type: "FileChange",
+        status: "completed",
+        changes: { "/tmp/proj/a.ts": { type: "update" }, "/tmp/proj/b.ts": { type: "delete" } },
+      }),
+      itemLine({
+        type: "FileChange",
+        status: "failed",
+        changes: { "/tmp/proj/c.ts": { type: "add" } },
+      }),
+      itemLine({
+        type: "FileChange",
+        status: "Completed",
+        changes: { "/tmp/proj/d.ts": { type: "add" } },
+      }),
+      // world_state / token_usage_record envelopes are recognized and dropped.
+      codexLine("world_state", { full: true, changes: { "/tmp/proj/e.ts": { type: "add" } } }),
+      codexLine("token_usage_record", { thread_id: "t" }),
+    ];
+    writeFileSync(p, `${lines.join("\n")}\n`);
+    expect((await extractChangedFiles(p)).sort()).toEqual([
+      "/tmp/proj/a.ts",
+      "/tmp/proj/b.ts",
+      "/tmp/proj/d.ts",
+    ]);
+    // One turn per completed FileChange item; the failed one, world_state and
+    // token_usage_record add none.
+    expect(await extractTranscriptTurns(p)).toHaveLength(2);
+  });
+
+  test("Reasoning and CommandExecution items contribute nothing", async () => {
+    const p = join(tmp, "rollout-other.jsonl");
+    const lines = [
+      itemLine({ type: "Reasoning", summary_text: ["thinking about /tmp/proj/x.ts"] }),
+      itemLine({ type: "CommandExecution", command: "touch /tmp/proj/y.ts", status: "completed" }),
+    ];
+    writeFileSync(p, `${lines.join("\n")}\n`);
+    expect(await extractChangedFiles(p)).toEqual([]);
+    expect(await extractTranscriptTurns(p)).toEqual([]);
   });
 });
 

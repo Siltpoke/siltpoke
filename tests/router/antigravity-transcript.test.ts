@@ -376,3 +376,74 @@ describe("normalizeAntigravityEvents — structured edit tool names, synthetic e
     ).toEqual([]);
   });
 });
+
+/**
+ * agy CLI transcripts JSON-encode every tool_call arg value: `TargetFile` is
+ * `"\"/abs/path\""`, `Overwrite` is `"true"`. Captured 2026-07-10 (agy CLI,
+ * conversation 748d2441), home dir rewritten to /Users/v. A 2026-10-23 survey
+ * found this quoting in 28 of 28 agy CLI transcripts on disk carrying an edit,
+ * so without decoding every agy CLI turn read as "no_code_changes".
+ */
+const CLI_QUOTED_FIXTURE = join(
+  import.meta.dir,
+  "..",
+  "fixtures",
+  "agy",
+  "transcript-cli-quoted-args.jsonl",
+);
+
+function writeEvent(filePath: string): NonNullable<ReturnType<typeof normalizeAntigravityEvents>> {
+  return [
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "tool_use", name: "Write", input: { file_path: filePath } }],
+      },
+      timestamp: undefined,
+    },
+  ];
+}
+
+describe("agy CLI transcript — JSON-encoded tool_call args", () => {
+  test("fixture really carries the quoted form (guards against a re-capture losing the property)", () => {
+    expect(readFileSync(CLI_QUOTED_FIXTURE, "utf8")).toContain(
+      '"TargetFile":"\\"/Users/v/agy-t1-scratch/hello.txt\\""',
+    );
+  });
+
+  test("extractChangedFiles decodes the quoted TargetFile to the bare path", async () => {
+    expect(await extractChangedFiles(CLI_QUOTED_FIXTURE)).toEqual([
+      "/Users/v/agy-t1-scratch/hello.txt",
+    ]);
+  });
+
+  test("an encoded Windows path decodes its escaped backslashes", () => {
+    expect(
+      normalizeAntigravityEvents({
+        type: "PLANNER_RESPONSE",
+        tool_calls: [{ name: "write_to_file", args: { TargetFile: '"C:\\\\repo\\\\a.ts"' } }],
+      }),
+    ).toEqual(writeEvent("C:\\repo\\a.ts"));
+  });
+
+  test("a value quoted at one end only, or not valid JSON, is kept as written", () => {
+    for (const raw of ['"/repo/a.ts', '/repo/a.ts"', '"/repo/\\q.ts"']) {
+      expect(
+        normalizeAntigravityEvents({
+          type: "PLANNER_RESPONSE",
+          tool_calls: [{ name: "write_to_file", args: { TargetFile: raw } }],
+        }),
+      ).toEqual(writeEvent(raw));
+    }
+  });
+
+  test("an encoded empty string is skipped like a missing TargetFile", () => {
+    expect(
+      normalizeAntigravityEvents({
+        type: "PLANNER_RESPONSE",
+        tool_calls: [{ name: "write_to_file", args: { TargetFile: '""' } }],
+      }),
+    ).toEqual([]);
+  });
+});

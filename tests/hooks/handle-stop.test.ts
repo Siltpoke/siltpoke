@@ -618,9 +618,10 @@ describe("handleStopHook — tool-augmented path (flag ON)", () => {
 
   test("PASSIVE_BUBBLE: a loud alert is set on the state file and the next alert-free review clears it (F8)", async () => {
     const ok = <T extends string>(tool: T) => ({ tool, status: "ok" as const, parsed: [], raw: "" });
-    const hunk = { file: "src/dummy.ts", oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, header: "@@", body: "-a\n+b" };
+    // A docs hunk: since gate step [1] a code hunk goes to NORMAL.
+    const hunk = { file: "docs/dummy.md", oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, header: "@@", body: "-a\n+b" };
     const passiveDeps = (extra: Record<string, unknown>): RunCriticDeps => ({
-      runToolsFn: async () => ({ tsc: ok("tsc"), eslint: ok("eslint"), "git-diff": { ...ok("git-diff"), parsed: [hunk], raw: "diff --git a/src/dummy.ts b/src/dummy.ts" }, ripgrep: ok("ripgrep"), securityFindings: [], owaspHints: [], webSearchSources: [] }),
+      runToolsFn: async () => ({ tsc: ok("tsc"), eslint: ok("eslint"), "git-diff": { ...ok("git-diff"), parsed: [hunk], raw: "diff --git a/docs/dummy.md b/docs/dummy.md" }, ripgrep: ok("ripgrep"), securityFindings: [], owaspHints: [], webSearchSources: [] }),
       callBrainFn: async () => {
         const { tool_calls, ...output } = extra;
         return { output: makeFakeBrainOutput({ bubble_short: "clean", ...output }), usage: noopUsage, toolCalls: (tool_calls as ToolCallRecord[] | undefined) ?? [] };
@@ -835,9 +836,9 @@ describe("handleStopHook — provider truth on ledger rows (track #7 T3)", () =>
           tool: "git-diff",
           status: "ok",
           parsed: [
-            { file: "src/dummy.ts", oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, header: "@@", body: "-a\n+b" },
+            { file: "docs/dummy.md", oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, header: "@@", body: "-a\n+b" },
           ],
-          raw: "diff --git a/src/dummy.ts b/src/dummy.ts",
+          raw: "diff --git a/docs/dummy.md b/docs/dummy.md",
         },
         ripgrep: { tool: "ripgrep", status: "ok", parsed: [], raw: "" },
         securityFindings: [],
@@ -875,9 +876,9 @@ describe("handleStopHook — provider truth on ledger rows (track #7 T3)", () =>
           tool: "git-diff",
           status: "ok",
           parsed: [
-            { file: "src/dummy.ts", oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, header: "@@", body: "-a\n+b" },
+            { file: "docs/dummy.md", oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, header: "@@", body: "-a\n+b" },
           ],
-          raw: "diff --git a/src/dummy.ts b/src/dummy.ts",
+          raw: "diff --git a/docs/dummy.md b/docs/dummy.md",
         },
         ripgrep: { tool: "ripgrep", status: "ok", parsed: [], raw: "" },
         securityFindings: [],

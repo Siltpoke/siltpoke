@@ -372,6 +372,18 @@ Brain consumer stay on claude by code — migrating them is tracked separately.
   review-of-review (siltpoke's own hooks see an internal marker and stand
   down). Caveat: *third-party* hooks you've configured in your own codex
   setup will still fire inside these internal calls.
+- **Chat reads your project on macOS only.** When codex answers dashboard
+  chat on the Code Map or in a conversation pinned to a project, it runs in
+  that project's folder under its read-only sandbox, and the sandbox refuses
+  reads of your other files (measured on codex-cli 0.155.1). It can still
+  read the git repository the folder is in, your global git config, and the
+  system files it needs to run. On
+  Linux and Windows codex has no such limit, so chat there does not open
+  your files, and the 📂 chip says so. Running in the project folder has the
+  same two leftovers as a codex review there: a project you trusted in codex
+  still starts the MCP servers its `.codex/config.toml` lists, and codex can
+  open the project's `AGENTS.md` with a shell command and follow it (it is
+  not loaded as instructions).
 
 **For Antigravity (`agy -p`)**:
 
@@ -393,6 +405,15 @@ Brain consumer stay on claude by code — migrating them is tracked separately.
   review is skipped (fail-soft) and doctor warns — siltpoke never silently
   swaps back to claude, because a same-family review pretending to be
   cross-family would be a lie.
+- **Only a prompt sentence keeps agy inside your project.** agy runs in an
+  empty folder of its own, never your repo (a repo folder makes agy run that
+  repo's hooks). In chat on the Code Map or in a pinned conversation it is
+  given the project's path and told not to read anything outside it. agy
+  itself does not enforce that: in a test with the sentence removed it read
+  a file in the home folder. A project file that talks agy into reading,
+  say, `~/.ssh/` could put that file's text into the chat record on this
+  machine. Reviews by agy have the same exposure. If that matters for a
+  project, pick claude or codex (macOS) for chat.
 
 **For Qoder (`qodercli -p`)**:
 
@@ -444,8 +465,11 @@ Brain consumer stay on claude by code — migrating them is tracked separately.
 
 ## Cost control
 
-Default `~$0.04–$0.10/day` thanks to prompt caching (~70k tokens cached,
-calls 2+ cost ~$0.001).
+Every code change gets a review that reads the diff. One such review costs
+about $0.09 at the median on an API-billed reviewer (a subscription pays no
+per-review dollars but uses plan quota; the token cap applies either way). The default daily budget,
+`dailyTokenLimit: 1000000`, allows about 100 reviews a day; after that the
+reviewer waits for the next day. Lower it to spend less.
 
 ```json
 {

@@ -17,7 +17,19 @@
  * settings (allowed paths, extra directories, a bypass mode) can widen it;
  * the argv does not override them.
  *
- * Claude only: the other chat agents have their own tool rules.
+ * codex and agy read too (2026-10-22, redo of #1070; real runs in
+ * an internal design note). What holds each one
+ * to the project differs:
+ *  - codex runs in the project root under its read-only sandbox. On macOS the
+ *    sandbox profile (providers/codex-sandbox.ts) refused a home file outside
+ *    the project even with no prompt sentence. Elsewhere plain read-only
+ *    reads the whole disk, so codex reads the project on macOS only.
+ *  - agy runs in its own empty folder (providers/agy-cwd.ts — a repo cwd runs
+ *    the project's hooks) and opens the project by absolute path. Nothing in
+ *    agy limits its reads: with the prompt's "do not read outside" sentence
+ *    removed it read a home file. The sentence is the only limit — the same
+ *    exposure review's agy already has (docs/MANUAL.md says so).
+ * qoder and codebuddy chat runs with no tools at all; they do not read.
  */
 import { statSync } from "node:fs";
 import type { ChatProviderResolution } from "../brain/chat-provider";
@@ -56,9 +68,28 @@ function isDir(path: string): boolean {
   }
 }
 
-/** True when this turn will be answered by claude (no resolver wired = claude). */
-export function answersWithClaude(res: ChatProviderResolution | undefined): boolean {
-  return res === undefined || (res.kind === "use" && res.family === "claude");
+/** The agents that read the project, and so get a project folder. */
+export type ReadingFamily = "claude" | "codex" | "agy";
+
+/**
+ * The agent answering this turn when it reads the project (no resolver wired
+ * = claude); undefined = it does not read. `platform` is a test seam;
+ * undefined means the real one.
+ */
+export function readingFamilyOf(
+  res: ChatProviderResolution | undefined,
+  platform: NodeJS.Platform = process.platform,
+): ReadingFamily | undefined {
+  if (res === undefined) return "claude";
+  if (res.kind !== "use") return undefined;
+  if (res.family === "claude" || res.family === "agy") return res.family;
+  if (res.family === "codex" && platform === "darwin") return "codex";
+  return undefined;
+}
+
+/** True when this turn's agent may read the user's project. */
+export function readsProject(res: ChatProviderResolution | undefined, platform?: NodeJS.Platform): boolean {
+  return readingFamilyOf(res, platform) !== undefined;
 }
 
 /**
@@ -87,7 +118,7 @@ export function noCodeAccessFor(cwd: string | undefined, pinned: boolean, pageId
 
 /**
  * What the chat's context bar says before a turn: can chat open the user's
- * files? `"agent"` = another agent answers chat (only claude reads);
+ * files? `"agent"` = an agent that does not read answers chat (`readsProject`);
  * `"no_project"` = no project folder for this conversation.
  */
 export type CodeAccess = "reads" | "agent" | "no_project";
@@ -108,8 +139,9 @@ export async function previewCodeAccess(a: {
   viewHash?: string;
   listSessions: () => Promise<Array<{ id: string; anchor?: { proj_hash?: string } | null }>>;
   resolve: ((projHash: string) => Promise<string | null>) | undefined;
+  platform?: NodeJS.Platform;
 }): Promise<CodeAccess> {
-  if (!answersWithClaude(a.resolution)) return "agent";
+  if (!readsProject(a.resolution, a.platform)) return "agent";
   let stored: string | undefined;
   if (a.session && SESSION_RE.test(a.session)) {
     try {
@@ -131,10 +163,22 @@ export async function previewCodeAccess(a: {
   return (await chatProjectRoot(scope, view, a.resolve)) ? "reads" : "no_project";
 }
 
-/** The prompt block that tells claude it may read the project. */
-export function repoAccessBlock(root: string): string {
+/**
+ * Where each reading agent finds the project. agy's last sentence is the only
+ * thing that keeps its reads inside the project (see the header).
+ */
+const WHERE: Record<ReadingFamily, (root: string) => string> = {
+  claude: (root) => `Your working directory is its root (${root}); the Read, Grep and Glob tools work there and nowhere else.`,
+  codex: (root) =>
+    `Your working directory is its root (${root}); your read-only tools work there. Do not read anything outside this folder.`,
+  agy: (root) =>
+    `The project is at ${root}. Your working directory is a different, empty folder: open the project's files by their absolute path under ${root}. Do not read anything outside ${root}.`,
+};
+
+/** The prompt block that tells the agent it may read the project. */
+export function repoAccessBlock(root: string, family: ReadingFamily = "claude"): string {
   return [
-    `You can read the user's project. Your working directory is its root (${root}); the Read, Grep and Glob tools work there and nowhere else.`,
+    `You can read the user's project. ${WHERE[family](root)}`,
     "When a question needs code that is not in the context above, read the files you need before you answer, and cite file:line.",
     "Never describe what code does from a name alone. If you did not read it, say that you have not read it.",
   ].join("\n");

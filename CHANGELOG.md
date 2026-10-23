@@ -6,6 +6,50 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-23
+
+### Changed — reviews now read your code every time, and cost more
+
+- **Every code change is sent to the reviewer with its diff.** Before, the
+  reviewer only saw your code when tsc, eslint or ripgrep reported something.
+  In a project without a tsconfig or eslint config — most new projects — a
+  review was a one-line reply written without seeing the code. Now any change
+  to a reviewable file (code in any language, scripts, Dockerfiles, CI
+  workflows, SQL, config that changes behaviour) is reviewed with its diff.
+  Changes to docs, images, lockfiles, `dist/` or data files only are not.
+- **Because of that, a review costs more:** about 9,900 tokens at the median,
+  roughly $0.09 per review on API billing. On a subscription or plan quota it
+  uses that quota instead.
+- **The default daily review budget is now 1,000,000 tokens (was 500,000)**,
+  about 100 reviews a day. A budget you set yourself in
+  `~/.siltpoke/config.json` is kept.
+
+### Added
+
+- **Chat reads your code with agy, and with codex on macOS**, as it already
+  did with claude. codex is confined to the project folder by its macOS
+  sandbox; on Linux and Windows codex chat still does not open your files.
+  agy is told the project's path and asked not to read anything else — that
+  request is the only limit agy has, so for a project you do not trust, use
+  claude or codex for chat. The manual says more.
+
+### Fixed
+
+- **Code written by codex or by the agy CLI is reviewed again.** Newer codex
+  (0.150 and later) records its work in a different shape, so siltpoke saw no
+  changed files and skipped every codex turn; the request you typed was also
+  missing from the review. The agy CLI wraps each edited path in an extra pair
+  of quotes, so the path never matched a file in your project. Both are read
+  now. A file codex changes by running a shell command (for example `sed -i`)
+  instead of its patch tool is still not seen.
+- **New files the agent created are reviewed before they are committed.**
+  Before, a file nobody had `git add`ed was missing from the review, and when
+  it was the only change the review read the previous commit instead.
+- **A review whose answer comes back malformed is asked once more** instead
+  of being dropped.
+- File names with spaces or non-ASCII characters are read correctly in a
+  diff.
+
 ## [1.4.0] - 2026-10-22
 
 ### Added

@@ -196,63 +196,61 @@ describe("runCritic integration — HARD_SUPPRESS (no tools available)", () => {
 // Top-level await — valid in ESM Bun test files (same pattern as run-ripgrep.test.ts).
 const gitReachable = await isGitReachable();
 
-describe("runCritic integration — PASSIVE_BUBBLE (git + clean tools)", () => {
+describe("runCritic integration — a new, untracked file (git + clean tools)", () => {
   test.if(gitReachable)(
-    "real git repo with a dirty file + clean tools → PASSIVE_BUBBLE, writeCritique called",
+    "real git repo, the turn creates src/newfile.ts and never adds it → NORMAL, and the AI is given that file",
     async () => {
       await initGitRepo(tmp);
 
       // Capture baseline AFTER git init (no dirty files yet)
       const gitBaseline = await captureGitBaseline(tmp);
 
-      // Now create a new file (simulates a code change) — after baseline
+      // Now create a new file (simulates the agent writing code) — after baseline.
+      // It is UNTRACKED: `git diff HEAD` alone never shows it. This test used to
+      // accept HARD_SUPPRESS or PASSIVE_BUBBLE ("git-diff may see no hunks") — that
+      // was the untracked-file bug. Since gate step [1b] the file reaches the diff,
+      // and since [1] a code change is reviewed whatever the (forced-off) linters said.
       mkdirSync(join(tmp, "src"), { recursive: true });
-      writeFileSync(join(tmp, "src", "newfile.ts"), "export const x = 1;\n");
+      writeFileSync(join(tmp, "src", "newfile.ts"), "export const x = 'NEWFILE_SENTINEL';\n");
 
       const caps = await getProjectCapabilities(tmp);
-      // Force tsc/eslint off to stay in PASSIVE_BUBBLE (no findings)
       const cappedCaps = { ...caps, hasTsc: false, hasEslint: false };
 
-      let writeCalled = false;
+      const prompts: string[] = [];
+      const stub = makeStubBrainFn({
+        mood: "watching",
+        pose: "peek",
+        bubble_short: "seen",
+        bubble_long: "",
+        critique_for_claude: "",
+        severity: "info",
+        confidence: "medium",
+        xp_earned_events: [],
+        findings: [],
+        evidence: [],
+      });
 
       const result = await runCritic(
         {
           ...(baseOpts() as RunCriticOpts),
           cwd: tmp,
-          changedFiles: ["src/newfile.ts"],
+          changedFiles: [join(tmp, "src", "newfile.ts")],
           caps: cappedCaps,
           gitBaseline,
         },
         {
-          callBrainFn: makeStubBrainFn({
-            mood: "happy",
-            pose: "wave",
-            bubble_short: "Clean refactor!",
-            bubble_long: "Everything looks good.",
-            critique_for_claude: "",
-            severity: "info",
-            confidence: "high",
-            xp_earned_events: [],
-            findings: [],
-            evidence: [],
-          }),
-          writeCritiqueFn: async (_basePath, _input) => {
-            writeCalled = true;
-            return { id: "c-passive-int", path: join(stateBase, "fake.md") };
+          callBrainFn: async (opts) => {
+            prompts.push(`${opts.systemPrompt}\n${opts.contextBundle}`);
+            return stub(opts);
           },
+          writeCritiqueFn: async (_basePath, _input) => ({ id: "c-untracked-int", path: join(stateBase, "fake.md") }),
         },
       );
 
-      // Known integration-coverage gap: the assertion below is non-falsifiable
-      // for the PASSIVE_BUBBLE case in CI, because git-diff may see no hunks when the
-      // working tree was set up after initGitRepo (timing / index state). The unit test
-      // in tests/critic/run-critic.test.ts covers the PASSIVE_BUBBLE write-path with
-      // stubs; a separate end-to-end smoke test covers PASSIVE_BUBBLE separately.
-      expect(["HARD_SUPPRESS", "PASSIVE_BUBBLE"]).toContain(result.decision);
-      if (result.decision === "PASSIVE_BUBBLE") {
-        expect(writeCalled).toBe(true);
-        expect(result.critique.mood).toBe("happy");
-      }
+      expect(result.decision).toBe("NORMAL");
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toContain("src/newfile.ts");
+      expect(prompts[0]).toContain("NEWFILE_SENTINEL");
     },
   );
 });

@@ -561,7 +561,10 @@ export function guardCritique(
   // because the first draft of this comment named only the first and undersold
   // what shipped (caught in review):
   //
-  //   1. an UNTRACKED file — `git diff HEAD` runs without `--others`;
+  //   1. an UNTRACKED file — `git diff HEAD` runs without `--others`. Since
+  //      gate step [1b] the turn's untracked files are added to the diff, so
+  //      this now needs one the tool skipped: over 256 KB, past the 20-file
+  //      cap, outside the repo, or a revision-range review;
   //   2. a file whose hunks were entirely cut by the 20-hunk review budget —
   //      `selectHunksForBudget` drops them and `scopeDiffRawToFiles`
   //      (src/brain/prompt-tools.ts) drops that file's raw bytes with them.

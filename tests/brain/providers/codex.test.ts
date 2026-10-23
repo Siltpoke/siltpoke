@@ -338,6 +338,38 @@ test("schema-violating agent_message throws BrainError via the same parseBrainOu
       spawnFn: fakeSpawn({ stdoutText: schemaViolatingJsonl }),
     }),
   ).rejects.toThrow(/schema validation/);
+  // makeGuardedCallBrain retries a reply it can recognise as rejected: the
+  // reply attached, no `failure`.
+  const err = (await provider
+    .call({
+      systemPrompt: "s",
+      contextBundle: "c",
+      spawnFn: fakeSpawn({ stdoutText: schemaViolatingJsonl }),
+    })
+    .catch((e: unknown) => e)) as BrainError;
+  expect(err.failure).toBeUndefined();
+  expect(err.rawResponse).toEqual({ ok: true, n: 3 });
+});
+
+test("an agent_message that is prose, not JSON, throws with the text attached and no `failure`", async () => {
+  // Same fixture, agent_message text swapped for prose. makeGuardedCallBrain
+  // retries a rejected reply only when the reply is attached.
+  const proseJsonl = schemaViolatingJsonl.replace(
+    String.raw`"text":"{\"ok\":true,\"n\":3}"`,
+    `"text":"Sure! Here is my review."`,
+  );
+  expect(proseJsonl).not.toBe(schemaViolatingJsonl);
+  const err = (await hermetic()
+    .call({
+      systemPrompt: "s",
+      contextBundle: "c",
+      spawnFn: fakeSpawn({ stdoutText: proseJsonl }),
+    })
+    .catch((e: unknown) => e)) as BrainError;
+  expect(err).toBeInstanceOf(BrainError);
+  expect(err.message).toContain("not valid JSON");
+  expect(err.failure).toBeUndefined();
+  expect(err.rawResponse).toBe("Sure! Here is my review.");
 });
 
 // ── 7. turn.failed -> BrainError w/ failure -> classifyBrainFailure ─────

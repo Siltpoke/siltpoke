@@ -20,7 +20,13 @@ import { type PageContext, parsePageId, previewContext } from "../../chat/page-c
 import { composeChatPrompt } from "../../chat/prompt-blocks";
 import { type ChatRunStore, localRunStore } from "../../chat/run-store";
 import { parseCodeMapView } from "../../chat/page-view";
-import { answersWithClaude, chatProjectRoot, noCodeAccessFor, previewCodeAccess, repoAccessBlock } from "../../chat/repo-access";
+import {
+  chatProjectRoot,
+  noCodeAccessFor,
+  previewCodeAccess,
+  readingFamilyOf,
+  repoAccessBlock,
+} from "../../chat/repo-access";
 import { RECALL_SURFACE_ENABLED, recallRelatedChats } from "../../chat/recall";
 import { type RecapDeps, recapSession } from "../../chat/recap";
 import { type ChatMessage, chatMessageSchema } from "../../chat/schema";
@@ -1062,14 +1068,15 @@ export function mountChatRoutes(app: Hono, deps: ChatRouteDeps): void {
 
     // Joined in prompt-blocks.ts (byte-identical to the old inline join); the
     // named blocks are kept for the chat call record.
-    // Claude reads the user's project from its root (src/chat/repo-access.ts).
+    // claude, agy and (macOS) codex read the user's project (src/chat/repo-access.ts).
     const resolution = deps.resolveChatProvider?.();
     const viewHash = parseCodeMapView((body as { view?: unknown }).view)?.projHash;
-    const cwd = answersWithClaude(resolution)
-      ? await chatProjectRoot(memScope, viewHash, deps.resolveProjectRootByHash)
-      : undefined;
+    const reader = readingFamilyOf(resolution);
+    const cwd = reader ? await chatProjectRoot(memScope, viewHash, deps.resolveProjectRootByHash) : undefined;
     const prompt = composeChatPrompt({
-      page: baseSystemPrompt, repoAccess: cwd ? repoAccessBlock(cwd) : "", userFacts: factsBlock, episodes: episodeBlock,
+      page: baseSystemPrompt,
+      repoAccess: cwd && reader ? repoAccessBlock(cwd, reader) : "",
+      userFacts: factsBlock, episodes: episodeBlock,
       noCodeAccess: noCodeAccessFor(cwd, anchorCtx !== null, pageId),
       captureHonesty, captureMarker, recall: recallBlock, transcript,
     });

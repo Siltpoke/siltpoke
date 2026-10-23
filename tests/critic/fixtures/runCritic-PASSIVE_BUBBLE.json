@@ -25,13 +25,13 @@
     "diffSummary": {
       "intent": "1 file changed · +0 −0 (heuristic summary — Haiku unavailable)",
       "key_changes": [
-        "src/foo.ts · +0 −0"
+        "docs/notes.md · +0 −0"
       ],
       "risks": [],
       "file_count": 1,
       "files_with_purpose": [
         {
-          "path": "src/foo.ts",
+          "path": "docs/notes.md",
           "purpose": "+0 −0"
         }
       ],

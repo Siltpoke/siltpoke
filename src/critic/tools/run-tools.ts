@@ -211,10 +211,13 @@ export async function runTools(opts: RunToolsOpts): Promise<RunToolsResult> {
     // `revisionRange` is spread in only when present so the span attributes
     // (and the arg object runGitDiff validates) stay byte-identical to before
     // for every caller that has no unit to name.
+    // With no range, the turn's changed files go along so that the ones nobody
+    // has `git add`ed yet — an agent's new files — are in the diff too.
     const gitDiffArgs = {
       cwd,
       timeoutMs: timeouts["git-diff"],
       ...(revisionRange !== undefined ? { revisionRange } : {}),
+      ...(revisionRange === undefined && changedFiles.length > 0 ? { untrackedCandidates: changedFiles } : {}),
     };
     promises.push(
       withToolSpan("git-diff", gitDiffArgs as Record<string, unknown>, tracing, () =>

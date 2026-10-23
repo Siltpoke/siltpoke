@@ -11,10 +11,10 @@ import { openIndex } from "../../src/chat/fts5-index";
 import { codeMapViewContext, parseCodeMapView } from "../../src/chat/page-view";
 import { composeChatPrompt } from "../../src/chat/prompt-blocks";
 import {
-  answersWithClaude,
   chatProjectRoot,
   NO_CODE_ACCESS_BLOCK,
   noCodeAccessFor,
+  readsProject,
   repoAccessBlock,
 } from "../../src/chat/repo-access";
 import { mountChatRoutes } from "../../src/daemon/routes/chat";
@@ -48,18 +48,44 @@ describe("where a chat turn runs", () => {
     expect(await chatProjectRoot(GLOBAL_ONLY, "abc123", async () => gone)).toBeUndefined();
   });
 
-  test("claude only: no resolver (= claude) or a claude pick; never another agent", () => {
-    expect(answersWithClaude(undefined)).toBe(true);
-    expect(answersWithClaude({ kind: "use", family: "claude", source: "settings" } as never)).toBe(true);
-    expect(answersWithClaude({ kind: "use", family: "codex", source: "settings" } as never)).toBe(false);
-    expect(answersWithClaude({ kind: "none" } as never)).toBe(false);
+  test("claude and agy read the project, codex on macOS only (no resolver = claude); qoder and codebuddy do not", () => {
+    const use = (family: string) => ({ kind: "use", family, source: "settings" }) as never;
+    for (const platform of ["darwin", "linux", "win32"] as const) {
+      expect(readsProject(undefined, platform)).toBe(true);
+      expect(readsProject(use("claude"), platform)).toBe(true);
+      expect(readsProject(use("agy"), platform)).toBe(true);
+      expect(readsProject(use("qoder"), platform)).toBe(false);
+      expect(readsProject(use("codebuddy"), platform)).toBe(false);
+      expect(readsProject({ kind: "none" } as never, platform)).toBe(false);
+    }
+    // codex's read limit is the macOS sandbox profile (codex-sandbox.ts);
+    // elsewhere plain read-only reads the whole disk.
+    expect(readsProject(use("codex"), "darwin")).toBe(true);
+    expect(readsProject(use("codex"), "linux")).toBe(false);
+    expect(readsProject(use("codex"), "win32")).toBe(false);
   });
 
-  test("the block names the folder and forbids describing code from a name", () => {
-    const b = repoAccessBlock(PROJ);
-    expect(b).toContain(`Your working directory is its root (${PROJ})`);
-    expect(b).toContain("read the files you need before you answer");
-    expect(b).toContain("Never describe what code does from a name alone");
+  test("each agent is told where the project is and what it reads with", () => {
+    const claude = repoAccessBlock(PROJ, "claude");
+    expect(claude).toContain(
+      `Your working directory is its root (${PROJ}); the Read, Grep and Glob tools work there and nowhere else.`,
+    );
+    expect(repoAccessBlock(PROJ)).toBe(claude);
+    const codex = repoAccessBlock(PROJ, "codex");
+    expect(codex).toContain(
+      `Your working directory is its root (${PROJ}); your read-only tools work there. Do not read anything outside this folder.`,
+    );
+    expect(codex).not.toContain("Read, Grep and Glob");
+    // agy runs in its own empty folder: it gets the path, and the only read limit it has.
+    const agy = repoAccessBlock(PROJ, "agy");
+    expect(agy).toContain(`The project is at ${PROJ}. Your working directory is a different, empty folder`);
+    expect(agy).toContain(`Do not read anything outside ${PROJ}.`);
+    expect(agy).not.toContain("Your working directory is its root");
+    for (const b of [claude, codex, agy]) {
+      expect(b.startsWith("You can read the user's project. ")).toBe(true);
+      expect(b).toContain("read the files you need before you answer, and cite file:line");
+      expect(b).toContain("Never describe what code does from a name alone");
+    }
   });
 
   test("the files a view lists are marked as paths only", () => {

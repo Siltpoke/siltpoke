@@ -70,7 +70,9 @@ async function reviewTurn(ripgrepHit: boolean): Promise<{ decision: string; seen
       {
         runToolsFn: async () => ({
           tsc: na("tsc"), eslint: na("eslint"),
-          "git-diff": { tool: "git-diff", status: "ok", parsed: [{ file: "src/foo.ts", header: "@@", body: "+eval(x)" }], raw: "" } as ToolResult,
+          // A ripgrep hit forces NORMAL; without one, only a docs-only change still
+          // takes PASSIVE_BUBBLE (gate step [1]: a code change is always reviewed).
+          "git-diff": { tool: "git-diff", status: "ok", parsed: [{ file: ripgrepHit ? "src/foo.ts" : "docs/notes.md", header: "@@", body: "+eval(x)" }], raw: "" } as ToolResult,
           ripgrep,
           securityFindings: [], owaspHints: [], webSearchSources: [],
         }),

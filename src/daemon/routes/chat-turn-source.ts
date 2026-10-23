@@ -17,6 +17,7 @@
  */
 import type { ChatProviderResolution } from "../../brain/chat-provider";
 import { providerForFamily } from "../../brain/registry";
+import { readsProject } from "../../chat/repo-access";
 import { loadChatQuotaDailyCapSync } from "../../config/brain-quota-cap-config";
 import { tryConsumeQuotaCall } from "../../state/brain-health";
 import type { ChatRun } from "../../chat/run-store";
@@ -72,11 +73,19 @@ export interface OpenChatTurnArgs {
   transcript: string;
   systemPrompt?: string;
   signal: AbortSignal;
-  /** The project root claude runs in (src/chat/repo-access.ts). Claude only. */
+  /** The project root the turn reads (src/chat/repo-access.ts); absent = no project. */
   cwd?: string;
   /** Test seam for the claude path — replaces `streamChat`. */
   streamFactory?: (opts: StreamChatOptions) => ChatStream;
   taps?: ChatTurnTaps;
+}
+
+/**
+ * Only an agent that reads gets the project folder, whoever the caller is
+ * (src/chat/repo-access.ts); qoder and codebuddy keep the empty chat folder.
+ */
+function readerRoot(res: ChatProviderResolution, cwd: string | undefined): string | undefined {
+  return readsProject(res) ? cwd : undefined;
 }
 
 async function* oneError(ev: Extract<StreamEvent, { type: "error" }>): ChatStream {
@@ -154,6 +163,7 @@ export function openChatTurn(args: OpenChatTurnArgs): ChatTurnSource {
       transcript: args.transcript,
       systemPrompt: args.systemPrompt,
       signal: args.signal,
+      projectRoot: readerRoot(res, args.cwd),
       ...taps,
     }),
     model: res.model ?? "",

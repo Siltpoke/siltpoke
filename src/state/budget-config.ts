@@ -18,7 +18,11 @@ export interface BudgetConfig {
 }
 
 export const DEFAULT_BUDGET_CONFIG: BudgetConfig = {
-  dailyTokenLimit: 500_000,
+  // 1,000,000 since gate step [1] (spec 2026-08-20 D15, the maintainer 2026-10-23):
+  // every code change now gets a review that reads the diff, ~9,884 weighted
+  // tokens at the median (an internal design note),
+  // so 500,000 stopped reviews after ~50 a day. 1M is ~100.
+  dailyTokenLimit: 1_000_000,
   perCallMaxInputTokens: 4_000,
   softWarnAtPercent: 80,
   hardStopAtPercent: 100,

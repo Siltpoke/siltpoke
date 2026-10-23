@@ -185,6 +185,11 @@ test("qoder: REAL fixture envelope is claude-shaped but its inner reply fails th
   // failed schema validation"). A regression back to the generic message
   // must fail this.
   await expect(call).rejects.toThrow("qoder response failed schema validation");
+  // makeGuardedCallBrain retries a reply it can recognise as rejected: the
+  // reply attached, no `failure`.
+  const err = (await call.catch((e: unknown) => e)) as BrainError;
+  expect(err.failure).toBeUndefined();
+  expect(err.rawResponse).toBeDefined();
 });
 
 test("qoder: inner result is non-JSON prose -> BrainError with the qoder-tagged parse-failure message (byte-identical review path)", async () => {
@@ -198,6 +203,9 @@ test("qoder: inner result is non-JSON prose -> BrainError with the qoder-tagged 
   );
   await expect(call).rejects.toThrow(BrainError);
   await expect(call).rejects.toThrow("qoder response was not valid JSON");
+  const err = (await call.catch((e: unknown) => e)) as BrainError;
+  expect(err.failure).toBeUndefined();
+  expect(err.rawResponse).toBe("not json at all, just prose");
 });
 
 test("qoder: is_error:true envelope -> BrainError, content never trusted", async () => {

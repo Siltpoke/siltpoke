@@ -44,7 +44,7 @@ function na(tool: ToolName): ToolResult {
 const OUTPUT = {
   mood: "happy", pose: "base", bubble_short: "ok", bubble_long: "",
   critique_for_claude: "", severity: "info", confidence: "medium",
-  xp_earned_events: [], evidence: [],
+  xp_earned_events: [], evidence: [], findings: [],
 } as const;
 
 /** Run one turn against a stubbed Brain and report the timeoutMs it was given. */

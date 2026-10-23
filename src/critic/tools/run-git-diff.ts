@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Perimeter-1.0.1
 // Copyright (c) 2026 Jiaqi Duan
+import { realpathSync, statSync } from "node:fs";
+import { relative, resolve, sep } from "node:path";
 import { spawnWithTimeout } from "../spawn";
 import { adaptiveHunkBody } from "./diff-summarizer";
 import {
@@ -10,6 +12,91 @@ import {
 import type { GitDiffHunk, ToolResult, ToolStatus } from "./types";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+
+/** At most this many untracked files are added to one review's diff. */
+const MAX_UNTRACKED_FILES = 20;
+/** An untracked file larger than this is skipped (see `untrackedDiff`). */
+const MAX_UNTRACKED_BYTES = 256 * 1024;
+
+/**
+ * Whole-file diffs for the untracked files among `candidates`.
+ *
+ * `git diff HEAD` never shows a file nobody has `git add`ed, and an agent's
+ * new file is exactly that until the user commits. Without this, the turn's
+ * new code was invisible to the review — and when nothing else had changed,
+ * the empty diff sent the caller to the previous-commits fallback, so the AI
+ * reviewed unrelated old code instead (2026-10-22 sandbox).
+ *
+ * Only `candidates` (the turn's changed files) are considered: other untracked
+ * files in the tree are scratch the turn did not write. Gitignored files are
+ * left out (`--exclude-standard`). Paths come out repo-root-relative, the same
+ * shape `git diff HEAD` prints, because both run from the top level here.
+ * Any failure yields "" — the tracked diff is still reviewed.
+ */
+async function untrackedDiff(cwd: string, candidates: readonly string[], timeoutMs: number): Promise<string> {
+  if (candidates.length === 0) return "";
+  // ONE deadline for the whole step: up to 22 spawns run here, inside a
+  // synchronous Stop hook, and a per-spawn timeout would multiply.
+  const deadline = Date.now() + timeoutMs;
+  const left = () => Math.max(0, deadline - Date.now());
+  // Swallowed by design — the tracked diff is still reviewed — but said out
+  // loud, because a silent miss is exactly the bug this step exists to fix.
+  const giveUp = (why: string) => {
+    console.error(`[siltpoke] git-diff: untracked files not added (${why})`);
+    return "";
+  };
+
+  const topRes = await spawnWithTimeout({ argv: ["git", "rev-parse", "--show-toplevel"], cwd, timeoutMs: left() });
+  if (topRes.timedOut || topRes.exitCode !== 0) return giveUp("rev-parse failed");
+  const top = resolve(topRes.stdout.trim());
+  // git prints the top level with symlinks resolved (macOS: /var → /private/var),
+  // so the candidates are compared by real path too. A candidate that no longer
+  // exists has nothing to diff. Pathspecs outside the repo make ls-files fail
+  // outright, so only the inside ones are passed on.
+  const inside: string[] = [];
+  for (const c of candidates) {
+    let real: string;
+    try {
+      real = realpathSync(resolve(cwd, c));
+    } catch {
+      continue;
+    }
+    if (!real.startsWith(top + sep)) continue;
+    // A new file this big is a log, a bundle or data, not something written
+    // for review — and its whole text would land in `raw` and the prompt.
+    try {
+      if (statSync(real).size > MAX_UNTRACKED_BYTES) continue;
+    } catch {
+      continue;
+    }
+    inside.push(relative(top, real).split(sep).join("/"));
+  }
+  if (inside.length === 0) return "";
+
+  const ls = await spawnWithTimeout({
+    argv: ["git", "ls-files", "--others", "--exclude-standard", "-z", "--", ...inside],
+    cwd: top,
+    timeoutMs: left(),
+  });
+  if (ls.timedOut || ls.exitCode !== 0) return giveUp("ls-files failed");
+  const untracked = [...new Set(ls.stdout.split("\0").filter(Boolean))].sort().slice(0, MAX_UNTRACKED_FILES);
+
+  const parts: string[] = [];
+  for (const file of untracked) {
+    if (left() === 0) {
+      giveUp(`deadline reached after ${parts.length} of ${untracked.length}`);
+      break;
+    }
+    const d = await spawnWithTimeout({
+      argv: ["git", "diff", "--no-index", "--no-color", "--", "/dev/null", file],
+      cwd: top,
+      timeoutMs: left(),
+    });
+    // --no-index exits 1 when the files differ, which for a new file is always.
+    if (!d.timedOut && d.exitCode === 1) parts.push(d.stdout);
+  }
+  return parts.join("");
+}
 
 // Hunk header pattern: @@ -oldStart,oldLines +newStart,newLines @@
 const HUNK_HEADER_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
@@ -26,6 +113,46 @@ interface RawHunk {
 }
 
 /**
+ * The path in a `--- a/…` / `+++ b/…` header, or null for `/dev/null` or a
+ * shape this does not know.
+ *
+ * Git writes two shapes besides the plain one, both common in files an agent
+ * creates: a name with a space gets a trailing TAB, and a name with non-ASCII
+ * or special characters is C-quoted with octal UTF-8 bytes
+ * (`"b/na\303\257ve.ts"`).
+ */
+function headerPath(rest: string, prefix: "a/" | "b/"): string | null {
+  let p = rest.endsWith("\t") ? rest.slice(0, -1) : rest;
+  if (p.startsWith('"') && p.endsWith('"') && p.length >= 2) p = unquoteC(p.slice(1, -1));
+  return p.startsWith(prefix) ? p.slice(prefix.length) : null;
+}
+
+/** Undo git's C-style path quoting: \t \n \" \\ and \ooo octal bytes, decoded as UTF-8. */
+function unquoteC(s: string): string {
+  const bytes: number[] = [];
+  const named: Record<string, number> = { t: 9, n: 10, r: 13, '"': 34, "\\": 92, a: 7, b: 8, f: 12, v: 11 };
+  for (let k = 0; k < s.length; k++) {
+    const ch = s[k]!;
+    if (ch !== "\\") {
+      bytes.push(...Buffer.from(ch, "utf8"));
+      continue;
+    }
+    const next = s[k + 1] ?? "";
+    const oct = /^[0-7]{3}/.exec(s.slice(k + 1));
+    if (oct) {
+      bytes.push(parseInt(oct[0], 8));
+      k += 3;
+    } else if (next in named) {
+      bytes.push(named[next]!);
+      k += 1;
+    } else {
+      bytes.push(92);
+    }
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
+/**
  * Parse a unified diff into raw hunks (body lines untruncated).
  * Truncation/elision is applied afterward via adaptiveHunkBody.
  */
@@ -34,15 +161,27 @@ function parseUnifiedDiffRaw(stdout: string): RawHunk[] {
   const hunks: RawHunk[] = [];
 
   let currentFile = "";
+  let oldFile = "";
   let i = 0;
 
   while (i < lines.length) {
     const line = lines[i]!;
 
-    // New file header: +++ b/<file>
-    const newFileMatch = /^\+\+\+ b\/(.+)$/.exec(line);
-    if (newFileMatch) {
-      currentFile = newFileMatch[1]!;
+    // Old-side header: --- a/<file>. Remembered for a deletion, whose new side is /dev/null.
+    if (line.startsWith("--- ")) {
+      oldFile = headerPath(line.slice(4), "a/") ?? "";
+      i++;
+      continue;
+    }
+
+    // New-side header: +++ b/<file>, or +++ /dev/null for a deleted file.
+    // Only right after a `--- ` line: an added source line that starts with
+    // "++ " prints as `+++ …` and must not be taken for a file
+    // (`++ b/evil.ts` would otherwise open a file named evil.ts).
+    if (line.startsWith("+++ ") && (lines[i - 1] ?? "").startsWith("--- ")) {
+      // A header we cannot read clears the file rather than keeping the
+      // previous one — the hunks below it must not be filed under another file.
+      currentFile = headerPath(line.slice(4), "b/") ?? oldFile;
       i++;
       continue;
     }
@@ -184,8 +323,14 @@ export async function runGitDiff(opts: {
    * production callers; underscore-prefixed signals test-only.
    */
   _argv?: string[];
+  /**
+   * The turn's changed files. Those that are untracked are added to the diff
+   * as whole-file additions (see `untrackedDiff`). Working-tree case only: a
+   * revision range names committed work, and loose files are not part of it.
+   */
+  untrackedCandidates?: readonly string[];
 }): Promise<Extract<ToolResult, { tool: "git-diff" }>> {
-  const { cwd, revisionRange, timeoutMs = DEFAULT_TIMEOUT_MS, _argv } = opts;
+  const { cwd, revisionRange, timeoutMs = DEFAULT_TIMEOUT_MS, _argv, untrackedCandidates } = opts;
 
   // Validate revisionRange before spawning — reject anything outside the safe allowlist.
   if (revisionRange !== undefined && revisionRange.trim() !== "") {
@@ -213,7 +358,14 @@ export async function runGitDiff(opts: {
   }
 
   const result = await spawnWithTimeout({ argv, cwd, timeoutMs });
-  const raw = buildRaw(result.stdout, result.stderr);
+  const rangeGiven = revisionRange !== undefined && revisionRange.trim() !== "";
+  // Only on a successful working-tree diff; an error path keeps git's own output.
+  const extra =
+    !result.timedOut && result.exitCode === 0 && !rangeGiven && _argv === undefined && untrackedCandidates !== undefined
+      ? await untrackedDiff(cwd, untrackedCandidates, timeoutMs)
+      : "";
+  const stdout = result.stdout + extra;
+  const raw = buildRaw(stdout, result.stderr);
 
   if (result.timedOut) {
     return { tool: "git-diff", status: "timeout", parsed: [], raw };
@@ -242,7 +394,7 @@ export async function runGitDiff(opts: {
 
   let parsed: GitDiffHunk[];
   try {
-    parsed = await parseUnifiedDiff(result.stdout);
+    parsed = await parseUnifiedDiff(stdout);
   } catch {
     return { tool: "git-diff", status: "error", parsed: [], raw };
   }

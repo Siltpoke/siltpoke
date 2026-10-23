@@ -1,7 +1,7 @@
 {
   "day": "2026-05-14",
   "used_pct": 0,
-  "remaining_tokens": 500000,
+  "remaining_tokens": 1000000,
   "total_input_tokens": 0,
   "total_output_tokens": 0,
   "total_cache_tokens": 0,
@@ -11,7 +11,7 @@
   "review_unit": "commit",
   "quiet_active": false,
   "budget_stage": "ok",
-  "daily_token_limit": 500000,
+  "daily_token_limit": 1000000,
   "pending_facts": 0,
   "chat_sessions_total": 0,
   "chat_messages_total": 0,

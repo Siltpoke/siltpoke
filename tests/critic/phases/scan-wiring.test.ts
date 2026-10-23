@@ -36,7 +36,10 @@ function tools(kind: "normal" | "passive", body: string | string[], newStart = 1
       status: "ok",
       parsed: (Array.isArray(body) ? body : [body]).map((b, i) => {
         const start = newStart + i * 100;
-        return { file: "src/foo.ts", oldStart: start, oldLines: 1, newStart: start, newLines: 1, header: "@@", body: b };
+        // Only a change with nothing reviewable in it still reaches PASSIVE_BUBBLE
+        // (gate step [1]), so the passive path's hunk is a docs file.
+        const file = kind === "passive" ? "docs/notes.md" : "src/foo.ts";
+        return { file, oldStart: start, oldLines: 1, newStart: start, newLines: 1, header: "@@", body: b };
       }),
       raw: "",
     } as ToolResult,
@@ -114,7 +117,7 @@ describe("scan wiring — diff hunks", () => {
     expect(result.decision).toBe("PASSIVE_BUBBLE");
     const alert = alertOf(result);
     expect(alert?.level).toBe("quiet");
-    expect(alert?.signals.map((s) => [s.kind, s.where])).toEqual([["scan", "src/foo.ts:11"]]);
+    expect(alert?.signals.map((s) => [s.kind, s.where])).toEqual([["scan", "docs/notes.md:11"]]);
   });
 
   test("a clean diff gives no alert on either path", async () => {

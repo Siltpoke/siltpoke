@@ -45,12 +45,13 @@ function eslintOk(
 
 function gitDiffOk(
   hunkCount: number,
+  fileOf: (i: number) => string = (i) => `src/file${i}.ts`,
 ): Extract<ToolResult, { tool: "git-diff" }> {
   return {
     tool: "git-diff",
     status: "ok",
     parsed: Array.from({ length: hunkCount }, (_, i) => ({
-      file: `src/file${i}.ts`,
+      file: fileOf(i),
       oldStart: 1,
       oldLines: 3,
       newStart: 1,
@@ -205,24 +206,36 @@ describe("case 1: all-clean, no diff", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Case 2 — All clean, diff present → PASSIVE_BUBBLE
+// Case 2 — All clean, diff present. Gate spec 2026-08-20 D2: a reviewable
+// change is read by the AI whatever the static tools said. Only a change with
+// nothing reviewable in it still takes PASSIVE_BUBBLE (transitional — step 3
+// replaces that branch with a zero-LLM bubble).
 // ---------------------------------------------------------------------------
 
 describe("case 2: all-clean, diff present", () => {
-  test("returns PASSIVE_BUBBLE when diff has hunks", () => {
+  test("a reviewable change returns NORMAL", () => {
     const result = classifyToolOutput(
       makeResults({ "git-diff": gitDiffOk(1) }),
     );
-    expect(result.decision).toBe("PASSIVE_BUBBLE" satisfies GateDecision);
+    expect(result.decision).toBe("NORMAL" satisfies GateDecision);
+    expect(result.reason).toMatch(/reviewable/i);
   });
 
-  test("reason mentions clean refactor or diff", () => {
+  test("a change with only docs returns PASSIVE_BUBBLE", () => {
     const result = classifyToolOutput(
-      makeResults({ "git-diff": gitDiffOk(2) }),
+      makeResults({ "git-diff": gitDiffOk(2, (i) => `docs/page${i}.md`) }),
     );
-    expect(result.reason.length).toBeGreaterThan(0);
-    // should reference refactor or diff
+    expect(result.decision).toBe("PASSIVE_BUBBLE" satisfies GateDecision);
     expect(result.reason).toMatch(/refactor|diff/i);
+  });
+
+  test("one reviewable file among docs is enough", () => {
+    const result = classifyToolOutput(
+      makeResults({
+        "git-diff": gitDiffOk(3, (i) => (i === 2 ? "deploy.sh" : `docs/page${i}.md`)),
+      }),
+    );
+    expect(result.decision).toBe("NORMAL" satisfies GateDecision);
   });
 
   test("usableTools includes git-diff", () => {
@@ -367,18 +380,29 @@ describe("case 7: partial — tsc errors, eslint timeout, diff hunks, rg clean",
 
 // ---------------------------------------------------------------------------
 // Case 8 — Partial: tsc not_applicable, eslint not_applicable, git-diff ok+[hunk], rg ok+[]
-// → PASSIVE_BUBBLE (clean refactor; rg clean, only diff)
+// → NORMAL. This is the 2026-10-22 sandbox shape: a project with no tsconfig and
+// no eslint config. It used to be PASSIVE_BUBBLE, so the reviewer never saw the diff.
 // ---------------------------------------------------------------------------
 
 describe("case 8: tsc+eslint not_applicable, diff has hunks, rg clean", () => {
-  test("returns PASSIVE_BUBBLE", () => {
+  test("returns NORMAL for a code change", () => {
     const result = classifyToolOutput({
       tsc: notApplicable("tsc"),
       eslint: notApplicable("eslint"),
       "git-diff": gitDiffOk(1),
       ripgrep: ripgrepOk(0),
     });
-    expect(result.decision).toBe("PASSIVE_BUBBLE" satisfies GateDecision);
+    expect(result.decision).toBe("NORMAL" satisfies GateDecision);
+  });
+
+  test("returns NORMAL when ripgrep did not run either", () => {
+    const result = classifyToolOutput({
+      tsc: notApplicable("tsc"),
+      eslint: notApplicable("eslint"),
+      "git-diff": gitDiffOk(1, () => "app/models/user.rb"),
+      ripgrep: notApplicable("ripgrep"),
+    });
+    expect(result.decision).toBe("NORMAL" satisfies GateDecision);
   });
 
   test("usableTools includes git-diff and ripgrep only", () => {
@@ -526,28 +550,29 @@ describe("case 12: reason string non-empty for every branch", () => {
 // ---------------------------------------------------------------------------
 
 describe("edge cases", () => {
-  test("git-diff ok with hunks, all other tools failed → PASSIVE_BUBBLE", () => {
+  test("git-diff ok with hunks, all other tools failed → NORMAL (gate spec AC1)", () => {
     // Only git-diff is ok (with hunks), all others are failed/not-installed.
-    // usableTools = [git-diff], no non-diff signal, allClean is vacuously true → PASSIVE_BUBBLE
+    // allClean is vacuously true; the hunks are code, so the AI reads them.
+    // (Before gate step [1] this was PASSIVE_BUBBLE — the reviewer got no diff.)
     const result = classifyToolOutput({
       tsc: timeout("tsc"),
       eslint: errored("eslint"),
       "git-diff": gitDiffOk(3),
       ripgrep: notInstalled("ripgrep"),
     });
-    expect(result.decision).toBe("PASSIVE_BUBBLE" satisfies GateDecision);
+    expect(result.decision).toBe("NORMAL" satisfies GateDecision);
   });
 
-  test("tsc ok+empty, eslint not_applicable, git-diff ok+hunks, ripgrep ok+empty → PASSIVE_BUBBLE", () => {
-    // Verifies the path where
-    // tsc ran clean (positive evidence) rather than not_applicable.
+  test("tsc ok+empty, eslint not_applicable, git-diff ok+hunks, ripgrep ok+empty → NORMAL (gate spec AC2)", () => {
+    // Verifies the path where tsc ran clean (positive evidence) rather than
+    // not_applicable: a clean static pass does not stop the AI from looking.
     const result = classifyToolOutput({
       tsc: tscOk(0),
       eslint: notApplicable("eslint"),
       "git-diff": gitDiffOk(2),
       ripgrep: ripgrepOk(0),
     });
-    expect(result.decision).toBe("PASSIVE_BUBBLE" satisfies GateDecision);
+    expect(result.decision).toBe("NORMAL" satisfies GateDecision);
     expect(result.usableTools).toContain("tsc");
     expect(result.usableTools).toContain("git-diff");
     expect(result.usableTools).toContain("ripgrep");

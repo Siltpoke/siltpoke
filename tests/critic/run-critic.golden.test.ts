@@ -175,12 +175,14 @@ test("golden: runCritic PASSIVE_BUBBLE path is stable", async () => {
     runToolsFn: async () => ({
       tsc: { tool: "tsc", status: "ok", parsed: [], raw: "" },
       eslint: { tool: "eslint", status: "ok", parsed: [], raw: "" },
+      // Since gate step [1] only a change with nothing reviewable in it reaches
+      // PASSIVE_BUBBLE, so the hunk is a docs file.
       "git-diff": {
         tool: "git-diff",
         status: "ok",
         parsed: [
           {
-            file: "src/foo.ts",
+            file: "docs/notes.md",
             oldStart: 1,
             oldLines: 5,
             newStart: 1,
@@ -189,7 +191,7 @@ test("golden: runCritic PASSIVE_BUBBLE path is stable", async () => {
             body: "-old line\n+new line",
           },
         ],
-        raw: "diff --git a/src/foo.ts b/src/foo.ts",
+        raw: "diff --git a/docs/notes.md b/docs/notes.md",
       },
       ripgrep: { tool: "ripgrep", status: "ok", parsed: [], raw: "" },
       securityFindings: [],

@@ -81,6 +81,11 @@ function makeAllNotApplicable(): Record<ToolName, ToolResult> & { securityFindin
   };
 }
 
+/**
+ * Clean tools + a diff that reaches PASSIVE_BUBBLE. Since gate step [1] only a
+ * change with nothing reviewable in it gets there — a code change goes to
+ * NORMAL whatever the tools said — so the hunk is a docs file.
+ */
 function makeCleanWithDiff(): Record<ToolName, ToolResult> & { securityFindings: never[]; owaspHints: never[]; webSearchSources: never[] } {
   return {
     tsc: { tool: "tsc", status: "ok", parsed: [], raw: "" },
@@ -90,7 +95,7 @@ function makeCleanWithDiff(): Record<ToolName, ToolResult> & { securityFindings:
       status: "ok",
       parsed: [
         {
-          file: "src/foo.ts",
+          file: "docs/notes.md",
           oldStart: 1,
           oldLines: 5,
           newStart: 1,
@@ -99,7 +104,7 @@ function makeCleanWithDiff(): Record<ToolName, ToolResult> & { securityFindings:
           body: "-old line\n+new line",
         },
       ],
-      raw: "diff --git a/src/foo.ts b/src/foo.ts",
+      raw: "diff --git a/docs/notes.md b/docs/notes.md",
     },
     ripgrep: { tool: "ripgrep", status: "ok", parsed: [], raw: "" },
     securityFindings: [],

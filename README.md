@@ -50,7 +50,7 @@ project:
 
 And it's a **Tamagotchi** — pet it, level it up, unlock poses. The pet
 is the surface that makes it feel like a companion, not a dashboard.
-Runs **~$0.04–$0.10/day** on typical use, thanks to prompt caching.
+A review that reads your change costs about **$0.09** at the median on an API-billed reviewer; the default budget allows about 100 a day.
 
 ## Setup (90 seconds)
 

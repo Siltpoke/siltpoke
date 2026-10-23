@@ -134,11 +134,13 @@ function makeCleanWithDiff(): Record<ToolName, ToolResult> & {
     "git-diff": {
       tool: "git-diff",
       status: "ok",
+      // A docs hunk: since gate step [1] only a change with nothing
+      // reviewable in it still reaches PASSIVE_BUBBLE.
       parsed: [{
-        file: "src/foo.ts", oldStart: 1, oldLines: 5, newStart: 1, newLines: 5,
+        file: "docs/notes.md", oldStart: 1, oldLines: 5, newStart: 1, newLines: 5,
         header: "@@ -1,5 +1,5 @@", body: "-old line\n+new line",
       }],
-      raw: "diff --git a/src/foo.ts b/src/foo.ts",
+      raw: "diff --git a/docs/notes.md b/docs/notes.md",
     },
     ripgrep: { tool: "ripgrep", status: "ok", parsed: [], raw: "" },
     securityFindings: [],

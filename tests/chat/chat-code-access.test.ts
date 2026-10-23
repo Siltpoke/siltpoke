@@ -27,6 +27,9 @@ const GONE = join(tmpdir(), "siltpoke-no-such-project-5521");
 const ROOTS: Record<string, string> = { abc123: PROJ, def456: PINNED, dead00: GONE };
 const resolve = async (h: string) => ROOTS[h] ?? null;
 const CODEX = { kind: "use", family: "codex", source: "settings" } as never;
+const AGY = { kind: "use", family: "agy", source: "settings" } as never;
+// qoder does not read the project (claude, agy, and codex on macOS do).
+const QODER = { kind: "use", family: "qoder", source: "settings" } as never;
 const homes: string[] = [];
 afterEach(() => {
   for (const h of homes.splice(0)) rmSync(h, { recursive: true, force: true });
@@ -43,8 +46,12 @@ describe("previewCodeAccess: the server's answer", () => {
     expect(await previewCodeAccess({ ...base, viewHash: "abc123", resolve: undefined })).toBe("no_project");
   });
 
-  test("another agent answers → agent, whatever the project", async () => {
-    expect(await previewCodeAccess({ ...base, resolution: CODEX, viewHash: "abc123" })).toBe("agent");
+  test("an agent that does not read the project → agent, whatever the project", async () => {
+    expect(await previewCodeAccess({ ...base, resolution: QODER, viewHash: "abc123" })).toBe("agent");
+    expect(await previewCodeAccess({ ...base, resolution: AGY, viewHash: "abc123" })).toBe("reads");
+    // codex reads only where its sandbox limits what it reads (macOS).
+    expect(await previewCodeAccess({ ...base, resolution: CODEX, viewHash: "abc123", platform: "darwin" })).toBe("reads");
+    expect(await previewCodeAccess({ ...base, resolution: CODEX, viewHash: "abc123", platform: "linux" })).toBe("agent");
     expect(await previewCodeAccess({ ...base, resolution: { kind: "none" } as never })).toBe("agent");
   });
 
@@ -142,10 +149,10 @@ describe("the route says the same thing the send does", () => {
     expect(await ask("&session=s-9&view_hash=abc123")).toBe("reads");
   });
 
-  // Not sent: the codex path ignores the stream seam and would spawn a real codex.
-  // The send side of "only claude reads" is pinned in tests/chat/repo-access.test.ts.
-  test("open project, codex → agent", async () => {
-    const { a } = app(() => CODEX);
+  // Not sent: the qoder path ignores the stream seam and would spawn a real qoder.
+  // Which agents read on the send side is pinned in tests/chat/repo-access.test.ts (readsProject).
+  test("open project, qoder → agent", async () => {
+    const { a } = app(() => QODER);
     const res = await a.request("/api/chat/context-preview?page=/repo-graph&view_hash=abc123");
     expect(((await res.json()) as { code_access: string }).code_access).toBe("agent");
   });
@@ -182,7 +189,7 @@ describe("the client: the question and the words", () => {
   test("can open: shown everywhere; can't open: only where code is expected", () => {
     expect(codeAccessChip("reads", false)?.label).toBe("can open your files");
     expect(codeAccessChip("agent", true)?.label).toBe("can't open your files");
-    expect(codeAccessChip("agent", true)?.title).toContain("Only claude opens your files");
+    expect(codeAccessChip("agent", true)?.title).toContain("The agent answering chat here does not open your files");
     expect(codeAccessChip("no_project", true)?.title).toContain("no project folder");
     expect(codeAccessChip("agent", false)).toBeNull();
     expect(codeAccessChip("no_project", false)).toBeNull();

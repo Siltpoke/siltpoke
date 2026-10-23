@@ -6,16 +6,20 @@
  * Wraps callBrain with:
  *   1. failure classification (pure TS, src/brain/failure-classify.ts)
  *   2. health recording (single writer, src/state/brain-health.ts)
- *   3. throttle-only retry: EXACTLY 1 in-process retry, full jitter
+ *   3. throttle retry: EXACTLY 1 in-process retry, full jitter
  *      random(0, min(30s, 2s·2^attempt)), retry-after honored when
- *      parseable, daily budget gate + outer-retry cap (5/day) re-checked
- *      BEFORE the second attempt. All other classes: 0 retries.
+ *      parseable. All other failure classes: 0 retries.
+ *   4. rejected-reply retry: EXACTLY 1 immediate retry when the reviewer
+ *      answered but the answer failed JSON parsing or schema validation.
+ *
+ * Both retries clear the same three gates first: the daily budget, the
+ * outer-retry cap (5/day), and the role's daily call cap.
  *
  * NO payload replay ever — the retry re-invokes the same
  * in-memory call once; nothing is persisted for later replay.
  *
  * Schema-validation / JSON-parse failures are NOT subprocess failures —
- * they carry no `failure` fields and pass through without touching health
+ * they carry no `failure` fields and never touch health
  * (A0: 85× schema + 4× invalid-JSON never reach the classifier).
  */
 import {
@@ -115,6 +119,20 @@ function consumeRoleCall(homeBase: string, usedBy: QuotaUse, now: Date): boolean
  * starts). When the process then never started — `spawnError` is set only
  * there, by every provider — no call was made, so the slot goes back (§110 W5).
  */
+/**
+ * The reviewer answered and the answer was thrown away: not JSON, or JSON that
+ * failed the schema. Every provider marks this the same way — the reply is
+ * attached (`rawResponse`) and there is no subprocess `failure`. A spawn,
+ * exit, timeout or quota-cap error never carries a reply, so it never matches.
+ */
+function isRejectedReply(err: unknown): err is BrainError {
+  return (
+    err instanceof BrainError &&
+    err.failure === undefined &&
+    err.rawResponse !== undefined
+  );
+}
+
 function refundIfNeverStarted(err: unknown, homeBase: string, usedBy: QuotaUse, now: Date): void {
   if (err instanceof BrainError && (err.failure?.spawnError ?? "").length > 0) {
     // writeBrainHealth swallows its own write failures, so this cannot mask
@@ -303,21 +321,80 @@ export function makeGuardedCallBrain(
 
   const usedBy = deps.usedBy ?? "review";
 
+  /** One call; a success is recorded in health. */
+  async function attempt(opts: CallBrainOptions): Promise<BrainCallResult> {
+    const result = await call(opts);
+    writeBrainHealth(
+      deps.homeBase,
+      recordSuccess(readBrainHealth(deps.homeBase), now().toISOString()),
+    );
+    return result;
+  }
+
+  /**
+   * The gates a retry clears, whichever kind it is. Any refusal → no retry.
+   */
+  async function retryAllowed(): Promise<boolean> {
+    if (!(await budgetOk())) return false;
+    // tryConsumeOuterRetry is the SOLE cap arbiter: it re-reads the health
+    // file fresh and consumes the slot at DECISION time (before the
+    // up-to-30s sleep). No preliminary stale-read check — a single fresh
+    // check avoids the midnight-rollover false refusal. Residual ms-window
+    // race accepted (cost: one extra retry).
+    if (!tryConsumeOuterRetry(deps.homeBase, now())) return false;
+    // The retry is a SECOND spawn and must ALSO clear the role's daily call
+    // cap (AC8), or an agent could double-spend past the cap via the retry
+    // path alone — the pre-spawn check in enforceCapAndWarn only ever covers
+    // the FIRST attempt. Same fresh-reread-consume-at-decision-time
+    // discipline as the outer-retry cap. Every agent, claude included
+    // (spec §12.3).
+    return consumeRoleCall(deps.homeBase, usedBy, now());
+  }
+
+  /** What a failed SECOND attempt throws, for both retry kinds. */
+  function secondAttemptFailed(err2: unknown): never {
+    refundIfNeverStarted(err2, deps.homeBase, usedBy, now());
+    if (isRejectedReply(err2)) {
+      // The message keeps the original text — audit-absence.ts classifies
+      // these by `includes("failed schema validation")`.
+      throw new BrainError(
+        `[reply-rejected attempts=2] ${err2.message}`,
+        err2,
+        undefined,
+        err2.code,
+        err2.rawResponse,
+      );
+    }
+    if (!(err2 instanceof BrainError) || err2.failure === undefined) throw err2;
+    throw recordAndEnrich(err2, classifyBrainFailure(err2.failure), 2);
+  }
+
   return async (opts: CallBrainOptions): Promise<BrainCallResult> => {
     enforceCapAndWarn(provider, opts, deps.homeBase, now(), usedBy);
 
     let firstError: BrainError;
     try {
-      const result = await call(opts);
-      writeBrainHealth(
-        deps.homeBase,
-        recordSuccess(readBrainHealth(deps.homeBase), now().toISOString()),
-      );
-      return result;
+      return await attempt(opts);
     } catch (err) {
       refundIfNeverStarted(err, deps.homeBase, usedBy, now());
-      // Non-subprocess failures (schema validation, JSON parse) pass
-      // through untouched — out of classifier scope.
+      // The reviewer answered, but the answer could not be used. Ask once
+      // more, right away — a second answer is usually well-formed, and
+      // dropping it costs the user the whole review. Health is not touched:
+      // nothing failed at the process level.
+      if (isRejectedReply(err)) {
+        if (!(await retryAllowed())) throw err;
+        // The caller only ever sees the LAST error, so a retry that succeeds
+        // would leave no trace of the first rejection. Name it here; the
+        // reply itself stays out of the log line.
+        console.error(`[siltpoke] reviewer reply rejected, asking once more — ${err.message}`);
+        try {
+          return await attempt(opts);
+        } catch (err2) {
+          secondAttemptFailed(err2);
+        }
+      }
+      // Other non-subprocess failures pass through untouched — out of
+      // classifier scope.
       if (!(err instanceof BrainError) || err.failure === undefined) throw err;
       firstError = err;
     }
@@ -330,27 +407,9 @@ export function makeGuardedCallBrain(
       throw enrichedFirst;
     }
 
-    // Throttle: exactly 1 retry — but only when the daily budget gate AND
-    // the outer-retry cap (5/day) both allow it.
-    if (!(await budgetOk())) {
-      throw enrichedFirst;
-    }
-    // tryConsumeOuterRetry is the SOLE cap arbiter: it re-reads the health
-    // file fresh and consumes the slot at DECISION time (before the
-    // up-to-30s sleep). No preliminary stale-read check — a single fresh
-    // check avoids the midnight-rollover false refusal. Residual ms-window
-    // race accepted (cost: one extra retry).
-    if (!tryConsumeOuterRetry(deps.homeBase, now())) {
-      throw enrichedFirst;
-    }
-    // The retry is a SECOND spawn and must ALSO clear the role's daily call
-    // cap (AC8), or a throttled agent could double-spend past the cap via
-    // the throttle-retry path alone — the pre-spawn check above only ever
-    // covers the FIRST attempt. Same fresh-reread-consume-at-decision-time
-    // discipline as the outer-retry cap. Refused → no retry, throw the same
-    // enriched first error (mirrors the outer-retry-refused exit immediately
-    // above). Every agent, claude included (spec §12.3).
-    if (!consumeRoleCall(deps.homeBase, usedBy, now())) {
+    // Throttle: exactly 1 retry, when every retry gate allows it. Refused →
+    // throw the enriched first error.
+    if (!(await retryAllowed())) {
       throw enrichedFirst;
     }
 
@@ -366,17 +425,9 @@ export function makeGuardedCallBrain(
     await sleep(delayMs);
 
     try {
-      const result = await call(opts);
-      writeBrainHealth(
-        deps.homeBase,
-        recordSuccess(readBrainHealth(deps.homeBase), now().toISOString()),
-      );
-      return result;
+      return await attempt(opts);
     } catch (err2) {
-      refundIfNeverStarted(err2, deps.homeBase, usedBy, now());
-      if (!(err2 instanceof BrainError) || err2.failure === undefined) throw err2;
-      const cls2 = classifyBrainFailure(err2.failure);
-      throw recordAndEnrich(err2, cls2, 2);
+      secondAttemptFailed(err2);
     }
   };
 }

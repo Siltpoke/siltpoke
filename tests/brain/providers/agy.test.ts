@@ -348,6 +348,9 @@ test("call(): exit 0 but unparseable stdout → BrainError (parse failure), neve
   expect((caught as Error).message).toBe(
     "agy -p produced no parseable JSON on stdout",
   );
+  // makeGuardedCallBrain retries a reply it can recognise as rejected: the
+  // reply attached, no `failure`. Without the reply this would not be retried.
+  expect((caught as BrainError).rawResponse).toBe("not json at all, just prose");
 });
 
 test("call(): exit 0 but stdout parses to JSON that fails brainOutputSchema → BrainError (schema failure), not a parse failure", async () => {
@@ -369,6 +372,8 @@ test("call(): exit 0 but stdout parses to JSON that fails brainOutputSchema → 
   // Pinning test (single-brain S2 fix): agy-tagged, not the shared
   // brainOutputFromText generic ("Brain response failed schema validation").
   expect((caught as Error).message).toBe("agy response failed schema validation");
+  // The retry in makeGuardedCallBrain keys on the attached reply.
+  expect((caught as BrainError).rawResponse).toEqual({ mood: "not-a-real-mood", pose: "base" });
 });
 
 test("call(): fence-wrapped JSON (```json ... ```) still parses — DEFENSIVE fallback (spike's fixture is bare, but a heavier model may fence)", async () => {

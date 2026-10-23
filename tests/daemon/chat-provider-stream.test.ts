@@ -217,6 +217,28 @@ describe("streamChatViaProvider — a reply from another agent", () => {
     expect((l as Launch).cwd).not.toBe(process.cwd());
   });
 
+  // A turn that may read the project runs codex in the project's root; the
+  // empty chat folder is not even made. agy keeps its own per-call empty folder
+  // (providers/agy-cwd.ts) and reads the project by absolute path.
+  test("projectRoot: codex runs in the project folder; agy stays in its own empty folder", async () => {
+    const proj = realpathSync(mkdtempSync(join(tmpdir(), "siltpoke-chat-proj-")));
+    try {
+      fakeCli("codex", "answer");
+      fakeCli("agy", "answer");
+      await collect(streamChatViaProvider({ ...base(), family: "codex", projectRoot: proj }));
+      await collect(streamChatViaProvider({ ...base(), family: "agy", projectRoot: proj }));
+      const codex = launchesByPid().find((l) => l.bin === "codex") as Launch;
+      const agy = launchesByPid().find((l) => l.bin === "agy") as Launch;
+      // codex is told its folder with -C (and its sandbox reads from it).
+      expect(codex.argv[codex.argv.indexOf("-C") + 1]).toBe(proj);
+      expect(agy.cwd).not.toBe(proj);
+      expect(agy.cwd).not.toBe(join(home, "chat-cwd"));
+      expect(existsSync(join(home, "chat-cwd"))).toBe(false);
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  });
+
   // codex and agy build a REVIEW request by default: codex is handed the review
   // verdict's JSON schema, agy a prompt headed "review rubric". A chat sent that
   // way comes back as a verdict, not an answer.

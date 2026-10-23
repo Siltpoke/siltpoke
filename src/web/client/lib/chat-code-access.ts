@@ -57,7 +57,7 @@ export function codeAccessChip(
   if (access === "agent") {
     return {
       label: "can't open your files",
-      title: "Only claude opens your files in chat, and another agent answers here. Chat sees only what this page sends it.",
+      title: "The agent answering chat here does not open your files. Chat sees only what this page sends it.",
     };
   }
   return {

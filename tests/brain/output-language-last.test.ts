@@ -202,9 +202,9 @@ const OUTPUT = {
 
 type Phase = "passive" | "normal";
 
-/** Tools that route runCritic into PASSIVE_BUBBLE (clean diff) or NORMAL (a tsc error). */
+/** Tools that route runCritic into PASSIVE_BUBBLE (a docs-only diff — since gate step [1] a code diff goes to NORMAL) or NORMAL (a tsc error). */
 function toolsFor(phase: Phase) {
-  const diff = { tool: "git-diff", status: "ok", parsed: [{ file: "src/foo.ts", header: "@@", body: "+const x = 1;" }], raw: "" } as ToolResult;
+  const diff = { tool: "git-diff", status: "ok", parsed: [{ file: phase === "passive" ? "docs/foo.md" : "src/foo.ts", header: "@@", body: "+const x = 1;" }], raw: "" } as ToolResult;
   const tsc: ToolResult = phase === "normal"
     ? { tool: "tsc", status: "ok", parsed: [{ file: "src/foo.ts", line: 1, col: 1, severity: "error", code: "TS2322", message: "Type mismatch." }], raw: `src/foo.ts(1,1): error TS2322\n${SNIPPET}` }
     : na("tsc");

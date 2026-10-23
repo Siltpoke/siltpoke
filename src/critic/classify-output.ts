@@ -8,11 +8,20 @@
  * Decision order (must be applied in sequence):
  *   1. usableTools.length === 0            → HARD_SUPPRESS (abstention floor, PQ8)
  *   2. allClean AND NOT diffHasHunks       → HARD_SUPPRESS (true no-op)
- *   3. allClean AND diffHasHunks           → PASSIVE_BUBBLE (clean refactor)
- *   4. nonDiffSignal exists                → NORMAL
- *   5. (defensive)                         → HARD_SUPPRESS
+ *   3. allClean AND diffHasHunks
+ *        AND a hunk is in a reviewable file → NORMAL (gate spec 2026-08-20 D2)
+ *   4. allClean AND diffHasHunks           → PASSIVE_BUBBLE (nothing reviewable changed)
+ *   5. nonDiffSignal exists                → NORMAL
+ *   6. (defensive)                         → HARD_SUPPRESS
+ *
+ * Step 3 is step [1] of the gate redesign. Before it, "the static tools found
+ * nothing" meant "the AI does not look": a project with no tsconfig and no
+ * eslint config was ALWAYS step 4, and the reviewer got a file count instead
+ * of the diff. The rest of the spec's decision tree is not built yet; step 4
+ * is the transitional remainder.
  */
 
+import { anyReviewable } from "./reviewable";
 import type { ToolName, ToolResult, ToolStatus } from "./tools/types";
 
 export type GateDecision = "HARD_SUPPRESS" | "PASSIVE_BUBBLE" | "NORMAL";
@@ -94,8 +103,19 @@ export function classifyToolOutput(
     };
   }
 
+  // The static tools are evidence, not a switch: a reviewable change is read
+  // by the AI whatever they said. Reached only when they said nothing — when
+  // they did report, the NORMAL branch below names them in the reason.
+  if (allClean && diffHasHunks && anyReviewable(gitDiff.parsed.map((h) => h.file))) {
+    return {
+      decision: "NORMAL",
+      reason: "reviewable change — the AI reads it whatever the static tools said",
+      usableTools,
+    };
+  }
+
   if (allClean && diffHasHunks) {
-    // Clean refactor: code changed but no findings
+    // Nothing reviewable changed (docs, assets, generated, data)
     return {
       decision: "PASSIVE_BUBBLE",
       reason: "tools clean, diff present (clean refactor)",

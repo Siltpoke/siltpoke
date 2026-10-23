@@ -271,7 +271,7 @@ function BudgetEditor({ config }: { config: { dailyTokenLimit: number; softWarnA
             lineHeight: 1.5,
           }}
         >
-          leave a field blank to keep its current value. defaults: daily 500,000 · soft 80% · hard 100%.
+          leave a field blank to keep its current value. defaults: daily 1,000,000 · soft 80% · hard 100%.
         </div>
         <form
           x-on:submit={submit}
